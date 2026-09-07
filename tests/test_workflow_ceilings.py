@@ -48,6 +48,13 @@ REQUIRED_FLAGS = {
     "curl": ("--connect-timeout", "--max-time"),
     "pip": (),
     "gh": (),
+    # A script is a network client when what it does is resolve from an index.
+    # `release_smoke.py` builds its own venv and installs the published
+    # requirement a second time, so `python scripts/release_smoke.py` reaches
+    # PyPI as surely as the `pip` above it — and the interpreter rule below
+    # would otherwise hide it, leaving its bound deletable without this scan
+    # noticing. Found by the gate review of #1116.
+    "release_smoke.py": (),
 }
 
 #: Commands that take another command as their argument, so the *next* token is
@@ -169,8 +176,15 @@ def head_tool(tokens: list[str]) -> tuple[str, int] | None:
     if index >= len(tokens):
         return None
     name = Path(tokens[index].strip("\"'$(){}")).name
-    if name in {"python", "python3"} and tokens[index + 1 : index + 3] == ["-m", "pip"]:
-        return "pip", index + 2
+    if name in {"python", "python3"}:
+        if tokens[index + 1 : index + 3] == ["-m", "pip"]:
+            return "pip", index + 2
+        # A script the interpreter runs is the client, when it is one this table
+        # knows. `python scripts/smoke.py` is still not a network call.
+        script = Path(tokens[index + 1].strip("\"'")).name if len(tokens) > index + 1 else ""
+        if script in REQUIRED_FLAGS:
+            return script, index + 1
+        return None
     if name.startswith("pip") or name.endswith("pip"):
         return "pip", index
     if name in REQUIRED_FLAGS:
@@ -263,8 +277,10 @@ class EveryNetworkCallInAReleaseIsBounded(ThePublishWorkflow):
         found = self._calls()
         tools = {tool for _, tool, _ in found}
 
-        self.assertEqual(tools, {"curl", "pip", "gh"}, f"tools seen: {sorted(tools)}")
-        self.assertGreaterEqual(len(found), 12, f"only {len(found)} calls found")
+        self.assertEqual(
+            tools, {"curl", "pip", "gh", "release_smoke.py"}, f"tools seen: {sorted(tools)}"
+        )
+        self.assertGreaterEqual(len(found), 13, f"only {len(found)} calls found")
 
     def test_a_conditional_does_not_hide_a_call(self):
         """`if curl …` and `if ! curl …` are calls to curl, not to `if`."""
@@ -276,6 +292,12 @@ class EveryNetworkCallInAReleaseIsBounded(ThePublishWorkflow):
         """`python -m pip install` opens the connection; `python` does not."""
         self.assertEqual([t for t, _ in network_calls("python -m pip install x")], ["pip"])
         self.assertEqual([t for t, _ in network_calls("python scripts/smoke.py")], [])
+
+    def test_an_interpreter_does_not_hide_a_script_that_resolves_from_the_index(self):
+        """`release_smoke.py` builds a venv and installs; the interpreter is not the client."""
+        found = network_calls("timeout 300 python scripts/release_smoke.py --requirement x")
+
+        self.assertEqual([t for t, _ in found], ["release_smoke.py"])
 
     def test_wrappers_and_assignments_do_not_hide_the_tool(self):
         """More than three words may stand before the executable."""

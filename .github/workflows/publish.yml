@@ -592,9 +592,17 @@ jobs:
             "Last 100 lines of the verify log (token shapes masked):" \
             "$logtail")"
 
+          # `|| true`, because this step runs under `set -euo pipefail` and a
+          # failed command substitution in an assignment *is* a failure: a `gh`
+          # that times out (`timeout` exits 124) or rate-limits would exit the
+          # reporter here and file nothing at all — the release-broken report
+          # swallowed by the bound added to protect it. An empty result already
+          # means "no open issue with this title", which is the safe reading:
+          # the branch below then creates one, and a duplicate report is a far
+          # better outcome than silence about a broken release.
           existing="$(timeout 60 gh issue list --state open --search "\"${title}\" in:title" \
             --json number,title \
-            --jq "map(select(.title == \"${title}\")) | .[0].number // empty")"
+            --jq "map(select(.title == \"${title}\")) | .[0].number // empty" || true)"
 
           if [ -n "$existing" ]; then
             timeout 60 gh issue comment "$existing" --body "$body"
