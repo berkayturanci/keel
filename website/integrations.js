@@ -333,6 +333,13 @@
       countEl.textContent = items.length + " of " + INTEGRATIONS.length + " integrations";
     }
 
+    var sr = document.getElementById("sr-live-region");
+    if (sr) {
+      sr.textContent = items.length === 0
+        ? 'No integrations found matching "' + searchQuery + '"'
+        : 'Showing ' + items.length + ' integrations';
+    }
+
     if (items.length === 0) {
       grid.innerHTML = '<div class="integ-empty">No integrations found matching "' + searchQuery + '".</div>';
       return;

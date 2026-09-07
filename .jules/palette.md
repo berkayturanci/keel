@@ -64,3 +64,7 @@
 ## 2026-09-06 - Accessible Name for Animation Replay Buttons
 **Learning:** Icon buttons used to replay animations (like `↻`) often have visible text that functions as an accessible name (e.g., "replay the run"). While this is technically valid, the context of *what* is being replayed (an animation) is lost to screen reader users who cannot see the visual flow above it.
 **Action:** When a button controls a visual animation, explicitly add an `aria-label` that provides context (e.g., "Replay the run animation"), even if there is visible text alongside an `aria-hidden` icon.
+
+## 2026-09-08 - Use sr-live-region for Search Updates
+**Learning:** For dynamic content updates like search results, applying `aria-live` to the entire container holding the results can be problematic or too noisy, especially if it contains interactive elements.
+**Action:** Remove `aria-live` from the content grid and instead use a dedicated off-screen `.sr-only` container with `aria-live="polite"` (like `#sr-live-region`) to announce the results or count changes to screen readers explicitly.
