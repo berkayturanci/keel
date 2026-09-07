@@ -432,13 +432,18 @@ jobs:
 
             echo "== release_smoke.py against the published package =="
             # This builds its own venv and resolves "$req" from the index a
-            # second time. It carries no retry of its own and does not need one:
-            # the install above is the canary, and it does not return until this
-            # runner has resolved this version through the simple index at least
-            # once — after which pip's own HTTP cache answers the second resolve
-            # from the same page. A first miss here would mean the index served
-            # this runner two different answers seconds apart, which is a
-            # different defect from the lag #1111 is about.
+            # second time, and carries no retry of its own. That is deliberate,
+            # but not for the reason it used to be: the retry above passes
+            # `--no-cache-dir`, so it leaves nothing in pip's HTTP cache and this
+            # resolve is a genuinely independent request rather than a replay of
+            # the page the canary already read. It is a stronger check for it.
+            #
+            # No retry, because the two failures mean different things. The
+            # install above does not return until this runner has resolved this
+            # version through the simple index at least once; a miss here would
+            # mean the index answered the same runner two different ways seconds
+            # apart — a regression, not the lag #1111 is about, and one that
+            # should fail the release loudly rather than be waited out.
             python scripts/release_smoke.py --requirement "$req"
 
             echo "== secondary: the GitHub Release SHA256SUMS =="
