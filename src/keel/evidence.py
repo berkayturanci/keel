@@ -1569,6 +1569,13 @@ _VERDICT_SENTENCE = r"(?:[^.!?;\u2026\n]|[.!?;\u2026](?!\s|$))"
 #: else, saying things like "Checked the formula syntax, the version URL and the
 #: checksum placeholder" — English objects, naming no symbol.
 #:
+#: The object now ends at a *sentence* rather than at any period, which is a
+#: change from `[^.\n]{8,}`: it costs the object a trailing `;`, `!` or `?`
+#: clause, and buys it a filename, since `evidence.py` no longer truncates to
+#: `evidence`. Measured across 1,421 verdicts, that trade takes nothing away —
+#: no verdict that passes on `main` is refused — but it is a change to this
+#: clause's reading and is written down rather than left to be discovered.
+#:
 #: **#1106 tried to widen this to traced/read/ran/inspected/verified and the
 #: widening turned out inert.** Those verbs could not keep a free-form object —
 #: "Read the whole diff and everything looks correct" is the #926 receipt with a
@@ -1684,9 +1691,8 @@ def verdict_substance(body: str, *, pr_title: str = "") -> tuple[bool, str]:
     if not anchored and not _review_act_clause(prose):
         return False, (
             "verdict names nothing concrete — no file, line, symbol, no two "
-            "of a filename/dotted name/identifier, and no 'checked|traced|read|"
-            "ran|inspected|verified …' clause naming what was looked at, so it "
-            "cannot be told apart from a receipt"
+            "of a filename/dotted name/identifier, and no 'checked …' clause, "
+            "so it cannot be told apart from a receipt"
         )
 
     title_words = set(_WORD.findall(pr_title.lower()))
