@@ -1756,10 +1756,26 @@ traceback. Branch on the code, never on the message.
 | `no-prompt` | `--prompt-file` is missing, unreadable, or empty |
 | `missing-binary` | the CLI is not installed |
 | `nonzero-exit` · `empty-output` | the CLI ran and produced a failure, or nothing |
-| `timeout` | the wall-clock limit killed it (`timed_out: true`) |
+| `timeout` | it ran out of time (`timed_out: true`) — keel's wall-clock limit killed it (`exit_code: 124`), **or** the vendor stopped on its own timer and said so |
 | `rate-limit` | HTTP 429, or a CLI that said it was out of quota |
 | `no-key` · `auth` · `http` · `network` · `bad-response` | the HTTP transports' vocabulary |
 | `lost` | a detached run's process vanished, or it passed its own deadline, without recording a result |
+
+`timed_out` means *this run ran out of time*, whichever bound it hit. `exit_code` says
+which: `124` is keel's wall-clock wrapper, another non-zero code is the vendor's own timer,
+and `null` with `error_code: lost` is a **detached** run that passed its deadline without
+recording a result — no process left to have an exit code. `error` quotes what the vendor
+said in the second case. Before #1133 only keel's wrapper set the code, so a vendor that
+timed out was classified by whatever its prose happened to match.
+
+`error_code` is decided from the vendor's **error**, never from its answer. For a
+stream-json vendor that is the `status` and `error` of the final `result` frame — not its
+`response`; otherwise it is stderr plus the tail of stdout. The whole transcript of a long
+run is mostly the model's prose about code, and a classifier reading it will find shas,
+timestamps and `file:line` references that look like status codes, and reviews that discuss
+rate limiting by name. When the evidence reads as both a timeout and a quota refusal,
+`timeout` wins: it is the recoverable reading, and the two send an operator in opposite
+directions.
 
 The **policy** around those codes stays with the caller (ship s4/s7), not here: this
 command never retries, never falls back to the host agent, and never consults the risk
