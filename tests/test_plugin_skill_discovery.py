@@ -96,9 +96,7 @@ class TheSkillDirectoryIsFoundWithoutReadingAManifest(unittest.TestCase):
         root skill with a command's name puts two entries for one job in front of a
         reader — the trap #1138 describes. This move avoids it because `keel-onboard` has
         no command twin; the day that stops being true, decide #1138 first."""
-        commands = {
-            path.stem for path in (REPO_ROOT / install.PLUGIN_COMMANDS_DIR).glob("*.md")
-        }
+        commands = {path.stem for path in (REPO_ROOT / install.PLUGIN_COMMANDS_DIR).glob("*.md")}
         self.assertTrue(commands, "no commands found — the check is vacuous")
         skills = {path.parent.name for path in self._skills()}
         prefixed = {f"{install.SKILL_PREFIX}{command}" for command in commands}
