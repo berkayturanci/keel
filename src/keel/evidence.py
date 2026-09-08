@@ -1507,11 +1507,11 @@ _VERDICT_BARE_IDENTIFIER = re.compile(r"\b_*[a-z0-9]+(?:_[a-z0-9]+)+_*\b")
 #: ``:42`` and a ``()`` are marks a reviewer types deliberately at a thing;
 #: none of them appear around a product name in ordinary prose. A bare dotted
 #: token is just a token with a dot in it.
-_VERDICT_ANCHORS = (
-    re.compile(r"[\w./-]+\.[A-Za-z0-9]{1,5}:\d+"),  # path/to/file.py:42
-    re.compile(r"[\w-]+/[\w./-]+\.[A-Za-z0-9]{1,5}\b"),  # src/keel/thing.py
-    re.compile(r"`[^`\n]{2,}`"),  # `a_symbol`, `--a-flag`
-    re.compile(r"\b\w+\.\w+\(\)"),  # module.function()
+_VERDICT_ANCHORS = re.compile(
+    r"[\w./-]+\.[A-Za-z0-9]{1,5}:\d+|"  # path/to/file.py:42
+    r"[\w-]+/[\w./-]+\.[A-Za-z0-9]{1,5}\b|"  # src/keel/thing.py
+    r"`[^`\n]{2,}`|"  # `a_symbol`, `--a-flag`
+    r"\b\w+\.\w+\(\)"  # module.function()
 )
 
 #: The unbackticked forms — a bare filename, a bare dotted token, a bare
@@ -1706,7 +1706,8 @@ def verdict_substance(body: str, *, pr_title: str = "") -> tuple[bool, str]:
     if not prose.strip():
         return False, "verdict has no prose beyond its header"
 
-    anchored = any(pattern.search(prose) for pattern in _VERDICT_ANCHORS) or (
+    # ⚡ Bolt Optimization: Use combined compiled regex instead of generator overhead
+    anchored = bool(_VERDICT_ANCHORS.search(prose)) or (
         len(_verdict_corroborators(prose)) >= _VERDICT_CORROBORATION_FLOOR
     )
     if not anchored and not _review_act_clause(prose):
