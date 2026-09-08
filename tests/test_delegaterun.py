@@ -931,5 +931,234 @@ class DocumentShapeTest(unittest.TestCase):
         self.assertEqual(delegaterun.state_dir("/repo").as_posix(), "/repo/.keel/state/delegate")
 
 
+class AVendorTimeoutIsATimeoutNotAQuotaRefusal(unittest.TestCase):
+    """A run the vendor timed out on was reported as ``rate-limit`` (#1133).
+
+    The dispatch that found this asked agy for #1130 under ``--timeout 900``. agy stopped
+    at 298s saying ``timeout waiting for response``, and keel's contract said
+    ``error_code: "rate-limit"``, ``timed_out: false``. The two codes send an operator in
+    opposite directions: ``rate-limit`` means *wait for the quota window* — a maintainer
+    who believes it stops for minutes or hours — while ``timeout`` means *the brief was
+    too large, the model too slow, or the bound too tight*, and the fix was to raise the
+    bound. The reported code advised the one thing that could not have helped.
+
+    Two causes, both fixed here.
+
+    **The classifier read the transcript, not the failure.** ``rate_limited`` was given
+    ``CommandResult.output`` — stdout and stderr glued together, which for a
+    hundreds-of-KB agent run is mostly the model's own prose about code. Measured over the
+    368 vendor transcripts on disk in this working session: **six** contain a bare ``429``
+    and not one of them is a status code — a timestamp (``16:33:40.429``), two git shas
+    (``4293a56``, ``a4810728429ea3…``), a file:line reference (``publish.yml:429``), and a
+    line number in the gutter of a code listing. Those six strings are the fixtures below,
+    verbatim.
+
+    **And a timeout the vendor reports was not a code at all.** Only keel's own wrapper
+    (exit 124) produced ``timeout``; the vendor's own timer produced whatever the prose
+    happened to match. ``timed_out`` now means *this run timed out*, against either bound.
+    """
+
+    #: agy's result frame, shape taken from a real ``--output-format stream-json`` run:
+    #: ``conversation_id``, ``status``, ``response``, ``duration_seconds``, ``num_turns``,
+    #: ``usage``. ``error`` appears in place of a complete ``response`` on a failure.
+    _RESULT = {
+        "conversation_id": "3ea7843d-cce7-40bb-a743-796137b84e0b",
+        "status": "ERROR",
+        "error": "timeout waiting for response",
+        "duration_seconds": 297.92,
+        "num_turns": 37,
+        "usage": {"input_tokens": 613666, "output_tokens": 4290, "total_tokens": 617956},
+    }
+
+    #: Every bare ``429`` found across 368 real vendor transcripts. None is a status code.
+    FALSE_429 = (
+        "2026-09-05 16:33:40.429 xcodebuild[4237:17075826]  DVTFilePathFSEvents: Failed",
+        "Inspected git diff 4293a56 HEAD and git diff --stat across repository",
+        "merge of 89842c1ab17b8762348bf10499eb72ac8868fd79 + 4293a564085d548217f6cad2cc",
+        "the bare artifact curl at publish.yml:429. test_release_docs.py pins the SBOM",
+        "evaluated PR head a4810728429ea3da07ff2bdc2922ceb190d0d382",
+        "   429\t    # google / agy / gemini AND any unknown vendor (issue #310)",
+    )
+
+    #: Quota refusals a vendor really emits. `usage limit` is codex's, verbatim from disk.
+    REAL_QUOTA = (
+        "ERROR: You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/pro)",
+        "HTTP 429: rate limit exceeded for this model",
+        "429 Too Many Requests",
+        "RESOURCE_EXHAUSTED: quota exceeded",
+    )
+
+    def _stream(self, *, result=None, chatter=""):
+        """A stream-json stdout: some step_update frames, then the final result frame."""
+        frames = [
+            json.dumps({"event": "init", "init": {"conversation_id": "3ea7843d"}}),
+            json.dumps(
+                {
+                    "event": "step_update",
+                    "step_update": {"step_index": 3, "state": "DONE", "text_delta": chatter},
+                }
+            ),
+            json.dumps({"event": "result", "result": result or self._RESULT}),
+        ]
+        return "\n".join(frames) + "\n"
+
+    def _run_agy(self, stdout, stderr=""):
+        run = _Recorder(CommandResult(False, 1, stdout + stderr, stdout=stdout, stderr=stderr))
+        return delegaterun.execute(
+            _plan("agy", "implement", timeout=900), _run=run, _read=_read
+        )
+
+    def test_the_vendors_own_timeout_is_reported_as_a_timeout(self):
+        result = self._run_agy(self._stream())
+
+        self.assertEqual(result["error_code"], "timeout")
+
+    def test_and_the_run_is_recorded_as_having_timed_out(self):
+        """It used to say ``timed_out: false`` about a run that timed out."""
+        self.assertTrue(self._run_agy(self._stream())["timed_out"])
+
+    def test_the_diagnostic_still_carries_the_vendors_own_words(self):
+        """Branch on the code; read the message. The message keeps both streams."""
+        self.assertIn("timeout waiting for response", self._run_agy(self._stream())["error"])
+
+    #: A failure that is **not** a timeout, so the timeout branch cannot mask what the
+    #: transcript would otherwise be read as. The first cut of these tests used the
+    #: timeout frame and passed against a classifier reading the whole stream, because
+    #: `timeout` was reached first either way — found by mutation.
+    _PLAIN_FAILURE = {"status": "ERROR", "error": "model not found: gemini-9"}
+
+    def test_a_sha_or_a_line_number_in_the_transcript_is_not_a_quota_refusal(self):
+        """The six real strings. Each one used to make ``rate_limited`` true."""
+        for chatter in self.FALSE_429:
+            with self.subTest(chatter=chatter[:40]):
+                self.assertFalse(delegaterun.rate_limited(chatter))
+                result = self._run_agy(
+                    self._stream(result=self._PLAIN_FAILURE, chatter=chatter)
+                )
+                self.assertEqual(result["error_code"], "nonzero-exit")
+
+    def test_nor_is_a_review_that_discusses_rate_limiting(self):
+        """A delegate's *answer* is prose about code, and keel's own code has a
+        rate-limit path in it. Reading the answer to classify the failure is the
+        mechanism, and the bounded signal is the fix — not a longer marker list."""
+        chatter = "quota.py maps HTTP status codes to rate-limit, auth, or http."
+        result = self._run_agy(self._stream(result=self._PLAIN_FAILURE, chatter=chatter))
+
+        self.assertEqual(result["error_code"], "nonzero-exit")
+
+    def test_the_answer_field_of_the_result_frame_is_not_read_either(self):
+        """`response` is the model's answer and lives in the same frame as `status`."""
+        result = self._run_agy(
+            self._stream(
+                result={
+                    "status": "ERROR",
+                    "error": "model not found: gemini-9",
+                    "response": "I checked publish.yml:429 and the rate limit handling.",
+                }
+            )
+        )
+
+        self.assertEqual(result["error_code"], "nonzero-exit")
+
+    def test_a_real_quota_refusal_still_maps_to_rate_limit(self):
+        """The no-retry-on-quota rule depends on this half being intact."""
+        for message in self.REAL_QUOTA:
+            with self.subTest(message=message[:40]):
+                self.assertTrue(delegaterun.rate_limited(message))
+
+    def test_a_quota_refusal_on_stderr_survives_a_transcript_that_says_nothing(self):
+        result = self._run_agy(
+            self._stream(result={"status": "ERROR", "response": "partial"}),
+            stderr="ERROR: You've hit your usage limit.\n",
+        )
+
+        self.assertEqual(result["error_code"], "rate-limit")
+        self.assertFalse(result["timed_out"])
+
+    def test_a_plain_failure_is_still_a_plain_failure(self):
+        result = self._run_agy(
+            self._stream(result={"status": "ERROR", "error": "model not found: gemini-9"})
+        )
+
+        self.assertEqual(result["error_code"], "nonzero-exit")
+        self.assertFalse(result["timed_out"])
+
+    def test_when_a_message_reads_as_both_the_timeout_wins(self):
+        """The order is a decision, so it is asserted rather than left to the `elif`.
+
+        A vendor that stops on a timer often explains it by naming its limits, and the
+        two codes send an operator in opposite directions. `timeout` is the recoverable
+        reading — retry now, smaller or longer — while `rate-limit` says stop and wait,
+        which is the advice that wasted the run this issue is about. When the evidence
+        supports both, keel gives the one an operator can act on.
+
+        The wording here is constructed: only agy's `timeout waiting for response` is
+        measured, and it says nothing about quota. This pins the precedence, not a phrase.
+        """
+        result = self._run_agy(
+            self._stream(
+                result={
+                    "status": "ERROR",
+                    "error": "timed out after 300s; the model may be near its usage limit",
+                }
+            )
+        )
+
+        self.assertEqual(result["error_code"], "timeout")
+        self.assertTrue(result["timed_out"])
+
+    def test_keels_own_wrapper_timeout_is_unchanged(self):
+        """Exit 124 was already classified correctly; this must stay that way."""
+        run = _Recorder(CommandResult(False, 124, "", timed_out=True))
+        result = delegaterun.execute(_plan("claude", timeout=5), _run=run, _read=_read)
+
+        self.assertEqual(result["error_code"], "timeout")
+        self.assertTrue(result["timed_out"])
+
+
+class TheFailureSignalIsBoundedAndIsTheVendors(unittest.TestCase):
+    """What a classification may read (#1133), asserted directly.
+
+    ``CommandResult.output`` is a diagnostic — this module already documents why gluing
+    stderr onto stdout makes it unparseable — and a classification is not a diagnostic.
+    """
+
+    def _stream(self, response):
+        return json.dumps({"event": "result", "result": {"status": "ERROR", **response}}) + "\n"
+
+    def test_the_delegates_answer_is_not_part_of_the_signal(self):
+        """`response` is what the model said; `status` and `error` are what happened."""
+        stdout = self._stream({"response": "the run hit a rate limit", "error": "bad model"})
+        signal = delegaterun.failure_signal(stderr="", stdout=stdout, stream_json=True)
+
+        self.assertIn("bad model", signal)
+        self.assertNotIn("rate limit", signal)
+
+    def test_a_non_stream_vendor_gets_the_tail_not_the_whole_stream(self):
+        stdout = "x" * 5000 + "\nfinal line: it stopped"
+        signal = delegaterun.failure_signal(stderr="", stdout=stdout, limit=64)
+
+        self.assertIn("it stopped", signal)
+        self.assertLess(len(signal), 200)
+
+    def test_stderr_is_always_included(self):
+        stdout = self._stream({})
+        signal = delegaterun.failure_signal(stderr="boom", stdout=stdout, stream_json=True)
+
+        self.assertIn("boom", signal)
+
+    def test_a_result_with_neither_stream_falls_back_to_the_concatenation(self):
+        """`runner._result` always fills both; a hand-built result may not, and refusing
+        to read it would classify every such failure as a plain nonzero exit."""
+        signal = delegaterun.failure_signal(stderr="", stdout="", output="Error: 429 Too Many")
+
+        self.assertIn("429", signal)
+
+    def test_an_unparseable_stream_does_not_raise(self):
+        for stdout in ("", "not json\n", "{}\n", '{"event": "step_update"}\n', "null\n"):
+            with self.subTest(stdout=stdout):
+                delegaterun.failure_signal(stderr="", stdout=stdout, stream_json=True)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

@@ -34,6 +34,7 @@ import contextlib
 import datetime
 import json
 import os
+import re
 import subprocess  # nosec B404
 import time
 import urllib.error
@@ -58,18 +59,43 @@ _RUN_ID_OK = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123
 #: Cap on a single HTTP response body, matching :mod:`keel.api_delegate`.
 _MAX_RESPONSE_BYTES = 50 * 1024 * 1024
 
-#: Substrings that mark a quota refusal in a CLI's own output. A hosted API answers 429
-#: and :mod:`keel.api_delegate` classifies it; a CLI exits nonzero with prose, and the
-#: caller's no-retry-on-quota rule needs the same ``rate-limit`` code either way.
+#: Patterns that mark a quota refusal in a CLI's own output. A hosted API answers 429 and
+#: :mod:`keel.api_delegate` classifies it; a CLI exits nonzero with prose, and the caller's
+#: no-retry-on-quota rule needs the same ``rate-limit`` code either way.
+#:
+#: ``429`` needs a status-shaped context, because three digits are not a status code
+#: (#1133). Measured over the 368 vendor transcripts this repository has on disk: every
+#: single occurrence of a bare ``429`` was something else — ``2026-09-05 16:33:40.429`` in
+#: an xcodebuild line, ``git diff 4293a56``, ``a4810728429ea3…``, ``publish.yml:429``, and
+#: a ``429`` in the gutter of a code listing. Six false matches, no true one; and the
+#: transcript that triggered the bug was several hundred KB, where a sha or a line number
+#: carrying those digits is a near certainty. The other markers are phrases, which do not
+#: have that problem.
 _RATE_LIMIT_MARKERS = (
-    "rate limit",
-    "rate_limit",
-    "ratelimit",
-    "429",
-    "resource_exhausted",
-    "quota exceeded",
-    "usage limit",
-    "too many requests",
+    re.compile(r"rate[ _-]?limit"),
+    re.compile(r"resource_exhausted"),
+    re.compile(r"quota exceeded"),
+    re.compile(r"usage limit"),
+    re.compile(r"too many requests"),
+    # `HTTP 429`, `status: 429`, `429 Too Many Requests`, `error 429` — never a bare 429.
+    re.compile(r"(?:http[/ ]|status[: ]+|code[: ]+|error[: ]+)429\b"),
+    re.compile(r"\b429\s+(?:too many|client error|error\b)"),
+)
+
+#: Phrases with which a vendor reports **its own** timeout, as distinct from the wall-clock
+#: bound keel imposes (exit 124, :attr:`keel.runner.CommandResult.timed_out`).
+#:
+#: One vendor's exact wording is measured — agy's ``timeout waiting for response``, seen at
+#: 298s under a keel ``--timeout 900`` — and the rest of this list is the same word in the
+#: shapes a CLI conventionally uses. That is deliberately short: a classifier tuned on one
+#: vendor's prose is how the defect this fixes arrived, so what makes matching prose safe
+#: here is not the list but :func:`failure_signal`, which keeps these patterns away from
+#: the delegate's *answer* and shows them only the vendor's own error.
+_VENDOR_TIMEOUT_MARKERS = (
+    re.compile(r"timeout waiting for"),
+    re.compile(r"\btimed[ -]out\b"),
+    re.compile(r"deadline exceeded"),
+    re.compile(r"\btimeout\b.*\bexceeded\b"),
 )
 
 
@@ -256,9 +282,91 @@ def result_document(
 
 
 def rate_limited(text: str) -> bool:
-    """Does this output read as a quota refusal? (pure, best-effort)"""
+    """Does this text read as a quota refusal? (pure, best-effort)
+
+    Give it a :func:`failure_signal`, not a transcript. The patterns are prose, and a
+    delegate's *answer* is prose about code — a review that says the word "rate limit",
+    a diff that contains a sha with 429 in it. Reading the whole stream is how a run that
+    timed out was reported as a quota refusal (#1133).
+    """
     lowered = (text or "").lower()
-    return any(marker in lowered for marker in _RATE_LIMIT_MARKERS)
+    return any(marker.search(lowered) for marker in _RATE_LIMIT_MARKERS)
+
+
+def vendor_timed_out(text: str) -> bool:
+    """Does this text read as the vendor reporting its own timeout? (pure, best-effort)
+
+    Distinct from :attr:`keel.runner.CommandResult.timed_out`, which is keel's wrapper
+    killing the process. Both are timeouts and both set ``timed_out`` on the contract —
+    the recovery is the same and the operator needs to be told the same thing — but only
+    one of them leaves an exit code of 124.
+    """
+    lowered = (text or "").lower()
+    return any(marker.search(lowered) for marker in _VENDOR_TIMEOUT_MARKERS)
+
+
+def final_stream_event(stdout: str) -> dict[str, Any] | None:
+    """agy's last ``{"event": "result", ...}`` frame, or ``None``.
+
+    The authoritative status of a stream-json run: ``status`` and ``error`` say what
+    happened, where ``response`` is only what the model said.
+    """
+    for line in reversed((stdout or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            frame = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(frame, dict) and frame.get("event") == "result":
+            result = frame.get("result")
+            return result if isinstance(result, dict) else frame
+    return None
+
+
+def failure_signal(
+    *,
+    stderr: str,
+    stdout: str,
+    output: str = "",
+    stream_json: bool = False,
+    limit: int = 400,
+) -> str:
+    """The text a failure *classification* may read — never the delegate's answer.
+
+    ``CommandResult.output`` is stdout and stderr glued together, and this module already
+    says why that is a diagnostic rather than a parse: every agent CLI writes progress and
+    notices to stderr. Classifying on it is worse than parsing it. The whole transcript of
+    a long run is hundreds of KB of the model's own prose about code — including, in the
+    transcripts on disk here, git shas and file:line references carrying the digits 429,
+    and reviews that discuss keel's own rate-limit handling by name. #1133 is one such run:
+    the vendor said ``timeout waiting for response`` after 298s and keel reported
+    ``rate-limit``, which tells an operator to wait out a quota window that does not exist.
+
+    So the signal is bounded and it is the vendor's, not the model's:
+
+    * a stream-json vendor's final ``result`` frame contributes ``status`` and ``error``,
+      and deliberately **not** ``response``;
+    * otherwise the tail of stdout, which is where a CLI prints why it stopped;
+    * plus stderr in both cases, which carries nothing else on a failure.
+
+    ``output`` is the last resort, used only when a result carries neither separated
+    stream. :func:`keel.runner._result` always fills both, so this is for a caller that
+    built a :class:`~keel.runner.CommandResult` by hand — where the concatenation is the
+    only signal there is, and refusing to read it would classify every such failure as a
+    plain nonzero exit.
+    """
+    if not (stderr or stdout):
+        return _tail(output, limit)
+    parts = [stderr or ""]
+    if stream_json:
+        event = final_stream_event(stdout)
+        if event is not None:
+            parts += [str(event.get("status") or ""), str(event.get("error") or "")]
+            return "\n".join(part for part in parts if part)
+    parts.append(_tail(stdout, limit))
+    return "\n".join(part for part in parts if part)
 
 
 def execute(
@@ -345,11 +453,33 @@ def _run_argv(plan: RunPlan, prompt: str, finish, *, run) -> dict[str, Any]:
             error=f"{argv[0]} could not be executed: {result.stderr or result.output}",
         )
     if not result.ok:
-        code = "rate-limit" if rate_limited(result.output) else "nonzero-exit"
+        # Classified on the vendor's own error, never on the delegate's answer (#1133),
+        # and timeout-before-quota: the two codes send an operator in opposite directions
+        # — `rate-limit` says wait out a window, `timeout` says retry now, smaller or
+        # longer — and a vendor that times out often says so in a sentence that also
+        # mentions its limits.
+        signal = failure_signal(
+            stderr=result.stderr,
+            stdout=result.stdout,
+            output=result.output,
+            stream_json=plan.stdin_mode == delegate.STDIN_STREAM_JSON,
+        )
+        vendor_timeout = vendor_timed_out(signal)
+        if vendor_timeout:
+            code = "timeout"
+        elif rate_limited(signal):
+            code = "rate-limit"
+        else:
+            code = "nonzero-exit"
         return finish(
             ok=False,
             exit_code=result.code,
+            # True for either bound: keel's wall-clock wrapper (exit 124) or the vendor's
+            # own. The run did time out; which timer fired is in `exit_code` and `error`.
+            timed_out=vendor_timeout,
             error_code=code,
+            # The tail still shows both streams — a diagnostic wants everything a reader
+            # might recognise, which is exactly what a decision must not read.
             error=f"{argv[0]} exited {result.code}: {_tail(result.output)}",
             text=text,
         )
