@@ -35,8 +35,9 @@ EXPECTED_PREFIXES = frozenset(
     {"jules", "bolt", "palette", "sentinel", "dependabot", "copilot", "renovate"}
 )
 
-#: The clause that lists the prefixes, in either file: it opens at the first backticked
-#: `jules` and closes at the "spelling" both sentences end on.
+#: The clause that lists the prefixes, in either file: it opens at "read-only input" —
+#: the phrase that names this rule, once per file — and closes at the "spelling" both
+#: sentences end on.
 #:
 #: Deliberately NOT an alternation of the expected names, and deliberately not anchored
 #: on one of them either. Two earlier cuts each failed to make the assertion this file
