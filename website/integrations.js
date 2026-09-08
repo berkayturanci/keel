@@ -1,6 +1,6 @@
 /* ============================================================
    keel — Ecosystem & Integrations Catalog
-   Interactive catalog of 32 AI coding agents, LLM backends,
+   Interactive catalog of 30 AI coding agents, LLM backends,
    agent skills, and developer platforms supported out-of-the-box.
    Uses authentic brand logo assets and 100% real Keel CLI commands.
    Zero external dependencies — pure client-side vanilla JS.
@@ -173,24 +173,6 @@
       desc: "100% on-device, offline model execution with zero API cost and private repository isolation.",
       cmd: "keel delegate run --provider ollama:deepseek-r1 --role implement --prompt-file task.md",
       logo: "logos/ollama.svg"
-    },
-    {
-      id: "aws-bedrock",
-      name: "AWS Bedrock",
-      category: "backends",
-      badge: "Enterprise Cloud",
-      desc: "Enterprise VPC-isolated Claude and Llama endpoints via standard AWS credentials.",
-      cmd: "export ANTHROPIC_BEDROCK_AWS_REGION=us-east-1",
-      logo: "logos/aws.svg"
-    },
-    {
-      id: "azure-openai",
-      name: "Azure OpenAI",
-      category: "backends",
-      badge: "Enterprise Cloud",
-      desc: "SOC2 and HIPAA compliant OpenAI models hosted in private Microsoft Azure tenancies.",
-      cmd: "export AZURE_OPENAI_ENDPOINT=https://...",
-      logo: "logos/azure.svg"
     },
     {
       id: "openrouter",

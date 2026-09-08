@@ -774,3 +774,49 @@ class TestTheDocumentedBlockingSlotsAreTheBlockingSlots(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheStatedIntegrationCountIsTheNumberOfCards(unittest.TestCase):
+    """The catalogue says how many integrations it has, in four places (#1131).
+
+    Nothing checked them. Removing the AWS Bedrock and Azure OpenAI cards — which
+    named no keel code path and no documentation — left the header comment, the
+    sidebar badge, the search placeholder and the status line all still saying
+    32, and the whole suite stayed green.
+
+    The count is a claim like any other on this site, and the one most likely to
+    be left behind by an edit to the list it counts.
+    """
+
+    def _cards(self) -> list[str]:
+        source = (SITE / "integrations.js").read_text(encoding="utf-8")
+        return re.findall(r'id: "([^"]+)",\n      name:', source)
+
+    def test_the_header_comment_counts_the_cards(self):
+        source = (SITE / "integrations.js").read_text(encoding="utf-8")
+        stated = re.search(r"Interactive catalog of (\d+) AI coding agents", source)
+
+        self.assertIsNotNone(stated, "the header no longer states a count")
+        self.assertEqual(int(stated.group(1)), len(self._cards()))
+
+    def test_every_count_the_page_shows_agrees(self):
+        """Badge, placeholder and status line — one edit, three places to forget."""
+        markup = (SITE / "index.html").read_text(encoding="utf-8")
+        cards = len(self._cards())
+
+        for pattern in (
+            r'Integrations <span class="badge">(\d+)\+</span>',
+            r'placeholder="Search (\d+)\+ integrations',
+            r">Showing (\d+) integrations<",
+        ):
+            with self.subTest(pattern=pattern):
+                found = re.search(pattern, markup)
+                self.assertIsNotNone(found, f"no count matched {pattern}")
+                self.assertEqual(int(found.group(1)), cards)
+
+    def test_the_removed_backends_are_gone(self):
+        """#1131: neither had a code path, docs, or a way to verify the claim."""
+        ids = self._cards()
+
+        self.assertNotIn("aws-bedrock", ids)
+        self.assertNotIn("azure-openai", ids)
