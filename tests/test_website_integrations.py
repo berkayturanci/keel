@@ -77,3 +77,59 @@ class TestWebsiteIntegrations(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheLiveRegionIsTheOnlyOneAndEveryUpdaterUsesIt(unittest.TestCase):
+    """One live region per page, and it is the dedicated off-screen one.
+
+    `aria-live` on the results grid made a container full of interactive
+    elements announce itself — the anti-pattern this replaced. What makes the
+    replacement work is that the page has exactly *one* live region and it is
+    `#sr-live-region`: two of them compete, and none leaves a screen-reader user
+    with no feedback at all. `app.js` and `docs.js` already wrote to it; this
+    pins the arrangement rather than leaving it to the next edit.
+    """
+
+    PAGES = ("index.html", "docs.html")
+    UPDATERS = ("app.js", "docs.js", "integrations.js")
+
+    def _read(self, name: str) -> str:
+        return (REPO_ROOT / "website" / name).read_text(encoding="utf-8")
+
+    def test_each_page_has_exactly_one_live_region(self):
+        for page in self.PAGES:
+            with self.subTest(page=page):
+                markup = self._read(page)
+                regions = re.findall(r'<[^>]*aria-live="[^"]*"[^>]*>', markup)
+
+                self.assertEqual(len(regions), 1, f"live regions found: {regions}")
+                self.assertIn('id="sr-live-region"', regions[0])
+                self.assertIn('class="sr-only"', regions[0])
+                self.assertIn('aria-live="polite"', regions[0])
+
+    def test_the_results_grid_carries_no_live_region(self):
+        """The anti-pattern, named so it cannot come back quietly."""
+        markup = self._read("index.html")
+        grid = re.search(r'<div[^>]*id="integrations-grid"[^>]*>', markup)
+
+        self.assertIsNotNone(grid, "the integrations grid is gone")
+        self.assertNotIn("aria-live", grid.group(0))
+
+    def test_every_dynamic_updater_announces_through_it(self):
+        for script in self.UPDATERS:
+            with self.subTest(script=script):
+                self.assertIn('getElementById("sr-live-region")', self._read(script))
+
+    def test_the_search_announcement_can_repeat_itself(self):
+        """A live region announces a *change*, so an identical string is silence.
+
+        Two searches can produce the same count — "cla" and "clau" both showing
+        three — and leaving the text alone says nothing while the results moved.
+        The region is cleared before the message is set, on a timer the next
+        keystroke cancels.
+        """
+        source = self._read("integrations.js")
+
+        self.assertIn('sr.textContent = "";', source)
+        self.assertIn("clearTimeout(srTimer)", source)
+        self.assertRegex(source, r"srTimer = setTimeout\(")

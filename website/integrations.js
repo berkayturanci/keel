@@ -7,6 +7,7 @@
    ============================================================ */
 
 (function () {
+  var srTimer = null;
   "use strict";
 
   var INTEGRATIONS = [
@@ -335,9 +336,18 @@
 
     var sr = document.getElementById("sr-live-region");
     if (sr) {
-      sr.textContent = items.length === 0
+      var announcement = items.length === 0
         ? 'No integrations found matching "' + searchQuery + '"'
         : 'Showing ' + items.length + ' integrations';
+      // Cleared first, and the message set on the next tick. A live region only
+      // announces a *change*: typing "cla" then "clau" can leave the same
+      // "Showing 3 integrations" text in place, and a screen reader says
+      // nothing while the result set actually moved. `app.js` and `docs.js`
+      // avoid this by clearing after their message; a filter fires on every
+      // keystroke, so it clears before instead.
+      sr.textContent = "";
+      if (srTimer) { clearTimeout(srTimer); }
+      srTimer = setTimeout(function () { sr.textContent = announcement; }, 0);
     }
 
     if (items.length === 0) {
