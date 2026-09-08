@@ -994,10 +994,6 @@ class TestTeamAssignment(unittest.TestCase):
         self.assertEqual(assessment.assignment["implementer"]["provider"], "claude")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestTddOrderBlocksTheMerge(unittest.TestCase):
     """The `tdd-order` gate is a gate: its finding reaches the merge decision (#1020).
 
@@ -1035,3 +1031,7 @@ class TestTddOrderBlocksTheMerge(unittest.TestCase):
             unrun_blocking_gates=(tdd.GATE_ID,),
         )
         self.assertEqual(assessment.merge.action, "block")
+
+
+if __name__ == "__main__":
+    unittest.main()

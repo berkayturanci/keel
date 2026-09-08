@@ -563,10 +563,6 @@ class TestGenerate(unittest.TestCase):
         self.assertEqual(json.loads(request.data)["max_tokens"], 42)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestExtraPayload(unittest.TestCase):
     """The optional effort fragment `keel delegate run --effort` merges in (#1012)."""
 
@@ -612,3 +608,7 @@ class TestExtraPayload(unittest.TestCase):
         sent = json.loads(opener.requests[0][0].data.decode("utf-8"))
         self.assertEqual(sent["reasoning_effort"], "high")
         self.assertEqual(sent["model"], "gpt-5.5")
+
+
+if __name__ == "__main__":
+    unittest.main()
