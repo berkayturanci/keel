@@ -16,5 +16,5 @@
     "multi-agent",
     "claude-code"
   ],
-  "skills": "./skill"
+  "skills": "./skills"
 }

@@ -16,7 +16,7 @@
     "multi-agent",
     "codex"
   ],
-  "skills": "./skill",
+  "skills": "./skills",
   "interface": {
     "displayName": "keel",
     "shortDescription": "Turns coding agents into work owners — a fixed backbone from backlog to done.",

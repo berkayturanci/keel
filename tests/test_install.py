@@ -669,7 +669,7 @@ class TestClaudeCodePlugin(unittest.TestCase):
         self.assertEqual(manifest["license"], "Apache-2.0")
         self.assertEqual(manifest["author"]["name"], "Berkay Turancı")
         self.assertEqual(manifest["homepage"], _site_base())
-        self.assertEqual(manifest["skills"], "./skill")
+        self.assertEqual(manifest["skills"], "./skills")
         self.assertTrue(manifest["description"])
 
     def test_marketplace_has_required_fields_and_keel_plugin(self):

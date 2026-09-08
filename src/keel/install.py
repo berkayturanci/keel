@@ -40,7 +40,7 @@ PLUGIN_COMMANDS_DIR = "commands"
 #: the committed plugin manifest + marketplace catalog live here.
 PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
 PLUGIN_MARKETPLACE = ".claude-plugin/marketplace.json"
-#: the committed Codex plugin manifest — same shape, reuses the same ./skill.
+#: the committed Codex plugin manifest — same shape, reuses the same ./skills.
 CODEX_PLUGIN_MANIFEST = ".codex-plugin/plugin.json"
 
 #: the static site's published argument surface, generated from the same frontmatter.
