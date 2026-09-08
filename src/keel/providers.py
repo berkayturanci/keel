@@ -325,8 +325,13 @@ def _parse_entry(
     # Fail-soft like every other registry rule: a bad label is dropped with a warning
     # rather than skipping the whole entry. The provider still works; it just keeps the
     # generic label it had before, which is the state this field improves on.
-    vendor_label = _text(entry.get("vendor_label"))
-    label_errors = cfg.vendor_label_errors(vendor_label, where=where)
+    # The **raw** value, not `_text(...)`: `_text` returns None for a bool, an int or a
+    # list, and `vendor_label_errors(None)` is silence — so exactly the YAML case the
+    # project-profile validator reports (an unquoted `on:`/`2:` resolving to a bool/int)
+    # was swallowed here without a warning. Both gate seats found it.
+    raw_label = entry.get("vendor_label")
+    label_errors = cfg.vendor_label_errors(raw_label, where=where)
+    vendor_label = _text(raw_label)
     if label_errors:
         warnings.extend(f"{message}; ignoring it" for message in label_errors)
         vendor_label = None

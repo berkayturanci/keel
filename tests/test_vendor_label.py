@@ -170,6 +170,61 @@ class UnsetIsUnchanged(unittest.TestCase):
         self.assertEqual(serialised["vendor_label"], "xai")
 
 
+class TheVocabularyContainsTheLabelItWrites(unittest.TestCase):
+    """`known_vendors` is what refuses a vendor keel could never have produced (#1129).
+
+    Adding `vendor_label` without adding it here split the vocabulary from the labels, and
+    the split surfaced in three places both gate seats traced independently: `keel doctor`
+    demanding `agent:xai` while `keel attribution --vendor xai` answered *unknown vendor*;
+    the same command refusing `--vendor xai --profile grok` as contradicting a profile
+    whose own attribution says `agent:xai`; and `ship --live --append-ledger` warning that
+    `xai:grok-4.6` — the implementer it had just recorded — was not one of keel's delegate
+    vendors.
+
+    So this asserts the *agreement* rather than the membership: everything
+    `attribution_labels` can write must be something `known_vendors` accepts.
+    """
+
+    def _config(self, **profiles):
+        return _config(**profiles)
+
+    def _labelled(self):
+        return self._config(
+            grok=cfg.DelegateProfile(
+                vendor="cli", command="cursor-agent", model="grok-4.6", vendor_label="xai"
+            )
+        )
+
+    def test_the_declared_label_is_a_known_vendor(self):
+        self.assertIn("xai", agents.known_vendors(self._labelled()))
+
+    def test_the_generic_vendor_and_the_profile_name_still_are(self):
+        """Both are spellings a caller may legitimately use: `--delegate grok` names the
+        entry, and an unlabelled profile still reports `cli`."""
+        known = agents.known_vendors(self._labelled())
+
+        self.assertIn("cli", known)
+        self.assertIn("grok", known)
+
+    def test_every_label_keel_can_write_is_a_vendor_it_will_accept(self):
+        """The agreement, stated once. A label in `attribution_labels` that
+        `known_vendors` refuses is a contradiction keel cannot act on."""
+        config = self._config(
+            grok=cfg.DelegateProfile(vendor="cli", command="cursor-agent", vendor_label="xai"),
+            gpt=cfg.DelegateProfile(vendor="cli", command="cursor-agent", vendor_label="openai"),
+            plain=cfg.DelegateProfile(vendor="cli", command="aider"),
+        )
+        known = agents.known_vendors(config)
+        written = [
+            label[len("agent:") :]
+            for label in agents.attribution_labels(config)
+            if label.startswith("agent:")
+        ]
+
+        self.assertTrue(written)
+        self.assertEqual([], sorted(set(written) - known))
+
+
 class TheLabelVocabularyStaysEnumerable(unittest.TestCase):
     """`keel doctor` checks that every label keel may apply exists on the repository."""
 
@@ -247,6 +302,23 @@ class TheValueIsCheckedBecauseItBecomesALabel(unittest.TestCase):
         self.assertIsNone(provider.vendor_label)
         self.assertEqual(provider.label_vendor(), "cli")
         self.assertTrue(any("ignoring it" in warning for warning in registry.warnings))
+
+    def test_the_registry_warns_about_a_value_that_is_not_a_string(self):
+        """`_text()` returns None for a bool, an int or a list, and an unset label is
+        silent — so exactly the unquoted-YAML case the project validator reports was
+        swallowed here without a warning. Both gate seats found it; the registry now
+        validates the raw value."""
+        for value in (123, True, ["xai"], "", "   "):
+            with self.subTest(value=value):
+                registry = _registry(bad={**CURSOR, "vendor_label": value})
+                provider = _entry(registry, "bad")
+
+                self.assertIsNone(provider.vendor_label)
+                self.assertEqual(provider.label_vendor(), "cli")
+                self.assertTrue(
+                    any("vendor_label" in warning for warning in registry.warnings),
+                    f"{value!r} was dropped silently: {registry.warnings}",
+                )
 
 
 if __name__ == "__main__":

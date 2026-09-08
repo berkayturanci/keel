@@ -81,6 +81,13 @@ def known_vendors(config: ProjectConfig | None = None) -> frozenset[str]:
     ``openai-compatible``), and — when a config is supplied — the configured
     profile *names*, because ``--delegate <name>`` is spelled with the name.
 
+    It must also contain each profile's :meth:`~keel.config.DelegateProfile.label_vendor`,
+    which is the vendor attribution actually **produces** for that entry (#1129). Adding
+    the field without adding it here split the vocabulary from the labels: `keel doctor`
+    demanded ``agent:xai`` while ``keel attribution --vendor xai`` answered *unknown
+    vendor*, and ``ship --live --append-ledger`` warned that the implementer it had just
+    recorded was not one of keel's delegate vendors. Both gate seats found it.
+
     Callers use this to refuse a vendor keel could never have produced. Without
     a config the set is the configuration-free vocabulary, which is why the
     ledger-writing check only warns: a record may predate the current config.
@@ -88,6 +95,7 @@ def known_vendors(config: ProjectConfig | None = None) -> frozenset[str]:
     names = {*BUILTIN_DELEGATE_VENDORS, *DELEGATE_PROFILE_VENDORS, HOST_DEFAULT}
     if config is not None:
         names.update(config.knobs.delegate_profiles)
+        names.update(profile.label_vendor() for profile in config.knobs.delegate_profiles.values())
         names.update(profile.vendor for profile in config.knobs.delegate_profiles.values())
     return frozenset(names)
 
