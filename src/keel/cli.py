@@ -5285,8 +5285,13 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     # the probe and by nothing else. Before the flag existed, `doctor --registry X`
     # was an argparse error; accepting it and reading nothing would be the same
     # quiet mismatch #1130 is about, one flag further out — so it is said out loud.
+    # On **stderr**: under `--json` this stream carries one JSON document and nothing
+    # else, and the first cut printed the note to stdout, so
+    # `keel doctor --registry X --json | jq` died on a note about a flag it did not
+    # pass. A diagnostic that breaks the machine-readable output is a worse bug than
+    # the one it warns about.
     if args.registry and not args.providers:
-        print("note: --registry applies only with --providers; no registry was read")
+        _warn("note: --registry applies only with --providers; no registry was read")
     providers = (
         providerprobe.collect(config, registry_path=args.registry) if args.providers else None
     )

@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from keel import __version__, agents, api_delegate, cli, doctor, install
+from keel import __version__, agents, api_delegate, cli, doctor, install, providers
 from keel import config as cfg
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
@@ -1554,10 +1555,6 @@ class TestDoctorLabelsCli(unittest.TestCase):
         self.assertIn("needs a project.yaml", err)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheProvidersProbeReadsTheRegistryItWasPointedAt(unittest.TestCase):
     """`doctor --providers` takes `--registry`, like `delegate run` (#1130).
 
@@ -1627,21 +1624,67 @@ class TheProvidersProbeReadsTheRegistryItWasPointedAt(unittest.TestCase):
 
         self.assertIn(self._ENTRY, [p["name"] for p in report["providers"]])
 
-    def test_without_the_flag_it_reads_the_default_path(self):
-        with tempfile.TemporaryDirectory() as root:
-            _, out, _ = run(["doctor", "--root", root, "--offline", "--providers", "--json"])
-            report = json.loads(out)
+    def _report(self, argv, env):
+        """`doctor --providers --json` under an environment of our choosing."""
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, env, clear=False):
+            os.environ.pop(providers.REGISTRY_ENV, None)
+            os.environ.update(env)
+            argv = ["doctor", "--root", root, "--offline", "--providers", "--json", *argv]
+            rc, out, _ = run(argv)
+        self.assertEqual(rc, 0)
+        return json.loads(out)
 
-        self.assertNotIn(
-            "/providers.yaml",
-            report["registry_path"].replace(str(Path.home() / ".keel" / "providers.yaml"), ""),
-        )
+    def test_without_the_flag_it_reads_the_default_path(self):
+        """Equality, not a substring.
+
+        The first cut asserted that the reported path was *not* the default one
+        after blanking it out — which any wrong path also satisfies, including
+        `$KEEL_PROVIDERS` leaking in from the machine running the tests.
+        """
+        with tempfile.TemporaryDirectory() as home:
+            report = self._report([], {"HOME": home})
+
+        self.assertEqual(report["registry_path"], str(Path(home) / ".keel" / "providers.yaml"))
+
+    def test_without_the_flag_the_environment_still_wins_over_the_home_default(self):
+        with self._registry() as path, tempfile.TemporaryDirectory() as home:
+            report = self._report([], {"HOME": home, providers.REGISTRY_ENV: str(path)})
+
+        self.assertEqual(report["registry_path"], str(path))
+
+    def test_the_flag_wins_over_the_environment(self):
+        """flag > `$KEEL_PROVIDERS` > `~/.keel/providers.yaml` — the order `delegate
+        run` documents, asserted rather than assumed."""
+        with self._registry() as flagged, self._registry() as env_path:
+            report = self._report(
+                ["--registry", str(flagged)], {providers.REGISTRY_ENV: str(env_path)}
+            )
+
+        self.assertEqual(report["registry_path"], str(flagged))
 
     def test_the_flag_without_providers_says_it_did_nothing(self):
         """It used to be an argparse error; accepting it silently would be the
         same quiet mismatch one flag further out."""
         with tempfile.TemporaryDirectory() as root:
-            rc, out, _ = run(["doctor", "--root", root, "--offline", "--registry", "/tmp/x.yaml"])
+            rc, out, err = run(["doctor", "--root", root, "--offline", "--registry", "/tmp/x.yaml"])
 
         self.assertEqual(rc, 0)
-        self.assertIn("--registry applies only with --providers", out)
+        self.assertIn("--registry applies only with --providers", err)
+        self.assertNotIn("--registry applies only with --providers", out)
+
+    def test_that_note_does_not_land_in_the_json_document(self):
+        """The note went to stdout first, so `doctor --registry X --json | jq` died
+        on the warning about the flag it had just been given. Found by the gate
+        review of this change."""
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, err = run(
+                ["doctor", "--root", root, "--offline", "--registry", "/tmp/x.yaml", "--json"]
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertIn("--registry applies only with --providers", err)
+        json.loads(out)  # the whole of stdout is one JSON document, or this raises
+
+
+if __name__ == "__main__":
+    unittest.main()
