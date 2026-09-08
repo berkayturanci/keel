@@ -562,6 +562,7 @@ class TestGenerate(unittest.TestCase):
         request, _ = opener.requests[0]
         self.assertEqual(json.loads(request.data)["max_tokens"], 42)
 
+
 class TestExtraPayload(unittest.TestCase):
     """The optional effort fragment `keel delegate run --effort` merges in (#1012)."""
 

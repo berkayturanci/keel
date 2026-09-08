@@ -13046,6 +13046,7 @@ class TestRenderReport(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("does not match the coverage report fields", err)
 
+
 class DelegateCommandTest(unittest.TestCase):
     """``keel delegate run|wait|status`` (#1012).
 

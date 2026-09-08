@@ -94,10 +94,10 @@ class TheRunnerSentinelIsTheLastStatement(unittest.TestCase):
     def test_a_sentinel_below_a_class_is_still_found(self):
         """The finder's own shape, on a module that has the defect."""
         tree = ast.parse(
-            'import unittest\n'
-            'class A(unittest.TestCase):\n    pass\n'
+            "import unittest\n"
+            "class A(unittest.TestCase):\n    pass\n"
             'if __name__ == "__main__":\n    unittest.main()\n'
-            'class B(unittest.TestCase):\n    pass\n'
+            "class B(unittest.TestCase):\n    pass\n"
         )
         sentinel = _sentinel(tree)
 

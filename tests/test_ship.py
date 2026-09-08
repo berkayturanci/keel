@@ -993,6 +993,7 @@ class TestTeamAssignment(unittest.TestCase):
         self.assertFalse(assessment.assignment["configured"])
         self.assertEqual(assessment.assignment["implementer"]["provider"], "claude")
 
+
 class TestTddOrderBlocksTheMerge(unittest.TestCase):
     """The `tdd-order` gate is a gate: its finding reaches the merge decision (#1020).
 

@@ -824,6 +824,7 @@ class JuryVerdictGateFidelityTests(unittest.TestCase):
         self.assertEqual(out["verdict"], "APPROVE")
         self.assertEqual(out["reviewers"], 0)
 
+
 class TestBlockedStep(unittest.TestCase):
     """A step reached and not passed must not render as one in progress (keel#636)."""
 

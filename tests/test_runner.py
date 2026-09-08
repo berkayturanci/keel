@@ -274,6 +274,7 @@ class TestFirstLocation(unittest.TestCase):
         # the whole thing fails to match -> ``(None, None)``.
         self.assertEqual(runner.first_location(r"C:\proj\x.py:10: err"), (None, None))
 
+
 class RunArgvStdinTest(unittest.TestCase):
     """``stdin_text`` — how a delegate prompt reaches a CLI without touching argv (#1012)."""
 
