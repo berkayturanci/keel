@@ -1122,10 +1122,15 @@ class TheFailureSignalIsBoundedAndIsTheVendors(unittest.TestCase):
     def _stream(self, response):
         return json.dumps({"event": "result", "result": {"status": "ERROR", **response}}) + "\n"
 
+    def _signal(self, result, *, stderr=""):
+        frame = json.dumps({"event": "result", "result": result}) + "\n"
+        return delegaterun.failure_signal(stderr=stderr, stdout=frame, stream_json=True)
+
     def test_the_delegates_answer_is_not_part_of_the_signal(self):
         """`response` is what the model said; `status` and `error` are what happened."""
-        stdout = self._stream({"response": "the run hit a rate limit", "error": "bad model"})
-        signal = delegaterun.failure_signal(stderr="", stdout=stdout, stream_json=True)
+        signal = self._signal(
+            {"status": "ERROR", "response": "the run hit a rate limit", "error": "bad model"}
+        )
 
         self.assertIn("bad model", signal)
         self.assertNotIn("rate limit", signal)
@@ -1137,11 +1142,9 @@ class TheFailureSignalIsBoundedAndIsTheVendors(unittest.TestCase):
         self.assertIn("it stopped", signal)
         self.assertLess(len(signal), 200)
 
-    def test_stderr_is_always_included(self):
-        stdout = self._stream({})
-        signal = delegaterun.failure_signal(stderr="boom", stdout=stdout, stream_json=True)
-
-        self.assertIn("boom", signal)
+    def test_stderr_is_read_when_the_frame_did_not_say_why(self):
+        """A frame with a status and no error text has said nothing about the cause."""
+        self.assertIn("boom", self._signal({"status": "ERROR"}, stderr="boom"))
 
     def test_a_result_with_neither_stream_falls_back_to_the_concatenation(self):
         """`runner._result` always fills both; a hand-built result may not, and refusing
@@ -1149,6 +1152,52 @@ class TheFailureSignalIsBoundedAndIsTheVendors(unittest.TestCase):
         signal = delegaterun.failure_signal(stderr="", stdout="", output="Error: 429 Too Many")
 
         self.assertIn("429", signal)
+
+    def test_a_stream_with_no_result_frame_does_not_fall_back_to_the_transcript(self):
+        """The bounded promise has to hold in the case the frame was meant to cover.
+
+        A crash, or a stream truncated mid-write, leaves no `result` frame — and the first
+        cut then fell back to the stdout tail, which for a stream-json vendor *is* the
+        model's prose. So a run that died mid-sentence about rate limiting came back
+        `rate-limit`: the same wrong recovery #1133 is about, reached by the code added to
+        fix it. Found by the gate review.
+        """
+        chatter = json.dumps(
+            {"event": "step_update", "step_update": {"text_delta": "the rate limit handling"}}
+        )
+        signal = delegaterun.failure_signal(stderr="", stdout=chatter + "\n", stream_json=True)
+
+        self.assertEqual(signal, "")
+        self.assertFalse(delegaterun.rate_limited(signal))
+
+    def test_but_stderr_is_still_read_when_there_is_no_frame(self):
+        """It is the only account of the failure left."""
+        signal = delegaterun.failure_signal(
+            stderr="ERROR: You've hit your usage limit.", stdout="{\n", stream_json=True
+        )
+
+        self.assertTrue(delegaterun.rate_limited(signal))
+
+    def test_a_numeric_status_is_the_one_429_that_is_a_status_code(self):
+        """The fields are labelled rather than concatenated bare: `429` alone cannot match
+        a pattern that requires status-shaped context, which made reading the `status`
+        field self-defeating for the one value it most needs to recognise."""
+        signal = self._signal({"status": 429, "error": ""})
+
+        self.assertIn("status: 429", signal)
+        self.assertTrue(delegaterun.rate_limited(signal))
+
+    def test_stderr_prose_does_not_override_a_frame_that_said_why(self):
+        """stderr carries progress as well as errors — this module's own docstring says
+        so — and prepending it unconditionally let the same sentence the transcript rule
+        refuses flip the classification from the other stream."""
+        signal = self._signal(
+            {"status": "ERROR", "error": "model not found: gemini-9"},
+            stderr="quota.py maps HTTP status codes to rate-limit, auth, or http.",
+        )
+
+        self.assertFalse(delegaterun.rate_limited(signal))
+        self.assertIn("model not found", signal)
 
     def test_an_unparseable_stream_does_not_raise(self):
         """Including a line that *looks* like a frame and is not — a stream truncated

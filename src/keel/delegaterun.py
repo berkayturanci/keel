@@ -346,10 +346,22 @@ def failure_signal(
 
     So the signal is bounded and it is the vendor's, not the model's:
 
-    * a stream-json vendor's final ``result`` frame contributes ``status`` and ``error``,
-      and deliberately **not** ``response``;
-    * otherwise the tail of stdout, which is where a CLI prints why it stopped;
-    * plus stderr in both cases, which carries nothing else on a failure.
+    * **stream-json with a final ``result`` frame** — that frame's ``status`` and
+      ``error``, and deliberately not its ``response``. stderr is *not* added: the frame
+      already said why the run failed, and every agent CLI writes progress there. Prepending
+      it unconditionally meant the same sentence this function refuses to read out of the
+      transcript flipped the classification when it appeared on stderr instead.
+    * **stream-json with no frame** — stderr alone. A crash or a stream truncated mid-write
+      leaves nothing authoritative, and the stdout tail there is the model's own prose, so
+      falling back to it would parse the transcript in exactly the case the frame was meant
+      to protect. Both of these were found by the gate review; the first cut kept the tail.
+    * **anything else** — stderr plus the tail of stdout, which is where a CLI that has no
+      structured output prints why it stopped.
+
+    The frame's fields are **labelled** (``status: …``), not concatenated bare. A numeric
+    ``status`` is the one ``429`` that really is a status code, and stripping it to a bare
+    token put it out of reach of the very pattern that requires status-shaped context —
+    self-defeating for the field this function chose to read. Also from the review.
 
     ``output`` is the last resort, used only when a result carries neither separated
     stream. :func:`keel.runner._result` always fills both, so this is for a caller that
@@ -359,14 +371,19 @@ def failure_signal(
     """
     if not (stderr or stdout):
         return _tail(output, limit)
-    parts = [stderr or ""]
     if stream_json:
         event = final_stream_event(stdout)
-        if event is not None:
-            parts += [str(event.get("status") or ""), str(event.get("error") or "")]
-            return "\n".join(part for part in parts if part)
-    parts.append(_tail(stdout, limit))
-    return "\n".join(part for part in parts if part)
+        if event is None:
+            return stderr or ""
+        parts = [
+            f"{field}: {event.get(field)}" for field in ("status", "error") if event.get(field)
+        ]
+        # A frame that carries no error text has said nothing about *why*; stderr is then
+        # the only account there is, and discarding it would lose a real quota refusal.
+        if not event.get("error"):
+            parts.append(stderr or "")
+        return "\n".join(part for part in parts if part)
+    return "\n".join(part for part in (stderr or "", _tail(stdout, limit)) if part)
 
 
 def execute(

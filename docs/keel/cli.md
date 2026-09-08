@@ -1761,10 +1761,12 @@ traceback. Branch on the code, never on the message.
 | `no-key` · `auth` · `http` · `network` · `bad-response` | the HTTP transports' vocabulary |
 | `lost` | a detached run's process vanished, or it passed its own deadline, without recording a result |
 
-`timed_out` means *this run ran out of time*, against **either** bound. Which timer fired
-is in `exit_code` — `124` is keel's wrapper, anything else is the vendor's own — and in
-`error`, which quotes what the vendor said. Before #1133 only keel's wrapper set the code,
-so a vendor that timed out was classified by whatever its prose happened to match.
+`timed_out` means *this run ran out of time*, whichever bound it hit. `exit_code` says
+which: `124` is keel's wall-clock wrapper, another non-zero code is the vendor's own timer,
+and `null` with `error_code: lost` is a **detached** run that passed its deadline without
+recording a result — no process left to have an exit code. `error` quotes what the vendor
+said in the second case. Before #1133 only keel's wrapper set the code, so a vendor that
+timed out was classified by whatever its prose happened to match.
 
 `error_code` is decided from the vendor's **error**, never from its answer. For a
 stream-json vendor that is the `status` and `error` of the final `result` frame — not its
