@@ -705,10 +705,17 @@ class TestTheIntegrationsCatalogRunsWhatItShows(unittest.TestCase):
     _NOTE = re.compile(r'note: "((?:[^"\\]|\\.)*)"')
 
     def _cards(self) -> list[dict]:
-        """Every catalogue card as ``{id, cmd, note}`` — note is ``""`` when absent."""
+        """Every catalogue card as ``{id, cmd, note}`` — note is ``""`` when absent.
+
+        The closing brace's comma is **optional**: the last object in a JavaScript array
+        literal has none, so requiring it silently dropped the final card. Both gate seats
+        found it — 29 parsed against 30 defined — and the consequence is the one that
+        matters: a `--delegate` card added at the end of the array would never be checked.
+        `test_the_parser_sees_every_card` pins the count against the ids.
+        """
         text = (SITE / "integrations.js").read_text(encoding="utf-8")
         cards = []
-        for block in re.finditer(r'\n      id: "([^"]+)",(.*?)\n    \},', text, re.S):
+        for block in re.finditer(r'\n      id: "([^"]+)",(.*?)\n    \},?', text, re.S):
             body = block.group(2)
             cmd = re.search(r'cmd: "((?:[^"\\]|\\.)*)"', body)
             note = self._NOTE.search(body)
@@ -741,18 +748,39 @@ class TestTheIntegrationsCatalogRunsWhatItShows(unittest.TestCase):
         builtin = {provider.name for provider in providers.builtin_providers()}
         silent = []
         for card in self._cards():
-            for name in self._DELEGATE.findall(card["cmd"]):
-                if name.split(":", 1)[0] in builtin:
+            for token in self._DELEGATE.findall(card["cmd"]):
+                # `--delegate` is split on the first colon: the left half names the
+                # provider or profile, the right half is a per-run model. The note names
+                # the profile, so the model must come off before the lookup — the builtin
+                # branch already split it and this one did not.
+                name = token.split(":", 1)[0]
+                if name in builtin:
                     continue
                 if f"delegate_profiles.{name}" in card["note"]:
                     continue
-                silent.append(f"{card['id']} -> --delegate {name}")
+                silent.append(f"{card['id']} -> --delegate {token}")
         self.assertEqual(
             [],
             silent,
             "these cards name a delegate keel ships no profile for and never say so:\n"
             + "\n".join(silent),
         )
+
+    def test_the_parser_sees_every_card(self):
+        """A parser that quietly returns a subset makes every check above narrower than it
+        reads. Counted against the ids, which are one per card by construction."""
+        text = (SITE / "integrations.js").read_text(encoding="utf-8")
+        ids = re.findall(r'\n      id: "([^"]+)",', text)
+
+        self.assertEqual([card["id"] for card in self._cards()], ids)
+
+    def test_a_delegate_carrying_a_model_still_finds_its_note(self):
+        """`--delegate cursor:grok-4.6` names the profile `cursor`, and the note says
+        `delegate_profiles.cursor`. Comparing the whole token flagged a correct card."""
+        token = self._DELEGATE.findall("keel implement p 1 --delegate cursor:grok-4.6")[0]
+
+        self.assertEqual(token, "cursor:grok-4.6")
+        self.assertEqual(token.split(":", 1)[0], "cursor")
 
     def test_that_note_points_at_a_section_that_exists(self):
         """A note whose link is wrong is the same defect one level down."""
