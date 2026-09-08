@@ -31,6 +31,7 @@ Everything is offline: these are facts about this checkout.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import inspect
 import io
@@ -770,6 +771,120 @@ class TestTheDocumentedBlockingSlotsAreTheBlockingSlots(unittest.TestCase):
             documented |= blocking
         self.assertEqual(tabled, set(model.SLOTS), "the slot table is missing a backbone slot")
         self.assertEqual(documented, _blocking_slots())
+
+
+class TheStatedIntegrationCountIsTheNumberOfCards(unittest.TestCase):
+    """The catalogue says how many integrations it has, in nine places (#1131).
+
+    Nothing checked them. Removing the AWS Bedrock and Azure OpenAI cards — which
+    named no keel code path and no documentation — left the header comment, the
+    sidebar badge, the search placeholder and the status line all still saying
+    32, and the whole suite stayed green.
+
+    The first cut of this class matched only the three counts that edit touched,
+    which is the same mistake one level up: the gate review then found the tab
+    bar reading ``All 32`` directly above ``Showing 30 integrations``, and a
+    ``LLM Backends 8`` pill that filters to six cards. So nothing here is a list
+    of the places that were wrong — every count is *derived* from the catalogue,
+    and every count the page states is found by its shape and checked.
+    """
+
+    _CARD = re.compile(
+        r'\{\s*id: "(?P<id>[^"]+)",\s*\n\s*name: "[^"]*",\s*\n\s*category: "(?P<cat>[^"]+)"'
+    )
+    _SECTION = re.compile(r"// --- \d+\. (?P<title>.+?) \((?P<count>\d+)\) ---")
+    _PILL = re.compile(
+        r'data-cat="(?P<cat>[a-z]+)"[^>]*>[^<]*'
+        r'<span class="integ-count-badge">(?P<count>\d+)</span>'
+    )
+
+    def _catalogue(self) -> str:
+        return (SITE / "integrations.js").read_text(encoding="utf-8")
+
+    def _cards(self) -> list[tuple[str, str]]:
+        found = [(m.group("id"), m.group("cat")) for m in self._CARD.finditer(self._catalogue())]
+        self.assertTrue(found, "no cards parsed — the catalogue's shape changed")
+        return found
+
+    def _by_category(self) -> collections.Counter:
+        return collections.Counter(cat for _, cat in self._cards())
+
+    def test_the_header_comment_counts_the_cards(self):
+        stated = re.search(r"Interactive catalog of (\d+) AI coding agents", self._catalogue())
+
+        self.assertIsNotNone(stated, "the header no longer states a count")
+        self.assertEqual(int(stated.group(1)), len(self._cards()))
+
+    def test_each_section_comment_counts_its_own_cards(self):
+        """``// --- 2. Supported LLM Models & Backends (8) ---`` above six cards."""
+        source = self._catalogue()
+        sections = list(self._SECTION.finditer(source))
+        self.assertEqual(len(sections), len(self._by_category()), "a section comment is missing")
+
+        for i, section in enumerate(sections):
+            end = sections[i + 1].start() if i + 1 < len(sections) else len(source)
+            block = source[section.start() : end]
+            with self.subTest(section=section.group("title")):
+                self.assertEqual(int(section.group("count")), len(self._CARD.findall(block)))
+
+    def test_every_filter_pill_states_the_size_of_what_it_filters_to(self):
+        """The badge on a pill is what the reader sees before clicking it, and the
+        row of cards is what they see after. The gate found those disagreeing."""
+        markup = (SITE / "index.html").read_text(encoding="utf-8")
+        counts = self._by_category()
+        pills = {m.group("cat"): int(m.group("count")) for m in self._PILL.finditer(markup)}
+
+        self.assertEqual(
+            set(pills) - {"all"}, set(counts), "a category has no pill, or a pill no cards"
+        )
+        for cat, stated in pills.items():
+            with self.subTest(category=cat):
+                self.assertEqual(stated, sum(counts.values()) if cat == "all" else counts[cat])
+
+    def test_the_prose_above_the_pills_counts_the_same_cards(self):
+        markup = (SITE / "index.html").read_text(encoding="utf-8")
+        counts = self._by_category()
+
+        for pattern, category in (
+            (r"(\d+) AI assistants", "assistants"),
+            (r"(\d+) LLM backends", "backends"),
+            (r"(\d+) engineering skill libraries", "skills"),
+        ):
+            with self.subTest(category=category):
+                found = re.search(pattern, markup)
+                self.assertIsNotNone(found, f"no count matched {pattern}")
+                self.assertEqual(int(found.group(1)), counts[category])
+
+    def test_the_status_line_states_the_whole_catalogue(self):
+        markup = (SITE / "index.html").read_text(encoding="utf-8")
+        found = re.search(r">Showing (\d+) integrations<", markup)
+
+        self.assertIsNotNone(found, "the status line no longer states a count")
+        self.assertEqual(int(found.group(1)), len(self._cards()))
+
+    def test_no_rounded_claim_promises_more_than_the_catalogue_holds(self):
+        """``30+`` is a floor, not an equality — so it is checked as a floor."""
+        markup = (SITE / "index.html").read_text(encoding="utf-8")
+        cards = len(self._cards())
+        claims = [
+            (p, re.search(p, markup))
+            for p in (
+                r'Integrations <span class="badge">(\d+)\+</span>',
+                r'placeholder="Search (\d+)\+ integrations',
+            )
+        ]
+
+        for pattern, found in claims:
+            with self.subTest(pattern=pattern):
+                self.assertIsNotNone(found, f"no count matched {pattern}")
+                self.assertLessEqual(int(found.group(1)), cards)
+
+    def test_the_removed_backends_are_gone(self):
+        """#1131: neither had a code path, docs, or a way to verify the claim."""
+        ids = [card for card, _ in self._cards()]
+
+        self.assertNotIn("aws-bedrock", ids)
+        self.assertNotIn("azure-openai", ids)
 
 
 if __name__ == "__main__":
