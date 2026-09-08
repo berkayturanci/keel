@@ -13063,6 +13063,54 @@ class DelegateCommandTest(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return str(path)
 
+    def test_a_relative_cwd_is_resolved_before_it_reaches_the_plan(self):
+        """agy is *given* the directory as well as started in it (`--add-dir`, #1134),
+        and a relative path means something different to a child already inside it. The
+        planner is pure and cannot call `abspath` — it would read this process's working
+        directory into a frozen document — so the CLI resolves it. Found by the gate
+        review of #1134, whose planner tests all used absolute paths."""
+        args = cli.build_parser().parse_args(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "agy:gemini-3.8-flash-high",
+                "--role",
+                "implement",
+                "--prompt-file",
+                self._prompt(),
+                "--cwd",
+                "worktrees/foo",
+                "--timeout",
+                "60",
+            ]
+        )
+        plan, failure = cli._delegate_plan(args)
+
+        self.assertIsNone(failure)
+        self.assertTrue(os.path.isabs(plan.cwd), plan.cwd)
+        self.assertEqual(plan.cwd, os.path.abspath("worktrees/foo"))
+        argv = list(plan.argv)
+        self.assertEqual(argv[argv.index("--add-dir") + 1], plan.cwd)
+
+    def test_an_absent_cwd_stays_absent(self):
+        args = cli.build_parser().parse_args(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "agy",
+                "--role",
+                "review",
+                "--prompt-file",
+                self._prompt(),
+            ]
+        )
+        plan, _failure = cli._delegate_plan(args)
+
+        self.assertIsNone(plan.cwd)
+        self.assertNotIn("--add-dir", plan.argv)
+
     def test_a_run_prints_the_json_contract_and_exits_zero(self):
         result = CommandResult(True, 0, "the diff", stdout="the diff")
         with patch("keel.runner.run_argv", return_value=result) as ran:

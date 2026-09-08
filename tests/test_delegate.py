@@ -1026,6 +1026,32 @@ class TheWorkingDirectoryKeelNamesIsTheOneAgyEdits(unittest.TestCase):
                 self.assertNotIn("--add-dir", argv)
                 self.assertNotIn("--print-timeout", argv)
 
+    def test_a_relative_directory_is_refused_rather_than_passed_through(self):
+        """The child is started *inside* ``cwd``, so agy resolves a relative
+        ``--add-dir`` against that directory: ``--cwd worktrees/foo`` would name
+        ``<root>/worktrees/foo/worktrees/foo``, and the real worktree would go untouched
+        exactly as it did before this fix. Found by the gate review, whose tests here all
+        used an absolute path and so could not see it."""
+        plan = delegate.plan_run(
+            _builtin("agy"), "implement", PROMPT, cwd="worktrees/foo", timeout=60
+        )
+
+        self.assertNotIn("--add-dir", plan.argv)
+        self.assertTrue(any("relative" in warning for warning in plan.warnings), plan.warnings)
+
+    def test_dot_is_not_a_way_out(self):
+        """Measured: ``--add-dir .`` ended on agy's timeout with the tree unchanged, the
+        same as passing no flag at all."""
+        self.assertFalse(delegate.is_absolute_cwd("."))
+        self.assertFalse(delegate.is_absolute_cwd("./wt"))
+        self.assertFalse(delegate.is_absolute_cwd("../wt-1012"))
+
+    def test_a_plan_is_a_document_that_may_be_read_on_another_platform(self):
+        """``posixpath.isabs`` alone would refuse a Windows worktree."""
+        for path in ("/abs/wt", "C:\\wt", "C:/wt", "\\\\host\\share"):
+            with self.subTest(path=path):
+                self.assertTrue(delegate.is_absolute_cwd(path))
+
     def test_the_flags_do_not_displace_what_backs_the_read_only_promise(self):
         plan = self._agy("review")
 

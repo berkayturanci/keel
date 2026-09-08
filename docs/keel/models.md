@@ -448,8 +448,10 @@ If you have official agent CLI tools installed and authenticated on your machine
 `agy` is the one built-in CLI that does **not** work in the process's working directory
 by default: it operates on its own copy under `~/.gemini/antigravity-cli/scratch/`, so
 before #1134 an `implement` run edited that copy and left the worktree keel gave it
-untouched. keel now passes `--add-dir <cwd>` on every agy dispatch that has a `cwd`, which
-is what makes the directory keel named the directory agy edits — measured against a
+untouched. keel now passes `--add-dir <cwd>` on every agy dispatch that has an **absolute** `cwd`,
+which is what makes the directory keel named the directory agy edits — `keel delegate run`
+resolves a relative `--cwd` before planning, because the child is started inside that
+directory and would otherwise resolve the flag against itself — measured against a
 standalone clone and a linked git worktree, with and without the flag; only the runs
 carrying it touched the real files, and only they made no scratch copy.
 

@@ -49,6 +49,8 @@ the fail-soft ``error_code`` of the JSON contract — a traceback never reaches 
 from __future__ import annotations
 
 import json
+import posixpath
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -97,6 +99,7 @@ __all__ = [
     "is_safe_body_model_token",
     "model_reaches_argv",
     "model_token_issue",
+    "is_absolute_cwd",
     "plan_run",
     "stream_json_frame",
     "parse_stream_json",
@@ -133,6 +136,11 @@ OLLAMA_GENERATE_URL = "http://127.0.0.1:11434/api/generate"
 
 #: agy's NDJSON stdin/stdout framing. See the module docstring for why keel uses it
 #: rather than ``--print=<prompt>``.
+#: A Windows absolute path (``C:\\wt`` / ``C:/wt``) or a UNC share (``\\\\host\\share``).
+#: ``posixpath.isabs`` says False for both, and a plan is a document that may be read
+#: on a platform other than the one that wrote it.
+_WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+
 AGY_STREAM_ARGS = ("--input-format", "stream-json", "--output-format", "stream-json")
 
 #: The only tools a read-only ``claude`` invocation may use. An **allow-list**: a denylist
@@ -426,6 +434,13 @@ def plan_run(
             cwd=cwd,
             timeout=timeout,
         )
+        if cwd and not is_absolute_cwd(cwd) and provider.name == "agy":
+            warnings = warnings + (
+                f"cwd {cwd!r} is relative; agy resolves --add-dir against the directory "
+                "it is started in, so it would name a path inside the worktree instead of "
+                "the worktree. The flag is omitted and agy will edit its own scratch copy "
+                "(#1134) — pass an absolute path.",
+            )
     elif transport == "profile":
         argv, stdin_mode, backed, profile_warnings = _profile_argv(
             provider, profile, read_only=read_only, model=effective
@@ -493,6 +508,27 @@ def _transport_of(provider: providers_mod.Provider) -> str:
     return "profile"
 
 
+def is_absolute_cwd(cwd: str | None) -> bool:
+    """Is ``cwd`` a path agy's ``--add-dir`` can be given? (pure — no filesystem)
+
+    The child is started **inside** ``cwd`` — :func:`keel.delegaterun._run_argv` passes it
+    to the runner — so agy resolves a relative ``--add-dir`` against that directory:
+    ``--cwd worktrees/foo`` would name ``<root>/worktrees/foo/worktrees/foo``, and the
+    real worktree would go untouched exactly as it did before #1134. ``--add-dir .`` is
+    not a way out; it was measured, and the run ended on agy's timeout with the tree
+    unchanged, the same as passing no flag at all.
+
+    So the path has to be absolute, and this module cannot make it so: ``abspath`` reads
+    the *host's* working directory into a :class:`RunPlan` that is frozen, JSON-stable and
+    may be executed somewhere else. The CLI resolves it; this refuses what is left, and
+    :func:`plan_run` says why in a warning. Found by the gate review of #1134.
+
+    Both separators are accepted, because a plan built on one platform is a document that
+    may be read on another.
+    """
+    return bool(cwd) and (posixpath.isabs(cwd) or _WINDOWS_ABSOLUTE.match(cwd) is not None)
+
+
 def _builtin_argv(
     provider: providers_mod.Provider,
     *,
@@ -558,7 +594,10 @@ def _builtin_argv(
     # worktree with this flag. Only the third edited the real file, and only it made
     # no scratch copy — the other two never touched the directory at all and ended on
     # agy's own print timeout.
-    if cwd:
+    # Absolute only — see :func:`is_absolute_cwd`. The caller makes it absolute; a plan
+    # that reached here with a relative one carries the warning instead of an argv the
+    # child would resolve against itself.
+    if is_absolute_cwd(cwd):
         argv += ["--add-dir", cwd]
     # And `--print-timeout` is why keel's own `--timeout` used to mean nothing here:
     # agy's print mode defaults to 5m and stops on its own, so `--timeout 900` against
