@@ -220,6 +220,16 @@ class TheValueIsCheckedBecauseItBecomesALabel(unittest.TestCase):
         self.assertEqual(self._errors("xai"), [])
         self.assertEqual(self._errors(None), [])
 
+    def test_a_value_that_is_not_a_name_at_all_is_refused(self):
+        """A YAML mapping value is not necessarily a string: an unquoted `on:`/`2:`
+        resolves to a bool/int, and the schema validates the *property* rather than
+        the type of every leaf. Blank is the same case — it would write `agent:`."""
+        for value in (123, True, ["xai"], "", "   "):
+            with self.subTest(value=value):
+                errors = self._errors(value)
+                self.assertTrue(errors, f"{value!r} was accepted")
+                self.assertIn("non-empty string", errors[0])
+
     def test_a_project_config_reports_it_through_keel_validate(self):
         errors = cfg._validate_delegate_profiles(
             {"grok": {"vendor": "cli", "command": "cursor-agent", "vendor_label": "agy"}},
