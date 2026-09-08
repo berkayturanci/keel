@@ -45,6 +45,12 @@ DEFAULT_EXTENSIONS_DIR = ".keel/extensions"
 #: — OpenRouter, Groq, DeepSeek, Together, LiteLLM, vLLM — from config (#666).
 DELEGATE_PROFILE_VENDORS = ("cli", "openai-compatible")
 
+#: Characters a ``vendor_label`` may contain (#1129). It becomes the GitHub label
+#: ``agent:<value>``, which ``attribution_check`` reads back and compares, so the set is
+#: the one every built-in vendor token already uses: lowercase, digits, ``.``, ``-``,
+#: ``_``. A ``:`` is excluded because it would split the label into a third segment.
+_VENDOR_LABEL_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789.-_")
+
 #: Vendors whose profile must name an executable.
 _COMMAND_VENDORS = ("cli",)
 #: Vendors whose profile must name an endpoint + the env var holding its key.
@@ -153,6 +159,7 @@ __all__ = [
     "load_schema",
     "config_hash",
     "delegate_profiles_dict",
+    "vendor_label_errors",
 ]
 
 
@@ -213,6 +220,17 @@ class DelegateProfile:
     #: Never the key. Profile config is serialised into the command contract and
     #: hashed into ``config_hash``, so a value here would be published.
     api_key_env: str | None = None
+    #: What ``agent:<vendor>`` should say for this entry, when ``vendor`` — which the
+    #: schema restricts to ``cli``/``openai-compatible`` — is the transport rather than
+    #: the model's maker (#1129). Two ``cli`` profiles driving Grok and GPT through the
+    #: same binary are otherwise the same ``agent:cli``, and
+    #: ``review-vendor-distinctness`` cannot tell them apart. Unset means unchanged:
+    #: the label stays ``agent:<vendor>``.
+    vendor_label: str | None = None
+
+    def label_vendor(self) -> str:
+        """The vendor this entry's attribution names: ``vendor_label`` when set."""
+        return self.vendor_label or self.vendor
 
     def role_args(self, *, review: bool = False) -> tuple[str, ...]:
         """Flags for this role: ``review_args`` for a reviewer when set, else ``args``."""
@@ -470,6 +488,7 @@ def _build(data: dict) -> ProjectConfig:
                 model_arg=profile.get("model_arg") or DEFAULT_MODEL_ARG,
                 endpoint=profile.get("endpoint"),
                 api_key_env=profile.get("api_key_env"),
+                vendor_label=profile.get("vendor_label"),
             )
             for name, profile in k.get("delegate_profiles", {}).items()
         },
@@ -896,7 +915,51 @@ def _validate_delegate_profiles(profiles: Any, *, source: str) -> list[str]:
                 f"{where}: invalid prompt_mode {prompt_mode!r}; "
                 f"valid: {', '.join(DELEGATE_PROMPT_MODES)}"
             )
+        errors.extend(vendor_label_errors(profile.get("vendor_label"), where=where))
     return errors
+
+
+def vendor_label_errors(label: Any, *, where: str) -> list[str]:
+    """Rules for a ``vendor_label`` — shared by project profiles and the registry (#1129).
+
+    The value becomes ``agent:<label>``, a GitHub label keel *applies* and
+    ``attribution_check`` later reads back. So the rules are about what may be written
+    into that vocabulary, not about the value's spelling for its own sake:
+
+    * it may not shadow a built-in delegate vendor, because the built-in writes the same
+      label from a different provider — which is the ambiguity #1129 is about, inverted;
+    * it may not restate the generic vendor it exists to replace (``cli``), because that
+      is the label the entry already gets and setting it reads as an intent that has no
+      effect;
+    * and it is restricted to the characters every existing vendor token uses, so the
+      label keel writes is the label ``attribution_check`` can match.
+    """
+    if label is None:
+        return []
+    if not isinstance(label, str) or not label.strip():
+        return [
+            f"{where}: vendor_label must be a non-empty string — the vendor name that "
+            "goes in the agent:<vendor> label, e.g. 'xai'"
+        ]
+    if label in BUILTIN_DELEGATE_VENDORS:
+        return [
+            f"{where}: vendor_label {label!r} is a built-in delegate vendor, which writes "
+            f"agent:{label} from a different provider — two providers sharing one label is "
+            "the ambiguity this field exists to remove. Name the model's maker, e.g. 'xai'"
+        ]
+    if label in DELEGATE_PROFILE_VENDORS:
+        return [
+            f"{where}: vendor_label {label!r} is what the label already says; leave it "
+            "unset, or name the model's maker (e.g. 'xai') so agent:<vendor> distinguishes "
+            "this entry from another entry with the same transport"
+        ]
+    if not _VENDOR_LABEL_OK.issuperset(label):
+        bad = "".join(sorted(set(label) - _VENDOR_LABEL_OK))
+        return [
+            f"{where}: vendor_label {label!r} contains {bad!r}; it becomes the GitHub "
+            "label agent:<vendor>, so use lowercase letters, digits, '.', '-' or '_'"
+        ]
+    return []
 
 
 def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tuple[str, list]]:
@@ -941,6 +1004,10 @@ def delegate_profiles_dict(config: ProjectConfig) -> dict:
                 "model_arg": profile.model_arg,
                 "endpoint": profile.endpoint,
                 "api_key_env": profile.api_key_env,
+                # Emitted only when set: this dict is hashed into `config_hash`, and an
+                # added optional field must not rotate the hash for a project that never
+                # used it. Same rule as `delegate_profiles` itself being omitted when empty.
+                **({"vendor_label": profile.vendor_label} if profile.vendor_label else {}),
             }
             for name, profile in sorted(profiles.items())
         }

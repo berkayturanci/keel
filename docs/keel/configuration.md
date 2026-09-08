@@ -642,6 +642,7 @@ Then: `/keel:ship 123 --delegate cursor`.
 | `model_arg` | string | | flag the model is passed on, as `<model_arg> <model>` (default `--model`) |
 | `endpoint` | string | ✅ for `openai-compatible` | the OpenAI-shaped chat-completions URL. Loopback by default |
 | `api_key_env` | string | ✅ for `openai-compatible` | the **name** of the env var holding the key — never the key, and only an [allowlisted name](#which-env-vars-may-hold-a-delegate-key) |
+| `vendor_label` | string \| null | | what `agent:<vendor>` should say for this entry — see [below](#vendor-label) |
 
 <a id="which-env-vars-may-hold-a-delegate-key"></a>
 **Which env vars may hold a delegate key.** This field names the variable whose *value*
@@ -794,6 +795,7 @@ sits in.
 | `model_arg` | | flag the model is passed on, as `<model_arg> <model>` (default `--model`) |
 | `effort` | | vendor-specific reasoning-effort selector, carried through to dispatch |
 | `review_args` | | flags for the reviewer role; their presence is what the probe reports as `read_only_mode` |
+| `vendor_label` | | what `agent:<vendor>` should say for this entry — see [below](#vendor-label) |
 
 **A registry entry's `review_args` is present or it is not — there is no third state.**
 A *profile* distinguishes them, because `role_args` falls back to `args`: `review_args: []`
@@ -803,6 +805,39 @@ silently receives the implementer's `args`. A registry entry has no `args` to fa
 to, so an empty or absent `review_args` is the same thing — nothing configured — and
 `keel delegate run --role review|gate|chair` reports `read_only_backed: false` with a
 warning for it. See [`cli.md`](cli.md#keel-delegate).
+
+<a id="vendor-label"></a>
+**`vendor_label` — what `agent:<vendor>` says (#1129).** `vendor` on a profile, and the
+transport on a registry entry, name *how* keel reaches the model: `cli` for every local
+coding-agent CLI. That is the wrong word for attribution. Two entries driving two makers
+through one binary —
+
+```yaml
+providers:
+  grok:           { transport: cli, command: cursor-agent, model: cursor-grok-4.6-high-fast }
+  gpt-via-cursor: { transport: cli, command: cursor-agent, model: gpt-5.3-codex-high }
+```
+
+— both reported `vendor: cli` in the delegate contract and both were labelled `agent:cli`.
+`reviewers.require_distinct_vendors` reads exactly that field, so it could not tell Grok
+from GPT, and would equally have refused two genuinely different reviewers. Adding
+`vendor_label: xai` and `vendor_label: openai` makes the contract say `xai` / `openai` and
+the labels `agent:xai` / `agent:openai`. The entry name is unaffected: it stays in
+`provider` and in `attribution.delegate_profile`.
+
+Unset changes nothing — every built-in already names itself, and a project that never
+writes the field keeps its labels and its `config_hash`.
+
+The value becomes a GitHub label keel *applies* and `attribution_check` later reads back,
+so it may not shadow a built-in vendor (`claude`, `codex`, `agy`, `ollama`, `*-api`), may
+not restate `cli`/`openai-compatible`, and is limited to lowercase letters, digits, `.`,
+`-` and `_`. In a project profile a bad value is a `keel validate` error; in the registry
+it is a warning and the entry keeps the generic label, like every other registry rule.
+
+**One caveat for the registry.** `keel doctor` checks that every label keel might apply
+already exists on the repository, and it can only enumerate the *project's* profiles — the
+registry lives in your home directory, on one machine, unread by the project config. If
+you label a registry entry, create `agent:<label>` on the repository yourself.
 
 **Precedence: built-in > project profile > registry.** A built-in vendor always wins and can
 never be redefined — not by a committed profile, not by a file in your home directory. Below

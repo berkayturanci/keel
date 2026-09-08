@@ -200,5 +200,84 @@ class TestProfileAttribution(AttributionCommandCase):
         self.assertIn("contradicts profile 'cursor'", err)
 
 
+class ADeclaredVendorLabelIsAcceptedHere(unittest.TestCase):
+    """`keel attribution` is the sanctioned way to get the labels, so it has to accept the
+    vendor it produces (#1129).
+
+    `vendor_label` made `agents.attribution` report `xai` for a `cli` profile, and this
+    command validates against `agents.known_vendors`, which did not contain it. The result
+    was a command that refused the only spelling ever written into a label — `--vendor xai`
+    answered *unknown vendor* while `keel doctor` demanded `agent:xai` — and, with
+    `--profile`, rejected it a second time as contradicting a profile whose own attribution
+    says exactly that. Both gate seats traced this independently.
+    """
+
+    LABELLED = {
+        **BASE_CONFIG,
+        "knobs": {
+            **BASE_CONFIG["knobs"],
+            "delegate_profiles": {
+                "grok": {
+                    "vendor": "cli",
+                    "command": "cursor-agent",
+                    "model": "cursor-grok-4.6-high-fast",
+                    "vendor_label": "xai",
+                }
+            },
+        },
+    }
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "project.yaml"
+        self.path.write_text(yaml.safe_dump(self.LABELLED), encoding="utf-8")
+
+    def test_the_declared_label_is_not_an_unknown_vendor(self):
+        rc, out, err = run(["attribution", "--vendor", "xai", "--config", str(self.path), "--json"])
+
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)["agent_label"], "agent:xai")
+
+    def test_it_does_not_contradict_the_profile_that_declares_it(self):
+        rc, out, err = run(
+            [
+                "attribution",
+                "--vendor",
+                "xai",
+                "--profile",
+                "grok",
+                "--config",
+                str(self.path),
+                "--json",
+            ]
+        )
+
+        self.assertEqual(rc, 0, err)
+        record = json.loads(out)
+        self.assertEqual(record["agent_label"], "agent:xai")
+        self.assertEqual(record["delegate_profile"], "grok")
+
+    def test_a_genuinely_different_vendor_is_still_a_contradiction(self):
+        """The check still does its job — it compares against the declared label rather
+        than accepting anything."""
+        rc, _out, err = run(
+            ["attribution", "--vendor", "codex", "--profile", "grok", "--config", str(self.path)]
+        )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("contradicts profile", err)
+
+    def test_what_the_profile_reports_is_what_this_command_accepts(self):
+        """Stated as the agreement rather than as two constants: the profile's own
+        attribution and this command's vocabulary come from the same place or they will
+        drift again."""
+        config = cli.cfg.load_config(str(self.path))
+        profile = agents.resolve_delegate_profile(config, "grok")
+        produced = agents.profile_attribution("grok", profile)["agent_label"]
+
+        self.assertIn(produced[len("agent:") :], agents.known_vendors(config))
+
+
 if __name__ == "__main__":
     unittest.main()

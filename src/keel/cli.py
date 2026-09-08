@@ -2831,12 +2831,17 @@ def _cmd_attribution(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 1
-        if vendor != profile.vendor:
+        # Compared against `label_vendor()`, which is the vendor this profile's
+        # attribution reports — `vendor_label` when it declares one (#1129). Comparing
+        # against the raw `vendor` refused the only spelling that is ever written into a
+        # label, so `--vendor xai --profile grok` contradicted a profile whose own
+        # attribution says `agent:xai`.
+        if vendor != profile.label_vendor():
             # A contradiction, not a preference: one of the two would silently lose,
             # and attribution exists precisely to stop a guessed value being recorded.
             print(
                 f"--vendor {args.vendor!r} contradicts profile {args.profile!r} "
-                f"(vendor: {profile.vendor})",
+                f"(vendor: {profile.label_vendor()})",
                 file=sys.stderr,
             )
             return 1

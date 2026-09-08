@@ -81,6 +81,13 @@ def known_vendors(config: ProjectConfig | None = None) -> frozenset[str]:
     ``openai-compatible``), and — when a config is supplied — the configured
     profile *names*, because ``--delegate <name>`` is spelled with the name.
 
+    It must also contain each profile's :meth:`~keel.config.DelegateProfile.label_vendor`,
+    which is the vendor attribution actually **produces** for that entry (#1129). Adding
+    the field without adding it here split the vocabulary from the labels: `keel doctor`
+    demanded ``agent:xai`` while ``keel attribution --vendor xai`` answered *unknown
+    vendor*, and ``ship --live --append-ledger`` warned that the implementer it had just
+    recorded was not one of keel's delegate vendors. Both gate seats found it.
+
     Callers use this to refuse a vendor keel could never have produced. Without
     a config the set is the configuration-free vocabulary, which is why the
     ledger-writing check only warns: a record may predate the current config.
@@ -88,6 +95,7 @@ def known_vendors(config: ProjectConfig | None = None) -> frozenset[str]:
     names = {*BUILTIN_DELEGATE_VENDORS, *DELEGATE_PROFILE_VENDORS, HOST_DEFAULT}
     if config is not None:
         names.update(config.knobs.delegate_profiles)
+        names.update(profile.label_vendor() for profile in config.knobs.delegate_profiles.values())
         names.update(profile.vendor for profile in config.knobs.delegate_profiles.values())
     return frozenset(names)
 
@@ -229,9 +237,18 @@ def attribution_labels(config: ProjectConfig | None = None) -> tuple[str, ...]:
     vocabularies.
 
     The set is the built-in vendors plus the host default and — when a config is given —
-    each ``knobs.delegate_profiles`` entry's **vendor** (``agent:cli``, the label
-    :func:`profile_attribution` writes; the profile *name* goes in ``delegate_profile``,
-    never in a label) and the model that entry pins.
+    each ``knobs.delegate_profiles`` entry's **label vendor** (its ``vendor_label`` when
+    set, else the generic ``cli``; the label :func:`profile_attribution` writes — the
+    profile *name* goes in ``delegate_profile``, never in a label) and the model that
+    entry pins.
+
+    A machine-level ``~/.keel/providers.yaml`` entry's ``vendor_label`` is **not**
+    enumerable here and never will be: this check exists so ``keel doctor`` can tell an
+    operator that a label keel may apply is missing from the repository, and the registry
+    lives outside the repository, on one machine, unread by the project config. An
+    operator who labels a registry entry has to create ``agent:<label>`` themselves —
+    which is the same trade the registry already makes everywhere else, and is documented
+    beside the field.
 
     ``model:*`` is only enumerable that far. The effective model can arrive from
     ``--delegate <vendor>:<model>`` or a ``delegate-model:`` issue label, so the labels
@@ -241,7 +258,7 @@ def attribution_labels(config: ProjectConfig | None = None) -> tuple[str, ...]:
     models: set[str] = set()
     if config is not None:
         for profile in config.knobs.delegate_profiles.values():
-            vendors.add(profile.vendor)
+            vendors.add(profile.label_vendor())
             if profile.model:
                 models.add(profile.model)
     labels = {agent_label(vendor) for vendor in vendors}
@@ -302,7 +319,7 @@ def profile_attribution(
     rule that attribution records the *effective* implementer whenever an operator
     picked a model per run.
     """
-    record = attribution(profile.vendor, model or profile.model)
+    record = attribution(profile.label_vendor(), model or profile.model)
     record["delegate_profile"] = name
     return record
 

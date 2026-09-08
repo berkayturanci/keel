@@ -463,6 +463,10 @@
                 "type": "string",
                 "minLength": 1,
                 "description": "Flag the command takes the effective model on, applied as '<model_arg> <model>'. Defaults to --model; set it for a CLI that spells model selection differently."
+              },
+              "vendor_label": {
+                "type": ["string", "null"],
+                "description": "What agent:<vendor> should say for this entry, when 'vendor' names the transport rather than the model's maker, e.g. 'xai' for a cli profile driving Grok. Unset leaves the label as agent:<vendor>. May not shadow a built-in vendor or restate 'cli'/'openai-compatible'; lowercase letters, digits, '.', '-' and '_' only, since the value becomes a GitHub label attribution_check reads back."
               }
             }
           },

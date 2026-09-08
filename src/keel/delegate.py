@@ -218,6 +218,14 @@ class RunPlan:
     """One fully-resolved delegate invocation. Frozen, JSON-stable, never executed here."""
 
     provider: str
+    #: The vendor attribution names — a built-in's own token, or a profile/registry
+    #: entry's ``vendor_label`` when it declares one (#1129). Before that field existed
+    #: this said ``cli`` for *every* configured CLI, so two entries driving different
+    #: makers through one binary were indistinguishable here and in the label derived
+    #: from it. Which executor runs the plan stays in :attr:`transport`
+    #: (``cli``/``profile``/``api``/``ollama``); a declared label costs the finer
+    #: ``cli``-vs-``local`` split, which no caller branches on — both are run as a
+    #: configured binary.
     vendor: str
     role: str
     transport: str
@@ -457,7 +465,7 @@ def plan_run(
         request = _request(provider, transport, model=effective, timeout=timeout, effort=applied)
     return RunPlan(
         provider=provider.name,
-        vendor=provider.vendor,
+        vendor=provider.label_vendor(),
         role=role,
         transport=transport,
         prompt_path=prompt_path,
@@ -800,10 +808,17 @@ def _attribution(
     never ``profile``: the ship run record already means the workflow profile
     (``standard``/``compound``) by that name, and writing the CLI's name there would
     silently overwrite it.
+
+    A registry entry names its **label vendor** (#1129): ``vendor`` there is the
+    transport the schema requires — ``cli`` for every local coding-agent CLI — so two
+    entries driving Grok and GPT through the same binary both reported ``agent:cli``,
+    and ``review-vendor-distinctness``, which is the rule keel most depends on, could
+    not tell them apart. ``vendor_label`` is how an entry says which maker it reaches;
+    unset, it stays the generic token, which is what every built-in already is.
     """
     if profile is not None:
         return agents.profile_attribution(provider.name, profile, model)
-    record = agents.attribution(provider.vendor, model)
+    record = agents.attribution(provider.label_vendor(), model)
     if provider.source != "builtin":
         record["delegate_profile"] = provider.name
     return record
