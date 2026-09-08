@@ -7,10 +7,16 @@ file passes in CI and quietly omits tests in the loop a person actually uses:
 
     PYTHONPATH=src python tests/test_cli.py -k delegate
 
-Five files were in that state, losing 54 tests between them: ``test_cli.py`` (38, the
-delegate CLI wiring and the TDD-order gate), ``test_api_delegate.py`` (5),
-``test_ship.py`` (3), ``test_runner.py`` (2) and ``keel-visual``'s ``test_runstate.py``
-(6). A test that does not run cannot fail, so the hole reports success.
+Five files were in that state, losing **56** tests between them: ``test_cli.py`` (40, the
+delegate CLI wiring and the TDD-order gate), ``keel-visual``'s ``test_runstate.py`` (6),
+``test_api_delegate.py`` (5), ``test_ship.py`` (3) and ``test_runner.py`` (2). A test that
+does not run cannot fail, so the hole reports success.
+
+That count is measured on this head rather than on the issue's, and it moved once: #1140
+added two tests to ``DelegateCommandTest``, which is one of the stranded classes, so the
+number this docstring records had to move with it. It is recorded here because the
+structural check below cannot express it — and a measurement in prose is exactly the kind
+that goes stale, which is why two gate reviewers caught this one.
 
 It is written down here rather than remembered because it kept happening: three separate
 changes in one week each added a class below the sentinel, and each was caught by a
@@ -39,13 +45,18 @@ def _sentinel(tree: ast.Module) -> ast.If | None:
         if not isinstance(node, ast.If):
             continue
         test = node.test
+        # The operator is checked too: `if __name__ != "__main__":` compares the same two
+        # things and is not a runner sentinel — treating it as one would report every
+        # definition below it as stranded. Found by the gate review.
         if (
             isinstance(test, ast.Compare)
             and isinstance(test.left, ast.Name)
             and test.left.id == "__name__"
             and any(
-                isinstance(comparator, ast.Constant) and comparator.value == "__main__"
-                for comparator in test.comparators
+                isinstance(op, ast.Eq)
+                and isinstance(comparator, ast.Constant)
+                and comparator.value == "__main__"
+                for op, comparator in zip(test.ops, test.comparators, strict=False)
             )
         ):
             return node
@@ -107,6 +118,18 @@ class TheRunnerSentinelIsTheLastStatement(unittest.TestCase):
 
     def test_a_main_string_that_is_not_a_sentinel_is_not_one(self):
         tree = ast.parse('"""talks about __main__."""\nx = "__main__"\n')
+
+        self.assertIsNone(_sentinel(tree))
+
+    def test_an_inverted_comparison_is_not_a_sentinel(self):
+        """`if __name__ != "__main__":` compares the same two things and runs the block
+        when imported — the opposite of a runner guard. Reading it as one would report
+        every definition below it as stranded."""
+        tree = ast.parse(
+            "import unittest\n"
+            'if __name__ != "__main__":\n    pass\n'
+            "class A(unittest.TestCase):\n    pass\n"
+        )
 
         self.assertIsNone(_sentinel(tree))
 
