@@ -352,9 +352,12 @@
     // is pending must not let the stale one fire after the results moved on.
     if (srTimer) { clearTimeout(srTimer); srTimer = null; }
     if (sr) {
+      // "Showing 1 integrations" is the sentence a screen-reader user actually
+      // hears, and searching "ollama" produces exactly one match.
       var announcement = items.length === 0
         ? 'No integrations found matching "' + searchQuery + '"'
-        : 'Showing ' + items.length + ' integrations';
+        : 'Showing ' + items.length +
+          (items.length === 1 ? ' integration' : ' integrations');
       // Cleared first, and the message set on the next tick. A live region only
       // announces a *change*: typing "cla" then "clau" can leave the same
       // "Showing 3 integrations" text in place, and a screen reader says

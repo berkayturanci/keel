@@ -120,14 +120,6 @@ class TheLiveRegionIsTheOnlyOneAndEveryUpdaterUsesIt(unittest.TestCase):
             with self.subTest(script=script):
                 self.assertIn('getElementById("sr-live-region")', self._read(script))
 
-    def test_it_announces_the_two_states_the_change_promises(self):
-        """The strings themselves, which the mechanism tests do not read."""
-        source = self._read("integrations.js")
-
-        self.assertIn("'Showing ' + items.length + ' integrations'", source)
-        self.assertIn("'No integrations found matching \"' + searchQuery + '\"'", source)
-        self.assertIn("items.length === 0", source)
-
     def test_the_strict_directive_is_the_first_statement(self):
         """A `var` above it ends the Directive Prologue and un-stricts the IIFE.
 
@@ -201,6 +193,8 @@ const since = () => { const w = sr.writes.slice(); sr.writes.length = 0; return 
   out.searched = since();
   search.oninput({ target: { value: "claude" } }); await tick();
   out.repeated = since();
+  search.oninput({ target: { value: "ollama" } }); await tick();
+  out.one_match = since();
   search.oninput({ target: { value: "zzzznope" } }); await tick();
   out.empty_result = since();
   search.oninput({ target: { value: "" } }); await tick();
@@ -245,6 +239,10 @@ class TheAnnouncementIsExercisedRatherThanGrepped(unittest.TestCase):
 
     def test_a_search_announces_the_count(self):
         self.assertRegex(self.said["searched"][-1], r"^Showing \d+ integrations$")
+
+    def test_a_single_match_is_announced_in_the_singular(self):
+        """ "Showing 1 integrations" is the sentence a reader actually hears."""
+        self.assertEqual(self.said["one_match"][-1], "Showing 1 integration")
 
     def test_an_identical_search_is_cleared_and_said_again(self):
         """A live region announces a change, so an unchanged value is silence.
