@@ -35,8 +35,16 @@ EXPECTED_PREFIXES = frozenset(
     {"jules", "bolt", "palette", "sentinel", "dependabot", "copilot", "renovate"}
 )
 
-#: The backticked tokens in the sentence that lists them.
-_PREFIX_LINE = re.compile(r"`(jules|bolt|palette|sentinel|dependabot|copilot|renovate)`")
+#: The clause that lists the prefixes, in either file: it opens at the first backticked
+#: `jules` and closes at the "spelling" both sentences end on.
+#:
+#: Deliberately NOT an alternation of the expected names. The first cut was
+#: ``re.compile(r"`(jules|bolt|…|renovate)`")``, which can only ever match the seven it
+#: already knows — so it caught a *dropped* prefix and was blind to an *added* one, while
+#: this file claimed to assert that `cursor` is not on the list. A closed pattern cannot
+#: make that assertion. Found by the gate review of #1128.
+_PREFIX_CLAUSE = re.compile(r"`jules`.*?spelling", re.S)
+_BACKTICKED = re.compile(r"`([a-z][a-z0-9-]*)`")
 
 
 class TheRuleIsStatedInBothPlaces(unittest.TestCase):
@@ -56,20 +64,35 @@ class TheRuleIsStatedInBothPlaces(unittest.TestCase):
         anchor = "CONTRIBUTING.md#bot-owned-branches-are-read-only"
         self.assertIn(anchor, AGENTS.read_text(encoding="utf-8"))
 
-    def test_the_anchor_that_link_points_at_exists(self):
-        """A heading rename would leave the link pointing at nothing."""
-        heading = "## Bot-owned branches are read-only"
-        slug = heading.lstrip("# ").lower().replace(" ", "-")
+    def test_the_anchor_resolves_to_the_heading_that_is_there(self):
+        """Derived from the file, so a rename breaks it rather than sliding past.
 
-        self.assertIn(heading, CONTRIBUTING.read_text(encoding="utf-8"))
-        self.assertEqual(slug, "bot-owned-branches-are-read-only")
+        The first cut slugified a *hardcoded* heading and substring-checked the file for
+        it — so `## Bot-owned branches are read-only (rule)` kept the test green while the
+        fragment `AGENTS.md` links to no longer resolved.
+        """
+        headings = [
+            line
+            for line in CONTRIBUTING.read_text(encoding="utf-8").splitlines()
+            if line.startswith("## ") and "read-only" in line
+        ]
+        self.assertEqual(len(headings), 1, f"expected one section heading, saw {headings}")
+
+        slug = re.sub(r"[^a-z0-9]+", "-", headings[0][3:].strip().lower()).strip("-")
+        link = re.search(r"CONTRIBUTING\.md#([a-z0-9-]+)", AGENTS.read_text(encoding="utf-8"))
+
+        self.assertIsNotNone(link, "AGENTS.md does not link the section")
+        self.assertEqual(link.group(1), slug)
 
 
 class BothCopiesNameTheSamePrefixes(unittest.TestCase):
     """Two statements of one rule are two rules that can disagree."""
 
     def _prefixes(self, path: Path) -> set[str]:
-        return {m.group(1) for m in _PREFIX_LINE.finditer(path.read_text(encoding="utf-8"))}
+        """Every backticked token in the clause, whatever it is."""
+        clause = _PREFIX_CLAUSE.search(path.read_text(encoding="utf-8"))
+        self.assertIsNotNone(clause, f"no prefix clause in {path.name}")
+        return set(_BACKTICKED.findall(clause.group(0)))
 
     def test_contributing_lists_every_automation(self):
         self.assertEqual(self._prefixes(CONTRIBUTING), set(EXPECTED_PREFIXES))
@@ -78,8 +101,14 @@ class BothCopiesNameTheSamePrefixes(unittest.TestCase):
         self.assertEqual(self._prefixes(AGENTS), set(EXPECTED_PREFIXES))
 
     def test_a_person_driven_prefix_is_not_covered(self):
-        """`claude/…`, `codex/…`, `cursor/…` are a working copy, not a bot's only copy."""
-        self.assertNotIn("cursor", EXPECTED_PREFIXES)
+        """`claude/…`, `codex/…`, `cursor/…` are a working copy, not a bot's only copy.
+
+        Read off the documents, not off `EXPECTED_PREFIXES` — asserting `cursor` is
+        absent from a constant this file writes proves nothing about what the rule says.
+        """
+        for path in (CONTRIBUTING, AGENTS):
+            with self.subTest(file=path.name):
+                self.assertNotIn("cursor", self._prefixes(path))
         for name in ("claude/", "codex/", "cursor/"):
             with self.subTest(prefix=name):
                 self.assertIn(name, CONTRIBUTING.read_text(encoding="utf-8"))
