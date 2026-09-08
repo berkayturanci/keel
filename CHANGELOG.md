@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The bot-branch rule keel did not have, after a bot used its absence** (#1127). A pull-request branch opened by an automation is a **read-only input**: the bot pushes from its own checkout, so its next push replaces the branch and silently reverts whatever landed in between. `CONTRIBUTING.md` now says so, `AGENTS.md` — the file the automations are actually pointed at — carries the short form and links it, and `tests/test_bot_branch_rule.py` compares the two prefix lists so one statement of the rule cannot drift from the other.
+  - **It is written down because it happened here.** On #1125 a review of a Palette change found four defects; the fixes were pushed onto the `jules-…` branch, which this repository's precedent (#810, #1114) permitted because nothing said otherwise. While the last gate round ran, the bot pushed *Acknowledge reviewer verdicts* and reverted all of them — **222 deletions**, the 189-line test class among them, restoring a `var` above `"use strict"` that ends the Directive Prologue and un-stricts a 420-line IIFE. A few minutes' different timing and it would have merged under a green suite, because the tests that would have caught it were in the commit it deleted. Re-landed as #1126.
+  - **The distinction is who holds the only copy, not who wrote the code.** `claude/…`, `codex/…` and `cursor/…` are driven from a working copy and stay outside the rule; `cursor` is deliberately absent from the prefix list a test pins.
+  - **The sibling repository's `Bot push guard` is named but not ported.** It detects a bot push that *follows* a human push, which is a detector rather than a preventive — and it needs a required-context registration in branch protection, where an unregistered required check that never reports blocks every merge. Measured before porting, not assumed.
+
 ## [1.21.1] - 2026-09-07
 
 ### Fixed

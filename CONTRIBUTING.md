@@ -57,6 +57,33 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    [PR description lint](.github/workflows/pr-lint.yml) check enforces this — a PR template
    only pre-fills the body, it can't stop an empty PR.
 
+## Bot-owned branches are read-only
+
+A pull request branch opened by an automation is a **read-only input**. The registered
+prefixes are `jules`, `bolt`, `palette`, `sentinel`, `dependabot`, `copilot` and
+`renovate`, in any spelling (`bolt-x`, `palette/x`, `jules-1234-abcd`).
+
+**Do not rebase such a branch, amend it, or push fixes to it.** The bot pushes from its
+own checkout, so its next push replaces the branch with that stale copy and silently
+reverts anything that landed in between. Re-land the reviewed changes on a fresh `fix/`,
+`perf/` or `docs/` branch cut from `main` — cherry-pick the bot's commit unchanged so its
+authorship survives — and close the bot's pull request with a link to the replacement.
+
+This is not hypothetical. On [#1125](https://github.com/berkayturanci/keel/pull/1125) a
+review found four defects in a Palette change and the fixes were pushed onto the
+`jules-…` branch; while the last gate round was running the bot pushed *Acknowledge
+reviewer verdicts*, which reverted all of them — **222 deletions**, the entire 189-line
+test class among them, restoring a `var` above `"use strict"` that silently un-stricts a
+420-line IIFE. A few minutes' different timing and it would have merged under a green
+suite, because the tests that would have caught it were in the commit it deleted. The
+work was re-landed as [#1126](https://github.com/berkayturanci/keel/pull/1126). The
+sibling repository adopted the same rule after an equivalent incident cost it two
+already-merged pull requests.
+
+Branches a person drives from a working copy (`claude/…`, `codex/…`, `cursor/…`, `fix/…`)
+are deliberately outside the rule — it is about a branch something else holds the only
+copy of, not about who wrote the code.
+
 ## Dependency and tooling updates
 
 GitHub Actions are pinned to commit SHAs and the runtime dependency footprint stays at one
