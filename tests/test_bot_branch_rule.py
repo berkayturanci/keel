@@ -38,12 +38,21 @@ EXPECTED_PREFIXES = frozenset(
 #: The clause that lists the prefixes, in either file: it opens at the first backticked
 #: `jules` and closes at the "spelling" both sentences end on.
 #:
-#: Deliberately NOT an alternation of the expected names. The first cut was
-#: ``re.compile(r"`(jules|bolt|…|renovate)`")``, which can only ever match the seven it
-#: already knows — so it caught a *dropped* prefix and was blind to an *added* one, while
-#: this file claimed to assert that `cursor` is not on the list. A closed pattern cannot
-#: make that assertion. Found by the gate review of #1128.
-_PREFIX_CLAUSE = re.compile(r"`jules`.*?spelling", re.S)
+#: Deliberately NOT an alternation of the expected names, and deliberately not anchored
+#: on one of them either. Two earlier cuts each failed to make the assertion this file
+#: claims, both found by the gate review of #1128:
+#:
+#: * ``r"`(jules|bolt|…|renovate)`"`` can only match the seven names it already knows, so
+#:   it caught a *dropped* prefix and was blind to an *added* one;
+#: * ``r"`jules`.*?spelling"`` starts at a list member, so a name inserted *before* it —
+#:   ``\`cursor\`, \`jules\`, …`` — falls outside the window and is invisible too.
+#:
+#: So the clause is bounded by prose that belongs to *this* rule: from the phrase that
+#: names it to the "spelling" both sentences end on. "spelling" alone is not an anchor —
+#: `AGENTS.md` uses the word again about a deprecated config key, and a bare
+#: ``r"[^.]{0,400}spelling"`` matched that instead and read an empty list, which every
+#: assertion here would then have compared against nothing.
+_PREFIX_CLAUSE = re.compile(r"read-only input.*?spelling", re.S)
 _BACKTICKED = re.compile(r"`([a-z][a-z0-9-]*)`")
 
 
