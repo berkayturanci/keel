@@ -419,7 +419,12 @@ def plan_run(
     backed = read_only
     if transport == "cli":
         argv, stdin_mode = _builtin_argv(
-            provider, read_only=read_only, model=effective, effort_args=applied.argv
+            provider,
+            read_only=read_only,
+            model=effective,
+            effort_args=applied.argv,
+            cwd=cwd,
+            timeout=timeout,
         )
     elif transport == "profile":
         argv, stdin_mode, backed, profile_warnings = _profile_argv(
@@ -494,6 +499,8 @@ def _builtin_argv(
     read_only: bool,
     model: str | None,
     effort_args: tuple[str, ...] = (),
+    cwd: str | None = None,
+    timeout: int | None = None,
 ) -> tuple[tuple[str, ...], str]:
     """The argv + stdin framing for one of the three built-in agent CLIs.
 
@@ -542,6 +549,24 @@ def _builtin_argv(
     argv += ["--dangerously-skip-permissions", *AGY_STREAM_ARGS]
     if model:
         argv += ["--model", model]
+    # `--add-dir` is what makes the working directory keel named the one agy edits
+    # (#1134). Without it agy works in `~/.gemini/antigravity-cli/scratch/<basename>` —
+    # its own copy — so an `implement` run returned prose about files it had changed
+    # while the worktree keel handed it stayed clean, and the first thing downstream
+    # would have seen is a pull request with no diff. Measured, not inferred: three
+    # runs of one prompt against a standalone clone, a linked worktree, and a linked
+    # worktree with this flag. Only the third edited the real file, and only it made
+    # no scratch copy — the other two never touched the directory at all and ended on
+    # agy's own print timeout.
+    if cwd:
+        argv += ["--add-dir", cwd]
+    # And `--print-timeout` is why keel's own `--timeout` used to mean nothing here:
+    # agy's print mode defaults to 5m and stops on its own, so `--timeout 900` against
+    # a real brief died at 298s with agy's `timeout waiting for response` — keel's
+    # bound never reached the process it was bounding. Go duration spelling, per
+    # `agy --help` ("default 5m0s").
+    if timeout:
+        argv += ["--print-timeout", f"{timeout}s"]
     return tuple(argv), STDIN_STREAM_JSON
 
 

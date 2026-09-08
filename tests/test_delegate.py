@@ -269,6 +269,9 @@ class BuiltinCliArgvTest(unittest.TestCase):
                 *delegate.AGY_STREAM_ARGS,
                 "--model",
                 "gemini-3.8-flash",
+                # keel's own bound, carried to the only timer agy honours (#1134).
+                "--print-timeout",
+                f"{delegate.DEFAULT_TIMEOUT_S}s",
             ),
         )
         self.assertEqual(plan.stdin_mode, delegate.STDIN_STREAM_JSON)
@@ -277,7 +280,13 @@ class BuiltinCliArgvTest(unittest.TestCase):
         plan = _plan("agy", "fix")
         self.assertEqual(
             plan.argv,
-            ("agy", "--dangerously-skip-permissions", *delegate.AGY_STREAM_ARGS),
+            (
+                "agy",
+                "--dangerously-skip-permissions",
+                *delegate.AGY_STREAM_ARGS,
+                "--print-timeout",
+                f"{delegate.DEFAULT_TIMEOUT_S}s",
+            ),
         )
 
     def test_the_prompt_never_reaches_a_builtin_argv(self):
@@ -944,6 +953,85 @@ class TestEffortVendors(unittest.TestCase):
 
         self.assertFalse(effort.applied)
         self.assertTrue(effort.warnings)
+
+
+class TheWorkingDirectoryKeelNamesIsTheOneAgyEdits(unittest.TestCase):
+    """agy works in its own scratch copy unless the directory is added (#1134).
+
+    ``keel delegate run --role implement --cwd <worktree>`` dispatched correctly — the
+    runner is given ``cwd`` — but agy edits
+    ``~/.gemini/antigravity-cli/scratch/<basename>``, its own copy of whatever it was
+    pointed at. So an implement run returned prose describing files it had changed while
+    the worktree stayed clean, and the next thing downstream would have seen is a pull
+    request with no diff. ``implement`` is the one role whose whole product is a modified
+    working tree, so a silent pass there is worse than the failure.
+
+    Measured before it was fixed — one prompt, three runs, the same flags in each:
+
+    * standalone clone (``.git`` directory), no flag — unchanged, ended on agy's timeout
+    * linked worktree (``.git`` file), no flag — unchanged, ended on agy's timeout
+    * linked worktree, ``--add-dir <cwd>`` — **edited in place, and made no scratch copy**
+
+    So this is not the git-worktree trap the gate runner works around by cloning: without
+    the flag agy never reached either kind of directory.
+
+    ``--print-timeout`` rides along because the same dispatch showed keel's
+    ``--timeout 900`` reaching nothing — agy's print mode stops at its own 5m default,
+    and the run died at 298s with agy's ``timeout waiting for response``. A bound that
+    does not reach the process it bounds is not a bound.
+
+    Only agy takes these. ``claude`` and ``codex`` run in the process's own working
+    directory; neither was exercised in the ``implement`` role here, which the issue and
+    ``docs/keel/models.md`` both say rather than assume.
+    """
+
+    WORKTREE = "/tmp/keel-wt-1134"
+
+    def _agy(self, role, **kwargs):
+        return delegate.plan_run(_builtin("agy"), role, PROMPT, cwd=self.WORKTREE, **kwargs)
+
+    def test_an_implement_run_names_the_directory_it_was_given(self):
+        argv = self._agy("implement").argv
+
+        self.assertIn("--add-dir", argv)
+        self.assertEqual(argv[argv.index("--add-dir") + 1], self.WORKTREE)
+
+    def test_so_does_a_read_only_run(self):
+        """A reviewer reading a copy is a milder form of the same defect: the copy is
+        whatever agy last synced, not what keel checked out."""
+        argv = self._agy("review").argv
+
+        self.assertIn("--sandbox", argv)
+        self.assertEqual(argv[argv.index("--add-dir") + 1], self.WORKTREE)
+
+    def test_no_directory_is_added_when_none_was_given(self):
+        """``--add-dir`` with nothing after it is a broken argv, not a default."""
+        argv = delegate.plan_run(_builtin("agy"), "implement", PROMPT).argv
+
+        self.assertNotIn("--add-dir", argv)
+
+    def test_keels_timeout_reaches_agys_own_timer(self):
+        argv = self._agy("implement", timeout=900).argv
+
+        self.assertEqual(argv[argv.index("--print-timeout") + 1], "900s")
+
+    def test_the_other_builtin_clis_take_neither_flag(self):
+        """They run in the process's working directory, and a vendor flag they do not
+        have would make every dispatch fail on an unknown argument."""
+        for name in ("claude", "codex"):
+            with self.subTest(provider=name):
+                argv = delegate.plan_run(
+                    _builtin(name), "implement", PROMPT, cwd=self.WORKTREE, timeout=900
+                ).argv
+                self.assertNotIn("--add-dir", argv)
+                self.assertNotIn("--print-timeout", argv)
+
+    def test_the_flags_do_not_displace_what_backs_the_read_only_promise(self):
+        plan = self._agy("review")
+
+        self.assertTrue(plan.read_only)
+        self.assertTrue(plan.read_only_backed)
+        self.assertEqual(plan.argv[1], "--sandbox")
 
 
 if __name__ == "__main__":  # pragma: no cover
