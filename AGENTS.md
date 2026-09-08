@@ -182,6 +182,14 @@ the schema if the contract changes), not this prose.
   reviewers, window, gates, decision).
 - **Docs impact.** When behaviour, config, or the CLI changes, update `docs/keel/` (and
   `README.md` / `CHANGELOG.md`) or state `Docs Impact: none` with a reason.
+- **A bot's branch is a read-only input.** Never rebase, amend, or push fixes onto a
+  pull-request branch opened by an automation (`jules`, `bolt`, `palette`, `sentinel`,
+  `dependabot`, `copilot`, `renovate`, any spelling). The bot pushes from its own
+  checkout, so its next push replaces the branch and silently reverts whatever landed in
+  between — on #1125 that erased a whole review, 222 deletions including the tests that
+  would have caught it. Re-land on a fresh `fix/` branch cut from `main`, cherry-picking
+  the bot's commit unchanged, and close the bot's pull request with a link. Full rule and
+  the incident: [CONTRIBUTING.md](CONTRIBUTING.md#bot-owned-branches-are-read-only).
 
 ## Repo layout
 
