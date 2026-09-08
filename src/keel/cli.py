@@ -5281,7 +5281,20 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     # Probed only under --providers: one PATH lookup and one `--version` call per CLI
     # vendor, plus a single loopback request for Ollama. Cheap enough to ask for,
     # too expensive to run on every `keel doctor`.
-    providers = providerprobe.collect(config) if args.providers else None
+    # `--registry` only means anything with `--providers`: the registry is read by
+    # the probe and by nothing else. Before the flag existed, `doctor --registry X`
+    # was an argparse error; accepting it and reading nothing would be the same
+    # quiet mismatch #1130 is about, one flag further out — so it is said out loud.
+    # On **stderr**: under `--json` this stream carries one JSON document and nothing
+    # else, and the first cut printed the note to stdout, so
+    # `keel doctor --registry X --json | jq` died on a note about a flag it did not
+    # pass. A diagnostic that breaks the machine-readable output is a worse bug than
+    # the one it warns about.
+    if args.registry and not args.providers:
+        _warn("note: --registry applies only with --providers; no registry was read")
+    providers = (
+        providerprobe.collect(config, registry_path=args.registry) if args.providers else None
+    )
     # One `gh label list` per run, and only with a config: the labels to check are the
     # ones that config declares. `--offline` skips it like every other network read.
     policy_labels = _doctor_policy_labels(config, root=args.root, offline=args.offline)
@@ -8004,6 +8017,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="probe every provider keel can dispatch to (agent CLIs, hosted APIs, "
         "local models, delegate profiles, and ~/.keel/providers.yaml)",
+    )
+    # Same flag, same precedence, same wording as `delegate run` (#1130). Without it
+    # `doctor --providers` read the default path whatever the operator passed, so a
+    # registry at a scratch path reported as an empty one — the check that answers
+    # "can this machine reach the provider I just configured?" answering about a
+    # different file, with nothing to say so.
+    p_doctor.add_argument(
+        "--registry", default=None, help="provider registry path (default $KEEL_PROVIDERS)"
     )
     p_doctor.add_argument(
         "--fix",
