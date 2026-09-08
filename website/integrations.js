@@ -9,6 +9,14 @@
 (function () {
   "use strict";
 
+  // Below the directive, never above it: a `var` before `"use strict"`
+  // ends the Directive Prologue and leaves the string an inert
+  // expression, silently un-stricting this whole IIFE.
+  var srTimer = null;
+  // Set the first time the reader touches a filter, so the initial render is
+  // silent and every change after it is announced — including clearing the box.
+  var srArmed = false;
+
   var INTEGRATIONS = [
     // --- 1. AI Agents & Coding Assistants (12) ---
     {
@@ -333,6 +341,33 @@
       countEl.textContent = items.length + " of " + INTEGRATIONS.length + " integrations";
     }
 
+    // Gated on whether the reader has touched a filter, NOT on the query being
+    // non-empty. `renderGrid` also runs from `init()` on DOMContentLoaded while
+    // the landing view is the overview and this grid is hidden, and announcing
+    // "Showing 32 integrations" there interrupts a page nobody opened. But
+    // *clearing* the box is a result-set change worth announcing, and an
+    // emptiness test silences exactly that.
+    var sr = srArmed ? document.getElementById("sr-live-region") : null;
+    // Cancelled unconditionally: a keystroke that lands while an announcement
+    // is pending must not let the stale one fire after the results moved on.
+    if (srTimer) { clearTimeout(srTimer); srTimer = null; }
+    if (sr) {
+      // "Showing 1 integrations" is the sentence a screen-reader user actually
+      // hears, and searching "ollama" produces exactly one match.
+      var announcement = items.length === 0
+        ? 'No integrations found matching "' + searchQuery + '"'
+        : 'Showing ' + items.length +
+          (items.length === 1 ? ' integration' : ' integrations');
+      // Cleared first, and the message set on the next tick. A live region only
+      // announces a *change*: typing "cla" then "clau" can leave the same
+      // "Showing 3 integrations" text in place, and a screen reader says
+      // nothing while the result set actually moved. `app.js` and `docs.js`
+      // avoid this by clearing after their message; a filter fires on every
+      // keystroke, so it clears before instead.
+      sr.textContent = "";
+      srTimer = setTimeout(function () { sr.textContent = announcement; }, 0);
+    }
+
     if (items.length === 0) {
       grid.innerHTML = '<div class="integ-empty">No integrations found matching "' + searchQuery + '".</div>';
       return;
@@ -395,6 +430,7 @@
         btn.classList.add("active");
         btn.setAttribute("aria-checked", "true");
         activeCategory = btn.getAttribute("data-cat");
+        srArmed = true;
         renderGrid();
       };
     });
@@ -403,6 +439,7 @@
     if (searchInput) {
       searchInput.oninput = function (e) {
         searchQuery = e.target.value;
+        srArmed = true;
         renderGrid();
       };
     }
