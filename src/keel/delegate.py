@@ -136,12 +136,12 @@ OLLAMA_GENERATE_URL = "http://127.0.0.1:11434/api/generate"
 
 #: agy's NDJSON stdin/stdout framing. See the module docstring for why keel uses it
 #: rather than ``--print=<prompt>``.
+AGY_STREAM_ARGS = ("--input-format", "stream-json", "--output-format", "stream-json")
+
 #: A Windows absolute path (``C:\\wt`` / ``C:/wt``) or a UNC share (``\\\\host\\share``).
 #: ``posixpath.isabs`` says False for both, and a plan is a document that may be read
 #: on a platform other than the one that wrote it.
 _WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
-
-AGY_STREAM_ARGS = ("--input-format", "stream-json", "--output-format", "stream-json")
 
 #: The only tools a read-only ``claude`` invocation may use. An **allow-list**: a denylist
 #: of write tools has to be extended every time the CLI grows one, and is wrong in the
@@ -526,7 +526,14 @@ def is_absolute_cwd(cwd: str | None) -> bool:
     Both separators are accepted, because a plan built on one platform is a document that
     may be read on another.
     """
-    return bool(cwd) and (posixpath.isabs(cwd) or _WINDOWS_ABSOLUTE.match(cwd) is not None)
+    # ``str(cwd)`` rather than ``cwd``: the annotation says ``str | None``, but
+    # ``posixpath.isabs`` accepts a ``PathLike`` while ``re.match`` does not, so a
+    # *relative* ``Path`` would fall through the first test and raise ``TypeError`` out of
+    # the second while an absolute one short-circuited to ``True``. A predicate that
+    # answers for half its inputs and crashes for the other half is worse than one that
+    # refuses both. Found by the gate review of #1134.
+    text = "" if cwd is None else str(cwd)
+    return bool(text) and (posixpath.isabs(text) or _WINDOWS_ABSOLUTE.match(text) is not None)
 
 
 def _builtin_argv(

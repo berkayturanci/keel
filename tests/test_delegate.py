@@ -1052,6 +1052,15 @@ class TheWorkingDirectoryKeelNamesIsTheOneAgyEdits(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(delegate.is_absolute_cwd(path))
 
+    def test_a_pathlike_is_answered_rather_than_half_answered(self):
+        """`posixpath.isabs` takes a `PathLike`, `re.match` does not — so a *relative*
+        `Path` used to fall through the first test and raise `TypeError` out of the
+        second, while an absolute one short-circuited to True. A predicate that answers
+        for half its inputs and crashes for the other half is worse than one that refuses
+        both. Found by the gate review of this change."""
+        self.assertTrue(delegate.is_absolute_cwd(pathlib.Path("/abs/wt")))
+        self.assertFalse(delegate.is_absolute_cwd(pathlib.Path("relative/wt")))
+
     def test_the_flags_do_not_displace_what_backs_the_read_only_promise(self):
         plan = self._agy("review")
 
