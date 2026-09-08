@@ -229,9 +229,18 @@ def attribution_labels(config: ProjectConfig | None = None) -> tuple[str, ...]:
     vocabularies.
 
     The set is the built-in vendors plus the host default and — when a config is given —
-    each ``knobs.delegate_profiles`` entry's **vendor** (``agent:cli``, the label
-    :func:`profile_attribution` writes; the profile *name* goes in ``delegate_profile``,
-    never in a label) and the model that entry pins.
+    each ``knobs.delegate_profiles`` entry's **label vendor** (its ``vendor_label`` when
+    set, else the generic ``cli``; the label :func:`profile_attribution` writes — the
+    profile *name* goes in ``delegate_profile``, never in a label) and the model that
+    entry pins.
+
+    A machine-level ``~/.keel/providers.yaml`` entry's ``vendor_label`` is **not**
+    enumerable here and never will be: this check exists so ``keel doctor`` can tell an
+    operator that a label keel may apply is missing from the repository, and the registry
+    lives outside the repository, on one machine, unread by the project config. An
+    operator who labels a registry entry has to create ``agent:<label>`` themselves —
+    which is the same trade the registry already makes everywhere else, and is documented
+    beside the field.
 
     ``model:*`` is only enumerable that far. The effective model can arrive from
     ``--delegate <vendor>:<model>`` or a ``delegate-model:`` issue label, so the labels
@@ -241,7 +250,7 @@ def attribution_labels(config: ProjectConfig | None = None) -> tuple[str, ...]:
     models: set[str] = set()
     if config is not None:
         for profile in config.knobs.delegate_profiles.values():
-            vendors.add(profile.vendor)
+            vendors.add(profile.label_vendor())
             if profile.model:
                 models.add(profile.model)
     labels = {agent_label(vendor) for vendor in vendors}
@@ -302,7 +311,7 @@ def profile_attribution(
     rule that attribution records the *effective* implementer whenever an operator
     picked a model per run.
     """
-    record = attribution(profile.vendor, model or profile.model)
+    record = attribution(profile.label_vendor(), model or profile.model)
     record["delegate_profile"] = name
     return record
 

@@ -91,6 +91,7 @@ _ENTRY_KEYS = frozenset(
         "model_arg",
         "effort",
         "review_args",
+        "vendor_label",
     }
 )
 
@@ -120,6 +121,20 @@ class Provider:
     #: How a model reaches a CLI (``<model_arg> <model>``); ``None`` when the provider
     #: exposes no model selection.
     model_arg: str | None = None
+    #: What ``agent:<vendor>`` should say for a profile or registry entry whose
+    #: :attr:`vendor` is the transport (``cli``) rather than the model's maker (#1129).
+    #: ``None`` — the default and the state of every built-in — leaves the label alone.
+    vendor_label: str | None = None
+
+    def label_vendor(self) -> str:
+        """The vendor this provider's attribution names: ``vendor_label`` when set.
+
+        Built-ins never set it, so they keep naming themselves. A ``cli`` entry that
+        does set it stops sharing one ``agent:cli`` with every other ``cli`` entry —
+        which is what ``review-vendor-distinctness`` needs in order to tell two
+        reviewers apart.
+        """
+        return self.vendor_label or self.vendor
 
     def capabilities(self) -> dict[str, bool]:
         """What this provider can do — the three facts a dispatcher needs.
@@ -307,12 +322,21 @@ def _parse_entry(
         return None, warnings
     review_args, arg_warnings = _string_tuple(entry.get("review_args"), where=where)
     warnings.extend(arg_warnings)
+    # Fail-soft like every other registry rule: a bad label is dropped with a warning
+    # rather than skipping the whole entry. The provider still works; it just keeps the
+    # generic label it had before, which is the state this field improves on.
+    vendor_label = _text(entry.get("vendor_label"))
+    label_errors = cfg.vendor_label_errors(vendor_label, where=where)
+    if label_errors:
+        warnings.extend(f"{message}; ignoring it" for message in label_errors)
+        vendor_label = None
     fields = {
         "name": name,
         "transport": transport,
         "model": _text(entry.get("model")),
         "effort": _text(entry.get("effort")),
         "review_args": review_args,
+        "vendor_label": vendor_label,
         "source": "registry",
     }
     if transport == "api":
@@ -458,6 +482,7 @@ def profile_providers(config) -> tuple[Provider, ...]:
                 review_args=profile.role_args(review=True) if profile.review_args else (),
                 source="profile",
                 model_arg=None if api else (profile.model_arg or None),
+                vendor_label=profile.vendor_label,
             )
         )
     return tuple(providers)

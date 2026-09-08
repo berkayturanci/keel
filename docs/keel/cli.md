@@ -1734,8 +1734,13 @@ for the life of the process. The one exception is a profile that declares
 }
 ```
 
-`transport` is one of `cli` (a built-in agent CLI), `profile` (any other configured
-binary), `api` (a hosted or OpenAI-compatible endpoint) or `ollama`. `exit_code` is `null`
+`vendor` is the vendor **attribution** names — a built-in's own token, or a profile /
+registry entry's [`vendor_label`](configuration.md#vendor-label) when it declares one.
+Without that field a configured entry reports the generic `cli`, which is what made two
+entries driving different makers through one binary indistinguishable here and in the
+label derived from this field (#1129). `transport` is one of `cli` (a built-in agent CLI),
+`profile` (any other configured binary), `api` (a hosted or OpenAI-compatible endpoint) or
+`ollama`. `exit_code` is `null`
 for the HTTP transports — there is no process, and a synthetic `1` would let a caller
 mistake a refused API key for a crashed CLI. `attribution` is computed by
 `keel.agents`, so the labels a caller writes cannot drift from what core recorded.
