@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -124,18 +128,6 @@ class TheLiveRegionIsTheOnlyOneAndEveryUpdaterUsesIt(unittest.TestCase):
         self.assertIn("'No integrations found matching \"' + searchQuery + '\"'", source)
         self.assertIn("items.length === 0", source)
 
-    def test_it_stays_quiet_until_the_reader_has_searched(self):
-        """`renderGrid` also runs from `init()`, with this grid hidden.
-
-        Announcing "Showing 32 integrations" there interrupts a reader who is
-        still on the overview and has not opened the catalogue.
-        """
-        source = self._read("integrations.js")
-
-        self.assertIn(
-            'var sr = searchQuery ? document.getElementById("sr-live-region") : null;', source
-        )
-
     def test_the_strict_directive_is_the_first_statement(self):
         """A `var` above it ends the Directive Prologue and un-stricts the IIFE.
 
@@ -161,6 +153,117 @@ class TheLiveRegionIsTheOnlyOneAndEveryUpdaterUsesIt(unittest.TestCase):
         self.assertIn('sr.textContent = "";', source)
         self.assertIn("clearTimeout(srTimer)", source)
         self.assertRegex(source, r"srTimer = setTimeout\(")
+
+
+#: Drives the real `integrations.js` against a minimal DOM and reports what the
+#: live region said at each step. Written out and run under node, because the
+#: assertions above it read the file as text and a source grep cannot tell a
+#: working announcement from a deleted one — the criticism that produced this.
+_DRIVER = r"""
+const fs = require("fs"), vm = require("vm");
+function el(id) {
+  const node = { id, innerHTML: "", _attrs: {}, onclick: null, oninput: null, writes: [],
+    classList: { add() {}, remove() {}, contains: () => false },
+    setAttribute(k, v) { this._attrs[k] = v; },
+    getAttribute(k) { return this._attrs[k] ?? null; } };
+  // Every write is recorded, not just the final value: "the region ends up
+  // saying X" cannot tell an announcement that was re-set from one that was
+  // never cleared, and clearing is what makes an identical repeat audible.
+  let value = "";
+  Object.defineProperty(node, "textContent", {
+    get() { return value; },
+    set(v) { value = v; node.writes.push(v); },
+  });
+  return node;
+}
+const nodes = {
+  "sr-live-region": el("sr-live-region"),
+  "integrations-grid": el("integrations-grid"),
+  "integrations-search": el("integrations-search"),
+  "integrations-count": el("integrations-count"),
+};
+const pill = el("pill"); pill._attrs["data-cat"] = "agents";
+const document = {
+  readyState: "complete",
+  getElementById: (id) => nodes[id] || null,
+  querySelectorAll: (sel) => (sel.includes("data-cat") ? [pill] : []),
+  addEventListener() {},
+};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"),
+  { document, setTimeout, clearTimeout, console, window: {} });
+const sr = nodes["sr-live-region"], search = nodes["integrations-search"];
+const out = {}, tick = () => new Promise((r) => setTimeout(r, 5));
+const since = () => { const w = sr.writes.slice(); sr.writes.length = 0; return w; };
+(async () => {
+  await tick();                       // let any pending timer fire first
+  out.initial = since();
+  search.oninput({ target: { value: "claude" } }); await tick();
+  out.searched = since();
+  search.oninput({ target: { value: "claude" } }); await tick();
+  out.repeated = since();
+  search.oninput({ target: { value: "zzzznope" } }); await tick();
+  out.empty_result = since();
+  search.oninput({ target: { value: "" } }); await tick();
+  out.cleared = since();
+  console.log(JSON.stringify(out));
+})();
+"""
+
+NODE = shutil.which("node")
+
+
+@unittest.skipUnless(NODE, "needs node to execute the page script")
+class TheAnnouncementIsExercisedRatherThanGrepped(unittest.TestCase):
+    """The same script the site ships, run against a stub DOM.
+
+    Every other assertion in this file reads `integrations.js` as text, which
+    cannot tell a working announcement from a deleted one. This drives it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        workdir = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, workdir, True)
+        driver = Path(workdir) / "drive.js"
+        driver.write_text(_DRIVER, encoding="utf-8")
+        done = subprocess.run(
+            [NODE, str(driver), str(REPO_ROOT / "website" / "integrations.js")],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert done.returncode == 0, done.stderr
+        cls.said = json.loads(done.stdout)
+
+    def test_the_initial_render_writes_nothing(self):
+        """`init()` runs with this grid hidden behind the overview.
+
+        Asserted on the writes, after the timers have run — reading the value
+        synchronously passes whether or not a `setTimeout` is about to speak.
+        """
+        self.assertEqual(self.said["initial"], [])
+
+    def test_a_search_announces_the_count(self):
+        self.assertRegex(self.said["searched"][-1], r"^Showing \d+ integrations$")
+
+    def test_an_identical_search_is_cleared_and_said_again(self):
+        """A live region announces a change, so an unchanged value is silence.
+
+        The clear is the mechanism, so the writes must show it: "" and then the
+        message. Without it the second search leaves the same string in place.
+        """
+        self.assertEqual(self.said["repeated"][0], "")
+        self.assertRegex(self.said["repeated"][-1], r"^Showing \d+ integrations$")
+        self.assertGreaterEqual(len(self.said["repeated"]), 2)
+
+    def test_no_matches_names_the_query(self):
+        self.assertEqual(self.said["empty_result"][-1], 'No integrations found matching "zzzznope"')
+
+    def test_clearing_the_box_announces_the_full_set(self):
+        """Emptying the box is a result-set change, and a `searchQuery` gate
+        silenced exactly that — the regression this test exists for."""
+        self.assertRegex(self.said["cleared"][-1], r"^Showing \d+ integrations$")
+        self.assertNotEqual(self.said["cleared"][-1], self.said["searched"][-1])
 
 
 if __name__ == "__main__":

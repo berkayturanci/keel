@@ -13,6 +13,9 @@
   // ends the Directive Prologue and leaves the string an inert
   // expression, silently un-stricting this whole IIFE.
   var srTimer = null;
+  // Set the first time the reader touches a filter, so the initial render is
+  // silent and every change after it is announced — including clearing the box.
+  var srArmed = false;
 
   var INTEGRATIONS = [
     // --- 1. AI Agents & Coding Assistants (12) ---
@@ -338,11 +341,16 @@
       countEl.textContent = items.length + " of " + INTEGRATIONS.length + " integrations";
     }
 
-    // Only after the user has actually filtered. `renderGrid` also runs from
-    // `init()` on DOMContentLoaded, while the landing view is the overview and
-    // this grid is hidden — announcing "Showing 32 integrations" there is an
-    // unsolicited interruption on a page the reader has not opened yet.
-    var sr = searchQuery ? document.getElementById("sr-live-region") : null;
+    // Gated on whether the reader has touched a filter, NOT on the query being
+    // non-empty. `renderGrid` also runs from `init()` on DOMContentLoaded while
+    // the landing view is the overview and this grid is hidden, and announcing
+    // "Showing 32 integrations" there interrupts a page nobody opened. But
+    // *clearing* the box is a result-set change worth announcing, and an
+    // emptiness test silences exactly that.
+    var sr = srArmed ? document.getElementById("sr-live-region") : null;
+    // Cancelled unconditionally: a keystroke that lands while an announcement
+    // is pending must not let the stale one fire after the results moved on.
+    if (srTimer) { clearTimeout(srTimer); srTimer = null; }
     if (sr) {
       var announcement = items.length === 0
         ? 'No integrations found matching "' + searchQuery + '"'
@@ -354,7 +362,6 @@
       // avoid this by clearing after their message; a filter fires on every
       // keystroke, so it clears before instead.
       sr.textContent = "";
-      if (srTimer) { clearTimeout(srTimer); }
       srTimer = setTimeout(function () { sr.textContent = announcement; }, 0);
     }
 
@@ -420,6 +427,7 @@
         btn.classList.add("active");
         btn.setAttribute("aria-checked", "true");
         activeCategory = btn.getAttribute("data-cat");
+        srArmed = true;
         renderGrid();
       };
     });
@@ -428,6 +436,7 @@
     if (searchInput) {
       searchInput.oninput = function (e) {
         searchQuery = e.target.value;
+        srArmed = true;
         renderGrid();
       };
     }
