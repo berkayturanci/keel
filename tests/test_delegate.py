@@ -9,6 +9,7 @@ write-enabling flag* — be asserted per vendor rather than written down in pros
 from __future__ import annotations
 
 import dataclasses
+import json
 import pathlib
 import re
 import unittest
@@ -1058,8 +1059,22 @@ class TheWorkingDirectoryKeelNamesIsTheOneAgyEdits(unittest.TestCase):
         second, while an absolute one short-circuited to True. A predicate that answers
         for half its inputs and crashes for the other half is worse than one that refuses
         both. Found by the gate review of this change."""
-        self.assertTrue(delegate.is_absolute_cwd(pathlib.Path("/abs/wt")))
+        # `Path.cwd()` rather than `Path("/abs/wt")`: on Windows the latter is
+        # `\abs\wt`, which has no drive and is *not* absolute, so the literal would
+        # assert the opposite of what it says on one of the three CI platforms.
+        self.assertTrue(delegate.is_absolute_cwd(pathlib.Path.cwd()))
         self.assertFalse(delegate.is_absolute_cwd(pathlib.Path("relative/wt")))
+
+    def test_a_pathlike_does_not_survive_into_the_argv(self):
+        """`RunPlan.argv` is `tuple[str, ...]` and the plan is serialised, so a `Path`
+        that passed the predicate would raise out of `as_dict` — at the point where the
+        contract is printed rather than built. Also from the gate review."""
+        plan = delegate.plan_run(
+            _builtin("agy"), "implement", PROMPT, cwd=pathlib.Path.cwd(), timeout=60
+        )
+
+        self.assertTrue(all(isinstance(argument, str) for argument in plan.argv), plan.argv)
+        json.dumps(plan.as_dict())
 
     def test_the_flags_do_not_displace_what_backs_the_read_only_promise(self):
         plan = self._agy("review")

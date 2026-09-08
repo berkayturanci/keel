@@ -413,6 +413,13 @@ def plan_run(
         )
     if not prompt_path:
         raise DelegateError("no-prompt", "--prompt-file is required")
+    # Normalised once, here, because a :class:`RunPlan` is a frozen JSON document: a
+    # ``Path`` reaching this far would pass every predicate, land in ``cwd`` and in the
+    # ``--add-dir`` argv, and then raise ``TypeError: Object of type PosixPath is not
+    # JSON serializable`` out of ``as_dict`` — at the point where the contract is
+    # printed rather than where the wrong type entered. Found by the gate review of
+    # #1134.
+    cwd = None if cwd is None else str(cwd)
     effective = model or provider.model
     _check_model(provider, effective)
     read_only = role in READ_ONLY_ROLES
@@ -543,7 +550,7 @@ def _builtin_argv(
     model: str | None,
     effort_args: tuple[str, ...] = (),
     cwd: str | None = None,
-    timeout: int | None = None,
+    timeout: int = DEFAULT_TIMEOUT_S,
 ) -> tuple[tuple[str, ...], str]:
     """The argv + stdin framing for one of the three built-in agent CLIs.
 
@@ -605,14 +612,20 @@ def _builtin_argv(
     # that reached here with a relative one carries the warning instead of an argv the
     # child would resolve against itself.
     if is_absolute_cwd(cwd):
-        argv += ["--add-dir", cwd]
+        # ``str`` by the time it reaches here — :func:`plan_run` normalises it — and
+        # spelled again because this helper is reachable from a test with any value, and
+        # ``RunPlan.argv`` is ``tuple[str, ...]``.
+        argv += ["--add-dir", str(cwd)]
     # And `--print-timeout` is why keel's own `--timeout` used to mean nothing here:
     # agy's print mode defaults to 5m and stops on its own, so `--timeout 900` against
     # a real brief died at 298s with agy's `timeout waiting for response` — keel's
     # bound never reached the process it was bounding. Go duration spelling, per
     # `agy --help` ("default 5m0s").
-    if timeout:
-        argv += ["--print-timeout", f"{timeout}s"]
+    #
+    # Unconditional, because :func:`plan_run` refuses a non-positive timeout before
+    # reaching here — a guard on it would be a branch no input can take, which the
+    # 100 % coverage bar reports as exactly what it is. Found by the gate review.
+    argv += ["--print-timeout", f"{timeout}s"]
     return tuple(argv), STDIN_STREAM_JSON
 
 
