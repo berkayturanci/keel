@@ -29,7 +29,7 @@ The CLI equivalents are `claude plugin marketplace add berkayturanci/keel` and
 | `.claude-plugin/plugin.json` | Plugin manifest — `name: keel`, `version` (matches `keel.__version__`), description, author, `homepage`, `license: Apache-2.0`. Its `version` is kept in lockstep with the package by a test. |
 | `.claude-plugin/marketplace.json` | Single-plugin marketplace — `name: keel`, `owner`, one `plugins[]` entry with `source: "./"` (the plugin lives at the repo root). Lets the repo be added via `/plugin marketplace add berkayturanci/keel`. |
 | `commands/<cmd>.md` | The plugin command bodies, discovered from the default `commands/` directory. **Generated** from `src/keel/adapters/commands/`; do not hand-edit. |
-| `skill/keel-onboard/SKILL.md` | The onboarding skill (referenced by `plugin.json`'s `skills` field). |
+| `skills/keel-onboard/SKILL.md` | The onboarding skill. Named by `plugin.json`'s `skills` field **and** found by Antigravity's root-directory convention, which reads no manifest (#1137). |
 
 The command bodies are the **same** project-neutral adapters used by
 `keel install-adapter claude` — they read every project value from `.keel/project.yaml` via
