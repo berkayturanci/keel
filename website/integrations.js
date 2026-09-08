@@ -128,7 +128,7 @@
       logo: "logos/hermes.png"
     },
 
-    // --- 2. Supported LLM Models & Backends (8) ---
+    // --- 2. Supported LLM Models & Backends (6) ---
     {
       id: "anthropic-claude",
       name: "Anthropic Claude",
