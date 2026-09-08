@@ -13138,7 +13138,11 @@ class DelegateCommandTest(unittest.TestCase):
         self.assertEqual(document["attribution"]["agent_label"], "agent:codex")
         argv, kwargs = ran.call_args[0][0], ran.call_args[1]
         self.assertEqual(argv[:2], ["codex", "exec"])
-        self.assertEqual(kwargs["cwd"], "/work")
+        # `abspath`, not the literal: `keel delegate run` resolves `--cwd` before
+        # planning (#1134), and on Windows `/work` is root-relative to the current
+        # drive — the same directory, spelled `D:\\work`. Asserting the literal made
+        # this pass on two platforms and fail on the third.
+        self.assertEqual(kwargs["cwd"], os.path.abspath("/work"))
         self.assertEqual(kwargs["timeout"], 60)
 
     def test_a_failing_run_exits_one_with_an_error_code_and_no_traceback(self):
