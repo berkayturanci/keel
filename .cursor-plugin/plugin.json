@@ -14,7 +14,7 @@
     "github",
     "automation",
     "multi-agent",
-    "claude-code"
+    "cursor"
   ],
   "logo": "website/favicon.svg",
   "skills": "./skills"

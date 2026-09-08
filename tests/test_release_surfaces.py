@@ -166,7 +166,17 @@ class TheCursorManifestMatchesTheSchemaItTargets(unittest.TestCase):
     """
 
     MANIFEST = ".cursor-plugin/plugin.json"
-    #: https://cursor.com/docs/reference/plugins — "Required fields" / "Optional fields".
+    #: https://cursor.com/docs/reference/plugins — the **plugin manifest's** "Required
+    #: fields" / "Optional fields" tables.
+    #:
+    #: That page carries a second table, "Plugin entry fields", which adds ``category``,
+    #: ``tags`` and ``source``. Those describe an entry in a *marketplace* manifest's
+    #: ``plugins`` array — a different file, which keel does not ship for Cursor — and the
+    #: page says the two are merged with manifest values taking precedence. They are
+    #: deliberately absent here: this set describes the file being validated, and widening
+    #: it to fields the manifest's own table does not list would let an unread key through
+    #: while claiming the schema was checked. A gate reviewer raised them; the two tables
+    #: are the answer.
     REQUIRED = {"name"}
     OPTIONAL = {
         "description",
@@ -213,6 +223,15 @@ class TheCursorManifestMatchesTheSchemaItTargets(unittest.TestCase):
         self.assertEqual(
             [], missing, f"the Claude manifest declares these and this does not: {missing}"
         )
+
+    def test_the_keywords_name_this_host(self):
+        """`keywords` is "tags for discovery" — the Codex manifest specialises its last one
+        to `codex`, and this one was copied from the Claude manifest, so the file
+        advertising keel *to Cursor* was tagged `claude-code`. Found by both gate seats."""
+        keywords = self.manifest.get("keywords") or []
+
+        self.assertIn("cursor", keywords, f"the Cursor manifest advertises {keywords}")
+        self.assertNotIn("claude-code", keywords)
 
     def test_and_names_the_same_skills_directory(self):
         """#1137: one root `skills/` for every agent, named by every manifest."""
@@ -280,9 +299,14 @@ class EveryPluginManifestIsARegisteredSurface(unittest.TestCase):
         )
 
     def test_and_every_registered_manifest_still_exists(self):
-        """The mirror: a table entry for a deleted file makes `--check-surfaces` read a
-        file that is not there, which `required=False` turns into silence rather than a
-        failure."""
+        """The mirror: an entry for a file that is gone is a surface nothing can read.
+
+        `release_check` reports it rather than passing silently, so this is not covering a
+        hole — it fails *here*, at the table, with a message naming the manifest, instead
+        of in a release check that says a file is missing. (An earlier draft of this
+        docstring claimed a `required=False` field turned it into silence; that field is
+        ai-jury's `Surface`, not keel's. Found by the gate review.)
+        """
         root = Path(release_surfaces.__file__).resolve().parents[1]
         registered = [
             surface.path
