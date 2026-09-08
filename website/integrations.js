@@ -35,6 +35,7 @@
       badge: "AI Code Editor",
       desc: "Integrated via knobs.delegate_profiles, background task sync, and AGENTS.md rules.",
       cmd: "keel implement .keel/project.yaml 101 --delegate cursor",
+      note: "Needs a <code>knobs.delegate_profiles.cursor</code> entry naming <code>cursor-agent</code> — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/cursor.svg"
     },
     {
@@ -80,6 +81,7 @@
       badge: "Terminal Agent",
       desc: "Interactive terminal pair programmer mapped to Keel's s4 implement via generic CLI delegates.",
       cmd: "keel implement .keel/project.yaml 101 --delegate aider",
+      note: "Needs a <code>knobs.delegate_profiles.aider</code> entry naming the <code>aider</code> binary — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/aider.svg"
     },
     {
@@ -89,6 +91,7 @@
       badge: "Open Assistant",
       desc: "Open-source coding assistant integrated via standard POSIX CLI delegate profiles.",
       cmd: "keel implement .keel/project.yaml 101 --delegate opencode",
+      note: "Needs a <code>knobs.delegate_profiles.opencode</code> entry naming the <code>opencode</code> binary — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/opencode.svg"
     },
     {
@@ -98,6 +101,7 @@
       badge: "AI Code Editor",
       desc: "Adaptive AI editor companion configured via delegate profiles and Keel deterministic gates.",
       cmd: "keel implement .keel/project.yaml 101 --delegate trae",
+      note: "Needs a <code>knobs.delegate_profiles.trae</code> entry naming the <code>trae</code> binary — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/trae.jpg"
     },
     {
@@ -116,6 +120,7 @@
       badge: "AI Assistant",
       desc: "Moonshot Kimi coding assistant integration for large-context codebase analysis and implementation.",
       cmd: "keel implement .keel/project.yaml 101 --delegate kimi",
+      note: "Needs a <code>knobs.delegate_profiles.kimi</code> entry naming the Kimi CLI binary — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/kimi-cli.png"
     },
     {
@@ -124,7 +129,8 @@
       category: "assistants",
       badge: "Autonomous Agent",
       desc: "Lightweight autonomous agent runner dispatched across parallel Swarm isolated worktrees.",
-      cmd: "keel swarm-run .keel/project.yaml",
+      cmd: "keel swarm-run .keel/project.yaml --delegate hermes",
+      note: "Needs a <code>knobs.delegate_profiles.hermes</code> entry naming the agent's binary — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/hermes.png"
     },
 
@@ -308,7 +314,8 @@
         item.name.toLowerCase().indexOf(q) >= 0 ||
         item.desc.toLowerCase().indexOf(q) >= 0 ||
         item.badge.toLowerCase().indexOf(q) >= 0 ||
-        item.cmd.toLowerCase().indexOf(q) >= 0;
+        item.cmd.toLowerCase().indexOf(q) >= 0 ||
+        (item.note || "").toLowerCase().indexOf(q) >= 0;
       return matchesCat && matchesQuery;
     });
   }
@@ -373,6 +380,10 @@
         '    <code>' + item.cmd + '</code>',
         '    <button type="button" class="integ-copy-btn" data-copy="' + item.cmd.replace(/"/g, '&quot;') + '" title="Copy command" aria-label="Copy ' + item.name + ' command">Copy</button>',
         '  </div>',
+        // The command alone is only half of what a reader needs when the delegate it
+        // names is not a built-in: it parses, it dry-runs, and it resolves to nothing
+        // until a profile exists (#1132). Cards that need one say so here.
+        item.note ? '  <p class="integ-note">' + item.note + '</p>' : '',
         '</div>'
       );
     });
