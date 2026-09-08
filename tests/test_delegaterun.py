@@ -1004,9 +1004,7 @@ class AVendorTimeoutIsATimeoutNotAQuotaRefusal(unittest.TestCase):
 
     def _run_agy(self, stdout, stderr=""):
         run = _Recorder(CommandResult(False, 1, stdout + stderr, stdout=stdout, stderr=stderr))
-        return delegaterun.execute(
-            _plan("agy", "implement", timeout=900), _run=run, _read=_read
-        )
+        return delegaterun.execute(_plan("agy", "implement", timeout=900), _run=run, _read=_read)
 
     def test_the_vendors_own_timeout_is_reported_as_a_timeout(self):
         result = self._run_agy(self._stream())
@@ -1032,9 +1030,7 @@ class AVendorTimeoutIsATimeoutNotAQuotaRefusal(unittest.TestCase):
         for chatter in self.FALSE_429:
             with self.subTest(chatter=chatter[:40]):
                 self.assertFalse(delegaterun.rate_limited(chatter))
-                result = self._run_agy(
-                    self._stream(result=self._PLAIN_FAILURE, chatter=chatter)
-                )
+                result = self._run_agy(self._stream(result=self._PLAIN_FAILURE, chatter=chatter))
                 self.assertEqual(result["error_code"], "nonzero-exit")
 
     def test_nor_is_a_review_that_discusses_rate_limiting(self):
