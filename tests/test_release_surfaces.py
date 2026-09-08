@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -55,6 +56,7 @@ FIXTURE: dict[str, str] = {
     "src/keel/__init__.py": '"""keel."""\n\n__version__ = "{v}"\n',
     ".claude-plugin/plugin.json": '{{\n  "name": "keel",\n  "version": "{v}"\n}}\n',
     ".codex-plugin/plugin.json": '{{\n  "name": "keel",\n  "version": "{v}"\n}}\n',
+    ".cursor-plugin/plugin.json": '{{\n  "name": "keel",\n  "version": "{v}"\n}}\n',
     # The historical prose must survive the bump; the pinned install must not.
     "README.md": (
         'pip install "git+https://github.com/berkayturanci/keel@v{v}"\n'
@@ -143,6 +145,153 @@ class TestTheTableIsTheSingleSource(unittest.TestCase):
                     found = release_surfaces.versions_in(surface, text)
                     self.assertTrue(found, f"{surface.pattern} matched nothing in {surface.path}")
                     self.assertEqual(set(found), {OLD})
+
+
+class TheCursorManifestMatchesTheSchemaItTargets(unittest.TestCase):
+    """A listing manifest is only listing metadata if it uses the host's fields (#1139).
+
+    The sibling change in ai-jury shipped `displayName` and no `logo`, and said in three
+    places that `displayName` was what stopped the plugin rendering as a bare repository
+    slug. It is not a Cursor field. Cursor's plugin reference documents the optional set as
+    `description`, `version`, `author`, `homepage`, `repository`, `license`, `keywords`,
+    `logo`, `rules`, `agents`, `skills`, `commands`, `hooks`, `mcpServers`, `variables` —
+    and `logo` is the listing asset: *"Relative path to a logo file in the repo … Relative
+    paths resolve to raw.githubusercontent.com URLs."* A gate reviewer read the page and
+    the diff and found the claim was in neither.
+
+    The GUI listing cannot be watched from a CLI. What can be asserted is that the keys
+    shipped are keys the host documents, that the logo is a file this repository has, and
+    that the manifest really mirrors the Claude one it says it mirrors — including the
+    `skills` path, which keeps it inside #1137's one-root-`skills/` rule.
+    """
+
+    MANIFEST = ".cursor-plugin/plugin.json"
+    #: https://cursor.com/docs/reference/plugins — "Required fields" / "Optional fields".
+    REQUIRED = {"name"}
+    OPTIONAL = {
+        "description",
+        "version",
+        "author",
+        "homepage",
+        "repository",
+        "license",
+        "keywords",
+        "logo",
+        "rules",
+        "agents",
+        "skills",
+        "commands",
+        "hooks",
+        "mcpServers",
+        "variables",
+    }
+
+    def setUp(self):
+        self.root = Path(release_surfaces.__file__).resolve().parents[1]
+        self.manifest = json.loads((self.root / self.MANIFEST).read_text(encoding="utf-8"))
+
+    def test_every_key_is_one_the_host_documents(self):
+        unknown = sorted(set(self.manifest) - self.REQUIRED - self.OPTIONAL)
+
+        self.assertEqual(
+            [], unknown, f"not Cursor plugin manifest fields, so the host ignores them: {unknown}"
+        )
+
+    def test_the_listing_asset_is_the_one_the_host_reads(self):
+        logo = self.manifest.get("logo")
+
+        self.assertIsInstance(logo, str, "no logo, so the listing has no image to show")
+        self.assertFalse(logo.startswith(("http://", "https://", "/")), logo)
+        self.assertTrue((self.root / logo).is_file(), f"{logo} is not in this repository")
+
+    def test_it_mirrors_the_claude_manifest_it_claims_to(self):
+        claude = json.loads(
+            (self.root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        missing = sorted(set(claude) - set(self.manifest))
+
+        self.assertEqual(
+            [], missing, f"the Claude manifest declares these and this does not: {missing}"
+        )
+
+    def test_and_names_the_same_skills_directory(self):
+        """#1137: one root `skills/` for every agent, named by every manifest."""
+        claude = json.loads(
+            (self.root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(self.manifest["skills"], claude["skills"])
+
+
+class EveryPluginManifestIsARegisteredSurface(unittest.TestCase):
+    """A manifest that names a version and is not in the table goes stale silently (#1139).
+
+    keel ships `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`, and both are
+    registered. The ecosystem repositories keel is measured against ship eight to twelve —
+    `.cursor-plugin/`, `.agy/`, `.kimi-plugin/`, `.grok-plugin/`, … — and each is one small
+    JSON file, which is exactly the shape of thing that gets added without being wired into
+    the release.
+
+    The failure would be invisible for one release and then permanent: the new manifest
+    keeps the version it was born with while everything else moves, and `agy plugin list`
+    or the Cursor marketplace reports a keel that has not existed for months. `keel doctor`
+    does not check it, and nothing else reads these files.
+
+    So the rule is discovery-based rather than a second list: whatever manifest exists in
+    the tree must be in `RELEASE_SURFACES`. Adding `.cursor-plugin/plugin.json` without a
+    table entry fails here, at the point of adding it.
+    """
+
+    #: Where a per-agent plugin manifest lives, by the convention every one of these
+    #: ecosystems uses: a dot-directory at the repository root holding `plugin.json`.
+    _MANIFEST_GLOB = ".*/plugin.json"
+
+    def _manifests(self) -> list[str]:
+        root = Path(release_surfaces.__file__).resolve().parents[1]
+        found = sorted(
+            path.relative_to(root).as_posix()
+            for path in root.glob(self._MANIFEST_GLOB)
+            if ".git/" not in path.as_posix()
+        )
+        self.assertTrue(found, "no plugin manifests found — the glob no longer matches")
+        return found
+
+    def test_the_known_manifests_are_still_found(self):
+        """Vacuity: a glob that stopped matching would make the check below pass.
+
+        A *subset* assertion on purpose — adding `.cursor-plugin/plugin.json` should fail
+        exactly one test, the registration one, with a message that says what to do. A
+        equality here would fail two and send the reader to the glob instead.
+        """
+        self.assertLessEqual(
+            {".claude-plugin/plugin.json", ".codex-plugin/plugin.json"}, set(self._manifests())
+        )
+
+    def test_every_manifest_in_the_tree_is_registered(self):
+        registered = {surface.path for surface in release_surfaces.RELEASE_SURFACES}
+        unregistered = [path for path in self._manifests() if path not in registered]
+
+        self.assertEqual(
+            [],
+            unregistered,
+            "these plugin manifests name a version and are not in RELEASE_SURFACES, so the "
+            "release bump will not touch them and they will report a stale keel:\n"
+            + "\n".join(unregistered),
+        )
+
+    def test_and_every_registered_manifest_still_exists(self):
+        """The mirror: a table entry for a deleted file makes `--check-surfaces` read a
+        file that is not there, which `required=False` turns into silence rather than a
+        failure."""
+        root = Path(release_surfaces.__file__).resolve().parents[1]
+        registered = [
+            surface.path
+            for surface in release_surfaces.RELEASE_SURFACES
+            if surface.path.endswith("plugin.json")
+        ]
+        missing = [path for path in registered if not (root / path).is_file()]
+
+        self.assertEqual([], missing, f"registered but absent: {missing}")
 
 
 class TestBumpThenCheck(unittest.TestCase):

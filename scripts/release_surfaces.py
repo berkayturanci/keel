@@ -91,6 +91,12 @@ RELEASE_SURFACES: tuple[Surface, ...] = (
         rf'"version": "(?P<version>{VERSION_RE})"',
         False,
     ),
+    Surface(
+        ".cursor-plugin/plugin.json",
+        '"version": "{version}"',
+        rf'"version": "(?P<version>{VERSION_RE})"',
+        False,
+    ),
     # --- pinned-install references a user copies ------------------------------
     Surface("README.md", "keel@v{version}", rf"keel@v(?P<version>{VERSION_RE})", False),
     Surface(
