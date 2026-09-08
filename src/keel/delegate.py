@@ -49,6 +49,8 @@ the fail-soft ``error_code`` of the JSON contract — a traceback never reaches 
 from __future__ import annotations
 
 import json
+import posixpath
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -97,6 +99,7 @@ __all__ = [
     "is_safe_body_model_token",
     "model_reaches_argv",
     "model_token_issue",
+    "is_absolute_cwd",
     "plan_run",
     "stream_json_frame",
     "parse_stream_json",
@@ -134,6 +137,11 @@ OLLAMA_GENERATE_URL = "http://127.0.0.1:11434/api/generate"
 #: agy's NDJSON stdin/stdout framing. See the module docstring for why keel uses it
 #: rather than ``--print=<prompt>``.
 AGY_STREAM_ARGS = ("--input-format", "stream-json", "--output-format", "stream-json")
+
+#: A Windows absolute path (``C:\\wt`` / ``C:/wt``) or a UNC share (``\\\\host\\share``).
+#: ``posixpath.isabs`` says False for both, and a plan is a document that may be read
+#: on a platform other than the one that wrote it.
+_WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 
 #: The only tools a read-only ``claude`` invocation may use. An **allow-list**: a denylist
 #: of write tools has to be extended every time the CLI grows one, and is wrong in the
@@ -405,6 +413,13 @@ def plan_run(
         )
     if not prompt_path:
         raise DelegateError("no-prompt", "--prompt-file is required")
+    # Normalised once, here, because a :class:`RunPlan` is a frozen JSON document: a
+    # ``Path`` reaching this far would pass every predicate, land in ``cwd`` and in the
+    # ``--add-dir`` argv, and then raise ``TypeError: Object of type PosixPath is not
+    # JSON serializable`` out of ``as_dict`` — at the point where the contract is
+    # printed rather than where the wrong type entered. Found by the gate review of
+    # #1134.
+    cwd = None if cwd is None else str(cwd)
     effective = model or provider.model
     _check_model(provider, effective)
     read_only = role in READ_ONLY_ROLES
@@ -419,8 +434,20 @@ def plan_run(
     backed = read_only
     if transport == "cli":
         argv, stdin_mode = _builtin_argv(
-            provider, read_only=read_only, model=effective, effort_args=applied.argv
+            provider,
+            read_only=read_only,
+            model=effective,
+            effort_args=applied.argv,
+            cwd=cwd,
+            timeout=timeout,
         )
+        if cwd and not is_absolute_cwd(cwd) and provider.name == "agy":
+            warnings = warnings + (
+                f"cwd {cwd!r} is relative; agy resolves --add-dir against the directory "
+                "it is started in, so it would name a path inside the worktree instead of "
+                "the worktree. The flag is omitted and agy will edit its own scratch copy "
+                "(#1134) — pass an absolute path.",
+            )
     elif transport == "profile":
         argv, stdin_mode, backed, profile_warnings = _profile_argv(
             provider, profile, read_only=read_only, model=effective
@@ -488,12 +515,42 @@ def _transport_of(provider: providers_mod.Provider) -> str:
     return "profile"
 
 
+def is_absolute_cwd(cwd: str | None) -> bool:
+    """Is ``cwd`` a path agy's ``--add-dir`` can be given? (pure — no filesystem)
+
+    The child is started **inside** ``cwd`` — :func:`keel.delegaterun._run_argv` passes it
+    to the runner — so agy resolves a relative ``--add-dir`` against that directory:
+    ``--cwd worktrees/foo`` would name ``<root>/worktrees/foo/worktrees/foo``, and the
+    real worktree would go untouched exactly as it did before #1134. ``--add-dir .`` is
+    not a way out; it was measured, and the run ended on agy's timeout with the tree
+    unchanged, the same as passing no flag at all.
+
+    So the path has to be absolute, and this module cannot make it so: ``abspath`` reads
+    the *host's* working directory into a :class:`RunPlan` that is frozen, JSON-stable and
+    may be executed somewhere else. The CLI resolves it; this refuses what is left, and
+    :func:`plan_run` says why in a warning. Found by the gate review of #1134.
+
+    Both separators are accepted, because a plan built on one platform is a document that
+    may be read on another.
+    """
+    # ``str(cwd)`` rather than ``cwd``: the annotation says ``str | None``, but
+    # ``posixpath.isabs`` accepts a ``PathLike`` while ``re.match`` does not, so a
+    # *relative* ``Path`` would fall through the first test and raise ``TypeError`` out of
+    # the second while an absolute one short-circuited to ``True``. A predicate that
+    # answers for half its inputs and crashes for the other half is worse than one that
+    # refuses both. Found by the gate review of #1134.
+    text = "" if cwd is None else str(cwd)
+    return bool(text) and (posixpath.isabs(text) or _WINDOWS_ABSOLUTE.match(text) is not None)
+
+
 def _builtin_argv(
     provider: providers_mod.Provider,
     *,
     read_only: bool,
     model: str | None,
     effort_args: tuple[str, ...] = (),
+    cwd: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT_S,
 ) -> tuple[tuple[str, ...], str]:
     """The argv + stdin framing for one of the three built-in agent CLIs.
 
@@ -542,6 +599,33 @@ def _builtin_argv(
     argv += ["--dangerously-skip-permissions", *AGY_STREAM_ARGS]
     if model:
         argv += ["--model", model]
+    # `--add-dir` is what makes the working directory keel named the one agy edits
+    # (#1134). Without it agy works in `~/.gemini/antigravity-cli/scratch/<basename>` —
+    # its own copy — so an `implement` run returned prose about files it had changed
+    # while the worktree keel handed it stayed clean, and the first thing downstream
+    # would have seen is a pull request with no diff. Measured, not inferred: three
+    # runs of one prompt against a standalone clone, a linked worktree, and a linked
+    # worktree with this flag. Only the third edited the real file, and only it made
+    # no scratch copy — the other two never touched the directory at all and ended on
+    # agy's own print timeout.
+    # Absolute only — see :func:`is_absolute_cwd`. The caller makes it absolute; a plan
+    # that reached here with a relative one carries the warning instead of an argv the
+    # child would resolve against itself.
+    if is_absolute_cwd(cwd):
+        # ``str`` by the time it reaches here — :func:`plan_run` normalises it — and
+        # spelled again because this helper is reachable from a test with any value, and
+        # ``RunPlan.argv`` is ``tuple[str, ...]``.
+        argv += ["--add-dir", str(cwd)]
+    # And `--print-timeout` is why keel's own `--timeout` used to mean nothing here:
+    # agy's print mode defaults to 5m and stops on its own, so `--timeout 900` against
+    # a real brief died at 298s with agy's `timeout waiting for response` — keel's
+    # bound never reached the process it was bounding. Go duration spelling, per
+    # `agy --help` ("default 5m0s").
+    #
+    # Unconditional, because :func:`plan_run` refuses a non-positive timeout before
+    # reaching here — a guard on it would be a branch no input can take, which the
+    # 100 % coverage bar reports as exactly what it is. Found by the gate review.
+    argv += ["--print-timeout", f"{timeout}s"]
     return tuple(argv), STDIN_STREAM_JSON
 
 

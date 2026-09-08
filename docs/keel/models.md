@@ -445,6 +445,25 @@ If you have official agent CLI tools installed and authenticated on your machine
 /keel:ship 42 --delegate agy
 ```
 
+`agy` is the one built-in CLI that does **not** work in the process's working directory
+by default: it operates on its own copy under `~/.gemini/antigravity-cli/scratch/`, so
+before #1134 an `implement` run edited that copy and left the worktree keel gave it
+untouched. keel now passes `--add-dir <cwd>` on every agy dispatch that has an **absolute** `cwd`,
+which is what makes the directory keel named the directory agy edits — `keel delegate run`
+resolves a relative `--cwd` before planning, because the child is started inside that
+directory and would otherwise resolve the flag against itself — measured against a
+standalone clone and a linked git worktree, with and without the flag; only the runs
+carrying it touched the real files, and only they made no scratch copy.
+
+keel also passes `--print-timeout <timeout>s`. agy's print mode stops at its own 5m
+default, so a `--timeout 900` dispatch used to die at 298s with agy's own
+`timeout waiting for response` — keel's bound never reached the process it was bounding.
+
+`claude` and `codex` take neither flag: both run where they are started. Neither has been
+exercised here in the `implement` role, so that is a statement about their documented
+behaviour rather than a measurement, and it is worth making the same check before relying
+on one of them to modify a worktree.
+
 For all three, the invocation is core's: `keel delegate run` selects the vendor's
 read-only mode for `--role review|gate|chair` and its write-enabled mode for
 `--role implement|fix`, and the prompt travels on the CLI's standard input rather than its

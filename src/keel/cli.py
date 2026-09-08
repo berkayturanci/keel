@@ -5342,13 +5342,20 @@ def _delegate_config(args: argparse.Namespace):
 def _delegate_plan(args: argparse.Namespace):
     """``(plan, failure)`` — exactly one of the two is ``None``."""
     registry = providers_mod.load_registry(args.registry)
+    # Resolved here rather than in the planner, which is pure and whose output is a frozen
+    # document: `abspath` reads this process's working directory, which is a property of
+    # the invocation, not of the plan. It matters because a delegate may be *given* the
+    # directory as an argument as well as started in it — agy's `--add-dir` — and a
+    # relative path means something different to a child that is already inside it
+    # (#1134).
+    cwd = os.path.abspath(args.cwd) if args.cwd else args.cwd
     try:
         resolution = delegate.resolve_provider(_delegate_config(args), registry, args.provider)
         plan = delegate.plan_run(
             resolution.provider,
             args.role,
             args.prompt_file,
-            args.cwd,
+            cwd,
             args.timeout,
             args.effort,
             args.model or resolution.model,
