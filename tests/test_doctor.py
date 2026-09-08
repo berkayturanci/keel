@@ -1129,8 +1129,9 @@ class TestDoctorProvidersCli(unittest.TestCase):
     def test_the_probe_sees_the_loaded_project_config(self):
         seen = {}
 
-        def fake_collect(config):
+        def fake_collect(config, **kwargs):
             seen["config"] = config
+            seen.update(kwargs)
             return self._collect()
 
         with tempfile.TemporaryDirectory() as d:
@@ -1555,3 +1556,92 @@ class TestDoctorLabelsCli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheProvidersProbeReadsTheRegistryItWasPointedAt(unittest.TestCase):
+    """`doctor --providers` takes `--registry`, like `delegate run` (#1130).
+
+    Before it did, the flag was silently not a flag: the command ran against the
+    default `~/.keel/providers.yaml`, reported `registry: … (not present)`, and the
+    entry the operator was checking did not appear. Nothing was wrong with the
+    registry — the command answered about a different file, with no error.
+
+    So these assert the **report**, not the plumbing. Spying on the keyword
+    argument is not enough: keep `registry_path=args.registry` and overwrite
+    `registry_path` in the payload before it renders, and a kwarg assertion stays
+    green while the operator sees the default path again — the original bug's
+    exact shape. Found by the gate review of this change.
+    """
+
+    _ENTRY = "keel-1130-probe"
+
+    @contextlib.contextmanager
+    def _registry(self):
+        """A real registry file at a path that is not the default."""
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "providers.yaml"
+            path.write_text(
+                "providers:\n"
+                f"  {self._ENTRY}:\n"
+                "    transport: cli\n"
+                "    command: keel-1130-not-on-path\n",
+                encoding="utf-8",
+            )
+            yield path
+
+    def test_the_report_names_the_registry_it_was_given(self):
+        with self._registry() as path, tempfile.TemporaryDirectory() as root:
+            rc, out, _ = run(
+                [
+                    "doctor",
+                    "--root",
+                    root,
+                    "--offline",
+                    "--providers",
+                    "--registry",
+                    str(path),
+                    "--json",
+                ]
+            )
+            report = json.loads(out)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(report["registry_path"], str(path))
+
+    def test_the_entries_of_that_registry_are_probed(self):
+        """The path alone could be echoed; this needs the file to have been read."""
+        with self._registry() as path, tempfile.TemporaryDirectory() as root:
+            _, out, _ = run(
+                [
+                    "doctor",
+                    "--root",
+                    root,
+                    "--offline",
+                    "--providers",
+                    "--registry",
+                    str(path),
+                    "--json",
+                ]
+            )
+            report = json.loads(out)
+
+        self.assertIn(self._ENTRY, [p["name"] for p in report["providers"]])
+
+    def test_without_the_flag_it_reads_the_default_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            _, out, _ = run(["doctor", "--root", root, "--offline", "--providers", "--json"])
+            report = json.loads(out)
+
+        self.assertNotIn(
+            "/providers.yaml",
+            report["registry_path"].replace(str(Path.home() / ".keel" / "providers.yaml"), ""),
+        )
+
+    def test_the_flag_without_providers_says_it_did_nothing(self):
+        """It used to be an argparse error; accepting it silently would be the
+        same quiet mismatch one flag further out."""
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, _ = run(["doctor", "--root", root, "--offline", "--registry", "/tmp/x.yaml"])
+
+        self.assertEqual(rc, 0)
+        self.assertIn("--registry applies only with --providers", out)

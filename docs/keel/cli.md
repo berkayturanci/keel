@@ -1522,7 +1522,7 @@ capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
 
 <a id="keel-doctor"></a>
 
-## `keel doctor [project.yaml] [--root DIR] [--offline] [--providers] [--strict] [--fix] [--approve-scope SCOPE] [--operator NAME] [--consent-mode MODE] [--json]`
+## `keel doctor [project.yaml] [--root DIR] [--offline] [--providers] [--registry FILE] [--strict] [--fix] [--approve-scope SCOPE] [--operator NAME] [--consent-mode MODE] [--json]`
 
 Run a diagnostic pass over the installed keel and its adapter surfaces. Read-only unless
 you pass `--fix`: `doctor` reads versions, markers, on-disk state and (with a config) the
@@ -1538,6 +1538,7 @@ keel doctor .keel/project.yaml --root .        # also check core_version, state 
 keel doctor .keel/project.yaml --offline --strict
 keel doctor --providers                       # which delegates are usable on this machine
 keel doctor --providers --json                # providers[], registry_path, warnings
+keel doctor --providers --registry ./providers.yaml   # probe a registry at another path
 keel doctor projects/keel.yaml --fix \
   --approve-scope github --operator you       # create the missing labels
 ```
