@@ -274,11 +274,6 @@ class TestFirstLocation(unittest.TestCase):
         # the whole thing fails to match -> ``(None, None)``.
         self.assertEqual(runner.first_location(r"C:\proj\x.py:10: err"), (None, None))
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RunArgvStdinTest(unittest.TestCase):
     """``stdin_text`` — how a delegate prompt reaches a CLI without touching argv (#1012)."""
 
@@ -307,3 +302,7 @@ class RunArgvStdinTest(unittest.TestCase):
         self.assertIsNone(captured["stdin"])
         self.assertEqual(captured["argv"], ["claude", "-p"])
         self.assertTrue(result.ok)
+
+
+if __name__ == "__main__":
+    unittest.main()

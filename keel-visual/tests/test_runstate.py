@@ -824,11 +824,6 @@ class JuryVerdictGateFidelityTests(unittest.TestCase):
         self.assertEqual(out["verdict"], "APPROVE")
         self.assertEqual(out["reviewers"], 0)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestBlockedStep(unittest.TestCase):
     """A step reached and not passed must not render as one in progress (keel#636)."""
 
@@ -860,3 +855,7 @@ class TestBlockedStep(unittest.TestCase):
     def test_default_is_unblocked(self):
         # An older activity record carries no verdict; it must not read as blocked.
         self.assertEqual(self._statuses()["s8"], rs.STATUS_GATE)
+
+
+if __name__ == "__main__":
+    unittest.main()

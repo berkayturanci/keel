@@ -13046,11 +13046,6 @@ class TestRenderReport(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("does not match the coverage report fields", err)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DelegateCommandTest(unittest.TestCase):
     """``keel delegate run|wait|status`` (#1012).
 
@@ -13954,3 +13949,7 @@ class TestTddOrderGateOnTheCli(unittest.TestCase):
         run_context = data["result"]["run_ledger"]["record"]["run_context"]
         self.assertIsNone(run_context["implement_mode"])
         self.assertEqual(run_context["implement_phases"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()
