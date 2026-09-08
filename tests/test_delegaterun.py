@@ -1155,9 +1155,28 @@ class TheFailureSignalIsBoundedAndIsTheVendors(unittest.TestCase):
         self.assertIn("429", signal)
 
     def test_an_unparseable_stream_does_not_raise(self):
-        for stdout in ("", "not json\n", "{}\n", '{"event": "step_update"}\n', "null\n"):
+        """Including a line that *looks* like a frame and is not — a stream truncated
+        mid-write ends exactly that way, and it is the last line, which is the one this
+        reads first."""
+        for stdout in (
+            "",
+            "not json\n",
+            "{}\n",
+            '{"event": "step_update"}\n',
+            "null\n",
+            '{"event": "result", "resu\n',
+            "{\n",
+        ):
             with self.subTest(stdout=stdout):
                 delegaterun.failure_signal(stderr="", stdout=stdout, stream_json=True)
+
+    def test_a_truncated_frame_is_skipped_and_the_one_before_it_is_read(self):
+        good = json.dumps({"event": "result", "result": {"status": "ERROR", "error": "boom"}})
+        signal = delegaterun.failure_signal(
+            stderr="", stdout=good + '\n{"event": "result", "resu\n', stream_json=True
+        )
+
+        self.assertIn("boom", signal)
 
 
 if __name__ == "__main__":  # pragma: no cover
