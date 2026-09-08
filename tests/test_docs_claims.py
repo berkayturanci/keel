@@ -42,13 +42,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keel import cli, extensions, install, model
+from keel import cli, extensions, install, model, providers
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
 CLI_DOC = REPO_ROOT / "docs" / "keel" / "cli.md"
 CONFIG_DOC = REPO_ROOT / "docs" / "keel" / "configuration.md"
 PARAM_DOC = REPO_ROOT / "docs" / "keel" / "parameter-reference.md"
+MODELS_DOC = REPO_ROOT / "docs" / "keel" / "models.md"
 SCHEMA = REPO_ROOT / "src" / "keel" / "schema" / "project.schema.json"
 
 #: `## `keel <name> …`` / `### `keel <name> …`` — the signature headings cli.md uses.
@@ -699,6 +700,106 @@ class TestTheIntegrationsCatalogRunsWhatItShows(unittest.TestCase):
             "website/integrations.js promises real CLI commands and shows these, "
             "which the CLI rejects:\n" + "\n".join(failures),
         )
+
+    _DELEGATE = re.compile(r"--delegate\s+([A-Za-z0-9._:-]+)")
+    _NOTE = re.compile(r'note: "((?:[^"\\]|\\.)*)"')
+
+    def _cards(self) -> list[dict]:
+        """Every catalogue card as ``{id, cmd, note}`` — note is ``""`` when absent.
+
+        The closing brace's comma is **optional**: the last object in a JavaScript array
+        literal has none, so requiring it silently dropped the final card. Both gate seats
+        found it — 29 parsed against 30 defined — and the consequence is the one that
+        matters: a `--delegate` card added at the end of the array would never be checked.
+        `test_the_parser_sees_every_card` pins the count against the ids.
+        """
+        text = (SITE / "integrations.js").read_text(encoding="utf-8")
+        cards = []
+        for block in re.finditer(r'\n      id: "([^"]+)",(.*?)\n    \},?', text, re.S):
+            body = block.group(2)
+            cmd = re.search(r'cmd: "((?:[^"\\]|\\.)*)"', body)
+            note = self._NOTE.search(body)
+            cards.append(
+                {
+                    "id": block.group(1),
+                    "cmd": cmd.group(1) if cmd else "",
+                    "note": note.group(1) if note else "",
+                }
+            )
+        self.assertTrue(cards, "no cards parsed — the catalogue's shape changed")
+        return cards
+
+    def test_a_card_naming_a_delegate_keel_ships_no_profile_for_says_so(self):
+        """Parsing is not the whole check (#1132).
+
+        The class above catches a command the CLI *rejects*. It cannot catch one that
+        parses, dry-runs, reports `delegate: opencode` — and then resolves to nothing,
+        because resolution needs a project and a registry no test has. Five cards were
+        in that state: `opencode`, `trae`, `kimi`, `aider` and `hermes` appear nowhere
+        in `src/` or `docs/`, which is the *point* of the generic `vendor: cli` profile
+        — but the card showed only the half a reader can copy.
+
+        So the rule is about the card, not about the name: a delegate that is not a
+        built-in has to be one the card tells you to define first — and the note has to
+        name **that** profile. Merely mentioning `delegate_profiles` is not enough: the
+        first cut accepted any note, so renaming a card's delegate while leaving its
+        note behind still passed, which is the same drift one level down.
+        """
+        builtin = {provider.name for provider in providers.builtin_providers()}
+        silent = []
+        for card in self._cards():
+            for token in self._DELEGATE.findall(card["cmd"]):
+                # `--delegate` is split on the first colon: the left half names the
+                # provider or profile, the right half is a per-run model. The note names
+                # the profile, so the model must come off before the lookup — the builtin
+                # branch already split it and this one did not.
+                name = token.split(":", 1)[0]
+                if name in builtin:
+                    continue
+                if f"delegate_profiles.{name}" in card["note"]:
+                    continue
+                silent.append(f"{card['id']} -> --delegate {token}")
+        self.assertEqual(
+            [],
+            silent,
+            "these cards name a delegate keel ships no profile for and never say so:\n"
+            + "\n".join(silent),
+        )
+
+    def test_the_parser_sees_every_card(self):
+        """A parser that quietly returns a subset makes every check above narrower than it
+        reads. Counted against the ids, which are one per card by construction."""
+        text = (SITE / "integrations.js").read_text(encoding="utf-8")
+        ids = re.findall(r'\n      id: "([^"]+)",', text)
+
+        self.assertEqual([card["id"] for card in self._cards()], ids)
+
+    def test_a_delegate_carrying_a_model_still_finds_its_note(self):
+        """`--delegate cursor:grok-4.6` names the profile `cursor`, and the note says
+        `delegate_profiles.cursor`. Comparing the whole token flagged a correct card."""
+        token = self._DELEGATE.findall("keel implement p 1 --delegate cursor:grok-4.6")[0]
+
+        self.assertEqual(token, "cursor:grok-4.6")
+        self.assertEqual(token.split(":", 1)[0], "cursor")
+
+    def test_that_note_points_at_a_section_that_exists(self):
+        """A note whose link is wrong is the same defect one level down."""
+        anchors = {
+            "#" + re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-")
+            for heading in re.findall(
+                r"^#{2,3} (.+)$", MODELS_DOC.read_text(encoding="utf-8"), re.M
+            )
+        }
+        links = [
+            fragment
+            for card in self._cards()
+            for fragment in re.findall(r"models\.md(#[a-z0-9-]+)", card["note"])
+        ]
+
+        self.assertTrue(links, "no card links into models.md any more")
+        for fragment in set(links):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, anchors)
 
     def test_the_python_distribution_is_named_correctly(self):
         """`pipx install keel` installs an unrelated PyPI project.

@@ -443,6 +443,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .integ-cmd-box code { font-family: var(--font-mono); font-size: .72rem; color: var(--accent-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .integ-copy-btn { background: var(--surface-3); border: 1px solid var(--border); color: var(--text); padding: .2rem .5rem; border-radius: 4px; font-size: .7rem; font-family: var(--font-mono); cursor: pointer; flex-shrink: 0; }
 .integ-copy-btn:hover { border-color: var(--accent-2); }
+/* The half of the story the command cannot carry: which delegate names need a
+   profile before they resolve to anything (#1132). */
+.integ-note { font-size: .72rem; color: var(--muted); line-height: 1.5; margin: 0; }
+.integ-note code { font-family: var(--font-mono); font-size: .68rem; color: var(--text); }
+.integ-note a { color: var(--accent-2); }
+
 .integ-empty { grid-column: 1 / -1; padding: 2.5rem; text-align: center; color: var(--muted); font-size: .9rem; background: var(--surface-2); border: 1px dashed var(--border); border-radius: 8px; }
 
 
