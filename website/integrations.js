@@ -7,8 +7,12 @@
    ============================================================ */
 
 (function () {
-  var srTimer = null;
   "use strict";
+
+  // Below the directive, never above it: a `var` before `"use strict"`
+  // ends the Directive Prologue and leaves the string an inert
+  // expression, silently un-stricting this whole IIFE.
+  var srTimer = null;
 
   var INTEGRATIONS = [
     // --- 1. AI Agents & Coding Assistants (12) ---
@@ -334,7 +338,11 @@
       countEl.textContent = items.length + " of " + INTEGRATIONS.length + " integrations";
     }
 
-    var sr = document.getElementById("sr-live-region");
+    // Only after the user has actually filtered. `renderGrid` also runs from
+    // `init()` on DOMContentLoaded, while the landing view is the overview and
+    // this grid is hidden — announcing "Showing 32 integrations" there is an
+    // unsolicited interruption on a page the reader has not opened yet.
+    var sr = searchQuery ? document.getElementById("sr-live-region") : null;
     if (sr) {
       var announcement = items.length === 0
         ? 'No integrations found matching "' + searchQuery + '"'

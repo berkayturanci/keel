@@ -75,10 +75,6 @@ class TestWebsiteIntegrations(unittest.TestCase):
         self.assertIn(".integ-icon-img", content)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheLiveRegionIsTheOnlyOneAndEveryUpdaterUsesIt(unittest.TestCase):
     """One live region per page, and it is the dedicated off-screen one.
 
@@ -120,6 +116,38 @@ class TheLiveRegionIsTheOnlyOneAndEveryUpdaterUsesIt(unittest.TestCase):
             with self.subTest(script=script):
                 self.assertIn('getElementById("sr-live-region")', self._read(script))
 
+    def test_it_announces_the_two_states_the_change_promises(self):
+        """The strings themselves, which the mechanism tests do not read."""
+        source = self._read("integrations.js")
+
+        self.assertIn("'Showing ' + items.length + ' integrations'", source)
+        self.assertIn("'No integrations found matching \"' + searchQuery + '\"'", source)
+        self.assertIn("items.length === 0", source)
+
+    def test_it_stays_quiet_until_the_reader_has_searched(self):
+        """`renderGrid` also runs from `init()`, with this grid hidden.
+
+        Announcing "Showing 32 integrations" there interrupts a reader who is
+        still on the overview and has not opened the catalogue.
+        """
+        source = self._read("integrations.js")
+
+        self.assertIn(
+            'var sr = searchQuery ? document.getElementById("sr-live-region") : null;', source
+        )
+
+    def test_the_strict_directive_is_the_first_statement(self):
+        """A `var` above it ends the Directive Prologue and un-stricts the IIFE.
+
+        That is not a style point: the string stays, the mode does not, and
+        every accidental global in 400 lines stops throwing. Caught here after
+        being introduced by the live-region timer.
+        """
+        source = self._read("integrations.js")
+        body = source.split("(function () {", 1)[1].lstrip()
+
+        self.assertTrue(body.startswith('"use strict";'), body[:60])
+
     def test_the_search_announcement_can_repeat_itself(self):
         """A live region announces a *change*, so an identical string is silence.
 
@@ -133,3 +161,7 @@ class TheLiveRegionIsTheOnlyOneAndEveryUpdaterUsesIt(unittest.TestCase):
         self.assertIn('sr.textContent = "";', source)
         self.assertIn("clearTimeout(srTimer)", source)
         self.assertRegex(source, r"srTimer = setTimeout\(")
+
+
+if __name__ == "__main__":
+    unittest.main()
