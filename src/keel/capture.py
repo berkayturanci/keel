@@ -1004,6 +1004,38 @@ def render_learning_document(
     return "\n".join(front + body)
 
 
+def learning_sink_writes(
+    *,
+    config: cfg.ProjectConfig | None,
+    decision: dict[str, Any] | None,
+    capture_status: str | None,
+) -> bool:
+    """Whether this run writes a learning file at all.
+
+    Split out so a caller can answer it **before** doing anything expensive — the
+    writer redacts its values before rendering, and reaching for the redaction
+    policy on a run with no sink turned an invalid `capture_redaction` pattern into
+    an exception raised from the wrong place, past the handler `keel ship` has for
+    exactly that. :func:`learning_sink_plan` asks the same question through this
+    function, so the two cannot drift.
+
+    Three conditions, and the third is the one that took two rounds to get right.
+    **The decision is the gate**, not merely the dedupe: `learning_decision` already
+    answers whether this run earns a durable artifact, and `create-learning` is the
+    one answer whose `durable_artifact` is true. Refusing only `duplicate` let four
+    other answers through — `learning.enabled` false, `enabled` omitted, `mode:
+    defer`, `mode: marker-only` — each planning a write while the record beside it
+    said the policy had decided not to keep one. A configured sink is where a
+    project's learnings go, not permission to write one whatever the policy says.
+    """
+    if capture_status != "applied":
+        return False
+    sink = learning_sink_policy(config)
+    if not sink or learning_sink_errors(sink):
+        return False
+    return isinstance(decision, dict) and decision.get("decision") == "create-learning"
+
+
 def learning_sink_plan(
     *,
     config: cfg.ProjectConfig | None,
@@ -1029,29 +1061,14 @@ def learning_sink_plan(
     clock — `date` is passed in for the same reason every other plan in this package
     takes its facts as arguments.
 
-    Returns `None` when there is nothing to write: no sink configured, a capture that
-    is not `applied`, or a learning decision that does not call for a durable
-    artifact — a `duplicate`, which is the dedupe doing its job, but equally a
-    project whose policy said `marker-only`.
+    Returns `None` when :func:`learning_sink_writes` says there is nothing to write:
+    no sink configured, a capture that is not `applied`, or a learning decision that
+    does not call for a durable artifact — a `duplicate`, which is the dedupe doing
+    its job, but equally a project whose policy said `marker-only`.
     """
-    if capture_status != "applied":
+    if not learning_sink_writes(config=config, decision=decision, capture_status=capture_status):
         return None
     sink = learning_sink_policy(config)
-    if not sink or learning_sink_errors(sink):
-        return None
-    # **The decision is the gate**, not merely the dedupe. `learning_decision`
-    # already answers whether this run earns a durable artifact, and
-    # `durable_artifact` is true for exactly `create-learning`. Refusing only
-    # `duplicate` let four other answers through: `learning.enabled` false,
-    # `enabled` omitted, `mode: defer` and `mode: marker-only` each planned a
-    # write while the record next to it said the policy had decided not to keep
-    # one. A configured sink is where a project's learnings go, not permission to
-    # write one whatever the policy says. `create-learning` is the one decision
-    # whose `durable_artifact` is true, and it is the decision — not the derived
-    # flag — that is checked, so a caller that hands over a decision by name is
-    # read the same way `record_marker` reads it.
-    if not isinstance(decision, dict) or decision.get("decision") != "create-learning":
-        return None
     values = {
         "owner": owner or "",
         "repo": repo or "",

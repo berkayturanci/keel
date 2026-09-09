@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -64,6 +65,17 @@ def write_config(directory: Path, extra_policy_pack_lines: list[str] | None = No
         encoding="utf-8",
     )
     return str(path)
+
+
+def _front_matter_fields(document: str) -> dict:
+    """The front-matter block, parsed by a real YAML parser.
+
+    Not keel's own reader: the point of the block is that *other* tools read it,
+    and a reader that splits on the first colon cannot tell a string from a list.
+    """
+    import yaml
+
+    return yaml.safe_load(document.split("---")[1])
 
 
 def _config(sink: dict | None) -> cfg.ProjectConfig:
@@ -758,6 +770,58 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertIn("Gates on the merged head", body)
             self.assertEqual(body.count("_Not recorded._"), 0)
 
+    def test_a_secret_survives_redaction_as_a_string_not_a_yaml_list(self):
+        """Redact the values, then render — the other order breaks the document.
+
+        `ghp_` + 36 letters is *plain* YAML: letters, digits and an underscore, so
+        the quoter correctly let it through bare. Replacing it in the finished
+        document put `[REDACTED:github-token]` inside that bare scalar, and a real
+        parser reads a **list** where a title belongs. The description is the issue
+        body's first non-empty line, so a body that opens with a pasted token hit it.
+
+        The filename is the same ordering bug seen from the other side: it is built
+        from the title, and a title redacted afterwards leaves most of the token in
+        a committed path.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            secret = "ghp_" + "A" * 36
+            code, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    str(root),
+                    "--live",
+                    "--append-ledger",
+                    "--run-id",
+                    "plain-secret",
+                    "--pull-request",
+                    "1154",
+                    "--issue-title",
+                    f"rotate {secret}",
+                    "--issue-body",
+                    f"{secret}\n\n## Deliverable\nRotate it.\n\n"
+                    "## Acceptance criteria\n- rotated\n",
+                    "--capture-status",
+                    "applied",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+            self.assertEqual(code, 0)
+            written = sorted((Path(root) / "learnings").glob("*.md"))[0]
+            body = written.read_text(encoding="utf-8")
+            self.assertNotIn(secret, body)
+            self.assertNotIn("aaaaaaaa", written.name.lower())
+            front = _front_matter_fields(body)
+            self.assertIsInstance(front["title"], str)
+            self.assertIsInstance(front["description"], str)
+            self.assertIn("REDACTED", front["title"])
+            self.assertIn("REDACTED", front["description"])
+
     def test_a_secret_in_the_issue_body_is_redacted_before_it_is_written(self):
         """Redaction before durability is the capture contract's rule, not a new one.
 
@@ -828,6 +892,29 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(second["learning"]["decision"], "duplicate")
             self.assertEqual(second["artifact"], first)
             self.assertEqual(self.artifact_findings(root, config, prs=(1, 2)), [])
+
+    def test_a_deduped_run_finds_the_file_from_another_working_directory(self):
+        """`--root` defaults to `.`, so a live run records a *relative* artifact.
+
+        Resolved against the process directory instead, the reuse could only find
+        that file when keel was launched from the repository — and a later run from
+        a CI runner, a worktree or a cron shell would record `applied` with no
+        artifact, which is the finding the reuse exists to prevent. Every test that
+        passes an absolute `--root` is blind to it, which is why this one does not.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root).resolve()
+            config = write_config(root_path, self.SINK_LINES)
+            here = Path.cwd()
+            os.chdir(root_path)
+            try:
+                self.assertEqual(self.ship(".", "project.yaml", pr=1)[0], 0)
+                first = self.ledger_capture(root_path)["artifact"]
+                self.assertFalse(Path(first).is_absolute(), first)
+            finally:
+                os.chdir(here)
+            self.assertEqual(self.ship(root_path, config, pr=2)[0], 0)
+            self.assertEqual(self.ledger_capture(root_path)["artifact"], first)
 
     def test_a_deduped_run_claims_nothing_when_that_file_is_gone(self):
         """An artifact that resolves to nothing is worse than no artifact.

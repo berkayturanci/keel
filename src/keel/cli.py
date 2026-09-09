@@ -8821,12 +8821,21 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
     # would be the least expected thing this command does.
     if not args.live:
         return None
-    description, what_changed, what_we_learned, do_differently = _learning_sections(args, outcomes)
+    # **Redact the values, then render.** Sanitizing the finished document put the
+    # replacement *inside* a front-matter scalar the quoter had already decided was
+    # safe: `ghp_AAA…` is plain YAML (letters, digits, underscore), so it went in
+    # bare, and `[REDACTED:github-token]` in its place makes a real parser read a
+    # list where a title should be. A redacted value is quoted like any other value
+    # when it goes through `_yaml_scalar` — and the filename, built from the title,
+    # stops carrying most of the token through `_slugify`.
+    status = _resolved_capture_status(args.capture_status)
     decision = capture.learning_decision(
+        # The *unredacted* title and labels: this is the dedupe fingerprint and it
+        # has to be the one `record_marker` computes for the ledger.
         title=args.issue_title,
         labels=_issue_labels(args),
         changed_files=changed_files or (),
-        capture_status=_resolved_capture_status(args.capture_status),
+        capture_status=status,
         capture_reason=args.capture_reason,
         # The records the dedupe needs. Without them `learning_decision` can
         # never answer `duplicate`, so the skip this feature documents was
@@ -8834,41 +8843,60 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
         existing_records=existing_records or (),
         config=config,
     )
+    # Asked before anything expensive happens. Reading the redaction policy on a run
+    # that writes nothing raised an invalid `capture_redaction` pattern from here,
+    # past the handler `_cmd_ship` has for exactly that failure.
+    if not capture.learning_sink_writes(config=config, decision=decision, capture_status=status):
+        return _duplicate_learning_artifact(config, decision, existing_records, args.root)
+    # **Redact the values, then render.** Sanitizing the finished document put the
+    # replacement *inside* a front-matter scalar the quoter had already decided was
+    # safe: `ghp_AAA…` is plain YAML (letters, digits, underscore), so it went in
+    # bare, and `[REDACTED:github-token]` in its place makes a real parser read a
+    # list where a title should be. A redacted value is quoted like any other when
+    # it goes through `_yaml_scalar` — and the filename, built from the title, stops
+    # carrying most of the token through `_slugify`.
+    policy = redaction.policy_from_config(config)
+    fields = redaction.sanitize(
+        {
+            "title": args.issue_title,
+            "labels": _issue_labels(args),
+            # A **list**, not the tuple `_learning_sections` returns: `sanitize`
+            # recurses into dicts, lists and strings, and a tuple goes through it
+            # untouched. Handed over as one, the description kept its secret until
+            # the document-level pass replaced it inside a scalar already quoted —
+            # which is the failure this reordering exists to remove.
+            "sections": list(_learning_sections(args, outcomes)),
+        },
+        policy,
+    ).value
+    description, what_changed, what_we_learned, do_differently = fields["sections"]
+    # Not `None` by construction: `learning_sink_writes` above is the same gate this
+    # consults, which is why it exists as its own function.
     plan = capture.learning_sink_plan(
         config=config,
         decision=decision,
-        capture_status=_resolved_capture_status(args.capture_status),
+        capture_status=status,
         owner=config.owner,
         repo=config.repo,
         base_branch=config.base_branch,
         date=_today(),
         pr_number=args.ledger_pr or args.pr,
-        title=args.issue_title,
+        title=fields["title"],
         issue_number=args.issue,
-        labels=_issue_labels(args),
+        labels=fields["labels"],
         changed_files=changed_files or (),
         description=description,
         what_changed=what_changed,
         what_we_learned=what_we_learned,
         do_differently=do_differently,
     )
-    if plan is None:
-        return _duplicate_learning_artifact(config, decision, existing_records)
-    # An absolute or `~` path is used as written — pointing the sink at a shared
-    # knowledge folder outside the checkout is the feature. A **relative** one
-    # resolves against `--root`, not the process working directory: the default
-    # `.keel/learning` otherwise wrote wherever keel happened to be launched from,
-    # which on a CI runner is not the repository at all.
-    directory = Path(plan["directory"]).expanduser()
-    if not directory.is_absolute():
-        directory = Path(args.root) / directory
-    target = directory / plan["filename"]
-    # Redaction before durability, which is the capture contract's rule and not a
-    # new one: `contract_as_dict` already declares `durable_artifacts.requires_redaction`,
-    # and the ledger sanitizes every record it writes. A learning file is a durable
-    # artifact made of an issue body and gate output — the two places a secret is
-    # most likely to have been pasted.
-    result = redaction.sanitize(plan["content"], redaction.policy_from_config(config))
+    target = _resolve_under_root(plan["directory"], args.root) / plan["filename"]
+    # A second pass over the finished document. Redaction before durability is the
+    # capture contract's own rule — `contract_as_dict` declares
+    # `durable_artifacts.requires_redaction` and the ledger sanitizes every record
+    # it writes — and this catches anything the renderer itself carried in. A no-op
+    # on values already sanitized above.
+    result = redaction.sanitize(plan["content"], policy)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         workspace.write_text_atomic(target, result.value)
@@ -8877,7 +8905,7 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
     return {"ok": True, "path": str(target), "error": None, "reused": False}
 
 
-def _duplicate_learning_artifact(config, decision, existing_records) -> dict | None:
+def _duplicate_learning_artifact(config, decision, existing_records, root) -> dict | None:
     """Point a deduped run at the file the run it duplicates already wrote.
 
     The path is only claimed when it is still there. A record can name a file
@@ -8893,9 +8921,23 @@ def _duplicate_learning_artifact(config, decision, existing_records) -> dict | N
     )
     if recorded is None:
         return None
-    if not Path(recorded).expanduser().is_file():
+    if not _resolve_under_root(recorded, root).is_file():
         return None
     return {"ok": True, "path": recorded, "error": None, "reused": True}
+
+
+def _resolve_under_root(recorded: str, root: str) -> Path:
+    """Where a recorded artifact path actually is on this machine.
+
+    The same rule the write path applies, and it has to be: `--root` defaults to
+    `.`, so a live run from the repository records a **relative**
+    `.keel/learning/…md`. Resolved against the process directory instead, a later
+    run launched from anywhere else — a CI runner, a worktree, a cron shell — would
+    find nothing and record `applied` with no artifact, which is the finding this
+    reuse exists to prevent.
+    """
+    path = Path(recorded).expanduser()
+    return path if path.is_absolute() else Path(root) / path
 
 
 def _resolved_capture_status(value: str | None) -> str | None:
