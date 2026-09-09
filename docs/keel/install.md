@@ -5,10 +5,14 @@ Homebrew, the curl installer, pipx/uv. This page covers the other half: getting
 keel in front of an agent as a **plugin**, so its commands and skills are
 available inside a session.
 
-The two are independent, and the plugin is the one that does **not** require
-`pip`. `docs/keel/plugin.md` describes what the plugin contains; this page is
-about getting it installed, per agent, and — the part that is not guessable —
-keeping it up to date.
+**The `keel` CLI still has to be on your `PATH`.** The plugin is what puts the
+commands and skills in front of an agent; the bodies they run shell out to `keel`,
+so the plugin removes the `pip install` from *distribution*, not the CLI from the
+requirements. Install it from [the README](../../README.md#install) either way.
+
+`docs/keel/plugin.md` describes what the plugin contains; this page is about
+getting it installed, per agent, and — the part that is not guessable — keeping it
+up to date.
 
 Every command below was run against the tooling on a real machine on
 **2026-09-09**, with keel **1.22.0**. Where something could not be exercised end
@@ -134,7 +138,15 @@ component directory.
 `marketplace` (`add`, `list`, `remove`, `update`) — there is no
 `cursor-agent plugin install`. Two routes, and they register different things.
 
-**Install — local checkout**
+**Install — marketplace** (the route that registers the `/keel:<command>` set)
+
+```bash
+cursor-agent plugin marketplace add https://github.com/berkayturanci/keel
+```
+
+Then install it from Cursor's `/plugins` screen.
+
+**Install — local checkout** (skills only; its update is a `git pull`)
 
 ```bash
 git clone --depth 1 https://github.com/berkayturanci/keel \
@@ -163,16 +175,6 @@ Cursor's own description of that command is *"Re-index a plugin marketplace from
 its git repository"*. Whether re-indexing advances what an already-installed
 plugin resolves to was not exercised from here; the local checkout is the route
 whose update is a `git pull` and needs no such question answered.
-
-**Install — marketplace**
-
-```bash
-cursor-agent plugin marketplace add https://github.com/berkayturanci/keel
-```
-
-Then install it from Cursor's `/plugins` screen.
-`cursor-agent plugin marketplace update <nameOrUrl>` re-indexes the marketplace
-from its git repository.
 
 ### What each Cursor route registers, measured
 

@@ -259,6 +259,22 @@ class TheSiteDoesNotPublishAOneAgentRecipe(unittest.TestCase):
             with self.subTest(agent=agent):
                 self.assertIn(agent, self.site)
 
+    def test_the_landing_page_does_not_lead_with_one_agent_either(self):
+        """The homepage is the surface most people see, and it had a copy button.
+
+        `website/index.html` read "In Claude Code? Install it as a plugin" beside a
+        one-click copy of `/plugin install keel`, and its command section offered
+        "`keel install-adapter all` or the Claude Code plugin" — the same
+        one-agent story the documents had stopped telling.
+        """
+        landing = (REPO_ROOT / "website" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("In Claude Code? Install it as a plugin", landing)
+        self.assertNotIn("or the Claude Code plugin", landing)
+        self.assertIn("docs/keel/install.md", landing)
+        for agent in ("Codex", "Antigravity", "Cursor"):
+            with self.subTest(agent=agent):
+                self.assertIn(agent, landing)
+
 
 class EveryCrossDocumentAnchorResolves(unittest.TestCase):
     """A link into a heading breaks silently when the heading is reworded.

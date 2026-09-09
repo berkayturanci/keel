@@ -356,8 +356,10 @@ git -C ~/.cursor/plugins/local/keel pull                  # the local checkout
 cursor-agent plugin marketplace update berkayturanci/keel # the marketplace copy
 ```
 
-Restart Cursor either way. Two install routes need two update commands; the box
-offered the second install and only the first update.
+Restart Cursor either way — two install routes, two update commands. Cursor
+describes the second as *"Re-index a plugin marketplace from its git
+repository"*; whether re-indexing advances what an already-installed plugin
+resolves to was not exercised from here.
 
 A locally installed Cursor plugin registers **skills only**. keel's 17
 `/keel:<command>` entries, where they appear in Cursor, are being read out of
