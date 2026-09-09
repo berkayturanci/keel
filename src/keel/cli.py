@@ -8865,20 +8865,15 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
         return {"ok": False, "path": None, "error": str(exc), "reused": False}
     fields = redaction.sanitize(
         {
+            # **Every value the document is rendered from**, not the ones a secret
+            # is most likely to be in. A `changed_files` path or a label that *is* a
+            # token — `ghp_…` and nothing else — is plain YAML, so it went in bare
+            # and the document pass put the replacement inside it: the same break as
+            # the title, one field over, twice. This is the whole set.
             "title": args.issue_title,
             "labels": _issue_labels(args),
-            # **Every value the document is rendered from**, not the ones a secret
-            # is most likely to be in. A path that *is* a token — `ghp_…` and
-            # nothing else — is plain YAML, so it went in bare and the document pass
-            # put the replacement inside it: the same break as the title, one field
-            # over, and the reason this list is the whole set rather than a sample.
-            "changed_files": list(changed_files or ()),
-            # A **list**, not the tuple `_learning_sections` returns: `sanitize`
-            # recurses into dicts, lists and strings, and a tuple goes through it
-            # untouched. Handed over as one, the description kept its secret until
-            # the document-level pass replaced it inside a scalar already quoted —
-            # which is the failure this reordering exists to remove.
-            "sections": list(_learning_sections(args, outcomes)),
+            "changed_files": changed_files or (),
+            "sections": _learning_sections(args, outcomes),
         },
         policy,
     ).value

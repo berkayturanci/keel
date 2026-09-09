@@ -902,6 +902,26 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertIn("REDACTED", front["title"])
             self.assertIn("REDACTED", front["description"])
 
+    def test_a_label_that_is_a_secret_stays_a_string(self):
+        """The third field in the same class, and the reason the fix moved.
+
+        `_issue_labels` returns a **tuple**, and `redaction.sanitize` walked only
+        `str`, `list` and `dict` — so a tuple came back with its secrets intact,
+        silently, looking exactly like a value that had been checked. Converting
+        each caller's tuple to a list fixed the field in front of it and left the
+        next one; `sanitize` walks tuples now.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            secret = "ghp_" + "C" * 36
+            code, _, err = self.ship_with(root, config, "--issue-label", secret)
+            self.assertEqual(code, 0, err)
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            self.assertNotIn(secret, body)
+            labels = _front_matter_fields(body)["labels"]
+            self.assertEqual(len(labels), 1)
+            self.assertIsInstance(labels[0], str)
+
     def test_a_changed_path_that_is_a_secret_stays_a_string(self):
         """Every value the document is rendered from, not the likely ones.
 

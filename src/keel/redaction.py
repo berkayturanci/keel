@@ -203,6 +203,14 @@ def _sanitize_value(value: Any, policy: RedactionPolicy, counts: dict[str, int])
         return _sanitize_string(value, policy, counts)
     if isinstance(value, list):
         return [_sanitize_value(item, policy, counts) for item in value]
+    # **A tuple is a sequence of strings too.** Walking only `list` meant every
+    # tuple a caller handed over came back with its secrets intact — silently, and
+    # looking exactly like a value that had been checked. keel's own vocabularies
+    # are tuples (`_issue_labels`, gate ids, declared files), so this was not a
+    # theoretical shape; it went out through the learning sink twice. The type is
+    # preserved so a caller that had a tuple still has one.
+    if isinstance(value, tuple):
+        return tuple(_sanitize_value(item, policy, counts) for item in value)
     if isinstance(value, dict):
         return {key: _sanitize_value(child, policy, counts) for key, child in value.items()}
     return value
