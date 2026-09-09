@@ -176,11 +176,15 @@ INSTRUCTION_PAGES = (
     "docs/keel/editors.md",
 )
 
-#: A markdown link into another document's anchor, as `](target.md#anchor)`.
-#: Case-insensitive on the filename: matching only lowercase made
-#: `](../../README.md#install)` — this page's own cross-links — invisible to the
-#: check that exists to catch exactly that kind of link.
-DOC_ANCHOR_LINK = re.compile(r"\]\((?:\.\.?/)*([A-Za-z0-9./_-]+\.md)#([a-z0-9-]+)\)")
+#: A markdown link into another document's anchor, as `](../target.md#anchor)`.
+#:
+#: The relative prefix is **inside** the capture. Left outside it, `../../README.md`
+#: was captured as `README.md` and resolved against the linking page's own
+#: directory — `docs/keel/README.md`, which does not exist — and the check then
+#: skipped it silently. Every cross-link this test was written for was invisible to
+#: it, and a deliberately broken anchor passed. Case-insensitive on the filename
+#: for the same reason: `README.md` is not lowercase.
+DOC_ANCHOR_LINK = re.compile(r"\]\(((?:\.\.?/)*[A-Za-z0-9./_-]+\.md)#([a-z0-9-]+)\)")
 
 
 class EveryCrossDocumentAnchorResolves(unittest.TestCase):
@@ -205,14 +209,23 @@ class EveryCrossDocumentAnchorResolves(unittest.TestCase):
         found = DOC_ANCHOR_LINK.findall((REPO_ROOT / "docs" / "keel" / "install.md").read_text())
         self.assertTrue(any(target.endswith("README.md") for target, _ in found), found)
 
+    def test_every_instruction_page_sends_the_reader_to_the_install_page(self):
+        """A page that gives its own recipe has to point at the one that owns them."""
+        for name, text in self.pages().items():
+            if name.endswith("install.md"):
+                continue
+            with self.subTest(document=name):
+                self.assertIn("install.md", text, f"{name} never points at the install page")
+
     def test_every_anchor_a_page_links_to_exists(self):
         for name, text in self.pages().items():
             base = (REPO_ROOT / name).parent
             for target, anchor in DOC_ANCHOR_LINK.findall(text):
                 path = (base / target).resolve()
-                if not path.is_file():
-                    continue
                 with self.subTest(document=name, link=f"{target}#{anchor}"):
+                    # A missing file is a finding, not a reason to skip. Skipping is
+                    # how a mis-resolved path turned this whole check into a no-op.
+                    self.assertTrue(path.is_file(), f"{name} links to {target}, which is not there")
                     body = path.read_text(encoding="utf-8")
                     headings = {
                         re.sub(r"[^a-z0-9 -]", "", line.lstrip("#").strip().lower()).replace(
