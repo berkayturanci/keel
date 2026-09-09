@@ -8848,6 +8848,15 @@ def _capture_issue_facts(args) -> tuple[str, str, tuple[str, ...]]:
     return title, body, labels
 
 
+def _gate_word(outcome) -> str:
+    """What a gate outcome says in a learning document."""
+    if outcome.skipped:
+        return "skipped"
+    if outcome.not_run:
+        return "not run"
+    return "ok" if outcome.ok else "failed"
+
+
 def _learning_sections(args, outcomes, body: str) -> tuple[str, str, str, str]:
     """The document's prose: description, and the three contracted sections.
 
@@ -8858,16 +8867,29 @@ def _learning_sections(args, outcomes, body: str) -> tuple[str, str, str, str]:
     else in it.
     """
     body = (body or "").strip()
-    first = next((line.strip() for line in body.splitlines() if line.strip()), "")
-    description = first[:200]
+    # **Not the first line — the first line that says something.** A keel issue opens
+    # with `## Deliverable` or `## Problem`, so the first non-empty line is a heading,
+    # and the front matter carried it as the lesson's one-line summary. The reader
+    # already skips headings when it falls back to the body; the writer was feeding
+    # one through the field that bypasses that.
+    description = next(
+        (
+            line.strip()[:200]
+            for line in body.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ),
+        "",
+    )
     files = ", ".join(sorted(changed)) if (changed := list(args.declared_file or ())) else ""
     what_changed = body or "_Not recorded._"
     if files:
         what_changed = f"{what_changed}\n\nDeclared files: {files}"
-    gates = [
-        f"{outcome.gate}: {'skipped' if outcome.skipped else 'ok' if outcome.ok else 'failed'}"
-        for outcome in outcomes or ()
-    ]
+    # `not_run` before `ok`: an agentic gate reaches the command runner as
+    # `ok=True, not_run=True` so a soft gate does not spuriously fail the run, and
+    # a document that recorded it as `ok` would teach the next run that a gate
+    # nobody executed had passed — inside the artifact that makes `applied`
+    # provable. `gates.record_gates_passed` refuses exactly this certification.
+    gates = [f"{outcome.gate}: {_gate_word(outcome)}" for outcome in outcomes or ()]
     what_we_learned = "Gates on the merged head — " + (", ".join(gates) if gates else "none run")
     do_differently = (
         "Recorded automatically from the run. Edit this file to say what the next "

@@ -32,7 +32,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keel import capture, cli
+from keel import capture, cli, gates
 from keel import config as cfg
 
 
@@ -1074,7 +1074,11 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
             front = yaml.safe_load(body.split("---")[1])
             self.assertTrue(front["description"], "the front-matter description is empty")
-            self.assertIn("Deliverable", front["description"])
+            # The *sentence*, not the heading above it: a keel issue opens with
+            # `## Deliverable`, and the front matter carried that as the lesson's
+            # one-line summary — the field every `retrieve_relevant_learnings` hit
+            # shows a reader.
+            self.assertEqual(front["description"], "A Markdown learning file per applied capture.")
             self.assertIn("A Markdown learning file per applied capture", body)
             self.assertIn("Gates on the merged head", body)
             self.assertEqual(body.count("_Not recorded._"), 0)
@@ -1229,6 +1233,27 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
             self.assertIn("issue: null", body)
             self.assertIsNone(_front_matter_fields(body)["issue"])
+
+    def test_a_gate_nobody_ran_is_not_recorded_as_passing(self):
+        """`not_run` is the fourth state, and it read as `ok`.
+
+        An agentic gate reaches the command runner as `ok=True, not_run=True` so a
+        soft gate does not spuriously fail the run. Rendered as `ok`, the durable
+        document taught the next run that a gate nobody executed had passed —
+        inside the artifact that exists to make `applied` provable.
+        """
+        outcomes = [
+            gates.GateOutcome(gate="build", ok=True),
+            gates.GateOutcome(gate="review", ok=True, not_run=True),
+            gates.GateOutcome(gate="docs", ok=True, skipped=True),
+            gates.GateOutcome(gate="tests", ok=False),
+        ]
+        args = cli.build_parser().parse_args(["ship", "p.yaml", "--issue-title", "t"])
+        _, _, learned, _ = cli._learning_sections(args, outcomes, "")
+        self.assertEqual(
+            learned,
+            "Gates on the merged head — build: ok, review: not run, docs: skipped, tests: failed",
+        )
 
     def test_an_empty_label_list_reads_back_as_a_list(self):
         """`labels:` with nothing under it is a **null**, not `[]`.
