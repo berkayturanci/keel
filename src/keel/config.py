@@ -22,7 +22,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import jsonschema_min
+from . import capture, jsonschema_min
 from . import tdd as tdd_mode
 from . import team as team_policy
 from . import yaml_helper as yaml
@@ -967,13 +967,7 @@ def vendor_label_errors(label: Any, *, where: str) -> list[str]:
 
 
 def _learning_sink_issues(policy_pack: dict[str, Any]) -> list[str]:
-    """Problems in `policy_pack.capture.learning.sink`, or `[]`.
-
-    Imported inside the function: `capture` imports this module, so importing it at
-    the top would close the cycle.
-    """
-    from . import capture
-
+    """Problems in `policy_pack.capture.learning.sink`, or `[]`."""
     capture_policy = policy_pack.get("capture")
     if not isinstance(capture_policy, dict):
         return []

@@ -5,9 +5,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from . import config as cfg
+if TYPE_CHECKING:  # pragma: no cover
+    # **Type-checking only, to keep the import graph acyclic.** `config` reads this
+    # module to validate `policy_pack.capture.learning`, and this module named
+    # `config` for annotations alone — every use of `cfg` here is a
+    # `cfg.ProjectConfig` in a signature, which `from __future__ import
+    # annotations` already leaves as a string at runtime. The pair still imported
+    # each other at import time, which is what CodeQL reports and what forced
+    # `config` to do its own import inside a function.
+    from . import config as cfg
 
 CAPTURE_SCHEMA_VERSION = "keel.capture.v1"
 RECONCILE_SCHEMA_VERSION = "keel.capture-reconcile.v1"
