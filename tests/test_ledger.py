@@ -775,6 +775,45 @@ class TestExistingCaptureMarker(unittest.TestCase):
         headed = _marker_record(pr=7, run_id="RUN-3", head_sha="eed4f81a")
         self.assertIsNone(ledger.existing_capture_marker([first], headed))
 
+    def test_capture_health_counts_pull_requests_not_rows(self):
+        """#1157 let one pull request leave two marked records; one capture stays one.
+
+        The writer's clash is keyed by (pull request, head) now, so a superseded
+        head's marker survives beside the merged head's. Counting rows reported
+        `applied: 1, skipped: 1` for a single capture in morning, wrap and status.
+        """
+
+        def merged(head, marker, status):
+            record = _gates_record(pr=168, head_sha=head, run_id=f"RUN-{head}")
+            record["capture"] = {"marker": marker, "status": status}
+            record["assessment"] = {"merge": {"action": "merge"}}
+            return record
+
+        pair = [
+            merged("48681d19", "compound-learning: pr=168 status=skipped:no-policy", "skipped"),
+            merged("eed4f81a", "compound-learning: pr=168 status=applied", "applied"),
+        ]
+
+        summary = ledger.capture_health_summary(pair)
+
+        self.assertEqual(summary["record_count"], 1)
+        self.assertEqual(summary["counts"]["applied"], 1)
+        self.assertEqual(summary["counts"]["skipped"], 0)
+
+    def test_capture_health_keeps_records_that_name_no_pull_request(self):
+        """Deduping by pull request must not drop the rows that have none."""
+        record = _gates_record(pr=168, head_sha="a", run_id="RUN-1")
+        record["capture"] = {
+            "marker": "compound-learning: pr=168 status=applied",
+            "status": "applied",
+        }
+        record["assessment"] = {"merge": {"action": "merge"}}
+        unkeyed = {**record, "pull_request": None}
+
+        summary = ledger.capture_health_summary([record, unkeyed])
+
+        self.assertEqual(summary["record_count"], 2)
+
     def test_the_deadlock_end_to_end(self):
         """Writer and merge gate agree again — the whole of #1157, in one place."""
         red = _marker_record(pr=7, run_id="RUN-1", head_sha="48681d19")

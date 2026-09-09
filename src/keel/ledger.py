@@ -453,9 +453,33 @@ def gates_pass_for_head(
     return True, latest
 
 
+def _latest_per_pr(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One record per pull request — the last — keeping records that name none.
+
+    A pull request has one capture, and since #1157 it can leave more than one
+    marked record: the writer's clash is keyed by ``(pull request, head)``, so a
+    superseded head's marker survives beside the merged head's. Counting rows
+    rather than pull requests then reported one merged pull request twice —
+    ``applied: 1, skipped: 1`` for a single capture — in morning, wrap and status.
+    Insertion order is preserved so these readers still list captures in the order
+    the ledger recorded them.
+    """
+    latest: dict[int, dict[str, Any]] = {}
+    unkeyed: list[dict[str, Any]] = []
+    for record in records:
+        pull_request = record.get("pull_request")
+        number = pull_request.get("number") if isinstance(pull_request, dict) else None
+        if isinstance(number, int):
+            latest[number] = record
+        else:
+            unkeyed.append(record)
+    keep = list(latest.values()) + unkeyed
+    return [record for record in records if any(record is kept for kept in keep)]
+
+
 def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize capture visibility for morning, wrap, status, and ledger readers."""
-    merged_records = [r for r in records if _is_merged_ship_run(r)]
+    merged_records = _latest_per_pr([r for r in records if _is_merged_ship_run(r)])
     items = [_capture_health_item(record) for record in merged_records]
     counts = {
         "applied": 0,

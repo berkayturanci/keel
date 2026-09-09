@@ -633,7 +633,9 @@ keel ledger .keel/project.yaml --root . --limit 10
 
 ## `keel capture-verify`
 
-Verify that merged PRs each have exactly one valid capture marker in the run ledger.
+Verify that merged PRs each have exactly one valid capture marker in the run ledger,
+counted on the head that capture was recorded against rather than across every head the
+pull request ever had (#1157).
 
 ```
 keel capture-verify <project.yaml> [--merged-pr N…] [--from-transport] [--merged-since DATE]

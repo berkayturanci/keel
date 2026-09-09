@@ -216,6 +216,41 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(report["status"], "complete")
         self.assertEqual(report["results"][0]["status"], "applied")
 
+    def test_a_run_that_never_reached_capture_does_not_move_the_counted_head(self):
+        """#945's record, meeting #1157's scoping.
+
+        A run that re-records gates after a rebase writes `not_run` with no
+        marker on a new head. Reading the counted head off the *last* record
+        would look past a real applied marker on the merged head and report the
+        capture missing — and `reconcile_session` would then plan to emit a
+        marker that already exists. `ledger.latest_ship_run_for_pr` documents why
+        last-by-pull-request is the wrong proxy for a head-scoped question; a row
+        with no marker is not evidence about capture at all.
+        """
+        merged = {
+            "schema_version": "keel.run-ledger.v1",
+            "record_type": "ship_run",
+            "pull_request": {"number": 168},
+            "git": {"head_sha": "48681d19"},
+            "capture": {"marker": "compound-learning: pr=168 status=applied"},
+            "assessment": {"merge": {"action": "merge"}},
+        }
+        rebased = {
+            "schema_version": "keel.run-ledger.v1",
+            "record_type": "ship_run",
+            "pull_request": {"number": 168},
+            "git": {"head_sha": "deadbeef"},
+            "capture": {"not_run": True, "marker": None},
+        }
+
+        report = capture.verify_session([merged, rebased], [168])
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["results"][0]["status"], "applied")
+
+        reconcile = capture.reconcile_session([merged, rebased], [168])
+        self.assertEqual(reconcile["results"][0]["status"], "complete")
+        self.assertEqual(reconcile["results"][0].get("actions", []), [])
+
     def test_verify_session_still_rejects_two_markers_on_one_head(self):
         """The invariant this check exists for survives the scoping above."""
         records = [
