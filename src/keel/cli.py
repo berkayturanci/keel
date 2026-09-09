@@ -693,11 +693,13 @@ CHECKPOINT_MERGE_STEP = "s10"
 #: three real outcomes, which broke two things (#945):
 #:
 #: * a **rebased PR could never be merged again**. The gates record is keyed on
-#:   ``(pr, head_sha)`` so a new head needs a new record, but
-#:   :func:`keel.ledger.existing_capture_marker` refuses a second record carrying
-#:   a marker for the same PR — and every accepted status produced one. Both
-#:   guards are right; the record just had no way to satisfy one without
-#:   violating the other.
+#:   ``(pr, head_sha)`` so a new head needs a new record, and
+#:   :func:`keel.ledger.existing_capture_marker` refused a second record carrying
+#:   a marker for the same PR *whatever its head* — and every accepted status
+#:   produced one. Both guards were right; the record had no way to satisfy one
+#:   without violating the other. #1157 keys the clash on ``(pr, head_sha)`` too,
+#:   so that particular deadlock is gone and this flag is no longer the only way
+#:   out of it. The reason below is the one that remains, and it is enough.
 #: * a record **asserted a capture that never happened**. A real status is read
 #:   back as a capture outcome — including by
 #:   :func:`keel.ledger._is_merged_ship_run`, which treats one as evidence the PR
@@ -1613,9 +1615,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if args.append_ledger:
         if ledger_result.get("skipped") == "duplicate-capture-marker":
             print(
-                "  ledger append : skipped — PR already has a capture marker "
-                f"(run {ledger_result['existing_run_id']}); a second one would block "
-                "capture-verify with no automated repair"
+                "  ledger append : skipped — this head already has a capture marker "
+                f"(run {ledger_result['existing_run_id']}); a second one on the same "
+                "head would block capture-verify with no automated repair"
             )
         else:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")

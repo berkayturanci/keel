@@ -2776,7 +2776,7 @@ class TestShip(unittest.TestCase):
         self.assertEqual((first_rc, second_rc, read_rc), (0, 0, 0))
         self.assertIn("ledger append : yes", first_out)
         self.assertIn("ledger append : skipped", second_out)
-        self.assertIn("already has a capture marker (run ship-42)", second_out)
+        self.assertIn("this head already has a capture marker (run ship-42)", second_out)
         self.assertEqual(len(json.loads(read_json)["records"]), 1)
         # …and the session stays verifiable, which is the whole point.
         self.assertEqual(verify_rc, 0)
