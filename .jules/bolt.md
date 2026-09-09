@@ -89,3 +89,6 @@ line is hot — a tight loop over thousands of items, called repeatedly. Do not 
 code that runs a handful of times per command, and especially not in
 `src/keel/evidence.py`, which decides whether a PR may merge: churn there needs to buy
 something. keel#789 proposed exactly that and was closed. See keel#791.
+## 2024-09-09 - Regex compilation for multi-glob matching
+**Learning:** For performance optimization in Python, compiling multiple fnmatch globs into a single regex pattern using the | (OR) operator is significantly faster than iteratively evaluating multiple globs in a loop with fnmatch.fnmatch(). fnmatch.translate() can be used to convert globs to regex parts.
+**Action:** When matching a string against multiple globs (e.g. file paths against allowed patterns) in a hot path, translate and compile them into a single regex pattern and cache the compiled pattern.
