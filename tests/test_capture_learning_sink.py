@@ -67,6 +67,25 @@ def write_config(directory: Path, extra_policy_pack_lines: list[str] | None = No
     return str(path)
 
 
+@contextlib.contextmanager
+def _github_issue(payload: str | None):
+    """Stand in for `gh issue view` — `payload` JSON, or `None` for no host."""
+    from keel import github
+
+    original = github.issue_facts
+
+    def fake(issue, *, cwd=None, fields="title,labels", _run=None):
+        if payload is None:
+            return github.CommandResult(False, 1, "gh: not found", stdout="")
+        return github.CommandResult(True, 0, payload, stdout=payload)
+
+    github.issue_facts = fake
+    try:
+        yield
+    finally:
+        github.issue_facts = original
+
+
 def _front_matter_fields(document: str) -> dict:
     """The front-matter block, parsed by a real YAML parser.
 
@@ -765,6 +784,57 @@ class EveryTypoShapeIsRefused(unittest.TestCase):
             self.assertIn("{fingerprint}", str(caught.exception))
 
 
+class TheHostFillsWhatTheFlagsDidNot(unittest.TestCase):
+    """Fail-soft at every step: a host that answers badly is a host that is silent.
+
+    The sink runs after a merge. Anything it reads from GitHub is a convenience,
+    and every way that read can go wrong has to end with the document saying what
+    the flags already said rather than with the command failing.
+    """
+
+    def facts(self, payload, **flags):
+        args = cli.build_parser().parse_args(
+            [
+                "ship",
+                "project.yaml",
+                "--issue",
+                "1155",
+                *[part for key, value in flags.items() for part in (f"--{key}", value)],
+            ]
+        )
+        with _github_issue(payload):
+            return cli._capture_issue_facts(args)
+
+    def test_the_host_fills_an_empty_title_body_and_labels(self):
+        payload = json.dumps(
+            {"title": "t", "body": "b", "labels": [{"name": "core"}, {"nope": 1}, "x"]}
+        )
+        self.assertEqual(self.facts(payload), ("t", "b", ("core",)))
+
+    def test_a_flag_wins_over_the_host(self):
+        """The operator said it on this run; the issue may have been edited since."""
+        payload = json.dumps({"title": "t", "body": "b", "labels": [{"name": "core"}]})
+        self.assertEqual(
+            self.facts(payload, **{"issue-title": "mine", "issue-body": "body"}),
+            ("mine", "body", ("core",)),
+        )
+
+    def test_no_issue_number_asks_nothing(self):
+        args = cli.build_parser().parse_args(["ship", "project.yaml", "--issue-title", "t"])
+        with _github_issue(None):
+            self.assertEqual(cli._capture_issue_facts(args), ("t", "", ()))
+
+    def test_every_bad_answer_leaves_the_flags_standing(self):
+        for label, payload in (
+            ("no host", None),
+            ("not json", "not json at all"),
+            ("not an object", "[1, 2]"),
+            ("wrong types", json.dumps({"title": 7, "body": None, "labels": "core"})),
+        ):
+            with self.subTest(answer=label):
+                self.assertEqual(self.facts(payload, **{"issue-title": "mine"}), ("mine", "", ()))
+
+
 class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
     """End to end, through the CLI, because that is where the I/O lives.
 
@@ -1090,7 +1160,9 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                     "applied",
                 ]
             )
-            result = cli._write_learning_sink(args, cfg.load_config(path), [secret], [], [])
+            result = cli._write_learning_sink(
+                args, cfg.load_config(path), [secret], [], [], ("a change", "", ())
+            )
             self.assertTrue(result["ok"], result)
             body = Path(result["path"]).read_text(encoding="utf-8")
             self.assertNotIn(secret, body)
@@ -1154,13 +1226,15 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(front["labels"], [])
             self.assertEqual(front["changed_files"], [])
 
-    def test_an_invalid_redaction_pattern_fails_soft_instead_of_crashing(self):
+    def test_an_invalid_redaction_pattern_is_reported_not_raised(self):
         """A pattern that will not compile must not end the command in a traceback.
 
-        `keel ship` has a handler for it where the *ledger* is sanitized; the sink
-        reached for the policy earlier, outside every handler, so a project with
-        both a sink and a bad pattern died after its merge instead of downgrading
-        the capture claim the way an unwritable directory does.
+        It **does** still end the run: `keel ship` refuses to append a record it
+        cannot redact, prints why, and exits 1 — which is the designed behaviour and
+        not the sink's to change, since writing an unsanitized record would be the
+        worse answer. What the sink owes is not raising from a place with no handler,
+        which is what it did. This is deliberately *not* the fail-soft an unwritable
+        directory gets: that one downgrades the claim and exits 0.
         """
         with tempfile.TemporaryDirectory() as root:
             config = write_config(
@@ -1178,6 +1252,97 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(code, 1, err)
             self.assertIn("redaction", err.lower())
             self.assertFalse(list((Path(root) / "learnings").glob("*.md")))
+
+    def test_the_adapters_own_s11_command_still_writes_a_document(self):
+        """The command keel dogfoods passes no title and no body.
+
+        `--issue-title` / `--issue-body` are `keel plan` flags at the start of a
+        run; s11 is `keel ship … --live --append-ledger --issue <N> --pull-request
+        <PR> --capture-status applied`, and a later invocation inherits nothing.
+        Measured on exactly that: a file titled `Learning`, an empty description, a
+        `learning` slug and `_Not recorded._` under every heading — an artifact that
+        makes `applied` "provable" by pointing at a document recording no lesson.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            facts = json.dumps(
+                {
+                    "title": "capture: feed retrieved learnings into briefs",
+                    "body": "## Deliverable\nWire the reader in.\n",
+                    "labels": [{"name": "core"}],
+                }
+            )
+            with _github_issue(facts):
+                code, _, err = run(
+                    [
+                        "ship",
+                        config,
+                        "--root",
+                        str(root),
+                        "--live",
+                        "--append-ledger",
+                        "--run-id",
+                        "s11",
+                        "--issue",
+                        "1155",
+                        "--pull-request",
+                        "1160",
+                        "--capture-status",
+                        "applied",
+                        "--approve-scope",
+                        "filesystem,git,github",
+                        "--operator",
+                        "tester",
+                    ]
+                )
+            self.assertEqual(code, 0, err)
+            written = sorted((Path(root) / "learnings").glob("*.md"))
+            self.assertEqual(len(written), 1, written)
+            self.assertIn("feed-retrieved-learnings", written[0].name)
+            body = written[0].read_text(encoding="utf-8")
+            front = _front_matter_fields(body)
+            self.assertEqual(front["title"], "capture: feed retrieved learnings into briefs")
+            self.assertEqual(front["labels"], ["core"])
+            self.assertNotIn("_Not recorded._\n\n## What we learned", body)
+
+    def test_offline_it_writes_what_it_has(self):
+        """Fail-soft, like the blocker gate's own reader: no host, no crash."""
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            with _github_issue(None):
+                code, _, err = run(
+                    [
+                        "ship",
+                        config,
+                        "--root",
+                        str(root),
+                        "--live",
+                        "--append-ledger",
+                        "--run-id",
+                        "offline",
+                        "--issue",
+                        "1155",
+                        "--pull-request",
+                        "1160",
+                        "--issue-title",
+                        "a title the flag carried",
+                        "--issue-body",
+                        self.BODY,
+                        "--capture-status",
+                        "applied",
+                        "--approve-scope",
+                        "filesystem,git,github",
+                        "--operator",
+                        "tester",
+                    ]
+                )
+            self.assertEqual(code, 0, err)
+            written = sorted((Path(root) / "learnings").glob("*.md"))
+            self.assertEqual(len(written), 1, written)
+            self.assertEqual(
+                _front_matter_fields(written[0].read_text(encoding="utf-8"))["title"],
+                "a title the flag carried",
+            )
 
     def test_a_secret_in_the_issue_body_is_redacted_before_it_is_written(self):
         """Redaction before durability is the capture contract's rule, not a new one.

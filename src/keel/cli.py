@@ -1469,8 +1469,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # an `applied` capture provable rather than asserted. A project with no sink
     # keeps today's behaviour exactly, including an operator-supplied
     # `--capture-artifact`.
+    # Resolved once, so the document the sink writes and the record the ledger
+    # appends fingerprint the same lesson.
+    capture_facts = _capture_issue_facts(args)
     capture_write = _write_learning_sink(
-        args, config, changed_read, existing_ledger_records, outcomes
+        args, config, changed_read, existing_ledger_records, outcomes, capture_facts
     )
     capture_status_value = _resolved_capture_status(args.capture_status)
     capture_reason_value = args.capture_reason
@@ -1505,8 +1508,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         capture_not_run=args.capture_status == CAPTURE_STATUS_NOT_RUN,
         capture_reason=capture_reason_value,
         capture_artifact=capture_artifact_value,
-        issue_title=args.issue_title,
-        issue_labels=_issue_labels(args),
+        issue_title=capture_facts[0],
+        issue_labels=capture_facts[2],
         existing_records=existing_ledger_records,
         config=config,
         implementer=args.implementer,
@@ -8771,7 +8774,51 @@ def _today() -> str:
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
 
 
-def _learning_sections(args, outcomes) -> tuple[str, str, str, str]:
+def _capture_issue_facts(args) -> tuple[str, str, tuple[str, ...]]:
+    """The issue's title, body and labels for the learning document.
+
+    **The adapter's s11 command does not pass them.** `--issue-title` and
+    `--issue-body` are `keel plan` flags at the start of a run; the ship that
+    records capture is `keel ship … --live --append-ledger --issue <N>
+    --pull-request <PR> --capture-status applied`, and a later invocation inherits
+    nothing. Measured on exactly that command: one file titled `Learning`, an empty
+    description, a `learning` slug and `_Not recorded._` under every heading — the
+    empty-document failure this feature was already once burned on, on the only path
+    keel dogfoods.
+
+    So when `--issue` names one and the flags are empty, the facts are read from the
+    host. Fail-soft, like :func:`_gather_issue_facts`, which does the same for the
+    blocker gate: offline, the flags stand and the document says what it can.
+    """
+    title = args.issue_title or ""
+    body = args.issue_body or ""
+    labels = _issue_labels(args)
+    issue = getattr(args, "issue", None)
+    if issue is None or (title and body and labels):
+        return title, body, labels
+    result = github.issue_facts(issue, cwd=args.root, fields="title,body,labels")
+    if not result.ok:
+        return title, body, labels
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return title, body, labels
+    if not isinstance(data, dict):
+        return title, body, labels
+    if not title and isinstance(data.get("title"), str):
+        title = data["title"]
+    if not body and isinstance(data.get("body"), str):
+        body = data["body"]
+    if not labels and isinstance(data.get("labels"), list):
+        labels = tuple(
+            str(item["name"])
+            for item in data["labels"]
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        )
+    return title, body, labels
+
+
+def _learning_sections(args, outcomes, body: str) -> tuple[str, str, str, str]:
     """The document's prose: description, and the three contracted sections.
 
     Built from what the run already carries — the issue body and the gate outcomes
@@ -8780,7 +8827,7 @@ def _learning_sections(args, outcomes) -> tuple[str, str, str, str]:
     three sections all read `_Not recorded._` is a file with a filename and nothing
     else in it.
     """
-    body = (args.issue_body or "").strip()
+    body = (body or "").strip()
     first = next((line.strip() for line in body.splitlines() if line.strip()), "")
     description = first[:200]
     files = ", ".join(sorted(changed)) if (changed := list(args.declared_file or ())) else ""
@@ -8799,7 +8846,9 @@ def _learning_sections(args, outcomes) -> tuple[str, str, str, str]:
     return description, what_changed, what_we_learned, do_differently
 
 
-def _write_learning_sink(args, config, changed_files, existing_records, outcomes) -> dict | None:
+def _write_learning_sink(
+    args, config, changed_files, existing_records, outcomes, facts
+) -> dict | None:
     """Write this run's learning document, or `None` when there is nothing to write.
 
     The plan is pure (:func:`keel.capture.learning_sink_plan`); this is the thin I/O
@@ -8829,11 +8878,14 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
     # when it goes through `_yaml_scalar` — and the filename, built from the title,
     # stops carrying most of the token through `_slugify`.
     status = _resolved_capture_status(args.capture_status)
+    title, body, labels = facts
     decision = capture.learning_decision(
-        # The *unredacted* title and labels: this is the dedupe fingerprint and it
-        # has to be the one `record_marker` computes for the ledger.
-        title=args.issue_title,
-        labels=_issue_labels(args),
+        # The *unredacted* title and labels, and the same ones the ledger's own
+        # `record_marker` is given: this is the dedupe fingerprint, and a sink that
+        # fingerprinted the host's title while the record fingerprinted an empty flag
+        # would dedupe against a value nothing else computes.
+        title=title,
+        labels=labels,
         changed_files=changed_files or (),
         capture_status=status,
         capture_reason=args.capture_reason,
@@ -8870,10 +8922,10 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
             # token — `ghp_…` and nothing else — is plain YAML, so it went in bare
             # and the document pass put the replacement inside it: the same break as
             # the title, one field over, twice. This is the whole set.
-            "title": args.issue_title,
-            "labels": _issue_labels(args),
+            "title": title,
+            "labels": labels,
             "changed_files": changed_files or (),
-            "sections": _learning_sections(args, outcomes),
+            "sections": _learning_sections(args, outcomes, body),
         },
         policy,
     ).value
