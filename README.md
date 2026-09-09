@@ -394,6 +394,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/evidence.md`](docs/keel/evidence.md) — evidence chain, commit-SHA binding, and compliance auditability
 - [`docs/keel/models.md`](docs/keel/models.md) — supported AI models, providers, and delegate profiles (Claude, OpenAI, Gemini, OpenRouter, DeepSeek, Groq, Ollama, CLI tools)
 - [`docs/keel/parameter-reference.md`](docs/keel/parameter-reference.md) — exhaustive per-flag reference for every CLI command and the `/keel:ship` adapter arguments
+- [`docs/keel/install.md`](docs/keel/install.md) — installing keel **into an agent** (Claude Code, Codex, Antigravity, Cursor), with the update path for each
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
 - [`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) — the live run board (`dash`/`render`/`serve`, the per-run 2D/3D drawer, `--all` multi-project, the auto-stamped `keel activity` channel)
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions
