@@ -972,6 +972,18 @@ _YAML_KEYWORDS = frozenset(
 )
 
 
+def _one_line(value: str) -> str:
+    """A value that cannot start a second line, wherever it is written.
+
+    :func:`_yaml_scalar` applies this before quoting, and the **body** needs it too:
+    the document's `# {title}` heading took the raw string, so a title carrying a
+    newline wrote a heading and then whatever followed it as Markdown of its own —
+    `foo\n## injected` became `# foo` and an `## injected` section. The front matter
+    and the body have to say the same thing about the same field.
+    """
+    return _YAML_CONTROL.sub(" ", value)
+
+
 def _yaml_scalar(value: str) -> str:
     """A front-matter value that survives a real YAML parser.
 
@@ -1000,7 +1012,7 @@ def _yaml_scalar(value: str) -> str:
     # title of `"foo` and drops the rest, while a real parser reads `foo bar`, so
     # the two disagree about the same file. A NUL is worse: PyYAML refuses the
     # document outright. They become spaces, because a title is a line.
-    return f'"{_YAML_CONTROL.sub(" ", escaped)}"'
+    return f'"{_one_line(escaped)}"'
 
 
 def _yaml_sequence(key: str, values: list[str] | tuple[str, ...]) -> list[str]:
@@ -1057,9 +1069,11 @@ def render_learning_document(
     front.append("---")
     body = [
         "",
-        f"# {title or 'Learning'}",
+        # Through `_one_line`, like the front matter above: a heading built from a
+        # raw title let a newline open a section of its own inside the document.
+        f"# {_one_line(title or 'Learning')}",
         "",
-        description or "",
+        _one_line(description or ""),
         "",
         "## What changed",
         "",

@@ -889,7 +889,7 @@
                     "path": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "Destination directory. Expands ~ and the placeholders {owner}, {repo}, {base_branch}, {date}, {pr}, {slug}. Defaults to .keel/learning."
+                      "description": "Destination directory. Expands ~ and the placeholders {owner}, {repo}, {base_branch}, {date}, {pr}, {slug}, {fingerprint}. Defaults to .keel/learning."
                     },
                     "filename": {
                       "type": "string",

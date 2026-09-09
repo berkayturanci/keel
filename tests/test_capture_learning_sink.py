@@ -636,6 +636,36 @@ class TheFrontMatterSurvivesARealParser(unittest.TestCase):
                 keel_title, _ = capture._learning_title_and_summary(document, "fallback")
                 self.assertEqual(keel_title, self.block(title)["title"])
 
+    def test_the_body_heading_cannot_open_a_section_of_its_own(self):
+        """The front matter and the body have to say the same thing.
+
+        The document's `# {title}` heading took the raw string, so a title carrying
+        a newline wrote a heading and then whatever followed it as Markdown of its
+        own: `foo` + newline + `## injected` became `# foo` and an `## injected`
+        section, sitting beside a front matter that had quoted the same value.
+        """
+        document = capture.render_learning_document(
+            title="foo\n## injected",
+            description="d\r## also",
+            pr_number=1,
+            issue_number=None,
+            repo="r",
+            date="2026-09-09",
+            labels=(),
+            changed_files=(),
+            fingerprint="f",
+        )
+        headings = [line for line in document.splitlines() if line.startswith("#")]
+        self.assertEqual(
+            headings,
+            [
+                "# foo ## injected",
+                "## What changed",
+                "## What we learned",
+                "## What to do differently next time",
+            ],
+        )
+
     def test_a_yaml_keyword_is_quoted_so_it_stays_a_string(self):
         for word in ("yes", "no", "true", "off", "null"):
             with self.subTest(word=word):
