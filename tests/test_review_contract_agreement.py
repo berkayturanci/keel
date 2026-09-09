@@ -880,13 +880,24 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                 self.assertEqual(review_payload["plan"]["required_count"], 3)
 
     def _jury_report(self, vendors):
-        """An ai-jury JSON report (schema 1.1) with one ballot per entry in `vendors`."""
+        """An ai-jury JSON report (schema 1.1) with one ballot per entry in `vendors`.
+
+        Each ballot names a file so it counts as a review after #1150: empty
+        findings on an older report fail closed and are not posted.
+        """
         path = self.root / "jury-report.json"
         path.write_text(
             json.dumps(
                 {
                     "schema_version": "1.1",
-                    "findings": [],
+                    "findings": [
+                        {
+                            "severity": "nit",
+                            "file": "src/a.py",
+                            "line": 1,
+                            "claim": "named so the ballot counts as a review",
+                        }
+                    ],
                     "consensus": [],
                     "reviewers": [
                         {
@@ -894,7 +905,7 @@ class TestEveryCommandResolvesTheSameBench(unittest.TestCase):
                             "vendor": vendor,
                             "model": f"{vendor}-model",
                             "verdict": "LGTM",
-                            "findings": [],
+                            "findings": [0],
                             "round1_ok": True,
                             "verified_count": 0,
                         }
