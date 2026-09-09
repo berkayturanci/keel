@@ -524,36 +524,28 @@ def ballot_is_review(ballot: Ballot) -> bool:
     """Whether this panelist ballot counts as a review (ai-jury ``is_review``).
 
     A review is a panelist whose scope is substantive and whose verdict is not
-    ``ABSTAIN``. The chair is split off before this predicate runs. Schema ≥1.2
-    reports declare ``counts_as_review`` / ``scope_substantive`` on the record;
-    those flags are honoured, and either being ``false`` fails closed even when
-    findings name a path. Older reports without the flags fail closed on an
-    empty finding list or an ``ABSTAIN``: inventing a ``Checked …`` opener is
-    what made an abstention look like a review.
+    ``ABSTAIN``. The chair is split off before this predicate runs.
+
+    The flags a schema ≥1.2 report declares — ``counts_as_review`` and
+    ``scope_substantive`` — can only ever **remove** a ballot here, never admit
+    one that carries nothing. ai-jury derives ``counts_as_review`` from
+    ``scope_substantive``, which is itself derived from the ``scope`` prose, so a
+    record claiming ``counts_as_review: true`` with no ``scope`` and no finding
+    is not a clean review it produced; it is internally inconsistent, and
+    admitting it means keel writing the substance the report failed to supply.
+    That is the escape hatch #1150 is about, so the ambiguous record fails closed
+    like every other one.
+
+    What is left is the fact the scope line reads: a ballot counts when the
+    report gave prose to post or a path to name. Older reports carry no flags and
+    are decided by that same fact, so a schema-1.1 empty ``APPROVE`` is dropped
+    rather than dressed up.
     """
     if ballot.verdict == "ABSTAIN":
         return False
     if ballot.counts_as_review is False or ballot.scope_substantive is False:
         return False
-    if ballot.counts_as_review is True or ballot.scope_substantive is True:
-        return True
-    return bool(_finding_paths(ballot))
-
-
-def _clean_review_scope(ballot: Ballot) -> str:
-    """The scope of a review that read the diff and had nothing to report.
-
-    :func:`keel.evidence.verdict_substance` accepts an explicit ``checked …``
-    clause precisely so a genuinely clean review stays expressible without
-    inventing a file reference. A ballot that *is* a review must therefore get
-    one, or it renders as an abstention it is not: `ballot_is_review` says yes,
-    the scope says "did not review", and the verdict is refused at posting time
-    by the gate it was built for.
-    """
-    return (
-        f"Checked the changed-file diff as ai-jury panelist {ballot.reviewer}; "
-        "named no file and raised no finding of its own."
-    )
+    return bool(ballot.scope) or bool(_finding_paths(ballot))
 
 
 def _abstention_scope(ballot: Ballot) -> str:
@@ -570,25 +562,24 @@ def ballot_scope(ballot: Ballot) -> str:
     A ballot that is not a review never gets a substance-passing opener: keel
     used to always start with ``Checked the changed-file diff…``, which is its
     own :func:`keel.evidence.verdict_substance` escape hatch, so an ``ABSTAIN``
-    still passed the gate by construction. Schema ≥1.2 reports carry their own
-    ``scope``; that prose is used when the ballot *is* a review.
+    still passed the gate by construction.
 
-    A ballot that *is* a review and names no path still gets the ``checked …``
-    clause. Withholding it there was the mirror of the defect above: a schema
-    ≥1.2 record declaring ``counts_as_review: true`` with no ``scope`` prose —
-    the shape of a seat that read the diff and found nothing — was admitted to
-    the panel by :func:`ballot_is_review` and then described as not having
-    reviewed, which :func:`keel.evidence.verdict_substance` refuses. Whether a
-    ballot counts is decided in one place; the scope line reports that decision
-    rather than making a second one.
+    Every remaining branch renders something the report actually supplied. A
+    schema ≥1.2 ballot carries its own ``scope`` and that prose is posted as
+    written — including the clean review that read the diff and found nothing,
+    which ai-jury describes itself rather than leaving keel to. Otherwise the
+    ballot named paths, and the ``checked …`` line is built from them. There is
+    no third case: :func:`ballot_is_review` admits a ballot only when one of
+    those two is true, so this function never has to invent a scope for a ballot
+    it was told to post.
     """
     if not ballot_is_review(ballot):
         return _abstention_scope(ballot)
     if ballot.scope:
         return ballot.scope
+    # Non-empty: `ballot_is_review` accepted this ballot, and with no `scope`
+    # prose the only way it could have is by naming a path.
     files = _finding_paths(ballot)
-    if not files:
-        return _clean_review_scope(ballot)
     opening = f"Checked the changed-file diff as ai-jury panelist {ballot.reviewer}"
     listed = ", ".join(files[:_SCOPE_FILES])
     more = len(files) - _SCOPE_FILES

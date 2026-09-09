@@ -870,27 +870,49 @@ class TestAbstentionsAreNotReviews(unittest.TestCase):
         )
         self.assertEqual(panel.ballots, ())
 
-    def test_a_declared_review_without_scope_or_paths_still_reads_as_a_review(self):
-        """The mirror of #1150: a review that renders as an abstention.
+    def test_a_flag_only_ballot_with_nothing_in_it_is_not_admitted(self):
+        """The flags may remove a ballot; they may not admit an empty one.
 
-        A schema >=1.2 record can declare ``counts_as_review: true`` and carry
-        neither ``scope`` prose nor a finding — the shape of a seat that read the
-        diff and found nothing. Withholding the ``checked …`` clause there
-        admitted the ballot to the panel and then described it as not having
-        reviewed, and `verdict_substance` refuses that verdict: the posting path
-        would fail on the one ballot every consumer most expects to succeed.
+        ai-jury derives `counts_as_review` from `scope_substantive`, which is
+        derived from the `scope` prose — `is_review({"role": "panelist",
+        "verdict": "APPROVE", "scope_substantive": scope_is_substantive("")})` is
+        False — so a record claiming `counts_as_review: true` with no `scope` and
+        no finding is not a clean review ai-jury produced. It is inconsistent,
+        and honouring the flag means keel writing the substance the report failed
+        to supply: #1150's escape hatch, re-opened for the one ballot an earlier
+        cut of this fix thought it was rescuing. It fails closed instead.
+        """
+        ballot = jury.Ballot(
+            reviewer="grok", vendor="xai", verdict="APPROVE", counts_as_review=True
+        )
+        self.assertFalse(jury.ballot_is_review(ballot))
+        self.assertNotIn("Checked", jury.ballot_scope(ballot))
+        panel = jury.parse_panel(
+            {"reviewers": [{"name": "grok", "verdict": "APPROVE", "counts_as_review": True}]}
+        )
+        self.assertEqual(panel.ballots, ())
+        self.assertEqual(panel.size, 0)
 
-        `verdict_substance` accepts an explicit ``checked …`` clause precisely so
-        a clean review stays expressible without inventing a file reference. The
-        decision is made once, by `ballot_is_review`; the scope line reports it.
+    def test_a_clean_review_posts_the_prose_the_report_wrote_for_it(self):
+        """The seat that read the diff and found nothing — described by ai-jury.
+
+        This is the ballot the flag-only record was mistaken for. A schema >=1.2
+        report carries its own `scope`, so keel posts what ai-jury wrote instead
+        of inventing an opener, and the gate accepts it.
         """
         from keel import artifacts, evidence
 
-        ballot = jury.Ballot(reviewer="a", verdict="LGTM", counts_as_review=True)
+        ballot = jury.Ballot(
+            reviewer="grok",
+            vendor="xai",
+            verdict="APPROVE",
+            counts_as_review=True,
+            scope_substantive=True,
+            scope="Read the diff in `src/keel/jury.py` end to end; nothing to raise.",
+        )
         self.assertTrue(jury.ballot_is_review(ballot))
         scope = jury.ballot_scope(ballot)
-        self.assertIn("Checked", scope)
-        self.assertNotIn("did not review", scope)
+        self.assertEqual(scope, ballot.scope)
         body = artifacts.render_review_verdict(
             reviewer=ballot.reviewer,
             head_sha="abc123",
