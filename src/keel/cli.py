@@ -1462,6 +1462,25 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # The same events say *who* ran each round, which is what lets the closure comment
     # name the seat an s9 escalation handed the fix to (#1016).
     run_fix_attribution = runcontrols.fix_attribution(run_control_events)
+    # The built-in capture extension (#1154). `policy_pack.capture.learning.sink`
+    # names a directory of Markdown; keel renders the document and writes it, and
+    # the path becomes `capture.artifact` — which is already the field that makes
+    # an `applied` capture provable rather than asserted. A project with no sink
+    # keeps today's behaviour exactly, including an operator-supplied
+    # `--capture-artifact`.
+    capture_write = _write_learning_sink(args, config, changed_read)
+    capture_status_value = _resolved_capture_status(args.capture_status)
+    capture_reason_value = args.capture_reason
+    capture_artifact_value = args.capture_artifact
+    if capture_write is not None:
+        if capture_write["ok"]:
+            capture_artifact_value = capture_write["path"]
+        else:
+            # Fail-soft, as the capture contract requires: a sink that cannot be
+            # written does not touch the merge, it downgrades the claim.
+            capture_status_value = "skipped"
+            capture_reason_value = "capability-unavailable"
+            capture_artifact_value = None
     ledger_record = ledger.build_ship_run_record(
         command=command,
         base_branch=config.base_branch,
@@ -1479,10 +1498,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         pr_number=args.ledger_pr or args.pr,
         branch=args.branch,
         head_sha=args.head_sha,
-        capture_status=_resolved_capture_status(args.capture_status),
+        capture_status=capture_status_value,
         capture_not_run=args.capture_status == CAPTURE_STATUS_NOT_RUN,
-        capture_reason=args.capture_reason,
-        capture_artifact=args.capture_artifact,
+        capture_reason=capture_reason_value,
+        capture_artifact=capture_artifact_value,
         issue_title=args.issue_title,
         issue_labels=_issue_labels(args),
         existing_records=existing_ledger_records,
@@ -8736,6 +8755,70 @@ def _parse_pr_issue_mapping(value: str) -> tuple[int, int]:
     except (argparse.ArgumentTypeError, ValueError) as exc:
         raise argparse.ArgumentTypeError("linked issue mapping must be PR=ISSUE") from exc
     return pr, issue
+
+
+def _today() -> str:
+    """Today's UTC date, as the sink's `{date}` placeholder and frontmatter field.
+
+    Here rather than in `capture`: the pure core takes no wall clock, so the date is
+    read at the one edge that is allowed to and passed in.
+    """
+    import datetime
+
+    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+
+
+def _write_learning_sink(args, config, changed_files) -> dict | None:
+    """Write this run's learning document, or `None` when there is nothing to write.
+
+    The plan is pure (:func:`keel.capture.learning_sink_plan`); this is the thin I/O
+    around it, which is why it lives here and not in `capture`. It returns
+    ``{"ok": bool, "path": str | None, "error": str | None}`` so the caller can
+    decide what the record says — a writer that reached into the record itself would
+    put policy in the I/O layer.
+
+    Fail-soft by contract: any `OSError` becomes ``ok: False`` and the caller
+    downgrades the capture to ``skipped:capability-unavailable``. A capture that
+    could not be written must not fail a merge that already happened.
+    """
+    plan = capture.learning_sink_plan(
+        config=config,
+        decision=capture.learning_decision(
+            title=args.issue_title,
+            labels=_issue_labels(args),
+            changed_files=changed_files or (),
+            capture_status=_resolved_capture_status(args.capture_status),
+            capture_reason=args.capture_reason,
+            config=config,
+        ),
+        capture_status=_resolved_capture_status(args.capture_status),
+        owner=config.owner,
+        repo=config.repo,
+        base_branch=config.base_branch,
+        date=_today(),
+        pr_number=args.ledger_pr or args.pr,
+        title=args.issue_title,
+        issue_number=args.issue,
+        labels=_issue_labels(args),
+        changed_files=changed_files or (),
+    )
+    if plan is None:
+        return None
+    # An absolute or `~` path is used as written — pointing the sink at a shared
+    # knowledge folder outside the checkout is the feature. A **relative** one
+    # resolves against `--root`, not the process working directory: the default
+    # `.keel/learning` otherwise wrote wherever keel happened to be launched from,
+    # which on a CI runner is not the repository at all.
+    directory = Path(plan["directory"]).expanduser()
+    if not directory.is_absolute():
+        directory = Path(args.root) / directory
+    target = directory / plan["filename"]
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        workspace.write_text_atomic(target, plan["content"])
+    except OSError as exc:
+        return {"ok": False, "path": None, "error": str(exc)}
+    return {"ok": True, "path": str(target), "error": None}
 
 
 def _resolved_capture_status(value: str | None) -> str | None:

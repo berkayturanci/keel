@@ -874,6 +874,30 @@
                       "description": "Whether stable learning fingerprints suppress duplicate durable learning candidates."
                     }
                   }
+                },
+                "sink": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "markdown-dir"
+                      ],
+                      "description": "The only sink kind: a directory of Markdown files with stable frontmatter. keel never learns what reads that directory."
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Destination directory. Expands ~ and the placeholders {owner}, {repo}, {base_branch}, {date}, {pr}, {slug}. Defaults to .keel/learning."
+                    },
+                    "filename": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "File name template, same placeholders. Defaults to {date}-pr{pr}-{slug}.md."
+                    }
+                  },
+                  "description": "Where an applied capture writes its durable learning file. Omit it and keel records the marker and writes nothing, which is the behaviour before #1154."
                 }
               },
               "description": "Policy for optional durable learning artifacts. Core records the decision in capture.learning and suppresses duplicates by stable fingerprint."

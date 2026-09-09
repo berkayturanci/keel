@@ -573,6 +573,10 @@ def parse_config(data: Any, *, source: str = "<dict>", schema: dict | None = Non
     if isinstance(data, dict) and isinstance(data.get("policy_pack"), dict):
         for path, names in _policy_capability_fields(data["policy_pack"]):
             errors.extend(validate_names(tuple(names), source=f"{source}: {path}"))
+        # Validated here rather than where the file is written: a template naming
+        # `{repoo}` is a typo whose only symptom would otherwise be a directory by
+        # that name, created successfully, on a machine nobody is watching.
+        errors.extend(f"{source}: {issue}" for issue in _learning_sink_issues(data["policy_pack"]))
     if errors:
         raise ConfigError(source, errors)
     return _build(data)
@@ -960,6 +964,23 @@ def vendor_label_errors(label: Any, *, where: str) -> list[str]:
             "label agent:<vendor>, so use lowercase letters, digits, '.', '-' or '_'"
         ]
     return []
+
+
+def _learning_sink_issues(policy_pack: dict[str, Any]) -> list[str]:
+    """Problems in `policy_pack.capture.learning.sink`, or `[]`.
+
+    Imported inside the function: `capture` imports this module, so importing it at
+    the top would close the cycle.
+    """
+    from . import capture
+
+    capture_policy = policy_pack.get("capture")
+    if not isinstance(capture_policy, dict):
+        return []
+    learning = capture_policy.get("learning")
+    if not isinstance(learning, dict):
+        return []
+    return capture.learning_sink_errors(learning.get("sink"))
 
 
 def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tuple[str, list]]:

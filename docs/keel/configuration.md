@@ -1318,6 +1318,60 @@ Allowed skip reasons are `dry-run`, `deferred`, `merge-failed`, `recursion-guard
 fail-soft: the merge is not reverted, but the marker and ledger must record the applied,
 deferred, or allowed skipped state so `keel capture-verify` can surface gaps.
 
+#### `policy_pack.capture.learning.sink`
+
+The built-in capture extension. Declare a sink and an **applied** capture writes one
+Markdown file per run; omit it and keel records the marker and writes nothing, which is
+the behaviour every project had before it existed.
+
+```yaml
+policy_pack:
+  name: example
+  capture:
+    enabled: true
+    mode: extension
+    learning:
+      mode: create-learning
+      sink:
+        kind: markdown-dir
+        path: "~/knowledge/projects/{repo}/learnings"
+        filename: "{date}-pr{pr}-{slug}.md"
+```
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `kind` | string | `markdown-dir` | the only kind. A directory of Markdown; keel never learns what reads it |
+| `path` | string | `.keel/learning` | destination directory; `~` and the placeholders below expand |
+| `filename` | string | `{date}-pr{pr}-{slug}.md` | file name template, same placeholders |
+
+Placeholders are `{owner}`, `{repo}`, `{base_branch}`, `{date}`, `{pr}` and `{slug}`
+(the issue title, lowercased and hyphenated). **The set is closed**: an unknown
+placeholder is rejected when the config is read, because its only other symptom would
+be a directory literally named `{repoo}`, created successfully, on a machine nobody is
+watching.
+
+Each file opens with front matter the read path relies on — `schema`, `title`,
+`description`, `repo`, `pr`, `issue`, `date`, `fingerprint`, `labels`, `changed_files` —
+then three fixed sections: **What changed**, **What we learned**, **What to do
+differently next time**. Content passes through
+[`policy_pack.capture_redaction`](#policy_packcapture_redaction) before it is written,
+which is the existing durable-artifact rule rather than a new one.
+
+Three behaviours worth knowing:
+
+- **The path becomes `capture.artifact`.** That field is what makes an `applied` capture
+  provable rather than asserted — `keel capture-reconcile` treats `applied` with no
+  artifact as a finding — so a project with a sink stops passing `--capture-artifact`
+  by hand for a file it did not write.
+- **A `duplicate` learning decision writes nothing.** That is the fingerprint dedupe
+  doing its job, not a failure.
+- **A sink that cannot be written is fail-soft**, like every other capture failure: the
+  record becomes `skipped:capability-unavailable` and the merge is untouched.
+
+The default `.keel/learning/` is **not** runtime-ignored. Everything else keel writes
+under `.keel/` is disposable per-run state; learnings are the exception, because a
+learning git throws away is one the read path can never find.
+
 ### `policy_pack.risk_rules`
 
 Array of high-risk policy rules. Each entry requires:

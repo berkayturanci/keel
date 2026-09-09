@@ -833,6 +833,285 @@ def _normalize_path(value: str) -> str:
     return "/".join(value.strip().lower().replace("\\", "/").split("/"))
 
 
+#: The one sink kind this issue ships. A directory of Markdown with stable
+#: frontmatter is the whole contract — no vault format, no wikilinks, no plugin
+#: API — so a project can point it at whatever reads Markdown and keel never
+#: learns what that is.
+LEARNING_SINK_KINDS = ("markdown-dir",)
+
+#: Where a sink writes when a project configures capture but names no path. The
+#: existing `.keel/learning/` convention, so turning the sink on changes where
+#: files appear only for a project that asked it to.
+DEFAULT_LEARNING_SINK_PATH = ".keel/learning"
+DEFAULT_LEARNING_SINK_FILENAME = "{date}-pr{pr}-{slug}.md"
+
+#: The frontmatter contract the reader depends on. Fixed and small on purpose:
+#: `retrieve_relevant_learnings` reads `title` and `description` out of it, so a
+#: field added here is a field that side has to be taught.
+LEARNING_SCHEMA_VERSION = "keel.learning.v1"
+
+#: Every placeholder a `path` or `filename` template may use. Named rather than
+#: open-ended: an unknown placeholder is a typo that would otherwise write a
+#: directory called `{repoo}` and look like it worked.
+LEARNING_SINK_PLACEHOLDERS = ("owner", "repo", "base_branch", "date", "pr", "slug")
+
+_SLUG_STRIP = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(text: str | None, *, limit: int = 48) -> str:
+    """A filename-safe slug, or `learning` when the title reduces to nothing."""
+    slug = _SLUG_STRIP.sub("-", (text or "").lower()).strip("-")
+    if not slug:
+        return "learning"
+    return slug[:limit].rstrip("-")
+
+
+def learning_sink_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
+    """The `policy_pack.capture.learning.sink` block, or `{}` when unset."""
+    sink = _learning_policy(config).get("sink")
+    return sink if isinstance(sink, dict) else {}
+
+
+def learning_sink_errors(sink: Any) -> list[str]:
+    """Why this `sink` block cannot be used, or `[]`.
+
+    Validated where the config is read rather than where the file is written: a
+    template naming `{repoo}` is a typo whose only symptom would otherwise be a
+    directory by that name, created successfully, on a machine nobody is watching.
+    """
+    if sink in (None, {}):
+        return []
+    if not isinstance(sink, dict):
+        return ["policy_pack.capture.learning.sink must be a mapping"]
+    errors: list[str] = []
+    kind = sink.get("kind", LEARNING_SINK_KINDS[0])
+    if kind not in LEARNING_SINK_KINDS:
+        errors.append(
+            f"policy_pack.capture.learning.sink.kind must be one of "
+            f"{', '.join(LEARNING_SINK_KINDS)} (got {kind!r})"
+        )
+    for field_name in ("path", "filename"):
+        raw = sink.get(field_name)
+        if raw is None:
+            continue
+        if not isinstance(raw, str) or not raw.strip():
+            errors.append(
+                f"policy_pack.capture.learning.sink.{field_name} must be a non-empty string"
+            )
+            continue
+        for name in re.findall(r"\{([a-z_]*)\}", raw):
+            if name not in LEARNING_SINK_PLACEHOLDERS:
+                errors.append(
+                    f"policy_pack.capture.learning.sink.{field_name} uses unknown placeholder "
+                    f"{{{name}}}; known: {', '.join(LEARNING_SINK_PLACEHOLDERS)}"
+                )
+    return errors
+
+
+def _expand(template: str, values: dict[str, str]) -> str:
+    out = template
+    for name, value in values.items():
+        out = out.replace("{" + name + "}", value)
+    return out
+
+
+def _yaml_scalar(value: str) -> str:
+    """A frontmatter value that survives a real YAML parser.
+
+    An issue title routinely contains a colon — `capture: built-in Markdown
+    learning sink` — and written bare it makes the block invalid YAML. keel's own
+    reader splits on the first colon and would not notice; every other tool that
+    reads this frontmatter would, and the whole point of frontmatter is that other
+    tools read it.
+    """
+    if value == "":
+        return '""'
+    if any(ch in value for ch in ':#"\n') or value.strip() != value:
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
+    return value
+
+
+def render_learning_document(
+    *,
+    title: str | None,
+    description: str | None,
+    pr_number: int | None,
+    issue_number: int | None,
+    repo: str | None,
+    date: str,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
+    fingerprint: str = "",
+    what_changed: str = "",
+    what_we_learned: str = "",
+    do_differently: str = "",
+) -> str:
+    """One learning file: frontmatter the reader can rely on, then three sections.
+
+    The heading is repeated below the frontmatter deliberately. `retrieve_relevant_learnings`
+    scores a file by its own text, and a title that lives only in frontmatter is a
+    title the search cannot weigh.
+    """
+    front = [
+        "---",
+        f"schema: {LEARNING_SCHEMA_VERSION}",
+        f"title: {_yaml_scalar(title or 'Learning')}",
+        f"description: {_yaml_scalar(description or '')}",
+        f"repo: {_yaml_scalar(repo or '')}",
+        f"pr: {pr_number if pr_number is not None else ''}",
+        f"issue: {issue_number if issue_number is not None else ''}",
+        f"date: {date}",
+        f"fingerprint: {fingerprint}",
+        "labels:",
+    ]
+    front += [f"  - {_yaml_scalar(label)}" for label in _strings(labels)]
+    front.append("changed_files:")
+    front += [f"  - {_yaml_scalar(path)}" for path in _strings(changed_files)]
+    front.append("---")
+    body = [
+        "",
+        f"# {title or 'Learning'}",
+        "",
+        description or "",
+        "",
+        "## What changed",
+        "",
+        what_changed or "_Not recorded._",
+        "",
+        "## What we learned",
+        "",
+        what_we_learned or "_Not recorded._",
+        "",
+        "## What to do differently next time",
+        "",
+        do_differently or "_Not recorded._",
+        "",
+    ]
+    return "\n".join(front + body)
+
+
+def learning_sink_plan(
+    *,
+    config: cfg.ProjectConfig | None,
+    decision: dict[str, Any] | None,
+    capture_status: str | None,
+    owner: str | None,
+    repo: str | None,
+    base_branch: str | None,
+    date: str,
+    pr_number: int | None,
+    title: str | None = None,
+    description: str | None = None,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
+    issue_number: int | None = None,
+    what_changed: str = "",
+    what_we_learned: str = "",
+    do_differently: str = "",
+) -> dict[str, Any] | None:
+    """What to write for this run, or `None` with the reason folded into the caller.
+
+    Pure: it resolves a path and renders a document and touches no filesystem and no
+    clock — `date` is passed in for the same reason every other plan in this package
+    takes its facts as arguments.
+
+    Returns `None` when there is nothing to write: no sink configured, a capture that
+    is not `applied`, or a `duplicate` learning decision, which is the dedupe already
+    doing its job rather than a failure.
+    """
+    if capture_status != "applied":
+        return None
+    sink = learning_sink_policy(config)
+    if not sink or learning_sink_errors(sink):
+        return None
+    if isinstance(decision, dict) and decision.get("decision") == "duplicate":
+        return None
+    values = {
+        "owner": owner or "",
+        "repo": repo or "",
+        "base_branch": base_branch or "",
+        "date": date,
+        "pr": str(pr_number) if pr_number is not None else "",
+        "slug": _slugify(title),
+    }
+    directory = _expand(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
+    filename = _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
+    fingerprint = ""
+    if isinstance(decision, dict):
+        fingerprint = str(decision.get("fingerprint") or "")
+    return {
+        "kind": sink.get("kind", LEARNING_SINK_KINDS[0]),
+        "directory": directory,
+        "filename": filename,
+        "content": render_learning_document(
+            title=title,
+            description=description,
+            pr_number=pr_number,
+            issue_number=issue_number,
+            repo=repo,
+            date=date,
+            labels=labels,
+            changed_files=changed_files,
+            fingerprint=fingerprint,
+            what_changed=what_changed,
+            what_we_learned=what_we_learned,
+            do_differently=do_differently,
+        ),
+    }
+
+
+def _unquote(value: str) -> str:
+    """Undo :func:`_yaml_scalar` for the fields this reader uses.
+
+    The writer quotes any value containing a colon — an issue title usually does —
+    so a reader that took the raw text would hand back a title wrapped in quotes.
+    """
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
+def _front_matter(content: str) -> tuple[dict[str, str], str]:
+    """Split a leading `---` block off, as `(fields, body)`.
+
+    Only the scalar fields this contract defines are read; a list value (`labels:`)
+    is skipped rather than parsed, because the caller wants a title and a sentence
+    and nothing here should grow into a YAML parser.
+    """
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, content
+    fields: dict[str, str] = {}
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return fields, "\n".join(lines[index + 1 :])
+        key, sep, value = line.partition(":")
+        if sep and not key.startswith(" "):
+            fields[key.strip()] = _unquote(value.strip())
+    # No closing delimiter: not front matter, whatever it looked like.
+    return {}, content
+
+
+def _learning_title_and_summary(content: str, fallback: str) -> tuple[str, str]:
+    """A learning file's title and one-line summary.
+
+    Front matter first, because that is what the writer fills. Read line-by-line
+    instead, a file written by `render_learning_document` would be titled `---` and
+    summarised `schema: keel.learning.v1` — measured, and the reason the reader is
+    part of the change that added the writer.
+    """
+    fields, body = _front_matter(content)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    title = fields.get("title") or (lines[0].lstrip("#").strip() if lines else fallback)
+    summary = fields.get("description") or ""
+    if not summary:
+        for line in lines[1:]:
+            if not line.startswith("#"):
+                summary = line
+                break
+    return title or fallback, summary
+
+
 def retrieve_relevant_learnings(
     query_text: str,
     learning_dir: str | Path,
@@ -879,9 +1158,7 @@ def retrieve_relevant_learnings(
                 score += min(count, 5)
 
         if score >= min_score:
-            lines = [line.strip() for line in content.splitlines() if line.strip()]
-            title = lines[0].lstrip("#").strip() if lines else file_path.name
-            summary = lines[1] if len(lines) > 1 else ""
+            title, summary = _learning_title_and_summary(content, file_path.name)
             results.append(
                 {
                     "file": file_path.name,

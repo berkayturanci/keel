@@ -200,7 +200,12 @@ class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
     #: does not demand they be ignored. Anything found in the source that is in
     #: neither this set nor ``RUNTIME_IGNORE_ENTRIES`` is unclassified, and the
     #: test says so rather than guessing.
-    COMMITTED_SUBTREES = frozenset({"extensions"})
+    #: `learning` joins it with #1154: the capture sink's default destination is
+    #: `.keel/learning/`, and a durable learning ignored at runtime is a file the
+    #: default writes and git throws away — which would make the default useless
+    #: and the read path in #1155 permanently empty. This sweep is what forced the
+    #: question: a new `.keel` subtree must be classified, not merely written.
+    COMMITTED_SUBTREES = frozenset({"extensions", "learning"})
 
     #: How the source spells a ``.keel`` subtree. Kept as patterns rather than a
     #: list of names, because a hand-maintained list of names is the same thing
