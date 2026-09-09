@@ -343,18 +343,21 @@ class TheSiteDoesNotPublishAOneAgentRecipe(unittest.TestCase):
         """
         landing = (REPO_ROOT / "website" / "index.html").read_text(encoding="utf-8")
         pairs = re.findall(
-            r'<code id="([a-z-]+)">(.*?)</code><button[^>]*?data-copy="([^"]*)"([^>]*)>',
+            r'<code id="([a-z-]+)">(.*?)</code><button([^>]*)>',
             landing,
         )
-        self.assertGreaterEqual(len(pairs), 2, pairs)
-        for element_id, shown, copied, rest in pairs:
+        self.assertGreaterEqual(len(pairs), 3, pairs)
+        for element_id, _shown, attrs in pairs:
             with self.subTest(button=element_id):
-                if "data-copy-target" in rest:
-                    continue
-                self.assertEqual(
-                    copied,
-                    re.sub(r"<[^>]+>", "", shown).replace("&amp;", "&"),
-                    f"#{element_id}: the button copies something other than what it shows",
+                # `data-copy-target` is what makes "copies what it shows" true by
+                # construction — it reads the element's own text. A literal
+                # `data-copy` is a second copy of the command that drifts from the
+                # first, which is exactly how this button came to show two
+                # commands and copy one.
+                self.assertIn(
+                    "data-copy-target",
+                    attrs,
+                    f"#{element_id}: copies a literal string instead of what it shows",
                 )
 
     def test_the_landing_page_does_not_lead_with_one_agent_either(self):
