@@ -540,6 +540,22 @@ def ballot_is_review(ballot: Ballot) -> bool:
     return bool(_finding_paths(ballot))
 
 
+def _clean_review_scope(ballot: Ballot) -> str:
+    """The scope of a review that read the diff and had nothing to report.
+
+    :func:`keel.evidence.verdict_substance` accepts an explicit ``checked …``
+    clause precisely so a genuinely clean review stays expressible without
+    inventing a file reference. A ballot that *is* a review must therefore get
+    one, or it renders as an abstention it is not: `ballot_is_review` says yes,
+    the scope says "did not review", and the verdict is refused at posting time
+    by the gate it was built for.
+    """
+    return (
+        f"Checked the changed-file diff as ai-jury panelist {ballot.reviewer}; "
+        "named no file and raised no finding of its own."
+    )
+
+
 def _abstention_scope(ballot: Ballot) -> str:
     """An explicitly anchorless scope: no ``Checked …``, no path, no backtick."""
     cause = (ballot.abstention_cause or "").replace("_", " ")
@@ -555,9 +571,16 @@ def ballot_scope(ballot: Ballot) -> str:
     used to always start with ``Checked the changed-file diff…``, which is its
     own :func:`keel.evidence.verdict_substance` escape hatch, so an ``ABSTAIN``
     still passed the gate by construction. Schema ≥1.2 reports carry their own
-    ``scope``; that prose is used when the ballot *is* a review. Older reports
-    may derive a ``Checked …`` line only from real finding paths on a
-    non-``ABSTAIN`` verdict.
+    ``scope``; that prose is used when the ballot *is* a review.
+
+    A ballot that *is* a review and names no path still gets the ``checked …``
+    clause. Withholding it there was the mirror of the defect above: a schema
+    ≥1.2 record declaring ``counts_as_review: true`` with no ``scope`` prose —
+    the shape of a seat that read the diff and found nothing — was admitted to
+    the panel by :func:`ballot_is_review` and then described as not having
+    reviewed, which :func:`keel.evidence.verdict_substance` refuses. Whether a
+    ballot counts is decided in one place; the scope line reports that decision
+    rather than making a second one.
     """
     if not ballot_is_review(ballot):
         return _abstention_scope(ballot)
@@ -565,7 +588,7 @@ def ballot_scope(ballot: Ballot) -> str:
         return ballot.scope
     files = _finding_paths(ballot)
     if not files:
-        return _abstention_scope(ballot)
+        return _clean_review_scope(ballot)
     opening = f"Checked the changed-file diff as ai-jury panelist {ballot.reviewer}"
     listed = ", ".join(files[:_SCOPE_FILES])
     more = len(files) - _SCOPE_FILES

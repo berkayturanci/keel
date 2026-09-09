@@ -870,10 +870,44 @@ class TestAbstentionsAreNotReviews(unittest.TestCase):
         )
         self.assertEqual(panel.ballots, ())
 
-    def test_a_declared_review_without_scope_or_paths_does_not_invent_checked(self):
+    def test_a_declared_review_without_scope_or_paths_still_reads_as_a_review(self):
+        """The mirror of #1150: a review that renders as an abstention.
+
+        A schema >=1.2 record can declare ``counts_as_review: true`` and carry
+        neither ``scope`` prose nor a finding — the shape of a seat that read the
+        diff and found nothing. Withholding the ``checked …`` clause there
+        admitted the ballot to the panel and then described it as not having
+        reviewed, and `verdict_substance` refuses that verdict: the posting path
+        would fail on the one ballot every consumer most expects to succeed.
+
+        `verdict_substance` accepts an explicit ``checked …`` clause precisely so
+        a clean review stays expressible without inventing a file reference. The
+        decision is made once, by `ballot_is_review`; the scope line reports it.
+        """
+        from keel import artifacts, evidence
+
         ballot = jury.Ballot(reviewer="a", verdict="LGTM", counts_as_review=True)
         self.assertTrue(jury.ballot_is_review(ballot))
+        scope = jury.ballot_scope(ballot)
+        self.assertIn("Checked", scope)
+        self.assertNotIn("did not review", scope)
+        body = artifacts.render_review_verdict(
+            reviewer=ballot.reviewer,
+            head_sha="abc123",
+            verdict=ballot.verdict,
+            scope=scope,
+            findings=[],
+            testing="none",
+        )
+        ok, reason = evidence.verdict_substance(body, pr_title="fix: something else")
+        self.assertTrue(ok, reason)
+
+    def test_a_ballot_that_is_not_a_review_still_gets_no_checked_opener(self):
+        """The fix above must not reopen #1150: the two paths stay separate."""
+        ballot = jury.Ballot(reviewer="a", verdict="LGTM")
+        self.assertFalse(jury.ballot_is_review(ballot))
         self.assertNotIn("Checked", jury.ballot_scope(ballot))
+        self.assertIn("did not review", jury.ballot_scope(ballot))
 
     def test_blank_and_non_string_scope_fields_are_treated_as_absent(self):
         panel = jury.parse_panel(
