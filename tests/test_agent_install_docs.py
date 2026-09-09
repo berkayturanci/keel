@@ -333,6 +333,30 @@ class TheSiteDoesNotPublishAOneAgentRecipe(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(command, self.site)
 
+    def test_every_copy_button_copies_what_the_reader_sees(self):
+        """A button that copies half of what is shown does half the job, silently.
+
+        The plugin button showed two commands and copied one — the same defect as
+        a second step hidden in a `#` comment, on the surface with the highest
+        traffic. `data-copy-target` makes the button read the element's own text,
+        which is the pattern the `pip install` button beside it already used.
+        """
+        landing = (REPO_ROOT / "website" / "index.html").read_text(encoding="utf-8")
+        pairs = re.findall(
+            r'<code id="([a-z-]+)">(.*?)</code><button[^>]*?data-copy="([^"]*)"([^>]*)>',
+            landing,
+        )
+        self.assertGreaterEqual(len(pairs), 2, pairs)
+        for element_id, shown, copied, rest in pairs:
+            with self.subTest(button=element_id):
+                if "data-copy-target" in rest:
+                    continue
+                self.assertEqual(
+                    copied,
+                    re.sub(r"<[^>]+>", "", shown).replace("&amp;", "&"),
+                    f"#{element_id}: the button copies something other than what it shows",
+                )
+
     def test_the_landing_page_does_not_lead_with_one_agent_either(self):
         """The homepage is the surface most people see, and it had a copy button.
 
