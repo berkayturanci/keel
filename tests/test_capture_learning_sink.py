@@ -250,12 +250,27 @@ class ADuplicatePointsAtTheFileItDuplicates(unittest.TestCase):
             for index, artifact in enumerate(artifacts)
         ]
 
-    def artifact(self, decision, records, sink={"kind": "markdown-dir"}):  # noqa: B006
+    def artifact(self, decision, records, sink={"kind": "markdown-dir"}, status="applied"):  # noqa: B006
         return capture.duplicate_learning_artifact(
             config=_config(sink),
             decision=decision,
+            capture_status=status,
             existing_records=records,
         )
+
+    def test_only_an_applied_capture_borrows_one(self):
+        """`learning_decision` answers `duplicate` before it looks at the status.
+
+        Without this gate a `not-run` or `skipped` record was handed the earlier
+        run's path — the exact contradiction the CLI refuses at its flag boundary,
+        *a run that never reached capture produced no artifact*, and the one
+        `record_marker` states for `deferred` and `skipped`.
+        """
+        for status in (None, "deferred", "skipped", "skipped:capability-unavailable"):
+            with self.subTest(status=status):
+                self.assertIsNone(
+                    self.artifact(self.DUPLICATE, self.records("/k/one.md"), status=status)
+                )
 
     def test_it_names_the_recorded_file(self):
         self.assertEqual(self.artifact(self.DUPLICATE, self.records("/k/one.md")), "/k/one.md")
@@ -666,7 +681,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             ]
         )
 
-    def ship_with(self, root, config, *extra, pr=1154, run_id=None):
+    def ship_with(self, root, config, *extra, pr=1154, run_id=None, status="applied"):
         """`ship`, plus flags a single test needs."""
         return run(
             [
@@ -685,7 +700,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                 "--issue-body",
                 self.BODY,
                 "--capture-status",
-                "applied",
+                status,
                 "--approve-scope",
                 "filesystem,git,github",
                 "--operator",
@@ -1087,6 +1102,25 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                 os.chdir(here)
             self.assertEqual(self.ship(root_path, config, pr=2)[0], 0)
             self.assertEqual(self.ledger_capture(root_path)["artifact"], first)
+
+    def test_a_run_that_never_reached_capture_borrows_nothing(self):
+        """Through the CLI, because that is where the contradiction would land.
+
+        `keel ship` already refuses `--capture-status not-run` with an artifact
+        passed by hand — *a run that never reached capture produced no artifact*.
+        The reuse was writing that same pair into the record without anyone asking.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            self.assertEqual(self.ship(root, config, pr=1)[0], 0)
+            self.assertIsNotNone(self.ledger_capture(root)["artifact"])
+            code, _, err = self.ship_with(
+                root, config, "--head-sha", "c" * 40, pr=2, run_id="not-run", status="not-run"
+            )
+            self.assertEqual(code, 0, err)
+            block = self.ledger_capture(root)
+            self.assertTrue(block["not_run"])
+            self.assertIsNone(block["artifact"])
 
     def test_a_deduped_run_claims_nothing_when_that_file_is_gone(self):
         """An artifact that resolves to nothing is worse than no artifact.

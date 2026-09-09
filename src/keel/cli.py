@@ -8847,7 +8847,7 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
     # that writes nothing raised an invalid `capture_redaction` pattern from here,
     # past the handler `_cmd_ship` has for exactly that failure.
     if not capture.learning_sink_writes(config=config, decision=decision, capture_status=status):
-        return _duplicate_learning_artifact(config, decision, existing_records, args.root)
+        return _duplicate_learning_artifact(config, decision, status, existing_records, args.root)
     # **Redact the values, then render.** Sanitizing the finished document put the
     # replacement *inside* a front-matter scalar the quoter had already decided was
     # safe: `ghp_AAA…` is plain YAML (letters, digits, underscore), so it went in
@@ -8918,7 +8918,9 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
     return {"ok": True, "path": str(target), "error": None, "reused": False}
 
 
-def _duplicate_learning_artifact(config, decision, existing_records, root) -> dict | None:
+def _duplicate_learning_artifact(
+    config, decision, capture_status, existing_records, root
+) -> dict | None:
     """Point a deduped run at the file the run it duplicates already wrote.
 
     The path is only claimed when it is still there. A record can name a file
@@ -8930,6 +8932,7 @@ def _duplicate_learning_artifact(config, decision, existing_records, root) -> di
     recorded = capture.duplicate_learning_artifact(
         config=config,
         decision=decision,
+        capture_status=capture_status,
         existing_records=existing_records or (),
     )
     if recorded is None:

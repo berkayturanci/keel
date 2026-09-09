@@ -1162,6 +1162,7 @@ def duplicate_learning_artifact(
     *,
     config: cfg.ProjectConfig | None,
     decision: dict[str, Any] | None,
+    capture_status: str | None,
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> str | None:
     """The artifact an earlier run already wrote for this same learning, or `None`.
@@ -1173,9 +1174,18 @@ def duplicate_learning_artifact(
     provable instead of letting the dedupe manufacture the gap the artifact
     exists to close.
 
+    **Only for an `applied` capture**, and that gate is the whole point rather than
+    a precaution: `learning_decision` answers `duplicate` on a fingerprint match
+    before it looks at the status, so without it a `not-run` or `skipped` record
+    was handed the earlier run's path — the exact contradiction the CLI refuses at
+    its flag boundary, *a run that never reached capture produced no artifact*, and
+    the one `record_marker` states for `deferred` and `skipped`.
+
     Pure: it reads recorded paths and never asks whether one still exists. The
     caller that can answer that is the caller that touches the filesystem.
     """
+    if capture_status != "applied":
+        return None
     if not learning_sink_policy(config):
         return None
     if not isinstance(decision, dict) or decision.get("decision") != "duplicate":
