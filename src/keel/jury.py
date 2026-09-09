@@ -291,6 +291,11 @@ class Ballot:
     verified_count: int = 0
     round1_ok: bool = True
     findings: tuple[dict[str, Any], ...] = ()
+    scope: str | None = None
+    testing: str | None = None
+    counts_as_review: bool | None = None
+    scope_substantive: bool | None = None
+    abstention_cause: str | None = None
 
     def as_review(self) -> dict[str, Any]:
         """This ballot in the ``keel review --reviews`` bundle shape."""
@@ -305,6 +310,11 @@ class Ballot:
         }
 
 
+def _review_ballots(ballots: tuple[Ballot, ...]) -> tuple[Ballot, ...]:
+    """Ballots that count as reviews — the one definition :class:`Panel` consumes."""
+    return tuple(ballot for ballot in ballots if ballot_is_review(ballot))
+
+
 @dataclass(frozen=True)
 class Panel:
     """A parsed ai-jury panel: the panelist ballots and the chair's consensus."""
@@ -315,27 +325,39 @@ class Panel:
 
     @property
     def size(self) -> int:
-        """Panelists that returned a ballot — the reviewer count this panel *is*."""
-        return len(self.ballots)
+        """Reviews this panel produced — the reviewer count the evidence gate sizes.
+
+        Aligns with ai-jury's ``is_review``: an abstention, an empty ballot, or a
+        ``counts_as_review: false`` record is not a review and does not inflate
+        ``panelists`` / ``jury_panel_size``. :func:`parse_panel` already drops
+        those from :attr:`ballots`; this property re-applies the same predicate
+        so a hand-built panel cannot disagree with the posting path.
+        """
+        return len(_review_ballots(self.ballots))
 
     @property
     def vendors(self) -> tuple[str, ...]:
-        """Distinct declared vendors across the ballots, in panel order.
+        """Distinct declared vendors across the reviews, in panel order.
 
         Lower-cased and de-duplicated exactly as :func:`keel.evidence.distinct_vendor_check`
         reads the posted ``vendor:`` lines, so the count declared on the jury verdict and
         the count the evidence gate recomputes from the verdicts cannot disagree.
+        Abstaining seats are not reviews and do not contribute a vendor.
         """
         seen: list[str] = []
-        for ballot in self.ballots:
+        for ballot in _review_ballots(self.ballots):
             vendor = (ballot.vendor or "").strip().lower()
             if vendor and vendor not in seen:
                 seen.append(vendor)
         return tuple(seen)
 
     def reviews(self) -> tuple[dict[str, Any], ...]:
-        """Every panelist ballot in the ``--reviews`` bundle shape."""
-        return tuple(ballot.as_review() for ballot in self.ballots)
+        """Review ballots in the ``--reviews`` bundle shape.
+
+        Non-reviews are omitted: posting them as head-pinned ``review-verdict-*``
+        evidence is the defect this mapping exists to close.
+        """
+        return tuple(ballot.as_review() for ballot in _review_ballots(self.ballots))
 
 
 def _finding_record(raw: Any) -> dict[str, Any] | None:
@@ -372,6 +394,27 @@ def _ballot_findings(raw: Any, findings: list[Any]) -> tuple[dict[str, Any], ...
     return tuple(records)
 
 
+def _text_field(raw: dict[str, Any], key: str) -> str | None:
+    """A non-empty string field, or ``None`` when absent / blank / the wrong type."""
+    value = raw.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _bool_field(raw: dict[str, Any], key: str) -> bool | None:
+    """A JSON boolean field, or ``None`` when absent or not a bool.
+
+    Integers are refused: ``1``/``0`` are not the schema ≥1.2 flags, and treating
+    them as booleans would let a malformed report opt a ballot into the review
+    count.
+    """
+    value = raw.get(key)
+    if isinstance(value, bool):
+        return value
+    return None
+
+
 def _ballot(raw: Any, findings: list[Any], *, position: int) -> Ballot:
     if not isinstance(raw, dict):
         raise JuryReportError(f"jury report reviewer #{position} must be a JSON object")
@@ -391,6 +434,11 @@ def _ballot(raw: Any, findings: list[Any], *, position: int) -> Ballot:
         else 0,
         round1_ok=bool(raw.get("round1_ok", True)),
         findings=_ballot_findings(raw.get("findings"), findings),
+        scope=_text_field(raw, "scope"),
+        testing=_text_field(raw, "testing"),
+        counts_as_review=_bool_field(raw, "counts_as_review"),
+        scope_substantive=_bool_field(raw, "scope_substantive"),
+        abstention_cause=_text_field(raw, "abstention_cause"),
     )
 
 
@@ -433,6 +481,11 @@ def parse_panel(data: dict | str) -> Panel | None:
     :class:`JuryReportError`: dropping a panelist would silently post fewer
     verdicts than the panel produced, which is the one failure this whole path
     exists to prevent.
+
+    Only ballots that :func:`ballot_is_review` accepts enter :attr:`Panel.ballots`.
+    An ``ABSTAIN``, a ``counts_as_review: false`` record, or an older empty
+    ballot is parsed and then dropped, so it cannot inflate ``panel.size`` or
+    become a posted ``review-verdict-*``.
     """
     if isinstance(data, str):
         try:
@@ -452,28 +505,82 @@ def parse_panel(data: dict | str) -> Panel | None:
         if isinstance(raw, dict) and (raw.get("role") or "") == CHAIR_ROLE:
             chair = ballot
             continue
-        ballots.append(ballot)
+        if ballot_is_review(ballot):
+            ballots.append(ballot)
     return Panel(ballots=tuple(ballots), chair=chair, verified=_verified_records(data))
 
 
-def ballot_scope(ballot: Ballot) -> str:
-    """The scope line keel renders for a panelist ballot.
-
-    Written to satisfy :func:`keel.evidence.verdict_substance` **by
-    construction**: it opens with a ``checked …`` clause and names every file the
-    panelist's own findings pointed at. The ai-jury report carries no per-ballot
-    scope prose — that lives only in its ``--format keel-reviews`` bundle — so a
-    scope derived here has to be built from what the ballot actually contains,
-    and a verdict that names nothing is refused by the gate it is posted for.
-    """
+def _finding_paths(ballot: Ballot) -> list[str]:
+    """Distinct file paths this ballot's own findings named, in first-seen order."""
     files: list[str] = []
     for finding in ballot.findings:
         path = finding.get("path")
         if isinstance(path, str) and path.strip() and path not in files:
             files.append(path.strip())
+    return files
+
+
+def ballot_is_review(ballot: Ballot) -> bool:
+    """Whether this panelist ballot counts as a review (ai-jury ``is_review``).
+
+    A review is a panelist whose scope is substantive and whose verdict is not
+    ``ABSTAIN``. The chair is split off before this predicate runs.
+
+    The flags a schema ≥1.2 report declares — ``counts_as_review`` and
+    ``scope_substantive`` — can only ever **remove** a ballot here, never admit
+    one that carries nothing. ai-jury derives ``counts_as_review`` from
+    ``scope_substantive``, which is itself derived from the ``scope`` prose, so a
+    record claiming ``counts_as_review: true`` with no ``scope`` and no finding
+    is not a clean review it produced; it is internally inconsistent, and
+    admitting it means keel writing the substance the report failed to supply.
+    That is the escape hatch #1150 is about, so the ambiguous record fails closed
+    like every other one.
+
+    What is left is the fact the scope line reads: a ballot counts when the
+    report gave prose to post or a path to name. Older reports carry no flags and
+    are decided by that same fact, so a schema-1.1 empty ``APPROVE`` is dropped
+    rather than dressed up.
+    """
+    if ballot.verdict == "ABSTAIN":
+        return False
+    if ballot.counts_as_review is False or ballot.scope_substantive is False:
+        return False
+    return bool(ballot.scope) or bool(_finding_paths(ballot))
+
+
+def _abstention_scope(ballot: Ballot) -> str:
+    """An explicitly anchorless scope: no ``Checked …``, no path, no backtick."""
+    cause = (ballot.abstention_cause or "").replace("_", " ")
+    if cause:
+        return f"ai-jury panelist {ballot.reviewer} did not review ({cause})."
+    return f"ai-jury panelist {ballot.reviewer} did not review."
+
+
+def ballot_scope(ballot: Ballot) -> str:
+    """The scope line keel renders for a panelist ballot.
+
+    A ballot that is not a review never gets a substance-passing opener: keel
+    used to always start with ``Checked the changed-file diff…``, which is its
+    own :func:`keel.evidence.verdict_substance` escape hatch, so an ``ABSTAIN``
+    still passed the gate by construction.
+
+    Every remaining branch renders something the report actually supplied. A
+    schema ≥1.2 ballot carries its own ``scope`` and that prose is posted as
+    written — including the clean review that read the diff and found nothing,
+    which ai-jury describes itself rather than leaving keel to. Otherwise the
+    ballot named paths, and the ``checked …`` line is built from them. There is
+    no third case: :func:`ballot_is_review` admits a ballot only when one of
+    those two is true, so this function never has to invent a scope for a ballot
+    it was told to post.
+    """
+    if not ballot_is_review(ballot):
+        return _abstention_scope(ballot)
+    if ballot.scope:
+        return ballot.scope
+    # Non-empty: `ballot_is_review` accepted this ballot, and with no `scope`
+    # prose the only way it could have is by naming a path.
+    files = _finding_paths(ballot)
     opening = f"Checked the changed-file diff as ai-jury panelist {ballot.reviewer}"
-    if not files:
-        return f"{opening}; named no file and raised no finding of its own."
     listed = ", ".join(files[:_SCOPE_FILES])
     more = len(files) - _SCOPE_FILES
     suffix = f" (+{more} more)" if more > 0 else ""
@@ -483,10 +590,14 @@ def ballot_scope(ballot: Ballot) -> str:
 def ballot_testing(ballot: Ballot) -> str:
     """The testing line keel renders for a panelist ballot.
 
-    The panel's verification round *is* the ballot's testing note: it is the only
-    check ai-jury performs on a reviewer's claims, and a ballot whose claims were
-    never upheld must say so rather than borrow the PR's own testing section.
+    Schema ≥1.2 reports carry their own ``testing`` prose; that is preferred
+    when present. Otherwise the panel's verification round *is* the ballot's
+    testing note: it is the only check ai-jury performs on a reviewer's claims,
+    and a ballot whose claims were never upheld must say so rather than borrow
+    the PR's own testing section.
     """
+    if ballot.testing:
+        return ballot.testing
     if ballot.verified_count > 0:
         note = (
             f"ai-jury verification upheld {ballot.verified_count} consensus "
@@ -540,7 +651,7 @@ def jury_verdict(panel: Panel) -> dict[str, Any]:
         "verdict": chair.verdict if chair is not None else "ABSTAIN",
         "participants": [
             f"{ballot.reviewer} ({ballot.vendor})" if ballot.vendor else ballot.reviewer
-            for ballot in panel.ballots
+            for ballot in _review_ballots(panel.ballots)
         ],
         "participating_vendors": len(panel.vendors),
         "panelists": panel.size,

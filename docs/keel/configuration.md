@@ -281,8 +281,10 @@ same answer on every machine.
 
 **`"3": jury` means the panel is dispatched once and its ballots *are* the review.** On
 such a tier `s7` runs ai-jury and `keel review --from-jury <report.json>` posts one
-head-pinned `keel.review-verdict.v1` per panelist — carrying the vendor and model that
-produced that ballot — plus the `keel.jury-verdict.v1` consensus record. Host reviewers are
+head-pinned `keel.review-verdict.v1` per panelist that counts as a review (ai-jury
+`is_review`) — carrying the vendor and model that produced that ballot — plus the
+`keel.jury-verdict.v1` consensus record. Abstentions are not posted and do not inflate
+`panelists`. Host reviewers are
 **not** staffed as well: paying for three host readings *and* a four-agent panel over the
 same diff, while the panel's ballots reached no gate, is what this policy replaced. The
 required verdict count is the panel's own size, declared as `panelists: <N>` on the posted

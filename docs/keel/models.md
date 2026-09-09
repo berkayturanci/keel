@@ -130,8 +130,10 @@ On such a tier s7 dispatches [ai-jury](https://github.com/berkayturanci/ai-jury)
 instead of running host readers beside it, and
 `keel review --from-jury <report.json>` turns the panel's JSON report
 (`jury --format json`, report schema 1.1+) into the run's public evidence: one head-pinned
-`keel.review-verdict.v1` per panelist ballot, carrying the `vendor:` and `model:` that
-produced *that* ballot, plus the panel's own `keel.jury-verdict.v1` consensus record — all
+`keel.review-verdict.v1` per panelist ballot that **counts as a review** (ai-jury
+`is_review`: panelist, substantive scope, not `ABSTAIN`), carrying the `vendor:` and
+`model:` that produced *that* ballot, plus the panel's own `keel.jury-verdict.v1`
+consensus record — all
 in one call, so ballots and verdict are pinned to the same head SHA by construction. The
 required verdict count becomes the panel's own declared size, and `--json` returns a
 `panel` block whose **verified** consensus findings are the s9 fix-loop input, in the

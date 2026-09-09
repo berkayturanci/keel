@@ -116,7 +116,7 @@ def _report(vendors: list[str]) -> dict:
                 "vendor": vendor,
                 "model": f"{vendor}-model",
                 "verdict": verdict,
-                "findings": [0] if name == "alpha" else [],
+                "findings": [0],
                 "round1_ok": True,
                 "verified_count": 1 if name == "alpha" else 0,
             }

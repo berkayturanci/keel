@@ -475,7 +475,7 @@ JURY_REPORT = {
             "vendor": "google",
             "model": "gemini-3-pro",
             "verdict": "COMMENT",
-            "findings": [],
+            "findings": [0],
             "round1_ok": True,
             "verified_count": 0,
         },
@@ -484,7 +484,7 @@ JURY_REPORT = {
             "vendor": "anthropic",
             "model": "",
             "verdict": "APPROVE",
-            "findings": [],
+            "findings": [0],
             "round1_ok": True,
             "verified_count": 1,
         },
@@ -662,6 +662,89 @@ class TestReviewFromJury(unittest.TestCase):
 
         self.assertEqual(rc, 1)
         self.assertIn("no panelist ballot", err)
+
+    def test_a_panel_of_only_abstentions_is_not_a_review(self):
+        rc, _, err = self._run(
+            {
+                "reviewers": [
+                    {"name": "alpha", "verdict": "ABSTAIN", "counts_as_review": False},
+                    {"name": "beta", "verdict": "APPROVE", "findings": []},
+                    {"name": "chair", "role": "chair", "verdict": "ABSTAIN"},
+                ]
+            }
+        )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("no panelist ballot", err)
+
+    def test_an_abstention_is_not_posted_and_does_not_inflate_panelists(self):
+        rc, out, err = self._run(
+            {
+                "schema_version": "1.2",
+                "findings": [
+                    {
+                        "severity": "major",
+                        "file": "src/keel/review.py",
+                        "line": 42,
+                        "claim": "the closure path drops the jury post",
+                    }
+                ],
+                "reviewers": [
+                    {
+                        "name": "alpha",
+                        "vendor": "anthropic",
+                        "model": "claude-opus-4",
+                        "verdict": "REQUEST_CHANGES",
+                        "findings": [0],
+                        "counts_as_review": True,
+                        "scope_substantive": True,
+                        "scope": "Checked `src/keel/review.py`.",
+                    },
+                    {
+                        "name": "gamma",
+                        "vendor": "anthropic",
+                        "verdict": "APPROVE",
+                        "findings": [0],
+                        "counts_as_review": True,
+                        "scope_substantive": True,
+                        "scope": "Checked `src/keel/review.py` and found nothing further.",
+                    },
+                    {
+                        "name": "beta",
+                        "vendor": "google",
+                        "verdict": "ABSTAIN",
+                        "counts_as_review": False,
+                        "scope_substantive": False,
+                        "abstention_cause": "named_nothing",
+                    },
+                    {
+                        "name": "chair",
+                        "role": "chair",
+                        "vendor": "openai",
+                        "verdict": "REQUEST_CHANGES",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(rc, 0, err)
+        data = json.loads(out)
+        verdicts = [p for p in data["plan"]["posts"] if p["artifact"] == "review-verdict"]
+        self.assertEqual(len(verdicts), 2)
+        self.assertEqual(
+            [post["run_id"] for post in verdicts],
+            ["run:rv-alpha", "run:rv-gamma"],
+        )
+        self.assertEqual(data["plan"]["supplied_count"], 2)
+        self.assertEqual(data["plan"]["required_count"], 2)
+        for post in verdicts:
+            self.assertNotIn("panelist beta", post["body"])
+            self.assertNotIn("Checked the changed-file diff as ai-jury panelist", post["body"])
+        jury_posts = [p for p in data["plan"]["posts"] if p["artifact"] == "jury-verdict"]
+        self.assertIn("panelists: 2", jury_posts[0]["body"])
+        self.assertNotIn("beta", jury_posts[0]["body"])
+        self.assertEqual(data["panel"]["size"], 2)
+        self.assertEqual([b["reviewer"] for b in data["panel"]["ballots"]], ["alpha", "gamma"])
 
     def test_a_malformed_ballot_is_reported_not_dropped(self):
         rc, _, err = self._run({"findings": [], "reviewers": [{"verdict": "APPROVE"}]})

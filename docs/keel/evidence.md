@@ -119,12 +119,14 @@ one surface requiring the panel's ballots while another demanded a host bench of
 pull request.
 
 On a `review.by_tier.<n>: jury` tier the panel *is* the review: `s7` dispatches ai-jury once
-and `keel review --from-jury <report.json>` maps each ballot onto a head-pinned
-`keel.review-verdict.v1` carrying the vendor and model that produced it. Running host
+and `keel review --from-jury <report.json>` maps each ballot that counts as a review onto a
+head-pinned `keel.review-verdict.v1` carrying the vendor and model that produced it
+(ai-jury `is_review`: panelist, substantive scope, not `ABSTAIN`). Running host
 reviewers **and** the panel over the same diff is what this replaced — it paid twice for the
 same reading while the panel's per-reviewer ballots reached no gate at all.
 
-**How the requirement is sized.** The panel decides how many ballots there are, so the
+**How the requirement is sized.** The panel decides how many reviews there are — abstentions
+do not count — so the
 posted `keel.jury-verdict.v1` declares `panelists: <N>` beside `vendors: <N>`, and
 `evidence.jury_panel_size()` reads it back — the same channel, and for the same reason: the
 run ledger and the jury artifact live under the gitignored `.keel/state/`, so a hosted
