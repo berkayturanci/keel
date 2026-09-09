@@ -138,13 +138,19 @@ component directory.
 `marketplace` (`add`, `list`, `remove`, `update`) — there is no
 `cursor-agent plugin install`. Two routes, and they register different things.
 
-**Install — marketplace** (the route that registers the `/keel:<command>` set)
+**Install — marketplace** (registers the `/keel:<command>` set; no verified update path)
 
 ```bash
 cursor-agent plugin marketplace add https://github.com/berkayturanci/keel
 ```
 
 Then install it from Cursor's `/plugins` screen.
+
+`cursor-agent plugin marketplace update <nameOrUrl>` re-indexes the **marketplace**
+— Cursor's own description of it — which is not the same thing as moving an
+already-installed plugin to a newer commit, and this session did not establish
+that it does. So the two routes trade off: this one registers the commands, the
+one below has an update that is a `git pull`.
 
 **Install — local checkout** (skills only; its update is a `git pull`)
 

@@ -247,15 +247,19 @@ there, and `install-adapter` writes files into a project with it. Installing kee
 as a **plugin** is how an agent gets the commands and skills: from this
 repository's own marketplace, with no `install-adapter` step. It is **not** a
 replacement for the CLI — the command bodies shell out to `keel`, so it still has
-to be on your `PATH`. Click the agent you use:
+to be on your `PATH`. Jump to the agent you use:
 
 [![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=flat-square)](#claude-code)
 [![Codex](https://img.shields.io/badge/Codex-install-000000?style=flat-square)](#codex)
 [![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=flat-square)](#antigravity)
 [![Cursor](https://img.shields.io/badge/Cursor-install-6E56CF?style=flat-square)](#cursor)
 
+Each badge jumps to that agent's box; open it for the commands. (A browser scrolls
+to a collapsed `<details>`; it does not expand one.)
+
+<a id="claude-code"></a>
 <details>
-<summary><a id="claude-code"></a><b>Claude Code</b> — marketplace plugin</summary>
+<summary><b>Claude Code</b> — marketplace plugin</summary>
 
 **Install**
 
@@ -280,8 +284,9 @@ bare name exits 1 with `Plugin "keel" not found`.
 
 </details>
 
+<a id="codex"></a>
 <details>
-<summary><a id="codex"></a><b>Codex</b> — marketplace plugin</summary>
+<summary><b>Codex</b> — marketplace plugin</summary>
 
 **Install**
 
@@ -302,8 +307,9 @@ CLI route useful in a container.
 
 </details>
 
+<a id="antigravity"></a>
 <details>
-<summary><a id="antigravity"></a><b>Antigravity</b> (<code>agy</code>) — git install</summary>
+<summary><b>Antigravity</b> (<code>agy</code>) — git install</summary>
 
 **Install**
 
@@ -327,8 +333,9 @@ re-run the install after a release that adds a component directory.
 
 </details>
 
+<a id="cursor"></a>
 <details>
-<summary><a id="cursor"></a><b>Cursor</b> — two routes, and they differ</summary>
+<summary><b>Cursor</b> — two routes, and they differ</summary>
 
 Cursor has **no CLI install command** — `cursor-agent plugin` exposes only
 `marketplace` — and the two routes do not register the same things.
@@ -354,13 +361,13 @@ Then restart Cursor. It is *reported* to list as `keel (Local)` under
 
 ```bash
 git -C ~/.cursor/plugins/local/keel pull                  # the local checkout
-cursor-agent plugin marketplace update berkayturanci/keel # the marketplace copy
+cursor-agent plugin marketplace update berkayturanci/keel # re-indexes the marketplace
 ```
 
-Restart Cursor either way — two install routes, two update commands. Cursor
-describes the second as *"Re-index a plugin marketplace from its git
-repository"*; whether re-indexing advances what an already-installed plugin
-resolves to was not exercised from here.
+Restart Cursor either way. The second re-indexes the **marketplace** — Cursor's
+own words — which is not the same as moving an installed plugin forward, and this
+session did not establish that it does. The two routes trade off: marketplace
+registers the commands, the local checkout has an update that is a `git pull`.
 
 A locally installed Cursor plugin registers **skills only — and here that is one
 skill.** `.cursor-plugin/plugin.json` names `./skills`, and the repository root's

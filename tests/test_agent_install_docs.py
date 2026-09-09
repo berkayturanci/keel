@@ -98,6 +98,18 @@ class EveryAgentIsInBothDocuments(unittest.TestCase):
         readme = self.readme + '\n<a id="zed"></a>\n'
         self.assertNotEqual(set(anchors(readme)), set(anchors(self.install)))
 
+    def test_the_badge_anchor_is_outside_the_collapsed_box(self):
+        """Navigating to an id inside `<summary>` does not open the `<details>`.
+
+        The badge row's whole promise is that clicking your agent takes you to its
+        commands, and an anchor buried in the summary lands the reader on a
+        collapsed box with no indication that it opens.
+        """
+        for agent in AGENTS:
+            with self.subTest(agent=agent):
+                self.assertIn(f'<a id="{agent}"></a>\n<details>', self.readme)
+                self.assertNotIn(f'<summary><a id="{agent}"></a>', self.readme)
+
     def test_every_badge_points_at_an_anchor_that_exists(self):
         """context-mode's badges are `href="#"` and go nowhere; these must not.
 
