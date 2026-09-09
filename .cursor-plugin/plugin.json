@@ -1,7 +1,7 @@
 {
   "name": "keel",
   "description": "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions.",
-  "version": "1.21.1",
+  "version": "1.22.0",
   "author": {
     "name": "Berkay Turanc\u0131",
     "url": "https://github.com/berkayturanci"

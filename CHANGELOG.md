@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-09-09
+
 ### Fixed
 - **An `implement` delegate through agy edits the worktree keel gave it** (#1134). `keel delegate run --role implement --provider agy:… --cwd <worktree>` dispatched correctly and changed nothing: agy works in its own copy under `~/.gemini/antigravity-cli/scratch/<basename>`, so the run returned prose describing files it had edited while the worktree stayed clean. `implement` is the one role whose whole product is a modified working tree, and the first thing downstream would have seen is a pull request with no diff. keel passes `--add-dir <cwd>` now on every agy dispatch that has a working directory.
   - **Measured, not inferred.** One prompt, three runs, the same flags in each: a standalone clone with no flag — unchanged, ended on agy's own timeout; a linked git worktree with no flag — unchanged, same timeout; a linked worktree with `--add-dir` — **edited in place, and no scratch copy was made**. So this is not the git-worktree trap the gate runner works around by cloning: without the flag agy reached neither kind of directory. Verified again end to end afterwards — the same `keel delegate run --role implement` that used to fail returned `ok: true` in 32.7s with the file really changed.
