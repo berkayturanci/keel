@@ -242,9 +242,11 @@ keel install-adapter all      # both surfaces
 
 ### Install into an agent
 
-Everything above installs the **CLI**. Installing keel as a **plugin** — so its
-commands and skills are available inside an agent session, without `pip` — is a
-separate step. Click the agent you use:
+Everything above needs the **CLI on your machine** — [Install](#install) puts it
+there, and `install-adapter` writes files into a project with it. Installing keel
+as a **plugin** is the other route: the agent gets the commands and skills from
+this repository's own marketplace, with no `pip install` at all. Click the agent
+you use:
 
 [![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=flat-square)](#claude-code)
 [![Codex](https://img.shields.io/badge/Codex-install-000000?style=flat-square)](#codex)
@@ -325,12 +327,20 @@ re-run the install after a release that adds a component directory.
 </details>
 
 <details>
-<summary><a id="cursor"></a><b>Cursor</b> — local checkout</summary>
+<summary><a id="cursor"></a><b>Cursor</b> — two routes, and they differ</summary>
 
 Cursor has **no CLI install command** — `cursor-agent plugin` exposes only
-`marketplace`.
+`marketplace` — and the two routes do not register the same things.
 
-**Install**
+**Install — marketplace** (registers the `/keel:` commands)
+
+```bash
+cursor-agent plugin marketplace add https://github.com/berkayturanci/keel
+```
+
+Then install it from Cursor's `/plugins` screen.
+
+**Install — local checkout** (skills only, but its update is a `git pull`)
 
 ```bash
 git clone --depth 1 https://github.com/berkayturanci/keel ~/.cursor/plugins/local/keel
@@ -338,13 +348,6 @@ git clone --depth 1 https://github.com/berkayturanci/keel ~/.cursor/plugins/loca
 
 Then restart Cursor. It is *reported* to list as `keel (Local)` under
 **Settings → Plugins** — a GUI claim, not confirmed from a CLI session.
-
-Or register the marketplace and install from Cursor's `/plugins` screen, which is
-the route that registers commands:
-
-```bash
-cursor-agent plugin marketplace add https://github.com/berkayturanci/keel
-```
 
 **Update**
 

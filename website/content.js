@@ -522,11 +522,12 @@ window.KEEL = {
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/onboarding.md",
     },
     {
-      group: "Start here", title: "Claude Code plugin", slug: "plugin",
-      summary: "Add keel's /keel:&lt;command&gt; workflows in Claude Code with no pip install — this repo is its own plugin marketplace.",
+      group: "Start here", title: "Agent plugin", slug: "plugin",
+      summary: "Add keel's /keel:&lt;command&gt; workflows to Claude Code, Codex, Antigravity or Cursor with no pip install — this repo is its own plugin marketplace.",
       body:
-        "<p>The same <code>/keel:&lt;command&gt;</code> flows are packaged as a <b>Claude Code plugin</b>, so you can add them to a session without <code>pip install</code> — straight from this repo's built-in marketplace:</p>" +
+        "<p>The same <code>/keel:&lt;command&gt;</code> flows are packaged as an <b>agent plugin</b>, so you can add them to a session without <code>pip install</code> — straight from this repo's built-in marketplace. In Claude Code:</p>" +
         "<pre class='doc-pre' tabindex='0' role='region' aria-label='Claude Code plugin commands'><code>/plugin marketplace add berkayturanci/keel   <span class='cm'># register the keel marketplace</span>\n/plugin install keel                          <span class='cm'># install → /keel:ship, /keel:regression, …</span></code></pre>" +
+        "<p><b>Codex, Antigravity and Cursor each have their own command, and each has its own <i>update</i> path</b> — <code>/plugin install</code> is a no-op on an installed plugin, so it is not an upgrade. All four, with what each route registers, are in <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/install.md'>docs/keel/install.md</a>.</p>" +
         "<p>The plugin ships the <b>same</b> project-neutral command bodies as <code>keel install-adapter</code> — they read every value from <code>.keel/project.yaml</code>, so a project still needs <code>keel setup</code> for the flows to act. The two distribution paths are additive.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/plugin.md",
     },

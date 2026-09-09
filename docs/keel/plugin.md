@@ -4,7 +4,7 @@
 > [`docs/keel/install.md`](install.md). This page is about what the plugin
 > *contains*.
 
-keel ships its agentic `/keel:<command>` workflows as a **Claude Code plugin** in addition to
+keel ships its agentic `/keel:<command>` workflows as an **agent plugin** in addition to
 the `pip install keel-workflow` + `keel install-adapter` path. Both flows are additive and use
 the same project-neutral command bodies; you do not have to choose one.
 

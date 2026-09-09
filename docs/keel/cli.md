@@ -2352,7 +2352,7 @@ keel install-adapter site            # regenerate the site's argument surface (w
 ```
 
 The `plugin` target is **repo-level**, not per-project: it regenerates the committed
-`commands/<cmd>.md` files that the Claude Code plugin ships (see [plugin.md](plugin.md)).
+`commands/<cmd>.md` files the agent plugin ships (see [plugin.md](plugin.md)).
 `make plugin` is the same command; a drift test fails if the committed files diverge from the
 `src/keel/adapters/commands/` source bodies.
 

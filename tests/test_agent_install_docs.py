@@ -233,6 +233,33 @@ def instruction_pages() -> dict[str, str]:
 DOC_ANCHOR_LINK = re.compile(r"\]\(((?:\.\.?/)*[A-Za-z0-9./_-]+\.md)#([a-z0-9-]+)\)")
 
 
+class TheSiteDoesNotPublishAOneAgentRecipe(unittest.TestCase):
+    """`website/content.js` is a fifth place the recipe lives, and it is the public one.
+
+    It titled its card "Claude Code plugin", embedded only Claude's two commands,
+    and cited the very page this change stripped of that framing. A reader on
+    keel-ship.dev met the same one-agent story the repository had just stopped
+    telling — the failure class of ai-jury#781, on the surface most people see.
+    """
+
+    def setUp(self):
+        self.site = (REPO_ROOT / "website" / "content.js").read_text(encoding="utf-8")
+
+    def test_the_card_was_read(self):
+        self.assertIn('slug: "plugin"', self.site)
+
+    def test_the_card_is_not_titled_for_one_agent(self):
+        self.assertNotIn('title: "Claude Code plugin"', self.site)
+
+    def test_the_card_points_at_the_install_page(self):
+        self.assertIn("docs/keel/install.md", self.site)
+
+    def test_the_card_names_the_other_three_agents(self):
+        for agent in ("Codex", "Antigravity", "Cursor"):
+            with self.subTest(agent=agent):
+                self.assertIn(agent, self.site)
+
+
 class EveryCrossDocumentAnchorResolves(unittest.TestCase):
     """A link into a heading breaks silently when the heading is reworded.
 
