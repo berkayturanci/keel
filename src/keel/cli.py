@@ -8804,9 +8804,13 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
 
     The plan is pure (:func:`keel.capture.learning_sink_plan`); this is the thin I/O
     around it, which is why it lives here and not in `capture`. It returns
-    ``{"ok": bool, "path": str | None, "error": str | None}`` so the caller can
-    decide what the record says — a writer that reached into the record itself would
-    put policy in the I/O layer.
+    ``{"ok": bool, "path": str | None, "error": str | None, "reused": bool}`` so the
+    caller can decide what the record says — a writer that reached into the record
+    itself would put policy in the I/O layer.
+
+    ``reused`` marks the one result that wrote nothing: a `duplicate` decision, whose
+    artifact is the file the run it duplicates already wrote (see
+    :func:`_duplicate_learning_artifact`).
 
     Fail-soft by contract: any `OSError` becomes ``ok: False`` and the caller
     downgrades the capture to ``skipped:capability-unavailable``. A capture that
@@ -8818,20 +8822,21 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
     if not args.live:
         return None
     description, what_changed, what_we_learned, do_differently = _learning_sections(args, outcomes)
+    decision = capture.learning_decision(
+        title=args.issue_title,
+        labels=_issue_labels(args),
+        changed_files=changed_files or (),
+        capture_status=_resolved_capture_status(args.capture_status),
+        capture_reason=args.capture_reason,
+        # The records the dedupe needs. Without them `learning_decision` can
+        # never answer `duplicate`, so the skip this feature documents was
+        # unreachable on the only path that writes.
+        existing_records=existing_records or (),
+        config=config,
+    )
     plan = capture.learning_sink_plan(
         config=config,
-        decision=capture.learning_decision(
-            title=args.issue_title,
-            labels=_issue_labels(args),
-            changed_files=changed_files or (),
-            capture_status=_resolved_capture_status(args.capture_status),
-            capture_reason=args.capture_reason,
-            # The records the dedupe needs. Without them `learning_decision` can
-            # never answer `duplicate`, so the skip this feature documents was
-            # unreachable on the only path that writes.
-            existing_records=existing_records or (),
-            config=config,
-        ),
+        decision=decision,
         capture_status=_resolved_capture_status(args.capture_status),
         owner=config.owner,
         repo=config.repo,
@@ -8848,7 +8853,7 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
         do_differently=do_differently,
     )
     if plan is None:
-        return None
+        return _duplicate_learning_artifact(config, decision, existing_records)
     # An absolute or `~` path is used as written — pointing the sink at a shared
     # knowledge folder outside the checkout is the feature. A **relative** one
     # resolves against `--root`, not the process working directory: the default
@@ -8868,8 +8873,29 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
         target.parent.mkdir(parents=True, exist_ok=True)
         workspace.write_text_atomic(target, result.value)
     except OSError as exc:
-        return {"ok": False, "path": None, "error": str(exc)}
-    return {"ok": True, "path": str(target), "error": None}
+        return {"ok": False, "path": None, "error": str(exc), "reused": False}
+    return {"ok": True, "path": str(target), "error": None, "reused": False}
+
+
+def _duplicate_learning_artifact(config, decision, existing_records) -> dict | None:
+    """Point a deduped run at the file the run it duplicates already wrote.
+
+    The path is only claimed when it is still there. A record can name a file
+    that has since been deleted, or one written on another machine into a shared
+    knowledge folder this checkout cannot see, and an `artifact` that resolves to
+    nothing is a worse answer than no artifact at all: `capture-verify` would
+    report a clean session while the proof it names does not exist.
+    """
+    recorded = capture.duplicate_learning_artifact(
+        config=config,
+        decision=decision,
+        existing_records=existing_records or (),
+    )
+    if recorded is None:
+        return None
+    if not Path(recorded).expanduser().is_file():
+        return None
+    return {"ok": True, "path": recorded, "error": None, "reused": True}
 
 
 def _resolved_capture_status(value: str | None) -> str | None:

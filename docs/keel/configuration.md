@@ -1339,9 +1339,12 @@ policy_pack:
         filename: "{date}-pr{pr}-{slug}.md"
 ```
 
-`learning.enabled` is not decoration: it is what `learning_decision` reads, and
-without it the decision is `marker-only` whatever `mode` says — a project would get
-files on disk and a ledger recording that it had decided not to produce them.
+`learning.enabled` is not decoration, and neither is `mode`. Together they are what
+`learning_decision` reads, and **the decision is the gate**: a file is written for
+`create-learning` and for nothing else. `enabled` false, `enabled` omitted, `mode:
+defer` and `mode: marker-only` each declare that this project does not want a durable
+artifact, and a configured sink does not override that — it only says where one would
+go if the policy asked for it.
 
 | field | type | default | meaning |
 |---|---|---|---|
@@ -1368,8 +1371,12 @@ Three behaviours worth knowing:
   provable rather than asserted — `keel capture-reconcile` treats `applied` with no
   artifact as a finding — so a project with a sink stops passing `--capture-artifact`
   by hand for a file it did not write.
-- **A `duplicate` learning decision writes nothing.** That is the fingerprint dedupe
-  doing its job, not a failure.
+- **A `duplicate` learning decision writes nothing**, and records the earlier run's
+  file as its artifact. That is the fingerprint dedupe doing its job — but the run still
+  claims `applied`, and `applied` with no artifact is a finding, so the record points at
+  the file the run it duplicates wrote. Only when that path still resolves: a record can
+  name a file since deleted, or one written on another machine into a shared folder this
+  checkout cannot see, and an artifact that resolves to nothing is worse than none.
 - **A sink that cannot be written is fail-soft**, like every other capture failure: the
   record becomes `skipped:capability-unavailable` and the merge is untouched.
 

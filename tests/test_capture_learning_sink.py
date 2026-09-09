@@ -140,20 +140,148 @@ class ThePlanIsPure(unittest.TestCase):
         plan = self.plan({"kind": "markdown-dir"}, title="::: ---")
         self.assertIn("learning", plan["filename"])
 
-    def test_a_run_with_no_learning_decision_still_plans(self):
-        """The decision is optional input: without one there is simply no fingerprint.
-
-        `learning_decision` is what supplies it, and a caller that has not run it —
-        or a project with dedupe off — should still get a document rather than a
-        crash or a silent skip.
-        """
-        plan = self.plan({"kind": "markdown-dir"}, decision=None)
-        self.assertIsNotNone(plan)
-        self.assertIn("fingerprint: \n", plan["content"])
-
     def test_an_invalid_sink_produces_no_plan_rather_than_a_bad_path(self):
         """Validation refuses it at config load; the plan refuses it again here."""
         self.assertIsNone(self.plan({"kind": "obsidian"}))
+
+
+class TheDecisionDecidesWhetherAnythingIsWritten(unittest.TestCase):
+    """A sink names a destination; the learning decision says whether to use it."""
+
+    def plan(self, decision):
+        return capture.learning_sink_plan(
+            config=_config({"kind": "markdown-dir"}),
+            decision=decision,
+            capture_status="applied",
+            owner="berkayturanci",
+            repo="keel",
+            base_branch="main",
+            date="2026-09-09",
+            pr_number=1154,
+            title="capture: built-in Markdown learning sink",
+        )
+
+    def test_only_create_learning_plans_a_write(self):
+        self.assertIsNotNone(self.plan({"decision": "create-learning", "fingerprint": "a"}))
+        for decision in ("marker-only", "defer", "duplicate"):
+            with self.subTest(decision=decision):
+                self.assertIsNone(self.plan({"decision": decision, "fingerprint": "a"}))
+
+    def test_no_decision_at_all_plans_no_write(self):
+        """Silence is not consent. Nothing decided, nothing durable."""
+        self.assertIsNone(self.plan(None))
+        self.assertIsNone(self.plan("create-learning"))
+
+    def test_the_policy_that_produces_each_decision_reaches_the_same_answer(self):
+        """Through `learning_decision`, not a decision handed over by name.
+
+        The four policies below are the ones a project actually writes, and each
+        planned a write before the gate moved onto the decision.
+        """
+        for label, learning in (
+            ("enabled omitted", {"mode": "create-learning"}),
+            ("enabled false", {"enabled": False, "mode": "create-learning"}),
+            ("defer", {"enabled": True, "mode": "defer"}),
+            ("marker-only", {"enabled": True, "mode": "marker-only"}),
+        ):
+            with self.subTest(policy=label):
+                config = cfg.ProjectConfig(
+                    extends="keel",
+                    core_version="^0.1",
+                    knobs={},
+                    owner="berkayturanci",
+                    repo="keel",
+                    base_branch="main",
+                    policy_pack={
+                        "capture": {
+                            "enabled": True,
+                            "mode": "extension",
+                            "learning": {**learning, "sink": {"kind": "markdown-dir"}},
+                        }
+                    },
+                )
+                decision = capture.learning_decision(
+                    title="capture: built-in Markdown learning sink",
+                    capture_status="applied",
+                    config=config,
+                )
+                self.assertFalse(decision["durable_artifact"], label)
+                self.assertIsNone(
+                    capture.learning_sink_plan(
+                        config=config,
+                        decision=decision,
+                        capture_status="applied",
+                        owner="berkayturanci",
+                        repo="keel",
+                        base_branch="main",
+                        date="2026-09-09",
+                        pr_number=1154,
+                        title="capture: built-in Markdown learning sink",
+                    )
+                )
+
+
+class ADuplicatePointsAtTheFileItDuplicates(unittest.TestCase):
+    """`applied` stays provable when the dedupe suppresses the write."""
+
+    DUPLICATE = {"decision": "duplicate", "fingerprint": "abc123"}
+
+    def records(self, *artifacts, fingerprint="abc123"):
+        return [
+            {
+                "run_id": f"r{index}",
+                "capture": {
+                    "artifact": artifact,
+                    "learning": {"decision": "create-learning", "fingerprint": fingerprint},
+                },
+            }
+            for index, artifact in enumerate(artifacts)
+        ]
+
+    def artifact(self, decision, records, sink={"kind": "markdown-dir"}):  # noqa: B006
+        return capture.duplicate_learning_artifact(
+            config=_config(sink),
+            decision=decision,
+            existing_records=records,
+        )
+
+    def test_it_names_the_recorded_file(self):
+        self.assertEqual(self.artifact(self.DUPLICATE, self.records("/k/one.md")), "/k/one.md")
+
+    def test_the_newest_record_wins(self):
+        """The ledger is append-only, so the last matching path is the current one."""
+        records = self.records("/k/one.md", "/k/two.md")
+        self.assertEqual(self.artifact(self.DUPLICATE, records), "/k/two.md")
+
+    def test_a_record_with_no_artifact_is_not_a_match(self):
+        records = self.records("/k/one.md") + self.records(None)
+        self.assertEqual(self.artifact(self.DUPLICATE, records), "/k/one.md")
+        self.assertIsNone(self.artifact(self.DUPLICATE, self.records("   ")))
+
+    def test_a_different_fingerprint_is_a_different_learning(self):
+        records = self.records("/k/one.md", fingerprint="zzz")
+        self.assertIsNone(self.artifact(self.DUPLICATE, records))
+
+    def test_only_a_duplicate_borrows_an_artifact(self):
+        for decision in ("create-learning", "marker-only", "defer"):
+            with self.subTest(decision=decision):
+                self.assertIsNone(
+                    self.artifact(
+                        {"decision": decision, "fingerprint": "abc123"},
+                        self.records("/k/one.md"),
+                    )
+                )
+        self.assertIsNone(self.artifact(None, self.records("/k/one.md")))
+        self.assertIsNone(self.artifact({"decision": "duplicate"}, self.records("/k/one.md")))
+
+    def test_a_project_with_no_sink_borrows_nothing(self):
+        """No sink is no feature. A run that never wrote learnings does not start
+        inheriting an operator's hand-passed `--capture-artifact`."""
+        self.assertIsNone(self.artifact(self.DUPLICATE, self.records("/k/one.md"), sink=None))
+
+    def test_junk_records_are_skipped(self):
+        records = ["not a record", {"capture": "not a mapping"}, {"capture": {"learning": []}}]
+        self.assertIsNone(self.artifact(self.DUPLICATE, records))
 
 
 class TheDocumentIsReadableByTheReaderThatExists(unittest.TestCase):
@@ -494,6 +622,38 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
         records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         return records[-1]["capture"]
 
+    def artifact_findings(self, root, config, *, prs):
+        """`applied-without-artifact` findings `keel capture-verify` reports.
+
+        Driven through the CLI with the offline merged-PR fixture, because the
+        finding this suppresses is one a real session raises against the ledger
+        these runs wrote, not one a unit test constructs.
+        """
+        fixture = Path(root) / "merged.json"
+        fixture.write_text(
+            json.dumps([{"number": number} for number in prs]),
+            encoding="utf-8",
+        )
+        code, out, err = run(
+            [
+                "capture-verify",
+                config,
+                "--root",
+                str(root),
+                "--from-transport",
+                "--merged-prs-json",
+                str(fixture),
+                "--json",
+            ]
+        )
+        self.assertIn(code, (0, 1), err)
+        report = json.loads(out)["reconcile"]
+        return [
+            finding
+            for finding in report["findings"]
+            if finding["type"] == "applied-without-artifact"
+        ]
+
     def test_an_applied_capture_writes_one_file_and_names_it(self):
         with tempfile.TemporaryDirectory() as root:
             config = write_config(
@@ -503,6 +663,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                     "    enabled: true",
                     "    mode: extension",
                     "    learning:",
+                    "      enabled: true",
                     "      mode: create-learning",
                     "      sink:",
                     "        kind: markdown-dir",
@@ -537,6 +698,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                     "    enabled: true",
                     "    mode: extension",
                     "    learning:",
+                    "      enabled: true",
                     "      mode: create-learning",
                     "      sink:",
                     "        kind: markdown-dir",
@@ -647,7 +809,76 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(self.ship(root, config, pr=2)[0], 0)
             written = sorted((Path(root) / "learnings").glob("*.md"))
             self.assertEqual(len(written), 1, [p.name for p in written])
+
+    def test_a_deduped_run_points_at_the_file_the_first_run_wrote(self):
+        """A dedupe must not manufacture the gap the artifact exists to close.
+
+        The second run writes nothing and still records `applied`, and `applied`
+        with no artifact is precisely what `capture-reconcile` reports as a
+        finding — so the feature whose stated purpose is to make `applied`
+        provable was producing an unprovable one every time the dedupe fired.
+        The lesson is not missing: it is the file the first run wrote.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            self.assertEqual(self.ship(root, config, pr=1)[0], 0)
+            first = self.ledger_capture(root)["artifact"]
+            self.assertEqual(self.ship(root, config, pr=2)[0], 0)
+            second = self.ledger_capture(root)
+            self.assertEqual(second["learning"]["decision"], "duplicate")
+            self.assertEqual(second["artifact"], first)
+            self.assertEqual(self.artifact_findings(root, config, prs=(1, 2)), [])
+
+    def test_a_deduped_run_claims_nothing_when_that_file_is_gone(self):
+        """An artifact that resolves to nothing is worse than no artifact.
+
+        A recorded path can name a file since deleted, or one written on another
+        machine into a shared folder this checkout cannot see. Copying it forward
+        unchecked would let `capture-reconcile` report a clean session whose proof
+        does not exist.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            self.assertEqual(self.ship(root, config, pr=1)[0], 0)
+            Path(self.ledger_capture(root)["artifact"]).unlink()
+            self.assertEqual(self.ship(root, config, pr=2)[0], 0)
             self.assertIsNone(self.ledger_capture(root)["artifact"])
+
+    def test_a_policy_that_wants_no_learning_writes_no_file(self):
+        """A configured sink is where learnings go, not permission to write one.
+
+        `learning.enabled` false — and, identically, an omitted `enabled`, a
+        `defer` mode and a `marker-only` mode — makes `learning_decision` answer
+        `marker-only` with `durable_artifact: false`. The first cut checked only
+        for `duplicate`, so all four wrote a durable body of issue text while the
+        record beside it said the policy had decided not to keep one.
+        """
+        for label, learning_lines in (
+            ("enabled omitted", ["      mode: create-learning"]),
+            ("enabled false", ["      enabled: false", "      mode: create-learning"]),
+            ("defer", ["      enabled: true", "      mode: defer"]),
+            ("marker-only", ["      enabled: true", "      mode: marker-only"]),
+        ):
+            with self.subTest(policy=label), tempfile.TemporaryDirectory() as root:
+                config = write_config(
+                    Path(root),
+                    [
+                        "  capture:",
+                        "    enabled: true",
+                        "    mode: extension",
+                        "    learning:",
+                        *learning_lines,
+                        "      sink:",
+                        "        kind: markdown-dir",
+                        "        path: 'learnings'",
+                    ],
+                )
+                code, _, _ = self.ship(root, config)
+                self.assertEqual(code, 0)
+                self.assertFalse(list((Path(root) / "learnings").glob("*.md")))
+                block = self.ledger_capture(root)
+                self.assertIsNone(block["artifact"])
+                self.assertFalse(block["learning"]["durable_artifact"])
 
     def test_declared_files_are_named_in_what_changed(self):
         """The section says what changed, so it should say which files.
@@ -710,6 +941,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                     "    enabled: true",
                     "    mode: extension",
                     "    learning:",
+                    "      enabled: true",
                     "      mode: create-learning",
                     "      sink:",
                     "        kind: markdown-dir",

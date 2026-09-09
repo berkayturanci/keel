@@ -1030,15 +1030,27 @@ def learning_sink_plan(
     takes its facts as arguments.
 
     Returns `None` when there is nothing to write: no sink configured, a capture that
-    is not `applied`, or a `duplicate` learning decision, which is the dedupe already
-    doing its job rather than a failure.
+    is not `applied`, or a learning decision that does not call for a durable
+    artifact — a `duplicate`, which is the dedupe doing its job, but equally a
+    project whose policy said `marker-only`.
     """
     if capture_status != "applied":
         return None
     sink = learning_sink_policy(config)
     if not sink or learning_sink_errors(sink):
         return None
-    if isinstance(decision, dict) and decision.get("decision") == "duplicate":
+    # **The decision is the gate**, not merely the dedupe. `learning_decision`
+    # already answers whether this run earns a durable artifact, and
+    # `durable_artifact` is true for exactly `create-learning`. Refusing only
+    # `duplicate` let four other answers through: `learning.enabled` false,
+    # `enabled` omitted, `mode: defer` and `mode: marker-only` each planned a
+    # write while the record next to it said the policy had decided not to keep
+    # one. A configured sink is where a project's learnings go, not permission to
+    # write one whatever the policy says. `create-learning` is the one decision
+    # whose `durable_artifact` is true, and it is the decision — not the derived
+    # flag — that is checked, so a caller that hands over a decision by name is
+    # read the same way `record_marker` reads it.
+    if not isinstance(decision, dict) or decision.get("decision") != "create-learning":
         return None
     values = {
         "owner": owner or "",
@@ -1050,9 +1062,9 @@ def learning_sink_plan(
     }
     directory = _expand(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
     filename = _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
-    fingerprint = ""
-    if isinstance(decision, dict):
-        fingerprint = str(decision.get("fingerprint") or "")
+    # No `isinstance` re-check: the gate above returned for anything that is not a
+    # `create-learning` mapping, so by here the decision is one.
+    fingerprint = str(decision.get("fingerprint") or "")
     return {
         "kind": sink.get("kind", LEARNING_SINK_KINDS[0]),
         "directory": directory,
@@ -1072,6 +1084,49 @@ def learning_sink_plan(
             do_differently=do_differently,
         ),
     }
+
+
+def duplicate_learning_artifact(
+    *,
+    config: cfg.ProjectConfig | None,
+    decision: dict[str, Any] | None,
+    existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+) -> str | None:
+    """The artifact an earlier run already wrote for this same learning, or `None`.
+
+    A `duplicate` decision writes no file — that is the dedupe working — but the
+    run still records `applied`, and `applied` with no artifact is exactly what
+    `capture-verify` reports as a finding. The lesson is not missing: it is on
+    disk, under the run this one duplicates. Naming that file keeps the claim
+    provable instead of letting the dedupe manufacture the gap the artifact
+    exists to close.
+
+    Pure: it reads recorded paths and never asks whether one still exists. The
+    caller that can answer that is the caller that touches the filesystem.
+    """
+    if not learning_sink_policy(config):
+        return None
+    if not isinstance(decision, dict) or decision.get("decision") != "duplicate":
+        return None
+    fingerprint = decision.get("fingerprint")
+    if not fingerprint:
+        return None
+    artifact: str | None = None
+    for record in existing_records:
+        if not isinstance(record, dict):
+            continue
+        capture_block = record.get("capture")
+        if not isinstance(capture_block, dict):
+            continue
+        learning = capture_block.get("learning")
+        if not isinstance(learning, dict) or learning.get("fingerprint") != fingerprint:
+            continue
+        candidate = capture_block.get("artifact")
+        if isinstance(candidate, str) and candidate.strip():
+            # Keep scanning: the ledger is append-only and the newest record
+            # holding this fingerprint is the one whose path is current.
+            artifact = candidate.strip()
+    return artifact
 
 
 def _unquote(value: str) -> str:
