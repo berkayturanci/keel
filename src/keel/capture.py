@@ -95,13 +95,15 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
             # A project that configures `learning.sink` has **core** writing the
             # file and filling `capture.artifact`, and an adapter that read this
             # block and wrote its own would have had it overwritten (#1154).
-            "project_destination": "sink" if sink_policy else "extension-owned",
+            "project_destination": "sink" if sink_policy is not None else "extension-owned",
             # Defaulted the way `learning_sink_plan` defaults it. Read without the
             # fallback, a sink that did not spell out its `kind` — which the schema,
             # the docs and the validator all allow — published
             # `{project_destination: sink, sink: None}`: a contract disagreeing with
             # itself about the writer it had just named.
-            "sink": sink_policy.get("kind", LEARNING_SINK_KINDS[0]) if sink_policy else None,
+            "sink": (
+                sink_policy.get("kind", LEARNING_SINK_KINDS[0]) if sink_policy is not None else None
+            ),
         },
         "learning_quality": learning_quality_contract_as_dict(config),
         "session_end_verifier": {
@@ -897,10 +899,17 @@ def _slugify(text: str | None, *, limit: int = 48) -> str:
     return slug[:limit].rstrip("-")
 
 
-def learning_sink_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
-    """The `policy_pack.capture.learning.sink` block, or `{}` when unset."""
+def learning_sink_policy(config: cfg.ProjectConfig | None) -> dict[str, Any] | None:
+    """The `policy_pack.capture.learning.sink` block, or `None` when unset.
+
+    `None` and `{}` are different answers and the difference is load-bearing: every
+    field of a sink is optional, so `sink: {}` is a project taking the documented
+    defaults — `markdown-dir` into `.keel/learning`. Collapsed to `{}`, that
+    declaration read as *no sink at all* and the project got the pre-#1154
+    behaviour of writing nothing, while the same block naming its `kind` wrote.
+    """
     sink = _learning_policy(config).get("sink")
-    return sink if isinstance(sink, dict) else {}
+    return sink if isinstance(sink, dict) else None
 
 
 def learning_sink_errors(sink: Any) -> list[str]:
@@ -1069,7 +1078,11 @@ def render_learning_document(
         # to fill rather than a merge that was linked to no issue.
         f"pr: {pr_number if pr_number is not None else 'null'}",
         f"issue: {issue_number if issue_number is not None else 'null'}",
-        f"date: {date}",
+        # Quoted like every other scalar in the block. Left bare, `2026-09-09` is a
+        # YAML *timestamp*: a real parser returns `datetime.date` where keel's reader
+        # returns the string, which is the one disagreement all this quoting exists
+        # to prevent.
+        f"date: {_yaml_scalar(date)}",
         f"fingerprint: {fingerprint}",
     ]
     front += _yaml_sequence("labels", labels)
@@ -1126,7 +1139,7 @@ def learning_sink_writes(
     if capture_status != "applied":
         return False
     sink = learning_sink_policy(config)
-    if not sink or learning_sink_errors(sink):
+    if sink is None or learning_sink_errors(sink):
         return False
     return isinstance(decision, dict) and decision.get("decision") == "create-learning"
 
@@ -1163,7 +1176,7 @@ def learning_sink_plan(
     """
     if not learning_sink_writes(config=config, decision=decision, capture_status=capture_status):
         return None
-    sink = learning_sink_policy(config)
+    sink = learning_sink_policy(config) or {}
     # No `isinstance` re-check: the gate above returned for anything that is not a
     # `create-learning` mapping, so by here the decision is one.
     fingerprint = str(decision.get("fingerprint") or "")
@@ -1227,7 +1240,7 @@ def duplicate_learning_artifact(
     """
     if capture_status != "applied":
         return None
-    if not learning_sink_policy(config):
+    if learning_sink_policy(config) is None:
         return None
     if not isinstance(decision, dict) or decision.get("decision") != "duplicate":
         return None

@@ -68,6 +68,19 @@ def write_config(directory: Path, extra_policy_pack_lines: list[str] | None = No
 
 
 @contextlib.contextmanager
+def _github_pr_files(files):
+    """Stand in for `gh pr view --json files` — a list, or `None` for no host."""
+    from keel import github
+
+    original = github.pr_files
+    github.pr_files = lambda pr, *, cwd=None, _run=None, _sleep=None: files
+    try:
+        yield
+    finally:
+        github.pr_files = original
+
+
+@contextlib.contextmanager
 def _github_issue(payload: str | None):
     """Stand in for `gh issue view` — `payload` JSON, or `None` for no host."""
     from keel import github
@@ -187,6 +200,11 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
 
     def destination(self, sink):
         return capture.contract_as_dict(_config(sink))["durable_artifacts"]
+
+    def test_an_empty_sink_block_is_still_a_sink(self):
+        block = self.destination({})
+        self.assertEqual(block["project_destination"], "sink")
+        self.assertEqual(block["sink"], capture.LEARNING_SINK_KINDS[0])
 
     def test_a_project_with_no_sink_is_unchanged(self):
         self.assertEqual(self.destination(None)["project_destination"], "extension-owned")
@@ -1252,6 +1270,71 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(code, 1, err)
             self.assertIn("redaction", err.lower())
             self.assertFalse(list((Path(root) / "learnings").glob("*.md")))
+
+    def test_the_files_come_from_the_pull_request_when_the_diff_is_empty(self):
+        """s11 runs after the squash, so the local diff reports nothing.
+
+        `--root .` is then the primary checkout sitting on `base_branch`, and
+        `git diff --name-only main...HEAD` is empty — so the document recorded
+        `changed_files: []` and, worse, the fingerprint hashed an empty list, which
+        is the field the sink filename exists to tell two lessons apart by.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            with _github_pr_files(["src/keel/capture.py", "src/keel/cli.py"]):
+                code, _, err = self.ship_with(root, config, pr=1160)
+            self.assertEqual(code, 0, err)
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            self.assertEqual(
+                _front_matter_fields(body)["changed_files"],
+                ["src/keel/capture.py", "src/keel/cli.py"],
+            )
+
+    def test_no_host_leaves_the_files_as_the_diff_reported_them(self):
+        """Fail-soft: offline the lesson is scored on its title alone, not lost."""
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            with _github_pr_files(None):
+                code, _, err = self.ship_with(root, config, pr=1160)
+            self.assertEqual(code, 0, err)
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            self.assertEqual(_front_matter_fields(body)["changed_files"], [])
+
+    def test_the_date_reads_back_as_a_string(self):
+        """`2026-09-09` bare is a YAML *timestamp*: a real parser returns a `date`
+        object where keel's reader returns the string, which is the one
+        disagreement all this quoting exists to prevent."""
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            self.assertEqual(self.ship(root, config)[0], 0)
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            self.assertIsInstance(_front_matter_fields(body)["date"], str)
+
+    def test_a_sink_that_names_nothing_takes_the_documented_defaults(self):
+        """Every field of a sink is optional, so `sink: {}` is a real declaration.
+
+        Collapsed to a falsy `{}`, it read as *no sink at all* and the project got
+        the pre-#1154 behaviour of writing nothing — while the same block naming
+        its `kind` wrote.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(
+                Path(root),
+                [
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      sink: {}",
+                ],
+            )
+            code, _, err = self.ship(root, config)
+            self.assertEqual(code, 0, err)
+            written = sorted((Path(root) / ".keel" / "learning").glob("*.md"))
+            self.assertEqual(len(written), 1, written)
+            self.assertEqual(self.ledger_capture(root)["artifact"], str(written[0]))
 
     def test_the_adapters_own_s11_command_still_writes_a_document(self):
         """The command keel dogfoods passes no title and no body.

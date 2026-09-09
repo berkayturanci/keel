@@ -1472,8 +1472,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # Resolved once, so the document the sink writes and the record the ledger
     # appends fingerprint the same lesson.
     capture_facts = _capture_issue_facts(args)
+    capture_changed = _capture_changed_files(args, changed_read)
     capture_write = _write_learning_sink(
-        args, config, changed_read, existing_ledger_records, outcomes, capture_facts
+        args, config, capture_changed, existing_ledger_records, outcomes, capture_facts
     )
     capture_status_value = _resolved_capture_status(args.capture_status)
     capture_reason_value = args.capture_reason
@@ -8772,6 +8773,30 @@ def _today() -> str:
     import datetime
 
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+
+
+def _capture_changed_files(args, changed_files) -> list[str]:
+    """The files this capture is about.
+
+    **The local diff is empty on the path that matters.** s11 runs after s10 has
+    squash-merged, so `--root .` is the primary checkout sitting on `base_branch`
+    and `git diff --name-only main...HEAD` reports nothing — measured. The document
+    then records `changed_files: []` and, worse, `learning_fingerprint` hashes an
+    empty file list, so the field the sink filename exists to distinguish two
+    lessons by stops distinguishing anything.
+
+    `--pull-request` names the PR whose files those were, so they are read from the
+    host when the local diff has none. Fail-soft, like the issue facts beside it:
+    offline, the empty list stands and the lesson is scored on its title alone.
+    """
+    local = list(changed_files or ())
+    # `args.ledger_pr or args.pr`, the same pair the sink resolves its `{pr}` from:
+    # `--pull-request` lands on `ledger_pr`, and reading only `args.pr` asked the
+    # host about nothing on the very command this exists for.
+    pr = getattr(args, "ledger_pr", None) or getattr(args, "pr", None)
+    if local or pr is None:
+        return local
+    return github.pr_files(pr, cwd=args.root) or []
 
 
 def _capture_issue_facts(args) -> tuple[str, str, tuple[str, ...]]:
