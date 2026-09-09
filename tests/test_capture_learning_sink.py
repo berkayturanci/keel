@@ -180,6 +180,28 @@ class ThePlanIsPure(unittest.TestCase):
         )
         self.assertIsNone(plan)
 
+    def test_an_expanded_placeholder_cannot_nest_the_file(self):
+        """Refusing a separator in the *template* is not enough.
+
+        `{base_branch}` is a legal filename placeholder and `feat/sink` is a normal
+        branch, so the expansion carried a slash, `mkdir(parents=True)` made the
+        directory, and the lesson landed one level below where the only reader
+        looks. Only `{slug}` was slugified; every other value went in raw.
+        """
+        plan = self.plan(
+            {"kind": "markdown-dir", "filename": "{date}-{base_branch}-{fingerprint}.md"},
+            base_branch="feat/sink",
+        )
+        self.assertEqual(plan["filename"], "2026-09-09-feat-sink-abc123.md")
+
+    def test_a_control_character_in_a_placeholder_is_flattened_too(self):
+        """Same class one field over: a name that cannot be written is not a name."""
+        plan = self.plan(
+            {"kind": "markdown-dir", "filename": "{repo}-{fingerprint}.md"},
+            repo="ke\x00el",
+        )
+        self.assertEqual(plan["filename"], "ke-el-abc123.md")
+
     def test_a_title_that_reduces_to_nothing_still_names_a_file(self):
         plan = self.plan({"kind": "markdown-dir"}, title="::: ---")
         self.assertIn("learning", plan["filename"])

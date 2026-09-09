@@ -983,6 +983,24 @@ def learning_sink_errors(sink: Any) -> list[str]:
     return errors
 
 
+#: Anything that would make a filename more than one path component, or unwritable.
+#: `/` and `\\` split it; the control characters are the same class one field over.
+_FILENAME_UNSAFE = re.compile(r"[/\\\x00-\x1f\x7f]+")
+
+
+def _one_component(name: str) -> str:
+    """A filename that names exactly one file, whatever the placeholders held.
+
+    Refusing a separator in the *template* is not enough: `{base_branch}` is a legal
+    filename placeholder and `feat/sink` is a normal branch, so
+    `{date}-pr{pr}-{base_branch}-{fingerprint}.md` expands to a name with a slash in
+    it, `mkdir(parents=True)` makes the directory, and the lesson lands one level
+    below where `retrieve_relevant_learnings` looks. Only `{slug}` was slugified;
+    every other value went in raw.
+    """
+    return _FILENAME_UNSAFE.sub("-", name)
+
+
 def _expand(template: str, values: dict[str, str]) -> str:
     out = template
     for name, value in values.items():
@@ -1209,7 +1227,9 @@ def learning_sink_plan(
         "fingerprint": fingerprint[:LEARNING_FINGERPRINT_SLICE],
     }
     directory = _expand(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
-    filename = _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
+    filename = _one_component(
+        _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
+    )
     return {
         "kind": sink.get("kind", LEARNING_SINK_KINDS[0]),
         "directory": directory,
