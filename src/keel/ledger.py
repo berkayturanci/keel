@@ -578,11 +578,12 @@ def existing_capture_marker(
 ) -> dict[str, Any] | None:
     """The already-recorded capture marker ``record`` would duplicate, if any.
 
-    Exactly one capture marker per merged PR is an invariant that was only ever
-    *detected*, never prevented: :func:`keel.capture.verify_session` refuses the whole
-    session on a second one ("multiple capture markers found for merged PR"),
-    ``capture-reconcile`` returns ``blocked`` with no actions to offer, and nothing in
-    this module can remove a line — so the only exit is editing the ledger by hand.
+    One capture marker per **(pull request, head)**, enforced at write time. It was
+    once only *detected*, and only afterwards: :func:`keel.capture.verify_session`
+    refuses the whole session on a second one ("multiple capture markers found for
+    merged PR"), ``capture-reconcile`` returns ``blocked`` with no actions to offer,
+    and nothing in this module can remove a line — so the recovery was editing the
+    ledger by hand, which is forging audit history to make a gate pass.
 
     Re-running the same append is the most natural thing to do after a crash mid-s11,
     which made the obvious recovery the very action that bricks the run. Checking here

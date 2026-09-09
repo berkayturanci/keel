@@ -16,6 +16,11 @@ website/coverage/
 
 # Env
 .venv/
+# `uv` writes this when a dev tool is run through it. keel pins its own tool
+# versions in `pyproject.toml`; a lock nothing reads is a canonical-looking pin
+# that no Makefile, CI leg, or test consults, and it reached a pull request once
+# by way of `git add -A`.
+uv.lock
 venv/
 
 # Claude Code — track the committed adapters under .claude/commands/, ignore harness-local state
