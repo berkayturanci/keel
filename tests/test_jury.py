@@ -774,9 +774,7 @@ class TestAbstentionsAreNotReviews(unittest.TestCase):
             reviewer="beta",
             verdict="ABSTAIN",
             abstention_cause="named_nothing",
-            findings=(
-                {"severity": "nit", "path": "src/a.py", "line": 1, "message": "x"},
-            ),
+            findings=({"severity": "nit", "path": "src/a.py", "line": 1, "message": "x"},),
         )
         scope = jury.ballot_scope(ballot)
         self.assertNotIn("Checked", scope)
