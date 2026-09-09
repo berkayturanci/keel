@@ -24,3 +24,7 @@
 ## 2026-07-20 - [Bandit False Positive on Intentionally Safe Subprocess Import]
 **Learning:** `import subprocess` (B404) in `src/keel/runner.py` is flagged by Bandit as a low-severity risk, but the module is specifically intended for a fail-soft command runner boundary where execution commands are strictly operator-controlled and injected via configuration. Automated static analysis flags the module itself even without unsafe invocations.
 **Action:** When a known false positive is verified as a deliberate and secure architecture choice, correctly suppress the Bandit warning at the source (e.g., `# nosec B404` on the import line) rather than removing functionality.
+## 2026-09-09 - [DoS Risk via Unbounded Payload Read in Visual Dashboard]
+**Vulnerability:** Unbounded `.read()` from `urlopen` in `keel-visual/tests/test_serve.py`.
+**Learning:** Even internal testing or visual dashboard tools can be vulnerable to memory exhaustion (DoS) if they read API data without enforcing a maximum size, particularly when integrated into long-running processes or automated checks.
+**Prevention:** Always enforce a maximum read byte limit when reading from network streams, even in tests, using e.g., `response.read(5 * 1024 * 1024)`.
