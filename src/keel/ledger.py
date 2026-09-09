@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -452,9 +453,33 @@ def gates_pass_for_head(
     return True, latest
 
 
+def _latest_per_pr(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One record per pull request — the last — keeping records that name none.
+
+    A pull request has one capture, and since #1157 it can leave more than one
+    marked record: the writer's clash is keyed by ``(pull request, head)``, so a
+    superseded head's marker survives beside the merged head's. Counting rows
+    rather than pull requests then reported one merged pull request twice —
+    ``applied: 1, skipped: 1`` for a single capture — in morning, wrap and status.
+    Insertion order is preserved so these readers still list captures in the order
+    the ledger recorded them.
+    """
+    latest: dict[int, dict[str, Any]] = {}
+    unkeyed: list[dict[str, Any]] = []
+    for record in records:
+        pull_request = record.get("pull_request")
+        number = pull_request.get("number") if isinstance(pull_request, dict) else None
+        if isinstance(number, int):
+            latest[number] = record
+        else:
+            unkeyed.append(record)
+    keep = list(latest.values()) + unkeyed
+    return [record for record in records if any(record is kept for kept in keep)]
+
+
 def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize capture visibility for morning, wrap, status, and ledger readers."""
-    merged_records = [r for r in records if _is_merged_ship_run(r)]
+    merged_records = _latest_per_pr([r for r in records if _is_merged_ship_run(r)])
     items = [_capture_health_item(record) for record in merged_records]
     counts = {
         "applied": 0,
@@ -541,21 +566,42 @@ def _capture_marker(record: dict[str, Any]) -> str | None:
     return marker if isinstance(marker, str) and marker.strip() else None
 
 
+def record_head_sha(record: Mapping[str, Any]) -> str | None:
+    """The head a ship_run record was written for, or ``None`` when it names none."""
+    git = record.get("git")
+    head = git.get("head_sha") if isinstance(git, Mapping) else None
+    return head.strip() if isinstance(head, str) and head.strip() else None
+
+
 def existing_capture_marker(
     records: list[dict[str, Any]], record: dict[str, Any]
 ) -> dict[str, Any] | None:
     """The already-recorded capture marker ``record`` would duplicate, if any.
 
-    Exactly one capture marker per merged PR is an invariant that was only ever
-    *detected*, never prevented: :func:`keel.capture.verify_session` refuses the whole
-    session on a second one ("multiple capture markers found for merged PR"),
-    ``capture-reconcile`` returns ``blocked`` with no actions to offer, and nothing in
-    this module can remove a line — so the only exit is editing the ledger by hand.
+    One capture marker per **(pull request, head)**, enforced at write time. It was
+    once only *detected*, and only afterwards: :func:`keel.capture.verify_session`
+    refuses the whole session on a second one ("multiple capture markers found for
+    merged PR"), ``capture-reconcile`` returns ``blocked`` with no actions to offer,
+    and nothing in this module can remove a line — so the recovery was editing the
+    ledger by hand, which is forging audit history to make a gate pass.
 
     Re-running the same append is the most natural thing to do after a crash mid-s11,
     which made the obvious recovery the very action that bricks the run. Checking here
     costs one pass over records the caller already holds. Returns the conflicting
     record so the caller can name it; ``None`` when the append is new.
+
+    **Scoped to the head, because that is how the merge gate reads it** (#1157). Keyed
+    by pull request alone, this refused every later head once *any* record carried a
+    marker — including the very first run, red. :func:`gates_pass_for_head` and
+    :func:`keel.juryavail.is_ship_run_for_head` then asked for a passing record on the
+    *current* head, which no run was any longer allowed to write. A pull request whose
+    first ship run failed became permanently unmergeable, and the documented exit was
+    editing an append-only audit ledger to make a gate pass, which is the one action
+    this design exists to prevent. The writer now keys the record the way every reader
+    that gates does: retrying the same head still clashes, a new head is a new run.
+
+    A record naming no head is compared to other records naming no head — the same
+    rule, applied to the value they have, rather than an exemption from it.
     """
     if _capture_marker(record) is None:
         return None
@@ -563,11 +609,14 @@ def existing_capture_marker(
     pr = pull_request.get("number") if isinstance(pull_request, dict) else None
     if not isinstance(pr, int):
         return None
+    head = record_head_sha(record)
     for existing in records:
         if existing.get("record_type") != RECORD_TYPE_SHIP_RUN:
             continue
         other = existing.get("pull_request")
         if (other.get("number") if isinstance(other, dict) else None) != pr:
+            continue
+        if record_head_sha(existing) != head:
             continue
         if _capture_marker(existing) is not None:
             return existing

@@ -517,8 +517,11 @@ check runs. Dry-run output includes the same would-be record but never writes th
 to infer status from closure comments. A run that never reached capture says so with
 `--capture-status not-run`: the flag stays required, but the record carries no capture
 marker and claims no outcome. Use it to re-record gates for a **rebased** PR — gates are
-pinned to the head SHA, so a new head needs its own record, and a second record carrying a
-marker would be refused (one capture marker per PR).
+pinned to the head SHA, so a new head needs its own record. A second record carrying a
+marker **for the same head** is refused; a new head may carry its own (#1157). Keyed by
+pull request alone, the refusal outlived the head it was written for: a pull request whose
+first ship run was red could never write the passing record the merge gate asks for, and
+the only exit was editing an append-only ledger by hand.
 
 `--host-agent` and `--transport` (`gh`|`mcp`) record the s0 preflight **run context** on
 the `ship_run` record so it becomes durable PR evidence. `--transport` defaults to the
@@ -539,6 +542,12 @@ omitted, so adapters should not echo a stale transport value.
 
 Verify that merged PRs have exactly one valid capture marker in the configured run ledger.
 Missing, invalid, or duplicate markers make the command exit non-zero.
+
+"One" is counted on the head the capture was recorded against — the last record carrying a
+marker — not across every head the pull request ever had (#1157). A marker left on a
+superseded head is not a duplicate of the merged head's, and a record that never reached
+capture (`--capture-status not-run`) carries no marker and does not move which head is
+counted.
 
 ```bash
 keel capture-verify .keel/project.yaml --root . --merged-pr 456 --json
