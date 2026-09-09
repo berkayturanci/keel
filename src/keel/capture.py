@@ -561,6 +561,13 @@ def _reconcile_pr(
     )
 
 
+def _record_head(record: dict[str, Any]) -> str | None:
+    """The head a ship_run record was written for, or ``None`` when it names none."""
+    git = record.get("git")
+    head = git.get("head_sha") if isinstance(git, dict) else None
+    return head.strip() if isinstance(head, str) and head.strip() else None
+
+
 def _verify_pr(records: list[dict[str, Any]], pr_number: int) -> dict[str, Any]:
     candidates = [
         record
@@ -568,10 +575,21 @@ def _verify_pr(records: list[dict[str, Any]], pr_number: int) -> dict[str, Any]:
         if record.get("record_type") == "ship_run"
         and (record.get("pull_request") or {}).get("number") == pr_number
     ]
+    # Markers are counted on the head this pull request was merged at, not across
+    # every head it ever had (#1157). `existing_capture_marker` refuses a second
+    # marker per (pull request, head); counting per pull request here would move
+    # the same deadlock one step later — a pull request whose superseded head left
+    # a marker would fail verification for having two, and the only exit would
+    # again be editing the ledger. A merged pull request does not change head, so
+    # the last record's head is the merged one and this is the same invariant
+    # read where it holds.
+    merged_head = _record_head(candidates[-1]) if candidates else None
     markers = [
         capture_block.get("marker")
         for record in candidates
-        if isinstance(capture_block := record.get("capture"), dict) and capture_block.get("marker")
+        if _record_head(record) == merged_head
+        and isinstance(capture_block := record.get("capture"), dict)
+        and capture_block.get("marker")
     ]
     if len(markers) > 1:
         return {

@@ -183,6 +183,63 @@ class TestCaptureContract(unittest.TestCase):
         self.assertEqual(report["results"][0]["status"], "invalid")
         self.assertEqual(report["results"][0]["marker_count"], 2)
 
+    def test_verify_session_counts_markers_on_the_merged_head(self):
+        """#1157: a superseded head's marker must not fail the merged one.
+
+        `existing_capture_marker` refuses a second marker per (pull request,
+        head) so a red first run no longer bricks the pull request. Counting per
+        pull request here would move that deadlock one step later — the pull
+        request would fail verification for carrying two markers, and the only
+        exit would again be editing an append-only audit ledger. A merged pull
+        request does not change head, so the last record's head is the merged
+        one and the invariant is read where it holds.
+        """
+        records = [
+            {
+                "schema_version": "keel.run-ledger.v1",
+                "record_type": "ship_run",
+                "pull_request": {"number": 168},
+                "git": {"head_sha": "48681d19"},
+                "capture": {"marker": "compound-learning: pr=168 status=skipped:no-policy"},
+            },
+            {
+                "schema_version": "keel.run-ledger.v1",
+                "record_type": "ship_run",
+                "pull_request": {"number": 168},
+                "git": {"head_sha": "eed4f81a"},
+                "capture": {"marker": "compound-learning: pr=168 status=applied"},
+            },
+        ]
+
+        report = capture.verify_session(records, [168])
+
+        self.assertEqual(report["status"], "complete")
+        self.assertEqual(report["results"][0]["status"], "applied")
+
+    def test_verify_session_still_rejects_two_markers_on_one_head(self):
+        """The invariant this check exists for survives the scoping above."""
+        records = [
+            {
+                "schema_version": "keel.run-ledger.v1",
+                "record_type": "ship_run",
+                "pull_request": {"number": 168},
+                "git": {"head_sha": "eed4f81a"},
+                "capture": {"marker": "compound-learning: pr=168 status=applied"},
+            },
+            {
+                "schema_version": "keel.run-ledger.v1",
+                "record_type": "ship_run",
+                "pull_request": {"number": 168},
+                "git": {"head_sha": "eed4f81a"},
+                "capture": {"marker": "compound-learning: pr=168 status=skipped:no-policy"},
+            },
+        ]
+
+        report = capture.verify_session(records, [168])
+
+        self.assertEqual(report["results"][0]["status"], "invalid")
+        self.assertEqual(report["results"][0]["marker_count"], 2)
+
     def test_verify_session_ignores_records_without_marker(self):
         records = [
             {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -541,6 +542,13 @@ def _capture_marker(record: dict[str, Any]) -> str | None:
     return marker if isinstance(marker, str) and marker.strip() else None
 
 
+def record_head_sha(record: Mapping[str, Any]) -> str | None:
+    """The head a ship_run record was written for, or ``None`` when it names none."""
+    git = record.get("git")
+    head = git.get("head_sha") if isinstance(git, Mapping) else None
+    return head.strip() if isinstance(head, str) and head.strip() else None
+
+
 def existing_capture_marker(
     records: list[dict[str, Any]], record: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -556,6 +564,19 @@ def existing_capture_marker(
     which made the obvious recovery the very action that bricks the run. Checking here
     costs one pass over records the caller already holds. Returns the conflicting
     record so the caller can name it; ``None`` when the append is new.
+
+    **Scoped to the head, because that is how the merge gate reads it** (#1157). Keyed
+    by pull request alone, this refused every later head once *any* record carried a
+    marker — including the very first run, red. :func:`gates_pass_for_head` and
+    :func:`keel.juryavail.is_ship_run_for_head` then asked for a passing record on the
+    *current* head, which no run was any longer allowed to write. A pull request whose
+    first ship run failed became permanently unmergeable, and the documented exit was
+    editing an append-only audit ledger to make a gate pass, which is the one action
+    this design exists to prevent. The writer now keys the record the way every reader
+    that gates does: retrying the same head still clashes, a new head is a new run.
+
+    A record naming no head is compared to other records naming no head — the same
+    rule, applied to the value they have, rather than an exemption from it.
     """
     if _capture_marker(record) is None:
         return None
@@ -563,11 +584,14 @@ def existing_capture_marker(
     pr = pull_request.get("number") if isinstance(pull_request, dict) else None
     if not isinstance(pr, int):
         return None
+    head = record_head_sha(record)
     for existing in records:
         if existing.get("record_type") != RECORD_TYPE_SHIP_RUN:
             continue
         other = existing.get("pull_request")
         if (other.get("number") if isinstance(other, dict) else None) != pr:
+            continue
+        if record_head_sha(existing) != head:
             continue
         if _capture_marker(existing) is not None:
             return existing

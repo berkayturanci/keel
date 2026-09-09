@@ -718,8 +718,8 @@ class TestRecordGatesPassed(unittest.TestCase):
         self.assertFalse(ledger.record_gates_passed(malformed))
 
 
-def _marker_record(*, pr, run_id="RUN-1", marker="keel-capture:1"):
-    record = _gates_record(pr=pr, head_sha="a", run_id=run_id)
+def _marker_record(*, pr, run_id="RUN-1", marker="keel-capture:1", head_sha="a"):
+    record = _gates_record(pr=pr, head_sha=head_sha, run_id=run_id)
     if marker is not None:
         record["capture"] = {"marker": marker, "status": "applied"}
     return record
@@ -743,6 +743,50 @@ class TestExistingCaptureMarker(unittest.TestCase):
     def test_a_different_pr_is_not_a_duplicate(self):
         existing = _marker_record(pr=7)
         self.assertIsNone(ledger.existing_capture_marker([existing], _marker_record(pr=8)))
+
+    def test_a_new_head_is_not_a_duplicate(self):
+        """#1157: keyed by pull request alone, a red first run bricked the PR.
+
+        `gates_pass_for_head` asks for a passing record on the *current* head.
+        Refusing every later head's append meant no run could ever write one, so
+        a pull request whose first ship run failed became permanently unmergeable
+        — and `existing_capture_marker`'s own docstring said the only exit was
+        editing an append-only audit ledger to make a gate pass.
+        """
+        red = _marker_record(pr=7, run_id="RUN-1", head_sha="48681d19")
+        green = _marker_record(pr=7, run_id="RUN-2", head_sha="eed4f81a")
+        self.assertIsNone(ledger.existing_capture_marker([red], green))
+
+    def test_the_same_head_is_still_a_duplicate(self):
+        """The case the check exists for: the natural retry after a crash mid-s11."""
+        first = _marker_record(pr=7, run_id="RUN-1", head_sha="eed4f81a")
+        again = _marker_record(pr=7, run_id="RUN-2", head_sha="eed4f81a")
+        clash = ledger.existing_capture_marker([first], again)
+        self.assertIsNotNone(clash)
+        self.assertEqual(clash["run_id"], "RUN-1")
+
+    def test_records_naming_no_head_are_compared_to_each_other(self):
+        """The rule applied to the value they have, not an exemption from it."""
+        first = _marker_record(pr=7, run_id="RUN-1")
+        second = _marker_record(pr=7, run_id="RUN-2")
+        for record in (first, second):
+            record["git"].pop("head_sha", None)
+        self.assertIsNotNone(ledger.existing_capture_marker([first], second))
+        headed = _marker_record(pr=7, run_id="RUN-3", head_sha="eed4f81a")
+        self.assertIsNone(ledger.existing_capture_marker([first], headed))
+
+    def test_the_deadlock_end_to_end(self):
+        """Writer and merge gate agree again — the whole of #1157, in one place."""
+        red = _marker_record(pr=7, run_id="RUN-1", head_sha="48681d19")
+        red["gates"] = [{"name": "jury", "ok": False, "skipped": False}]
+        green = _marker_record(pr=7, run_id="RUN-2", head_sha="eed4f81a")
+
+        self.assertIsNone(ledger.existing_capture_marker([red], green))
+        records = [red, green]
+        passed, record = ledger.gates_pass_for_head(records, 7, "eed4f81a")
+        self.assertTrue(passed)
+        self.assertEqual(record["run_id"], "RUN-2")
+        self.assertFalse(ledger.gates_pass_for_head(records, 7, "48681d19")[0])
 
     def test_a_record_carrying_no_marker_never_clashes(self):
         existing = _marker_record(pr=7)
