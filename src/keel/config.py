@@ -969,14 +969,16 @@ def vendor_label_errors(label: Any, *, where: str) -> list[str]:
 
 
 def _learning_sink_issues(policy_pack: dict[str, Any]) -> list[str]:
-    """Problems in `policy_pack.capture.learning.sink`, or `[]`."""
+    """Problems in `policy_pack.capture.learning`'s write and read paths, or `[]`."""
     capture_policy = policy_pack.get("capture")
     if not isinstance(capture_policy, dict):
         return []
     learning = capture_policy.get("learning")
     if not isinstance(learning, dict):
         return []
-    return capture.learning_sink_errors(learning.get("sink"))
+    return capture.learning_sink_errors(learning.get("sink")) + capture.learning_source_errors(
+        learning.get("source")
+    )
 
 
 def _policy_capability_fields(value: Any, path: str = "policy_pack") -> list[tuple[str, list]]:

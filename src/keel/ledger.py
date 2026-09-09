@@ -106,6 +106,7 @@ def build_ship_run_record(
     #: dedupe compares two fingerprints of one lesson. ``None`` keeps
     #: ``changed_files``, which is every other caller.
     capture_changed_files: list[str] | tuple[str, ...] | None = None,
+    capture_retrieved: list[str] | tuple[str, ...] = (),
     capture_not_run: bool = False,
     issue_title: str | None = None,
     issue_labels: list[str] | tuple[str, ...] = (),
@@ -212,6 +213,7 @@ def build_ship_run_record(
             status=capture_status,
             reason=capture_reason,
             artifact=capture_artifact,
+            retrieved=capture_retrieved,
             title=issue_title,
             labels=issue_labels,
             # Not `changed_files`: `changes.files` above records what this run's git

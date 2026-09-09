@@ -1409,6 +1409,57 @@ The default `.keel/learning/` is **not** runtime-ignored. Everything else keel w
 under `.keel/` is disposable per-run state; learnings are the exception, because a
 learning git throws away is one the read path can never find.
 
+#### `policy_pack.capture.learning.source`
+
+The read side of capture. Where the **implement** and **review** briefs look for
+lessons this project already recorded, so an agent implementing issue N is shown that
+issue N-40 hit the same trap.
+
+```yaml
+policy_pack:
+  capture:
+    learning:
+      source:
+        - ".keel/learning"
+        - "~/knowledge/shared/learnings"
+```
+
+| | |
+|---|---|
+| type | string, or a list of strings |
+| default | the `sink`'s `path`, else `.keel/learning` |
+| placeholders | `{owner}`, `{repo}`, `{base_branch}` |
+
+**Unset is the useful default.** A project that turned the sink on already has exactly
+one place its learnings live, and a second setting to keep in step with the first is a
+second setting to get wrong. A list reads several directories — a repo-local folder plus
+a shared cross-project one — and the results are ranked together, so a shared folder's
+best lesson can outrank a weak local one.
+
+The placeholder set is closed and validated when the config is read, like the sink's.
+It is **smaller** than the sink's on purpose: `{pr}`, `{date}` and `{slug}` name one
+document, and a directory naming a single PR would retrieve that PR's lesson and nothing
+else. A sink path that uses one of them still works as a *sink*; as a default source it
+is skipped rather than read as a folder literally called `{pr}`.
+
+**How a file is ranked.** Its text is scored against the issue's title, labels and
+declared files. On top of that, a file with `keel.learning.v1` front matter is matched
+*exactly* on the `labels` and `changed_files` it declares — a lesson that names
+`src/keel/ledger.py` is about a task touching `src/keel/ledger.py`, while one that merely
+says "ledger" eight times is worded like it. A file with no front matter is plain
+Markdown and scores on its text alone, so learnings keel wrote and learnings a person
+wrote both rank.
+
+At most five reach a brief, under a fixed **Relevant past learnings** heading, each as a
+title, one line and a path. The rendered section is capped so a brief cannot become an
+unbounded prompt.
+
+**No learnings means no section.** Not an empty heading, not a note that none were
+found — a project with an absent or empty directory gets exactly the brief it got before
+this existed, and pays one `is_dir()` for it. What *was* retrieved is recorded on the run
+ledger as `capture.retrieved`, a list of fingerprints, so a later run can tell a lesson
+nobody had from one that was put in front of the implementer and still not applied.
+
 ### `policy_pack.risk_rules`
 
 Array of high-risk policy rules. Each entry requires:

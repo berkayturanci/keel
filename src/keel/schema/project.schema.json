@@ -898,6 +898,13 @@
                     }
                   },
                   "description": "Where an applied capture writes its durable learning file. Omit it and keel records the marker and writes nothing, which is the behaviour before #1154."
+                },
+                "source": {
+                  "oneOf": [
+                    { "type": "string", "minLength": 1 },
+                    { "type": "array", "items": { "type": "string", "minLength": 1 } }
+                  ],
+                  "description": "Directories the implement and review briefs retrieve past learnings from. Defaults to the sink's path, else .keel/learning. A list reads several, e.g. a repo-local folder plus a shared cross-project one. Placeholders: {owner}, {repo}, {base_branch}."
                 }
               },
               "description": "Policy for optional durable learning artifacts. Core records the decision in capture.learning and suppresses duplicates by stable fingerprint."

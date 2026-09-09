@@ -137,6 +137,7 @@ def contract_as_dict(config: _HasPolicyPack | None = None) -> dict[str, Any]:
             "commit_required": learning_sink_in_worktree(config),
         },
         "learning_quality": learning_quality_contract_as_dict(config),
+        "learning_retrieval": learning_retrieval_contract_as_dict(config),
         "session_end_verifier": {
             "primitive": "capture.verify_session",
             "cli": "keel capture-verify",
@@ -159,6 +160,31 @@ def contract_as_dict(config: _HasPolicyPack | None = None) -> dict[str, Any]:
                 "record-skip",
             ],
         },
+    }
+
+
+def learning_retrieval_contract_as_dict(
+    config: _HasPolicyPack | None = None,
+) -> dict[str, Any]:
+    """The read side of capture, declared so an adapter knows the section exists.
+
+    Policy only — where this project reads learnings from and how many a brief
+    carries. What was actually *found* is measured per run and travels on the ship
+    contract, because reading a directory is I/O and this contract is pure.
+    """
+    return {
+        "schema_version": LEARNING_RETRIEVAL_SCHEMA_VERSION,
+        "policy_source": "policy_pack.capture.learning.source",
+        # As **configured**, not as resolved: this contract is pure and has no
+        # `{repo}` to expand with, so a resolved list would report an empty
+        # `sources` for a templated setting that reads perfectly well at run time.
+        "sources": learning_source_entries(config),
+        "limit": DEFAULT_LEARNING_RETRIEVAL_LIMIT,
+        "heading": LEARNING_BRIEF_HEADING,
+        "briefs": ["implement", "review"],
+        "reader": "capture.retrieve_relevant_learnings",
+        "ledger_field": "capture.retrieved",
+        "silent_when_empty": True,
     }
 
 
@@ -246,6 +272,7 @@ def record_marker(
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     config: _HasPolicyPack | None = None,
     not_run: bool = False,
+    retrieved: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Build the capture block stored in a ship run ledger record.
 
@@ -253,6 +280,11 @@ def record_marker(
     capture artifact. It is the proof that an ``applied`` capture actually
     produced something; capture reconcile treats ``applied`` with no artifact as
     a finding. ``deferred``/``skipped`` need no artifact.
+
+    ``retrieved`` is the fingerprints of the learnings this run put in front of the
+    implementer and the reviewers (#1155). Recording them is what lets a later run
+    tell a lesson nobody had from one that was surfaced and still not applied —
+    the difference between a retrieval gap and a discipline gap.
 
     ``not_run`` marks a record whose run never reached capture, so a reader can
     tell it apart from one that reached capture and lost its marker. Both carry
@@ -263,6 +295,7 @@ def record_marker(
     fail-open this field exists to avoid.
     """
     clean_artifact = artifact.strip() if isinstance(artifact, str) and artifact.strip() else None
+    clean_retrieved = _strings(retrieved)
     if status is None:
         return {
             "schema_version": CAPTURE_SCHEMA_VERSION,
@@ -272,6 +305,7 @@ def record_marker(
             "marker": None,
             "not_run": not_run,
             "artifact": clean_artifact,
+            "retrieved": clean_retrieved,
             "fail_soft": True,
             "learning": learning_decision(
                 title=title,
@@ -302,6 +336,7 @@ def record_marker(
             "marker_reason": clean_marker_reason,
             "marker": None,
             "artifact": clean_artifact,
+            "retrieved": clean_retrieved,
             "fail_soft": True,
             "learning": learning,
         }
@@ -313,6 +348,7 @@ def record_marker(
         "marker_reason": marker.reason,
         "marker": marker.as_text(),
         "artifact": clean_artifact,
+        "retrieved": clean_retrieved,
         "fail_soft": True,
         "learning": learning,
     }
@@ -1484,29 +1520,323 @@ def _learning_title_and_summary(content: str, fallback: str) -> tuple[str, str]:
     return title or fallback, summary
 
 
+#: Placeholders a `source` directory may use. A subset of the sink's: `{pr}`,
+#: `{date}` and `{slug}` name one *document*, and a directory that named a single
+#: PR would retrieve only that PR's lesson.
+LEARNING_SOURCE_PLACEHOLDERS = ("owner", "repo", "base_branch")
+
+#: How many lessons a brief carries, and how much of it they may take. A brief
+#: *becomes* an agent's prompt, so an unbounded retrieval is an unbounded prompt —
+#: the same reason `fixloop` clamps a reviewer's findings.
+DEFAULT_LEARNING_RETRIEVAL_LIMIT = 5
+LEARNING_BRIEF_CHAR_BUDGET = 4000
+LEARNING_BRIEF_SUMMARY_CHARS = 240
+
+#: The heading both briefs use, fixed so an agent reading two of them recognises
+#: the same section rather than inferring one from prose.
+LEARNING_BRIEF_HEADING = "Relevant past learnings"
+LEARNING_RETRIEVAL_SCHEMA_VERSION = "keel.learning-retrieval.v1"
+
+#: What an exact front-matter match is worth beside a text hit. A file whose
+#: `labels` or `changed_files` name this task's own label or path is *about* this
+#: task; one that merely says "auth" eight times is worded like it. Text scoring
+#: alone ranked the second above the first.
+LEARNING_LABEL_MATCH_SCORE = 6
+LEARNING_FILE_MATCH_SCORE = 8
+
+#: The weakest text match a retrieval accepts. One passing mention of one word is a
+#: coincidence — "keel" appears in every learning this repository writes — and at
+#: `min_score=1` every document matched every task. Four is a word said repeatedly, a
+#: filename that names the subject, or two words at once. An exact front-matter match
+#: clears it on its own, which is the ordering this whole scheme is for.
+LEARNING_TEXT_MATCH_FLOOR = 4
+
+#: Words too common to distinguish one learning from another.
+_LEARNING_STOPWORDS = frozenset(
+    {"the", "and", "for", "with", "this", "that", "issue", "feat", "fix"}
+)
+
+
+def learning_source_errors(source: Any) -> list[str]:
+    """Why this `source` cannot be used, or `[]`.
+
+    Checked where the config is read, like the sink's templates and for the same
+    reason: a directory naming `{repoo}` is a typo whose only symptom is a
+    retrieval that silently finds nothing, on every run, forever.
+    """
+    if source in (None, [], ()):
+        return []
+    entries = [source] if isinstance(source, str) else source
+    if not isinstance(entries, (list, tuple)):
+        return ["policy_pack.capture.learning.source must be a string or a list of strings"]
+    errors: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, str) or not entry.strip():
+            errors.append("policy_pack.capture.learning.source entries must be non-empty strings")
+            continue
+        for name in re.findall(r"\{([^}]*)\}", entry):
+            if name not in LEARNING_SOURCE_PLACEHOLDERS:
+                errors.append(
+                    f"policy_pack.capture.learning.source uses unknown placeholder "
+                    f"{{{name}}}; known: {', '.join(LEARNING_SOURCE_PLACEHOLDERS)}"
+                )
+    return errors
+
+
+def learning_source_entries(config: _HasPolicyPack | None) -> list[str]:
+    """The directories a project *configured*, before any placeholder is expanded.
+
+    Unset, it is **the directory the sink writes to** — a project that turned
+    capture on has exactly one place its learnings live, and a second setting to
+    keep in step with the first is a second setting to get wrong. With no sink
+    either, the `.keel/learning/` convention, so retrieval works the moment a
+    project has files however they got there.
+
+    Separate from :func:`learning_source_dirs` because the pure contract has no
+    `{repo}` to expand with: reporting the resolved list there would print an
+    empty `sources` for a templated setting that reads fine at run time.
+    """
+    policy = _learning_policy(config)
+    raw = policy.get("source")
+    if isinstance(raw, str):
+        entries = [raw]
+    elif isinstance(raw, (list, tuple)):
+        entries = [entry for entry in raw if isinstance(entry, str)]
+    else:
+        entries = []
+    if not entries:
+        sink = learning_sink_policy(config) or {}
+        entries = [str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH)]
+    return entries
+
+
+def learning_source_dirs(
+    config: _HasPolicyPack | None,
+    *,
+    values: dict[str, str] | None = None,
+) -> list[str]:
+    """The directories this run reads, with the placeholders expanded.
+
+    Pure. An entry still holding a placeholder after expansion is dropped rather
+    than taken literally, which is what keeps a per-document sink path (`…/{pr}/`)
+    from being read as a folder called `{pr}`.
+    """
+    resolved: list[str] = []
+    for entry in learning_source_entries(config):
+        expanded = _expand(entry, values or {}).strip()
+        if not expanded or "{" in expanded:
+            continue
+        if expanded not in resolved:
+            resolved.append(expanded)
+    return resolved
+
+
+def learning_query_text(
+    *,
+    title: str | None = None,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
+) -> str:
+    """The text a task is matched by: its title, its labels, and its paths.
+
+    The paths belong in it. A lesson about `src/keel/ledger.py` and an issue that
+    touches `src/keel/ledger.py` share no words at all when only titles are
+    compared, which is the pairing retrieval most needs to make.
+    """
+    parts = [title or "", *_strings(labels), *_strings(changed_files)]
+    return " ".join(part for part in parts if part)
+
+
+def _front_matter_lists(content: str) -> dict[str, list[str]]:
+    """The `key:` / `  - value` sequences in a leading `---` block.
+
+    :func:`_front_matter` deliberately skips list values — it wants a title and a
+    sentence. Exact matching needs the two lists the writer emits, and nothing
+    here grows into a YAML parser either: a key at column 0 with an empty value
+    opens a list, a `  - ` line extends it, anything else closes it.
+    """
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return out
+        if line.startswith("  - ") and current is not None:
+            out[current].append(_unquote(line[4:].strip()))
+            continue
+        key, sep, value = line.partition(":")
+        current = key.strip() if sep and not key.startswith(" ") and not value.strip() else None
+        if current is not None:
+            out[current] = []
+    # No closing delimiter: not front matter, whatever it looked like.
+    return {}
+
+
+def _learning_tokens(query_text: str) -> set[str]:
+    return {
+        word.lower()
+        for word in re.findall(r"[A-Za-z0-9_-]{3,}", query_text)
+        if word.lower() not in _LEARNING_STOPWORDS
+    }
+
+
+def _text_score(content_lower: str, filename_lower: str, tokens: set[str]) -> int:
+    score = 0
+    for token in tokens:
+        if token in filename_lower:
+            score += 3
+        count = content_lower.count(token)
+        if count > 0:
+            score += min(count, 5)
+    return score
+
+
+def _exact_matches(content: str, labels: set[str], changed_files: set[str]) -> tuple[list, list]:
+    """The declared `labels` / `changed_files` this file and this task share.
+
+    Front matter only. A file without it is plain Markdown and falls back to text
+    scoring, which is the whole tolerance the read path promises: learnings keel
+    wrote and learnings a person wrote both rank.
+    """
+    lists = _front_matter_lists(content)
+    matched_labels = sorted({_normalize_text(value) for value in lists.get("labels", [])} & labels)
+    matched_files = sorted(
+        {_normalize_path(value) for value in lists.get("changed_files", [])} & changed_files
+    )
+    return matched_labels, matched_files
+
+
+def dedupe_learning_hits(
+    hits: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> list[dict[str, Any]]:
+    """One entry per lesson, keeping the first — which is the best-ranked.
+
+    Reading several directories is the point of a list, and the same lesson living
+    in two of them is the normal way that happens: a shared knowledge folder synced
+    into a checkout, a copy taken before a move. Left in, one lesson would take two
+    of the five slots a brief has and push a different one out.
+
+    Identity is the fingerprint, not the path: the same lesson under two names is
+    still one lesson. A hit without one (a hand-written file) falls back to its
+    path, which is the only thing that distinguishes it.
+    """
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for hit in hits:
+        key = str(hit.get("fingerprint") or hit.get("path") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(hit)
+    return unique
+
+
+def render_learning_brief_section(
+    hits: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    *,
+    char_budget: int = LEARNING_BRIEF_CHAR_BUDGET,
+) -> str:
+    """The fixed **Relevant past learnings** block, or `""` when nothing matched.
+
+    Empty in, empty out, and the caller renders nothing at all then — which is
+    what keeps a project with no learnings byte-identical to the brief it got
+    before this existed. Zero cost when unused is a requirement, not a nicety.
+    """
+    if not hits:
+        return ""
+    lines = [f"### {LEARNING_BRIEF_HEADING}", ""]
+    used = sum(len(line) + 1 for line in lines)
+    for hit in hits:
+        title = str(hit.get("title") or hit.get("file") or "Learning").strip()
+        summary = " ".join(str(hit.get("summary") or "").split())
+        if len(summary) > LEARNING_BRIEF_SUMMARY_CHARS:
+            summary = summary[: LEARNING_BRIEF_SUMMARY_CHARS - 1].rstrip() + "\u2026"
+        path = str(hit.get("path") or hit.get("file") or "")
+        entry = f"- **{title}**" + (f" — {summary}" if summary else "") + f" (`{path}`)"
+        if used + len(entry) + 1 > char_budget:
+            # Stop at the budget rather than trimming the last entry into a
+            # sentence fragment: a brief that ends mid-lesson reads as a bug.
+            break
+        lines.append(entry)
+        used += len(entry) + 1
+    if len(lines) == 2:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
+def learning_retrieval_as_dict(
+    *,
+    sources: list[str] | tuple[str, ...] = (),
+    hits: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+    limit: int = DEFAULT_LEARNING_RETRIEVAL_LIMIT,
+) -> dict[str, Any]:
+    """The retrieval block adapters read and the ledger records.
+
+    `section` is rendered here rather than left to each brief's author: the
+    implement brief and the reviewer brief must carry the *same* section, and two
+    renderers agree only until one of them is edited.
+    """
+    entries = [
+        {
+            "file": hit.get("file"),
+            "path": hit.get("path"),
+            "title": hit.get("title"),
+            "summary": hit.get("summary"),
+            "score": hit.get("score"),
+            "fingerprint": hit.get("fingerprint"),
+            "matched_labels": list(hit.get("matched_labels") or []),
+            "matched_files": list(hit.get("matched_files") or []),
+        }
+        for hit in hits
+    ]
+    return {
+        "schema_version": LEARNING_RETRIEVAL_SCHEMA_VERSION,
+        "heading": LEARNING_BRIEF_HEADING,
+        "policy_source": "policy_pack.capture.learning.source",
+        "sources": list(sources),
+        "limit": limit,
+        "hits": entries,
+        "fingerprints": [entry["fingerprint"] for entry in entries if entry["fingerprint"]],
+        "section": render_learning_brief_section(hits),
+    }
+
+
 def retrieve_relevant_learnings(
     query_text: str,
     learning_dir: str | Path,
     *,
     max_results: int = 3,
     min_score: int = 1,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Retrieve relevant historical learning records for an issue or task.
 
-    Pure, stdlib-first token matching against Markdown or JSON learning files
-    in ``learning_dir`` (e.g. ``.keel/learning/``). Returns the top matching lessons
+    Stdlib-first token matching against Markdown or JSON learning files in
+    ``learning_dir`` (e.g. ``.keel/learning/``). Returns the top matching lessons
     to be injected into implementation / review contexts.
+
+    ``labels`` and ``changed_files`` are this task's own, and a file that
+    *declares* one of them in its front matter is about this task rather than
+    merely worded like it — see :data:`LEARNING_LABEL_MATCH_SCORE`. A file with no
+    front matter is plain Markdown and scores on its text alone, which is the
+    tolerance this reader promises: a lesson keel wrote and a lesson a person
+    wrote both rank.
+
+    The one function in this module that reads the filesystem, and it was written
+    that way before the pure/thin-I/O split had a name for it. Everything it
+    decides is in the pure helpers around it.
     """
     path = Path(learning_dir)
     if not path.is_dir():
         return []
 
-    tokens = {
-        w.lower()
-        for w in re.findall(r"[A-Za-z0-9_-]{3,}", query_text)
-        if w.lower() not in {"the", "and", "for", "with", "this", "that", "issue", "feat", "fix"}
-    }
-    if not tokens:
+    tokens = _learning_tokens(query_text)
+    want_labels = {_normalize_text(label) for label in _strings(labels)}
+    want_files = {_normalize_path(name) for name in _strings(changed_files)}
+    if not tokens and not want_labels and not want_files:
         return []
 
     results: list[dict[str, Any]] = []
@@ -1518,16 +1848,17 @@ def retrieve_relevant_learnings(
         except OSError:
             continue
 
-        score = 0
-        content_lower = content.lower()
-        filename_lower = file_path.name.lower()
-
-        for token in tokens:
-            if token in filename_lower:
-                score += 3
-            count = content_lower.count(token)
-            if count > 0:
-                score += min(count, 5)
+        fields, body = _front_matter(content)
+        matched_labels, matched_files = _exact_matches(content, want_labels, want_files)
+        score = (
+            # **The body, not the document.** Front matter is metadata with its own
+            # exact matching above, and scoring it as prose made every learning this
+            # repository ever wrote match every task in it: `repo: keel` and
+            # `schema: keel.learning.v1` name the project in every single file.
+            _text_score(body.lower(), file_path.name.lower(), tokens)
+            + LEARNING_LABEL_MATCH_SCORE * len(matched_labels)
+            + LEARNING_FILE_MATCH_SCORE * len(matched_files)
+        )
 
         if score >= min_score:
             title, summary = _learning_title_and_summary(content, file_path.name)
@@ -1538,8 +1869,20 @@ def retrieve_relevant_learnings(
                     "title": title,
                     "summary": summary,
                     "score": score,
+                    # The writer's own fingerprint when there is one, so a later
+                    # run can tell that this exact lesson was surfaced. A file
+                    # written by hand has none; its content identifies it.
+                    "fingerprint": fields.get("fingerprint") or _content_fingerprint(content),
+                    "matched_labels": matched_labels,
+                    "matched_files": matched_files,
                 }
             )
 
     results.sort(key=lambda r: (-r["score"], r["file"]))
     return results[:max_results]
+
+
+def _content_fingerprint(content: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()

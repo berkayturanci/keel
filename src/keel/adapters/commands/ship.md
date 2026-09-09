@@ -395,6 +395,18 @@ whose paths this PR touches. When the branch-scoped red-`base_branch` signal is 
 on the fallback transport, treat that rule as no-fire and log it.
 
 ### s4 implement *(agent)*
+**Open every implement brief with `learnings.section`, verbatim, when it is not
+empty.** Core retrieved it from the directories `policy_pack.capture.learning.source`
+names — the sink's own directory unless the project says otherwise — ranked against
+this issue's title, labels and declared files, and rendered it under a fixed
+**Relevant past learnings** heading so the same block reaches s4 and s7 unchanged.
+Each entry is a title, one line, and the path; open the file when the line looks
+relevant. The section is empty for a project with no learnings on disk and for a task
+nothing matches, and an empty section is **nothing at all** — no heading, no note that
+none were found. The lessons are context, not a checklist: they say what went wrong the
+last time work of this shape was done, and they do not replace the issue's acceptance
+criteria. Do not paraphrase them, and do not append your own.
+
 Read the implementer from `assignment.implementer` — core resolved it from
 `knobs.team.implement` (or the deprecated `implementer_agents`) by the issue's role label,
 **overridden by `--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag >
@@ -902,7 +914,11 @@ reviewer see more — they make it *finish the trace*, which is the difference b
 follow-up ticket and a rollback. Likewise
 `review_merge_contract.reviewers.required_sections` (from `policy_pack.review.
 required_sections`) are sections a review body must contain; a review missing one is
-incomplete, not merely terse. Both are absent for most projects — pass nothing then, and
+incomplete, not merely terse. And **`learnings.section` goes into every reviewer's brief
+too**, verbatim and unchanged from the one s4 read: the implementer was shown what went
+wrong last time, so a reviewer can check the implementation against it rather than
+rediscovering it. Same rule as s4 — empty means nothing at all. All are absent for most
+projects — pass nothing then, and
 never invent entries to fill the slot.
 
 **Post findings per `--review-comments` (inline default):** review findings are public PR
