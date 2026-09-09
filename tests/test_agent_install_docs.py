@@ -31,9 +31,10 @@ README = REPO_ROOT / "README.md"
 INSTALL_DOC = REPO_ROOT / "docs" / "keel" / "install.md"
 PLUGIN_DOC = REPO_ROOT / "docs" / "keel" / "plugin.md"
 
-#: The anchor each agent's box and section carries. The README puts it in the
-#: `<summary>` so the badge above links into the collapsed box; `install.md` puts
-#: it under the heading. One spelling, so a badge cannot point at nothing.
+#: An explicit anchor. The README needs them: a `<details>` box has no heading for
+#: a slug to come from, and the anchor sits *before* the box because navigating to
+#: an id inside `<summary>` scrolls to it without expanding it. `install.md` has
+#: headings and uses those.
 ANCHOR = re.compile(r'<a id="([a-z0-9-]+)"></a>')
 
 #: `[![Name](badge-url)](#anchor)` — the badge row that doubles as the index.
@@ -49,8 +50,24 @@ AGENTS = ("claude-code", "codex", "antigravity", "cursor")
 INSTALL_NAME = "docs/keel/install.md"
 
 
+#: A markdown heading, whose GitHub slug is an anchor as real as an explicit one.
+HEADING = re.compile(r"^#{2,3} +(.+?)\s*$", re.M)
+
+
+def heading_slug(title: str) -> str:
+    """GitHub's heading anchor, near enough for the names these pages use."""
+    return re.sub(r"[^a-z0-9 -]", "", title.lower()).strip().replace(" ", "-")
+
+
 def anchors(text: str) -> list[str]:
-    return ANCHOR.findall(text)
+    """Every id this document offers — explicit anchors and heading slugs alike.
+
+    Explicit anchors are what the README needs, because a `<details>` box has no
+    heading. The install page has headings, and writing an `<a id>` under one gave
+    the rendered page **two** elements with the same id — a hazard for anything
+    that resolves an anchor by lookup. A heading is an anchor; both count.
+    """
+    return ANCHOR.findall(text) + [heading_slug(title) for title in HEADING.findall(text)]
 
 
 class TheDocumentsWereRead(unittest.TestCase):
@@ -91,7 +108,14 @@ class EveryAgentIsInBothDocuments(unittest.TestCase):
         the comparison reduced to `AGENTS == AGENTS`. A fifth agent added to one
         page and not the other — exactly the drift named in the docstring — passed.
         """
-        self.assertEqual(set(anchors(self.readme)), set(anchors(self.install)))
+        # Both documents must offer every agent id, and neither may offer an agent
+        # id the other does not. Compared over the agent-shaped ids rather than
+        # every id, because the install page also has ordinary headings.
+        readme, install = set(anchors(self.readme)), set(anchors(self.install))
+        self.assertLessEqual(set(AGENTS), readme)
+        self.assertLessEqual(set(AGENTS), install)
+        agentish = {a for a in readme | install if a in AGENTS or a.startswith("zed")}
+        self.assertEqual(agentish & readme, agentish & install)
 
     def test_a_fifth_agent_on_one_page_only_is_caught(self):
         """The mutation the intersecting version survived."""
@@ -137,20 +161,27 @@ class EveryBoxSaysHowToUpdate(unittest.TestCase):
         cls.install = INSTALL_DOC.read_text(encoding="utf-8")
 
     def sections(self, text: str) -> dict[str, str]:
-        """Each agent's prose: from its anchor to the next one, or to its own end.
+        """Each agent's prose, from its own boundary to the next one.
 
-        "Or to the end of the file" was wrong for the **last** agent. `cursor` is
+        A boundary is an explicit `<a id>` **or** a heading — the README uses the
+        first because a `<details>` box has no heading, the install page uses the
+        second, and writing both under one heading gave the rendered page two
+        elements with the same id. Splitting on either keeps one implementation
+        for two shapes.
+
+        "Or to the end of the file" was wrong for the **last** agent: `cursor` is
         last in the README, so its section ran to the end of the document and any
-        later `**update` — in eight hundred lines of unrelated prose — would have
-        satisfied the check for a box that had none. The last section stops at the
-        `</details>` that closes its box, or at the next horizontal rule on a page
-        that does not use them.
+        later `**update` would have satisfied the check for a box that had none.
+        The last section stops at the `</details>` that closes its box, or at the
+        next rule on a page that does not use them.
         """
+        marks = [(m.group(1), m.start()) for m in ANCHOR.finditer(text)]
+        marks += [(heading_slug(m.group(1)), m.start()) for m in HEADING.finditer(text)]
+        marks.sort(key=lambda pair: pair[1])
         found = {}
-        positions = [(m.group(1), m.start()) for m in ANCHOR.finditer(text)]
-        for index, (name, start) in enumerate(positions):
-            if index + 1 < len(positions):
-                end = positions[index + 1][1]
+        for index, (name, start) in enumerate(marks):
+            if index + 1 < len(marks):
+                end = marks[index + 1][1]
             else:
                 tail = text[start:]
                 for closer in ("</details>", "\n---\n", "\n## "):
@@ -175,8 +206,10 @@ class EveryBoxSaysHowToUpdate(unittest.TestCase):
             with self.subTest(document=where):
                 sections = self.sections(text)
                 last = sections[AGENTS[-1]]
-                tail = text[text.index(f'<a id="{AGENTS[-1]}"></a>') :]
-                self.assertLess(len(last), len(tail), f"{where}: the last section runs on")
+                self.assertIn(last, text)
+                self.assertLess(
+                    len(last), len(text) - text.index(last), f"{where}: the last section runs on"
+                )
                 self.assertNotIn("## See also", last)
 
     def test_the_split_returns_a_body_per_agent(self):

@@ -29,7 +29,6 @@ to end, it says so.
 
 ## Claude Code
 
-<a id="claude-code"></a>
 
 This repository doubles as a single-plugin marketplace: the marketplace is added
 once and the plugin installed from it.
@@ -66,7 +65,6 @@ Two measured details:
 
 ## Codex
 
-<a id="codex"></a>
 
 **Install**
 
@@ -96,7 +94,6 @@ CLI route useful in a container or a CI job.
 
 ## Antigravity
 
-<a id="antigravity"></a>
 
 **Install**
 
@@ -132,7 +129,6 @@ component directory.
 
 ## Cursor
 
-<a id="cursor"></a>
 
 **Cursor has no CLI install command.** `cursor-agent plugin` exposes only
 `marketplace` (`add`, `list`, `remove`, `update`) — there is no

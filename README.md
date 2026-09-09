@@ -359,9 +359,14 @@ Then restart Cursor. It is *reported* to list as `keel (Local)` under
 
 **Update**
 
+Whichever route you took — they are alternatives, not steps:
+
 ```bash
-git -C ~/.cursor/plugins/local/keel pull                  # the local checkout
-cursor-agent plugin marketplace update berkayturanci/keel # re-indexes the marketplace
+git -C ~/.cursor/plugins/local/keel pull                   # if you cloned
+```
+
+```bash
+cursor-agent plugin marketplace update berkayturanci/keel  # if you used the marketplace
 ```
 
 Restart Cursor either way. The second re-indexes the **marketplace** — Cursor's
