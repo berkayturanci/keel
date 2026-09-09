@@ -899,7 +899,10 @@ def learning_sink_errors(sink: Any) -> list[str]:
                 f"policy_pack.capture.learning.sink.{field_name} must be a non-empty string"
             )
             continue
-        for name in re.findall(r"\{([a-z_]*)\}", raw):
+        # `[^}]*`, not `[a-z_]*`: a mixed-case or hyphenated typo — `{Repo}`,
+        # `{base-branch}` — is exactly as wrong as `{repoo}` and was invisible to a
+        # pattern that only matched the shape of a correct name.
+        for name in re.findall(r"\{([^}]*)\}", raw):
             if name not in LEARNING_SINK_PLACEHOLDERS:
                 errors.append(
                     f"policy_pack.capture.learning.sink.{field_name} uses unknown placeholder "
@@ -915,20 +918,31 @@ def _expand(template: str, values: dict[str, str]) -> str:
     return out
 
 
-def _yaml_scalar(value: str) -> str:
-    """A frontmatter value that survives a real YAML parser.
+#: A value plain YAML reads back unchanged: starts with a letter, contains only
+#: letters, digits, space and a few punctuation marks that carry no meaning there.
+_YAML_PLAIN = re.compile(r"[A-Za-z][A-Za-z0-9 ._/()+-]*")
 
-    An issue title routinely contains a colon — `capture: built-in Markdown
-    learning sink` — and written bare it makes the block invalid YAML. keel's own
-    reader splits on the first colon and would not notice; every other tool that
-    reads this frontmatter would, and the whole point of frontmatter is that other
-    tools read it.
+#: Words plain YAML turns into something that is not a string.
+_YAML_KEYWORDS = frozenset(
+    {"y", "n", "yes", "no", "true", "false", "on", "off", "null", "none", "~"}
+)
+
+
+def _yaml_scalar(value: str) -> str:
+    """A front-matter value that survives a real YAML parser.
+
+    **Quote unless the value is plainly safe**, rather than quoting a list of
+    dangerous characters. The first cut listed `:`, `#`, `"` and a newline, and a
+    dozen other shapes went through it: a leading `-`, `*`, `&`, `!`, `@`, `%`,
+    `|`, `>` or backtick either fails to parse or comes back as something else,
+    `{a}` becomes a mapping, `[a]` a list, and `yes` becomes `True`. An issue title
+    can be any of those. A deny-list has to be right about every character; an
+    allow-list only has to be right about the ones it lets through.
     """
-    if value == "":
-        return '""'
-    if any(ch in value for ch in ':#"\n') or value.strip() != value:
-        return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
-    return value
+    if value and _YAML_PLAIN.fullmatch(value) and value.lower() not in _YAML_KEYWORDS:
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+    return f'"{escaped}"'
 
 
 def render_learning_document(

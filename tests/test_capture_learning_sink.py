@@ -345,6 +345,93 @@ class ATemplateTypoIsRefusedWhereTheConfigIsRead(unittest.TestCase):
         self.assertIn("{repoo}", str(caught.exception))
 
 
+class TheFrontMatterSurvivesARealParser(unittest.TestCase):
+    """Quote unless the value is plainly safe — a deny-list was wrong twelve ways.
+
+    The first cut listed `:`, `#`, `"` and a newline. An issue title beginning with
+    `-`, `*`, `&`, `!`, `@`, `%`, `|`, `>` or a backtick then failed to parse or came
+    back as something else; `{a}` became a mapping, `[a]` a list, and `yes` became
+    `True`. A deny-list has to be right about every character; an allow-list only
+    has to be right about the ones it lets through.
+    """
+
+    #: Every shape that broke the deny-list, plus two that must stay unquoted.
+    TITLES = (
+        "- leading dash",
+        "*anchor",
+        "&anchor",
+        "{brace}",
+        "[bracket]",
+        "yes",
+        "@at",
+        "`tick",
+        "%directive",
+        "|pipe",
+        ">fold",
+        "!tag",
+        "capture: built-in Markdown learning sink",
+        'he said "no"',
+        "  padded  ",
+        "plain title",
+    )
+
+    def block(self, title):
+        import yaml
+
+        text = capture.render_learning_document(
+            title=title,
+            description="",
+            pr_number=1,
+            issue_number=None,
+            repo="r",
+            date="2026-09-09",
+            labels=(),
+            changed_files=(),
+            fingerprint="f",
+        )
+        return yaml.safe_load(text.split("---")[1])
+
+    def test_every_title_round_trips_through_yaml(self):
+        for title in self.TITLES:
+            with self.subTest(title=title):
+                self.assertEqual(self.block(title)["title"], title)
+
+    def test_a_plain_title_is_left_unquoted(self):
+        text = capture.render_learning_document(
+            title="plain title",
+            description="",
+            pr_number=1,
+            issue_number=None,
+            repo="r",
+            date="2026-09-09",
+            labels=(),
+            changed_files=(),
+            fingerprint="f",
+        )
+        self.assertIn("title: plain title\n", text)
+
+    def test_a_yaml_keyword_is_quoted_so_it_stays_a_string(self):
+        for word in ("yes", "no", "true", "off", "null"):
+            with self.subTest(word=word):
+                self.assertIsInstance(self.block(word)["title"], str)
+
+
+class EveryTypoShapeIsRefused(unittest.TestCase):
+    """`{Repo}` and `{base-branch}` are as wrong as `{repoo}`.
+
+    The first pattern matched `[a-z_]*`, which is the shape of a *correct* name — so
+    a mixed-case or hyphenated typo was invisible to the check written to catch typos.
+    """
+
+    def test_a_mixed_case_or_hyphenated_placeholder_is_named(self):
+        for template in ("~/{Repo}/x", "~/{base-branch}/x", "~/{ repo }/x", "~/{}/x"):
+            with self.subTest(template=template):
+                self.assertTrue(capture.learning_sink_errors({"path": template}), template)
+
+    def test_the_documented_set_still_passes(self):
+        self.assertEqual(capture.learning_sink_errors({"path": "~/{repo}/{date}/{pr}"}), [])
+
+
 class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
     """End to end, through the CLI, because that is where the I/O lives.
 
@@ -360,6 +447,21 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
         "## Deliverable\nA Markdown learning file per applied capture.\n\n"
         "## Acceptance criteria\n- one file per applied capture\n"
     )
+
+    #: The sink block these tests configure, kept in one place so a test that adds
+    #: a case cannot quietly configure a different sink from the rest.
+    SINK_LINES = [
+        "  capture:",
+        "    enabled: true",
+        "    mode: extension",
+        "    learning:",
+        "      enabled: true",
+        "      mode: create-learning",
+        "      sink:",
+        "        kind: markdown-dir",
+        "        path: 'learnings'",
+        "        filename: '{date}-pr{pr}-{slug}.md'",
+    ]
 
     def ship(self, root, config, pr=1154, status="applied"):
         return run(
@@ -445,6 +547,147 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             written = sorted((Path(root) / ".keel" / "learning").glob("*.md"))
             self.assertEqual(len(written), 1, written)
             self.assertEqual(self.ledger_capture(root)["artifact"], str(written[0]))
+
+    def test_a_dry_run_writes_nothing(self):
+        """`--live` gates it, as it gates the ledger append.
+
+        A `keel ship` without `--live` that scattered files into somebody's
+        knowledge folder would be the least expected thing this command does.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            code, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    str(root),
+                    "--run-id",
+                    "dry",
+                    "--pull-request",
+                    "1154",
+                    "--issue-title",
+                    "capture: built-in Markdown learning sink",
+                    "--issue-body",
+                    self.BODY,
+                    # The capture claim the sink acts on. Without it the run declines
+                    # for a reason unrelated to the gate under test, and removing the
+                    # gate leaves this test green.
+                    "--capture-status",
+                    "applied",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertFalse(list(Path(root).rglob("*.md")))
+
+    def test_the_document_carries_the_run_and_not_three_placeholders(self):
+        """The extension fills the sections from the run; empty ones are a file with
+        a filename and nothing in it."""
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            self.assertEqual(self.ship(root, config)[0], 0)
+            import yaml
+
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            front = yaml.safe_load(body.split("---")[1])
+            self.assertTrue(front["description"], "the front-matter description is empty")
+            self.assertIn("Deliverable", front["description"])
+            self.assertIn("A Markdown learning file per applied capture", body)
+            self.assertIn("Gates on the merged head", body)
+            self.assertEqual(body.count("_Not recorded._"), 0)
+
+    def test_a_secret_in_the_issue_body_is_redacted_before_it_is_written(self):
+        """Redaction before durability is the capture contract's rule, not a new one.
+
+        A learning file is a durable artifact made of an issue body and gate output —
+        the two places a secret is most likely to have been pasted — and the first
+        cut of this feature claimed the rule in its docs and did not apply it.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            secret = "ghp_" + "A" * 36
+            code, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    str(root),
+                    "--live",
+                    "--append-ledger",
+                    "--run-id",
+                    "secret",
+                    "--pull-request",
+                    "1154",
+                    "--issue-title",
+                    "capture: built-in Markdown learning sink",
+                    "--issue-body",
+                    f"## Deliverable\nToken {secret}\n\n## Acceptance criteria\n- none\n",
+                    "--capture-status",
+                    "applied",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+            self.assertEqual(code, 0)
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            self.assertNotIn(secret, body)
+
+    def test_a_second_run_on_the_same_shape_is_deduped(self):
+        """The dedupe was unreachable on the only path that writes.
+
+        `learning_decision` needs the existing records to answer `duplicate`, and the
+        first cut called it without them — so the skip this feature documents could
+        never happen in a real run, only in a unit test that passed them by hand.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            self.assertEqual(self.ship(root, config, pr=1)[0], 0)
+            self.assertEqual(self.ship(root, config, pr=2)[0], 0)
+            written = sorted((Path(root) / "learnings").glob("*.md"))
+            self.assertEqual(len(written), 1, [p.name for p in written])
+            self.assertIsNone(self.ledger_capture(root)["artifact"])
+
+    def test_declared_files_are_named_in_what_changed(self):
+        """The section says what changed, so it should say which files.
+
+        `--declared-file` is what a run states it touched; the document repeats it
+        rather than leaving the reader to infer it from a title.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            code, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    str(root),
+                    "--live",
+                    "--append-ledger",
+                    "--run-id",
+                    "declared",
+                    "--pull-request",
+                    "1154",
+                    "--issue-title",
+                    "capture: built-in Markdown learning sink",
+                    "--issue-body",
+                    self.BODY,
+                    "--declared-file",
+                    "src/keel/capture.py",
+                    "--declared-file",
+                    "src/keel/cli.py",
+                    "--capture-status",
+                    "applied",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+            self.assertEqual(code, 0)
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            self.assertIn("Declared files: src/keel/capture.py, src/keel/cli.py", body)
 
     def test_a_project_with_no_sink_writes_nothing_and_is_unchanged(self):
         with tempfile.TemporaryDirectory() as root:

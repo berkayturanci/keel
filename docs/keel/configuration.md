@@ -1331,12 +1331,17 @@ policy_pack:
     enabled: true
     mode: extension
     learning:
+      enabled: true
       mode: create-learning
       sink:
         kind: markdown-dir
         path: "~/knowledge/projects/{repo}/learnings"
         filename: "{date}-pr{pr}-{slug}.md"
 ```
+
+`learning.enabled` is not decoration: it is what `learning_decision` reads, and
+without it the decision is `marker-only` whatever `mode` says — a project would get
+files on disk and a ledger recording that it had decided not to produce them.
 
 | field | type | default | meaning |
 |---|---|---|---|

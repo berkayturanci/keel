@@ -57,6 +57,7 @@ from . import (
     mergeverify,
     project_commands,
     providerprobe,
+    redaction,
     review,
     runcontrols,
     runtime,
@@ -1468,7 +1469,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # an `applied` capture provable rather than asserted. A project with no sink
     # keeps today's behaviour exactly, including an operator-supplied
     # `--capture-artifact`.
-    capture_write = _write_learning_sink(args, config, changed_read)
+    capture_write = _write_learning_sink(
+        args, config, changed_read, existing_ledger_records, outcomes
+    )
     capture_status_value = _resolved_capture_status(args.capture_status)
     capture_reason_value = args.capture_reason
     capture_artifact_value = args.capture_artifact
@@ -8768,7 +8771,35 @@ def _today() -> str:
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
 
 
-def _write_learning_sink(args, config, changed_files) -> dict | None:
+def _learning_sections(args, outcomes) -> tuple[str, str, str, str]:
+    """The document's prose: description, and the three contracted sections.
+
+    Built from what the run already carries — the issue body and the gate outcomes
+    — rather than from a model. The extension "fills them from the run ledger and
+    the closure summary; it does not call any model itself", and a document whose
+    three sections all read `_Not recorded._` is a file with a filename and nothing
+    else in it.
+    """
+    body = (args.issue_body or "").strip()
+    first = next((line.strip() for line in body.splitlines() if line.strip()), "")
+    description = first[:200]
+    files = ", ".join(sorted(changed)) if (changed := list(args.declared_file or ())) else ""
+    what_changed = body or "_Not recorded._"
+    if files:
+        what_changed = f"{what_changed}\n\nDeclared files: {files}"
+    gates = [
+        f"{outcome.gate}: {'skipped' if outcome.skipped else 'ok' if outcome.ok else 'failed'}"
+        for outcome in outcomes or ()
+    ]
+    what_we_learned = "Gates on the merged head — " + (", ".join(gates) if gates else "none run")
+    do_differently = (
+        "Recorded automatically from the run. Edit this file to say what the next "
+        "run should do differently; the read path scores on its text."
+    )
+    return description, what_changed, what_we_learned, do_differently
+
+
+def _write_learning_sink(args, config, changed_files, existing_records, outcomes) -> dict | None:
     """Write this run's learning document, or `None` when there is nothing to write.
 
     The plan is pure (:func:`keel.capture.learning_sink_plan`); this is the thin I/O
@@ -8781,6 +8812,12 @@ def _write_learning_sink(args, config, changed_files) -> dict | None:
     downgrades the capture to ``skipped:capability-unavailable``. A capture that
     could not be written must not fail a merge that already happened.
     """
+    # A dry run must write nothing. The ledger append is gated the same way, and a
+    # `keel ship` without `--live` that scattered files into a knowledge folder
+    # would be the least expected thing this command does.
+    if not args.live:
+        return None
+    description, what_changed, what_we_learned, do_differently = _learning_sections(args, outcomes)
     plan = capture.learning_sink_plan(
         config=config,
         decision=capture.learning_decision(
@@ -8789,6 +8826,10 @@ def _write_learning_sink(args, config, changed_files) -> dict | None:
             changed_files=changed_files or (),
             capture_status=_resolved_capture_status(args.capture_status),
             capture_reason=args.capture_reason,
+            # The records the dedupe needs. Without them `learning_decision` can
+            # never answer `duplicate`, so the skip this feature documents was
+            # unreachable on the only path that writes.
+            existing_records=existing_records or (),
             config=config,
         ),
         capture_status=_resolved_capture_status(args.capture_status),
@@ -8801,6 +8842,10 @@ def _write_learning_sink(args, config, changed_files) -> dict | None:
         issue_number=args.issue,
         labels=_issue_labels(args),
         changed_files=changed_files or (),
+        description=description,
+        what_changed=what_changed,
+        what_we_learned=what_we_learned,
+        do_differently=do_differently,
     )
     if plan is None:
         return None
@@ -8813,9 +8858,15 @@ def _write_learning_sink(args, config, changed_files) -> dict | None:
     if not directory.is_absolute():
         directory = Path(args.root) / directory
     target = directory / plan["filename"]
+    # Redaction before durability, which is the capture contract's rule and not a
+    # new one: `contract_as_dict` already declares `durable_artifacts.requires_redaction`,
+    # and the ledger sanitizes every record it writes. A learning file is a durable
+    # artifact made of an issue body and gate output — the two places a secret is
+    # most likely to have been pasted.
+    result = redaction.sanitize(plan["content"], redaction.policy_from_config(config))
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        workspace.write_text_atomic(target, plan["content"])
+        workspace.write_text_atomic(target, result.value)
     except OSError as exc:
         return {"ok": False, "path": None, "error": str(exc)}
     return {"ok": True, "path": str(target), "error": None}

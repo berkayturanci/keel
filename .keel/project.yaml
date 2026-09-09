@@ -127,6 +127,10 @@ policy_pack:
     enabled: true
     mode: extension
     learning:
+      # `enabled` is what `learning_decision` reads; without it the decision is
+      # `marker-only` however the mode reads, so a dogfood that omitted it would
+      # write files while recording that it had decided not to.
+      enabled: true
       mode: create-learning
       sink:
         kind: markdown-dir
