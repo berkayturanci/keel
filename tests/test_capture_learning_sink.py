@@ -182,6 +182,17 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
         self.assertEqual(block["project_destination"], "sink")
         self.assertEqual(block["sink"], "markdown-dir")
 
+    def test_a_sink_that_did_not_spell_out_its_kind_still_names_one(self):
+        """`kind` is optional everywhere else, so the contract must default it too.
+
+        Read without the fallback the block was `{project_destination: sink, sink:
+        None}` — a contract disagreeing with itself about the writer it had just
+        named, for a config the schema, the docs and the validator all accept.
+        """
+        block = self.destination({"path": ".keel/learning"})
+        self.assertEqual(block["project_destination"], "sink")
+        self.assertEqual(block["sink"], capture.LEARNING_SINK_KINDS[0])
+
 
 class TheDecisionDecidesWhetherAnythingIsWritten(unittest.TestCase):
     """A sink names a destination; the learning decision says whether to use it."""
@@ -604,7 +615,19 @@ class TheFrontMatterSurvivesARealParser(unittest.TestCase):
     #: reads the whole thing, the two disagreeing about one file. A NUL makes
     #: PyYAML refuse the document outright. `--issue-title` is a raw CLI string and
     #: can carry either.
-    CONTROLS = ("foo\rbar", "foo\x00bar", "tab\tseparated", "vertical\x0bspace")
+    #: `\x85`, `\u2028` and `\u2029` are the ones that matter most: `str.splitlines()`
+    #: breaks on all three, and none of them is in C0 — so a pattern written as
+    #: "control characters" let a title open a Markdown section of its own through
+    #: the very guard added to stop it.
+    CONTROLS = (
+        "foo\rbar",
+        "foo\x00bar",
+        "tab\tseparated",
+        "vertical\x0bspace",
+        "next\x85line",
+        "line\u2028separator",
+        "paragraph\u2029separator",
+    )
 
     def test_a_control_character_becomes_a_space(self):
         for title in self.CONTROLS:
@@ -635,6 +658,30 @@ class TheFrontMatterSurvivesARealParser(unittest.TestCase):
                 )
                 keel_title, _ = capture._learning_title_and_summary(document, "fallback")
                 self.assertEqual(keel_title, self.block(title)["title"])
+
+    def test_no_line_break_python_knows_can_open_a_section(self):
+        """Every separator `str.splitlines()` breaks on, not the visible ones.
+
+        The first pass matched C0 and DEL, which is what "control character" reads
+        as — and `\x85`, `\u2028` and `\u2029` are none of those while being line
+        breaks to Python. A title carrying one walked straight through the guard.
+        """
+        for separator in ("\n", "\r", "\x85", "\u2028", "\u2029", "\x0c", "\x1e"):
+            with self.subTest(separator=repr(separator)):
+                document = capture.render_learning_document(
+                    title=f"foo{separator}## injected",
+                    description=f"d{separator}## also",
+                    pr_number=1,
+                    issue_number=None,
+                    repo="r",
+                    date="2026-09-09",
+                    labels=(),
+                    changed_files=(),
+                    fingerprint="f",
+                )
+                headings = [line for line in document.splitlines() if line.startswith("#")]
+                self.assertEqual(headings[0], "# foo ## injected")
+                self.assertEqual(len(headings), 4, headings)
 
     def test_the_body_heading_cannot_open_a_section_of_its_own(self):
         """The front matter and the body have to say the same thing.

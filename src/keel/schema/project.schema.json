@@ -903,7 +903,7 @@
               "description": "Policy for optional durable learning artifacts. Core records the decision in capture.learning and suppresses duplicates by stable fingerprint."
             }
           },
-          "description": "Project-owned post-merge capture policy. Core owns marker/verifier mechanics; capture content and destinations remain extension-owned."
+          "description": "Project-owned post-merge capture policy. Core owns marker/verifier mechanics and capture content stays extension-owned; so does the destination, unless learning.sink names one — then core writes the file and fills capture.artifact."
         },
         "review": {
           "type": "object",

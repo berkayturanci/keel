@@ -63,6 +63,7 @@ class CaptureMarker:
 def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
     """Return the stable capture contract consumed by adapters and verifiers."""
     capture_policy = _capture_policy(config)
+    sink_policy = learning_sink_policy(config)
     return {
         "schema_version": CAPTURE_SCHEMA_VERSION,
         "marker": {
@@ -94,10 +95,13 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
             # A project that configures `learning.sink` has **core** writing the
             # file and filling `capture.artifact`, and an adapter that read this
             # block and wrote its own would have had it overwritten (#1154).
-            "project_destination": ("sink" if learning_sink_policy(config) else "extension-owned"),
-            "sink": learning_sink_policy(config).get("kind")
-            if learning_sink_policy(config)
-            else None,
+            "project_destination": "sink" if sink_policy else "extension-owned",
+            # Defaulted the way `learning_sink_plan` defaults it. Read without the
+            # fallback, a sink that did not spell out its `kind` — which the schema,
+            # the docs and the validator all allow — published
+            # `{project_destination: sink, sink: None}`: a contract disagreeing with
+            # itself about the writer it had just named.
+            "sink": sink_policy.get("kind", LEARNING_SINK_KINDS[0]) if sink_policy else None,
         },
         "learning_quality": learning_quality_contract_as_dict(config),
         "session_end_verifier": {
@@ -962,9 +966,13 @@ def _expand(template: str, values: dict[str, str]) -> str:
 #: letters, digits, space and a few punctuation marks that carry no meaning there.
 _YAML_PLAIN = re.compile(r"[A-Za-z][A-Za-z0-9 ._/()+-]*")
 
-#: C0 controls and DEL. Not a taste question: a raw CR splits a line inside quotes
-#: and a NUL makes a real parser refuse the document.
-_YAML_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+#: **Everything `str.splitlines()` treats as a line break**, plus the rest of C0 and
+#: DEL. Not a taste question and not only the obvious ones: a raw CR splits a line
+#: inside quotes, a NUL makes a real parser refuse the document, and `\x85` (NEL),
+#: `\u2028` (LINE SEPARATOR) and `\u2029` (PARAGRAPH SEPARATOR) are line breaks to
+#: Python while looking like nothing at all — a C0-only pattern let a title open a
+#: Markdown section of its own through the very guard written to stop it.
+_YAML_CONTROL = re.compile("[\x00-\x1f\x7f\x85\u2028\u2029]")
 
 #: Words plain YAML turns into something that is not a string.
 _YAML_KEYWORDS = frozenset(
