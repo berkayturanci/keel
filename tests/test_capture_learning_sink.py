@@ -629,6 +629,34 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             ]
         )
 
+    def ship_with(self, root, config, *extra, pr=1154):
+        """`ship`, plus flags a single test needs."""
+        return run(
+            [
+                "ship",
+                config,
+                "--root",
+                str(root),
+                "--live",
+                "--append-ledger",
+                "--run-id",
+                f"ship-{pr}",
+                "--pull-request",
+                str(pr),
+                "--issue-title",
+                "capture: built-in Markdown learning sink",
+                "--issue-body",
+                self.BODY,
+                "--capture-status",
+                "applied",
+                "--approve-scope",
+                "filesystem,git,github",
+                "--operator",
+                "tester",
+                *extra,
+            ]
+        )
+
     def ledger_capture(self, root):
         path = Path(root) / "state" / "runs.jsonl"
         records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
@@ -821,6 +849,80 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertIsInstance(front["description"], str)
             self.assertIn("REDACTED", front["title"])
             self.assertIn("REDACTED", front["description"])
+
+    def test_a_changed_path_that_is_a_secret_stays_a_string(self):
+        """Every value the document is rendered from, not the likely ones.
+
+        A path that *is* a token and nothing else is plain YAML, so it went in bare
+        and the document pass put `[REDACTED:…]` inside it — the same break as the
+        title, one field over. The fix is the whole set of rendered values, which is
+        why this test names a field nobody would have thought to redact.
+
+        Driven at `_write_learning_sink` rather than through `ship`: this list is
+        what **git** reported changed, and no flag supplies it.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            path = write_config(Path(root), self.SINK_LINES)
+            secret = "ghp_" + "B" * 36
+            args = cli.build_parser().parse_args(
+                [
+                    "ship",
+                    path,
+                    "--root",
+                    str(root),
+                    "--live",
+                    "--issue-title",
+                    "a change",
+                    "--capture-status",
+                    "applied",
+                ]
+            )
+            result = cli._write_learning_sink(args, cfg.load_config(path), [secret], [], [])
+            self.assertTrue(result["ok"], result)
+            body = Path(result["path"]).read_text(encoding="utf-8")
+            self.assertNotIn(secret, body)
+            changed = _front_matter_fields(body)["changed_files"]
+            self.assertEqual(len(changed), 1)
+            self.assertIsInstance(changed[0], str)
+
+    def test_an_empty_label_list_reads_back_as_a_list(self):
+        """`labels:` with nothing under it is a **null**, not `[]`.
+
+        The contract calls these fields sequences, so a consumer that iterates them
+        raises `TypeError` on any merge that recorded none — which is most of them.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            self.assertEqual(self.ship(root, config)[0], 0)
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            front = _front_matter_fields(body)
+            self.assertEqual(front["labels"], [])
+            self.assertEqual(front["changed_files"], [])
+
+    def test_an_invalid_redaction_pattern_fails_soft_instead_of_crashing(self):
+        """A pattern that will not compile must not end the command in a traceback.
+
+        `keel ship` has a handler for it where the *ledger* is sanitized; the sink
+        reached for the policy earlier, outside every handler, so a project with
+        both a sink and a bad pattern died after its merge instead of downgrading
+        the capture claim the way an unwritable directory does.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(
+                Path(root),
+                [
+                    *self.SINK_LINES,
+                    "  capture_redaction:",
+                    "    deny_patterns:",
+                    "      - id: bad-regex",
+                    "        pattern: '[unclosed'",
+                    "        replacement: '[REDACTED]'",
+                ],
+            )
+            code, _, err = self.ship(root, config)
+            self.assertEqual(code, 1, err)
+            self.assertIn("redaction", err.lower())
+            self.assertFalse(list((Path(root) / "learnings").glob("*.md")))
 
     def test_a_secret_in_the_issue_body_is_redacted_before_it_is_written(self):
         """Redaction before durability is the capture contract's rule, not a new one.

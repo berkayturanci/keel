@@ -945,6 +945,20 @@ def _yaml_scalar(value: str) -> str:
     return f'"{escaped}"'
 
 
+def _yaml_sequence(key: str, values: list[str] | tuple[str, ...]) -> list[str]:
+    """A front-matter list, written so an empty one reads back as an empty list.
+
+    `key:` with nothing under it is a **null** to a YAML parser, not `[]`, and the
+    contract calls these fields sequences — a consumer that iterates them raises
+    `TypeError` on a merge that touched nothing it recorded. `key: []` is the same
+    field with the type it promised.
+    """
+    items = _strings(values)
+    if not items:
+        return [f"{key}: []"]
+    return [f"{key}:", *(f"  - {_yaml_scalar(item)}" for item in items)]
+
+
 def render_learning_document(
     *,
     title: str | None,
@@ -976,11 +990,9 @@ def render_learning_document(
         f"issue: {issue_number if issue_number is not None else ''}",
         f"date: {date}",
         f"fingerprint: {fingerprint}",
-        "labels:",
     ]
-    front += [f"  - {_yaml_scalar(label)}" for label in _strings(labels)]
-    front.append("changed_files:")
-    front += [f"  - {_yaml_scalar(path)}" for path in _strings(changed_files)]
+    front += _yaml_sequence("labels", labels)
+    front += _yaml_sequence("changed_files", changed_files)
     front.append("---")
     body = [
         "",

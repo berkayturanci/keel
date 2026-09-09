@@ -8855,11 +8855,24 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
     # list where a title should be. A redacted value is quoted like any other when
     # it goes through `_yaml_scalar` — and the filename, built from the title, stops
     # carrying most of the token through `_slugify`.
-    policy = redaction.policy_from_config(config)
+    try:
+        policy = redaction.policy_from_config(config)
+    except redaction.RedactionError as exc:
+        # Fail-soft, like an unwritable directory: an invalid `capture_redaction`
+        # pattern must not kill a run whose merge already happened. `_cmd_ship`
+        # reports the policy properly when the *ledger* is sanitized; raising from
+        # here reached no handler at all and ended the command in a traceback.
+        return {"ok": False, "path": None, "error": str(exc), "reused": False}
     fields = redaction.sanitize(
         {
             "title": args.issue_title,
             "labels": _issue_labels(args),
+            # **Every value the document is rendered from**, not the ones a secret
+            # is most likely to be in. A path that *is* a token — `ghp_…` and
+            # nothing else — is plain YAML, so it went in bare and the document pass
+            # put the replacement inside it: the same break as the title, one field
+            # over, and the reason this list is the whole set rather than a sample.
+            "changed_files": list(changed_files or ()),
             # A **list**, not the tuple `_learning_sections` returns: `sanitize`
             # recurses into dicts, lists and strings, and a tuple goes through it
             # untouched. Handed over as one, the description kept its secret until
@@ -8884,7 +8897,7 @@ def _write_learning_sink(args, config, changed_files, existing_records, outcomes
         title=fields["title"],
         issue_number=args.issue,
         labels=fields["labels"],
-        changed_files=changed_files or (),
+        changed_files=fields["changed_files"],
         description=description,
         what_changed=what_changed,
         what_we_learned=what_we_learned,
