@@ -153,6 +153,17 @@ git -C ~/.cursor/plugins/local/keel pull
 
 Restart Cursor.
 
+**Update — marketplace**
+
+```bash
+cursor-agent plugin marketplace update berkayturanci/keel
+```
+
+Cursor's own description of that command is *"Re-index a plugin marketplace from
+its git repository"*. Whether re-indexing advances what an already-installed
+plugin resolves to was not exercised from here; the local checkout is the route
+whose update is a `git pull` and needs no such question answered.
+
 **Install — marketplace**
 
 ```bash

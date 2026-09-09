@@ -349,8 +349,12 @@ cursor-agent plugin marketplace add https://github.com/berkayturanci/keel
 **Update**
 
 ```bash
-git -C ~/.cursor/plugins/local/keel pull   # the local checkout
+git -C ~/.cursor/plugins/local/keel pull                  # the local checkout
+cursor-agent plugin marketplace update berkayturanci/keel # the marketplace copy
 ```
+
+Restart Cursor either way. Two install routes need two update commands; the box
+offered the second install and only the first update.
 
 A locally installed Cursor plugin registers **skills only**. keel's 17
 `/keel:<command>` entries, where they appear in Cursor, are being read out of

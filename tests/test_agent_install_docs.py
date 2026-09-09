@@ -1,12 +1,18 @@
 """The README's install boxes and `docs/keel/install.md` name the same agents.
 
-`docs/keel/install.md` exists because the README churns and a release note cannot link
-into it stably. Two documents covering one subject is how #781's `@v1` came about:
-three pages agreed with each other and none of them agreed with the repository. So
-the pair is checked against each other *and* against the surfaces they describe —
-an agent added to one page and not the other is the drift this file refuses, and a
-box with no update instructions is the half of #783 that is not guessable by
-analogy.
+`docs/keel/install.md` exists because the README churns and a release note cannot
+link into it stably. Two documents covering one subject is how ai-jury#781's `@v1`
+came about: three pages agreed with each other and none of them agreed with the
+repository.
+
+**What these tests check is structure, not content.** Which agents appear on each
+page, that every badge resolves to an anchor that exists, that every box carries
+an Update as well as an Install, that every page printing an install command
+points at the page that owns them, and that every cross-document anchor is real.
+They do **not** verify a command against the tool it names — both pages could
+agree on a wrong marketplace name and stay green. That check would have to run the
+CLIs; the commands here were measured by hand instead, with the date and the
+version written into the pages themselves.
 
 Read as text, with no Markdown parser: these are documents, and the properties
 worth pinning — which agents appear, whether a badge resolves, whether a box has
@@ -38,6 +44,9 @@ BADGE = re.compile(r"\[!\[[^\]]+\]\([^)]+\)\]\(#([a-z0-9-]+)\)")
 #: should be a deliberate edit to this line rather than something a page silently
 #: drops.
 AGENTS = ("claude-code", "codex", "antigravity", "cursor")
+
+#: The install page, as the failure messages name it.
+INSTALL_NAME = "docs/keel/install.md"
 
 
 def anchors(text: str) -> list[str]:
@@ -143,11 +152,20 @@ class EveryBoxSaysHowToUpdate(unittest.TestCase):
         return found
 
     def test_the_last_section_stops_at_its_own_box(self):
-        """Vacuity, on the one section that had none: it used to run to the file end."""
-        for text, where in ((self.readme, "README.md"), (self.install, "docs/keel/install.md")):
+        """Vacuity, on the one section that had none: it used to run to the file end.
+
+        The property, not a character budget. A budget failed the day the Cursor
+        box legitimately grew a second update command, which is the wrong thing to
+        refuse; what matters is that the split **cut** something rather than
+        handing back the rest of the document.
+        """
+        for text, where in ((self.readme, "README.md"), (self.install, INSTALL_NAME)):
             with self.subTest(document=where):
-                last = self.sections(text)[AGENTS[-1]]
-                self.assertLess(len(last), 2000, f"{where}: the last section runs on")
+                sections = self.sections(text)
+                last = sections[AGENTS[-1]]
+                tail = text[text.index(f'<a id="{AGENTS[-1]}"></a>') :]
+                self.assertLess(len(last), len(tail), f"{where}: the last section runs on")
+                self.assertNotIn("## See also", last)
 
     def test_the_split_returns_a_body_per_agent(self):
         for text, where in ((self.readme, "README.md"), (self.install, "docs/keel/install.md")):
@@ -166,15 +184,43 @@ class EveryBoxSaysHowToUpdate(unittest.TestCase):
                     self.assertIn("**update", body, f"{where}: {agent} has no Update")
 
 
-#: Every page that gives somebody an install instruction. The sibling change in
-#: ai-jury had the stale claim fixed in one page and left standing in a third, and
-#: a link into a renamed heading go quietly dead. Both are checked here.
-INSTRUCTION_PAGES = (
-    "README.md",
-    "docs/keel/install.md",
-    "docs/keel/plugin.md",
-    "docs/keel/editors.md",
+#: The commands that make a page an install instruction, whatever it calls itself.
+INSTALL_COMMANDS = (
+    "/plugin install",
+    "plugin marketplace add",
+    "agy plugin install",
+    "codex plugin add",
+    "cursor-agent plugin marketplace add",
+    "--install-extension",
 )
+
+#: Records of what shipped, not instructions to follow.
+INSTRUCTION_EXEMPT = ("CHANGELOG.md",)
+
+#: Directories with no documents of ours in them. `tests` included: this file
+#: quotes the commands it looks for, and a walk that read it would report itself.
+SKIPPED_DIRS = {".git", ".venv", "node_modules", "htmlcov", "__pycache__", "tests"}
+
+
+def instruction_pages() -> dict[str, str]:
+    """Every tracked document that tells somebody how to install keel into a host.
+
+    **Discovered, not listed.** A hardcoded four-name tuple was the same defect
+    this module exists to refuse, one level in — the sibling change in ai-jury had
+    exactly that, and two pages printing an install-only recipe were invisible to
+    the test that requires a pointer to the page owning them. A page that prints
+    one of these commands is an install page whatever its title says.
+    """
+    found = {}
+    for path in sorted(REPO_ROOT.rglob("*.md")):
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        if SKIPPED_DIRS & set(Path(relative).parts) or relative in INSTRUCTION_EXEMPT:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if any(command in text for command in INSTALL_COMMANDS):
+            found[relative] = text
+    return found
+
 
 #: A markdown link into another document's anchor, as `](../target.md#anchor)`.
 #:
@@ -197,10 +243,16 @@ class EveryCrossDocumentAnchorResolves(unittest.TestCase):
     """
 
     def pages(self):
-        return {name: (REPO_ROOT / name).read_text(encoding="utf-8") for name in INSTRUCTION_PAGES}
+        return instruction_pages()
 
     def test_the_pages_were_read(self):
-        for name, text in self.pages().items():
+        pages = self.pages()
+        self.assertLessEqual(
+            {"README.md", "docs/keel/install.md", "docs/keel/plugin.md", "docs/keel/cli.md"},
+            set(pages),
+            f"the walk did not reach the pages that carry a recipe: {sorted(pages)}",
+        )
+        for name, text in pages.items():
             with self.subTest(document=name):
                 self.assertGreater(len(text.splitlines()), 20)
 
