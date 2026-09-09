@@ -141,7 +141,9 @@ git clone --depth 1 https://github.com/berkayturanci/keel \
   ~/.cursor/plugins/local/keel
 ```
 
-Restart Cursor. It appears in **Settings → Plugins** as `keel (Local)`.
+Then restart Cursor. It is *reported* to list as `keel (Local)` under
+**Settings → Plugins**. That is a GUI claim and has not been confirmed from a CLI
+session — everything else on this page was run.
 
 **Update — local checkout**
 
@@ -189,5 +191,8 @@ them.
 ## See also
 
 - [`docs/keel/plugin.md`](plugin.md) — what the plugin contains and how it is generated.
-- [`docs/keel/editors.md`](editors.md) — editor and agent surfaces.
+- [`docs/keel/editors.md`](editors.md) — the **VS Code / Cursor editor extension**,
+  which is a different product from the agent plugin this page is about: it installs
+  with `code --install-extension` and does not give you the skills or the
+  `/keel:<command>` set.
 - [`README.md`](../../README.md#install) — installing the `keel` CLI itself.

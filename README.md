@@ -333,15 +333,23 @@ Cursor has **no CLI install command** — `cursor-agent plugin` exposes only
 **Install**
 
 ```bash
-git clone --depth 1 https://github.com/berkayturanci/keel   ~/.cursor/plugins/local/keel
+git clone --depth 1 https://github.com/berkayturanci/keel ~/.cursor/plugins/local/keel
 ```
 
-Restart Cursor; it appears in **Settings → Plugins** as `keel (Local)`.
+Then restart Cursor. It is *reported* to list as `keel (Local)` under
+**Settings → Plugins** — a GUI claim, not confirmed from a CLI session.
+
+Or register the marketplace and install from Cursor's `/plugins` screen, which is
+the route that registers commands:
+
+```bash
+cursor-agent plugin marketplace add https://github.com/berkayturanci/keel
+```
 
 **Update**
 
 ```bash
-git -C ~/.cursor/plugins/local/keel pull
+git -C ~/.cursor/plugins/local/keel pull   # the local checkout
 ```
 
 A locally installed Cursor plugin registers **skills only**. keel's 17

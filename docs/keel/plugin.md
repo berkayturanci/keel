@@ -10,21 +10,18 @@ the same project-neutral command bodies; you do not have to choose one.
 
 ## Install (no `pip` required)
 
-This repository is itself a single-plugin **marketplace**, so a user adds it and installs the
-plugin in two steps:
+This repository is itself a single-plugin **marketplace**. **Installing it — for
+Claude Code, Codex, Antigravity or Cursor, each with its own update path — is
+[`install.md`](install.md).** Keeping a second copy of those recipes here is how
+this page came to give Claude's commands and no others, and how a reader came away
+believing the plugin was a Claude-only artifact.
 
-```text
-/plugin marketplace add berkayturanci/keel   # register the marketplace (this repo)
-/plugin install keel                          # install the keel plugin
-```
-
-After installing, the workflows are available as namespaced slash commands — `/keel:ship`,
-`/keel:regression`, `/keel:review-cycle`, and the rest of the [shipped set](commands.md). The
-plugin name (`keel`) is the namespace, so a flat `commands/ship.md` is discovered as
-`/keel:ship`.
-
-The CLI equivalents are `claude plugin marketplace add berkayturanci/keel` and
-`claude plugin install keel@keel` (the marketplace and plugin are both named `keel`).
+In a Claude Code session the short form is `/plugin marketplace add
+berkayturanci/keel` then `/plugin install keel`. What matters for the rest of *this*
+page is what happens after: the workflows become namespaced slash commands —
+`/keel:ship`, `/keel:regression`, `/keel:review-cycle`, and the rest of the
+[shipped set](commands.md). The plugin name (`keel`) is the namespace, so a flat
+`commands/ship.md` is discovered as `/keel:ship`.
 
 ## What ships
 

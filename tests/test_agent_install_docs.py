@@ -166,6 +166,67 @@ class EveryBoxSaysHowToUpdate(unittest.TestCase):
                     self.assertIn("**update", body, f"{where}: {agent} has no Update")
 
 
+#: Every page that gives somebody an install instruction. The sibling change in
+#: ai-jury had the stale claim fixed in one page and left standing in a third, and
+#: a link into a renamed heading go quietly dead. Both are checked here.
+INSTRUCTION_PAGES = (
+    "README.md",
+    "docs/keel/install.md",
+    "docs/keel/plugin.md",
+    "docs/keel/editors.md",
+)
+
+#: A markdown link into another document's anchor, as `](target.md#anchor)`.
+#: Case-insensitive on the filename: matching only lowercase made
+#: `](../../README.md#install)` — this page's own cross-links — invisible to the
+#: check that exists to catch exactly that kind of link.
+DOC_ANCHOR_LINK = re.compile(r"\]\((?:\.\.?/)*([A-Za-z0-9./_-]+\.md)#([a-z0-9-]+)\)")
+
+
+class EveryCrossDocumentAnchorResolves(unittest.TestCase):
+    """A link into a heading breaks silently when the heading is reworded.
+
+    That is not hypothetical: renaming a heading in the sibling repository left a
+    link pointing at the old slug, and nothing said so. Anchors are cheap to check
+    and the failure mode is a reader landing at the top of a page wondering which
+    part they were sent to.
+    """
+
+    def pages(self):
+        return {name: (REPO_ROOT / name).read_text(encoding="utf-8") for name in INSTRUCTION_PAGES}
+
+    def test_the_pages_were_read(self):
+        for name, text in self.pages().items():
+            with self.subTest(document=name):
+                self.assertGreater(len(text.splitlines()), 20)
+
+    def test_the_pattern_sees_the_links_that_are_there(self):
+        """Vacuity: a pattern matching nothing passes the check below."""
+        found = DOC_ANCHOR_LINK.findall((REPO_ROOT / "docs" / "keel" / "install.md").read_text())
+        self.assertTrue(any(target.endswith("README.md") for target, _ in found), found)
+
+    def test_every_anchor_a_page_links_to_exists(self):
+        for name, text in self.pages().items():
+            base = (REPO_ROOT / name).parent
+            for target, anchor in DOC_ANCHOR_LINK.findall(text):
+                path = (base / target).resolve()
+                if not path.is_file():
+                    continue
+                with self.subTest(document=name, link=f"{target}#{anchor}"):
+                    body = path.read_text(encoding="utf-8")
+                    headings = {
+                        re.sub(r"[^a-z0-9 -]", "", line.lstrip("#").strip().lower()).replace(
+                            " ", "-"
+                        )
+                        for line in body.splitlines()
+                        if line.startswith("#")
+                    }
+                    self.assertTrue(
+                        f'<a id="{anchor}"></a>' in body or anchor in headings,
+                        f"{name} links to {target}#{anchor}, which is not there",
+                    )
+
+
 class ThePluginPageAgreesWithTheInstallPage(unittest.TestCase):
     """`plugin.md` is titled for one agent; the install page covers four.
 
@@ -181,10 +242,6 @@ class ThePluginPageAgreesWithTheInstallPage(unittest.TestCase):
 
     def test_the_install_page_points_back(self):
         self.assertIn("plugin.md", INSTALL_DOC.read_text(encoding="utf-8"))
-
-
-if __name__ == "__main__":  # pragma: no cover
-    unittest.main()
 
 
 if __name__ == "__main__":  # pragma: no cover
