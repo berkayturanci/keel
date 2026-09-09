@@ -359,6 +359,10 @@ class TheSiteDoesNotPublishAOneAgentRecipe(unittest.TestCase):
                     attrs,
                     f"#{element_id}: copies a literal string instead of what it shows",
                 )
+                # `textContent` renders `<br>` as nothing, so a two-line label
+                # inside one `<code>` copies as a single run-on command — which is
+                # what the first attempt at showing both plugin steps produced.
+                self.assertNotIn("<br>", _shown, f"#{element_id}: copies as one run-on line")
 
     def test_the_landing_page_does_not_lead_with_one_agent_either(self):
         """The homepage is the surface most people see, and it had a copy button.
