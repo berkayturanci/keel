@@ -60,5 +60,7 @@ parse and carry their required fields.
 The `pip install keel-workflow` + `keel install-adapter {claude,skills,all}` flow is
 unchanged. The plugin is **repo-level** packaging (the command files live at the repo root and
 are not pip package-data), so the published wheel is unaffected. Use whichever distribution
-fits: the plugin for a quick `/plugin install` in a Claude Code session, or the package when
-you also want the `keel` CLI and the shared non-Claude skill surface.
+fits: the plugin for a quick install in an agent session — [any of the four](install.md),
+not only Claude Code — or the package when you also want the `keel` CLI on your `PATH` and
+the shared skill surface under `.agents/skills/`. The plugin does not remove the CLI from
+the requirements; the command bodies it ships shell out to `keel`.

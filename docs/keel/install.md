@@ -183,6 +183,13 @@ subagents, no MCP servers. That is Cursor's local-plugin behaviour rather than
 anything about keel's manifest: a plugin declaring no components at all behaves
 the same way.
 
+**And here "skills" is one skill.** `.cursor-plugin/plugin.json` names `./skills`,
+the repository root's `skills/` directory holds `keel-onboard` and nothing else,
+and the 17 workflow skills live in `.agents/skills/` — which no plugin manifest
+points at, because that surface is written into a project by
+`keel install-adapter skills` rather than shipped by the plugin. A local Cursor
+install therefore gives you onboarding and nothing more.
+
 So keel's 17 `/keel:<command>` entries do not come from a local install. On a
 machine where they appear in Cursor, they are being read out of **Claude Code's
 plugin cache**:

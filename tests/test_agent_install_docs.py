@@ -259,6 +259,16 @@ class TheSiteDoesNotPublishAOneAgentRecipe(unittest.TestCase):
             with self.subTest(agent=agent):
                 self.assertIn(agent, self.site)
 
+    def test_the_card_offers_their_commands_and_not_only_a_caption(self):
+        """A four-agent caption over one agent's copyable fence is still one recipe.
+
+        The card was retitled and the other three named in prose, while the only
+        `<pre>` a reader can copy stayed Claude's two slash commands.
+        """
+        for command in ("codex plugin add keel@keel", "agy plugin install", "cursor-agent plugin"):
+            with self.subTest(command=command):
+                self.assertIn(command, self.site)
+
     def test_the_landing_page_does_not_lead_with_one_agent_either(self):
         """The homepage is the surface most people see, and it had a copy button.
 

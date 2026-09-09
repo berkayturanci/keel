@@ -244,9 +244,10 @@ keel install-adapter all      # both surfaces
 
 Everything above needs the **CLI on your machine** — [Install](#install) puts it
 there, and `install-adapter` writes files into a project with it. Installing keel
-as a **plugin** is the other route: the agent gets the commands and skills from
-this repository's own marketplace, with no `pip install` at all. Click the agent
-you use:
+as a **plugin** is how an agent gets the commands and skills: from this
+repository's own marketplace, with no `install-adapter` step. It is **not** a
+replacement for the CLI — the command bodies shell out to `keel`, so it still has
+to be on your `PATH`. Click the agent you use:
 
 [![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=flat-square)](#claude-code)
 [![Codex](https://img.shields.io/badge/Codex-install-000000?style=flat-square)](#codex)
@@ -361,7 +362,10 @@ describes the second as *"Re-index a plugin marketplace from its git
 repository"*; whether re-indexing advances what an already-installed plugin
 resolves to was not exercised from here.
 
-A locally installed Cursor plugin registers **skills only**. keel's 17
+A locally installed Cursor plugin registers **skills only — and here that is one
+skill.** `.cursor-plugin/plugin.json` names `./skills`, and the repository root's
+`skills/` holds `keel-onboard` alone; the 17 workflow skills live in
+`.agents/skills/`, which no plugin manifest points at. keel's 17
 `/keel:<command>` entries, where they appear in Cursor, are being read out of
 Claude Code's plugin cache — pinned to whichever version directory Claude kept.
 The marketplace route is the one that registers commands.
