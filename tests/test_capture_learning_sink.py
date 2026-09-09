@@ -1547,6 +1547,34 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             written = sorted((Path(root) / "learnings").glob("*.md"))
             self.assertEqual(len(written), 1, [p.name for p in written])
 
+    def test_a_retry_on_the_same_head_writes_no_orphan(self):
+        """The append no-ops on a repeated (PR, head); the write must too.
+
+        Asked afterwards, a retry whose fingerprint had *moved* — a `gh` outage on
+        the first attempt, a label fetched on the second — wrote a second document
+        into the sink, possibly a shared knowledge folder, that no ledger record
+        would ever name. Reproduced with two labels on one head.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            head = ("a" * 40, "--head-sha")
+            self.assertEqual(
+                self.ship_with(
+                    root, config, head[1], head[0], "--issue-label", "core", pr=7, run_id="one"
+                )[0],
+                0,
+            )
+            first = self.ledger_capture(root)["artifact"]
+            self.assertEqual(
+                self.ship_with(
+                    root, config, head[1], head[0], "--issue-label", "docs", pr=7, run_id="two"
+                )[0],
+                0,
+            )
+            written = sorted((Path(root) / "learnings").glob("*.md"))
+            self.assertEqual([p.name for p in written], [Path(first).name])
+            self.assertEqual(self.ledger_capture(root)["artifact"], first)
+
     def test_a_deduped_run_points_at_the_file_the_first_run_wrote(self):
         """A dedupe must not manufacture the gap the artifact exists to close.
 

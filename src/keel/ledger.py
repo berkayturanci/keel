@@ -584,6 +584,36 @@ def record_head_sha(record: Mapping[str, Any]) -> str | None:
     return head.strip() if isinstance(head, str) and head.strip() else None
 
 
+def capture_marker_for_head(
+    records: list[dict[str, Any]],
+    *,
+    pr_number: int | None,
+    head_sha: str | None,
+) -> dict[str, Any] | None:
+    """The recorded capture marker for this ``(pull request, head)``, if any.
+
+    The same rule :func:`existing_capture_marker` enforces, asked **before** a
+    record exists. The clash is keyed on the pair and nothing else, so a caller
+    about to do durable work for this run can find out whether its append will
+    land — a learning file written ahead of an append that then no-ops is a
+    document on disk that no ledger record will ever point at.
+    """
+    if not isinstance(pr_number, int):
+        return None
+    head = head_sha.strip() if isinstance(head_sha, str) and head_sha.strip() else None
+    for existing in records:
+        if existing.get("record_type") != RECORD_TYPE_SHIP_RUN:
+            continue
+        other = existing.get("pull_request")
+        if (other.get("number") if isinstance(other, dict) else None) != pr_number:
+            continue
+        if record_head_sha(existing) != head:
+            continue
+        if _capture_marker(existing) is not None:
+            return existing
+    return None
+
+
 def existing_capture_marker(
     records: list[dict[str, Any]], record: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -620,18 +650,7 @@ def existing_capture_marker(
     pr = pull_request.get("number") if isinstance(pull_request, dict) else None
     if not isinstance(pr, int):
         return None
-    head = record_head_sha(record)
-    for existing in records:
-        if existing.get("record_type") != RECORD_TYPE_SHIP_RUN:
-            continue
-        other = existing.get("pull_request")
-        if (other.get("number") if isinstance(other, dict) else None) != pr:
-            continue
-        if record_head_sha(existing) != head:
-            continue
-        if _capture_marker(existing) is not None:
-            return existing
-    return None
+    return capture_marker_for_head(records, pr_number=pr, head_sha=record_head_sha(record))
 
 
 def append_record(path: str | Path, record: dict[str, Any]) -> None:

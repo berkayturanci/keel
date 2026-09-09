@@ -1473,8 +1473,26 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # appends fingerprint the same lesson.
     capture_facts = _capture_issue_facts(args)
     capture_changed = _capture_changed_files(args, changed_read)
-    capture_write = _write_learning_sink(
-        args, config, capture_changed, existing_ledger_records, outcomes, capture_facts
+    # **Ask the clash first.** The append no-ops when this (PR, head) already
+    # carries a marker, and the write ran before that was known — so a retry whose
+    # fingerprint had moved (a `gh` outage on the first attempt, a label fetched on
+    # the second) scattered a second document into the sink, possibly a shared
+    # knowledge folder, that no ledger record would ever name.
+    capture_clash = (
+        ledger.capture_marker_for_head(
+            existing_ledger_records,
+            pr_number=args.ledger_pr or args.pr,
+            head_sha=args.head_sha,
+        )
+        if args.append_ledger and args.live
+        else None
+    )
+    capture_write = (
+        None
+        if capture_clash is not None
+        else _write_learning_sink(
+            args, config, capture_changed, existing_ledger_records, outcomes, capture_facts
+        )
     )
     capture_status_value = _resolved_capture_status(args.capture_status)
     capture_reason_value = args.capture_reason
@@ -1578,7 +1596,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         ],
     }
     if args.append_ledger and args.live:
-        clash = ledger.existing_capture_marker(existing_ledger_records, ledger_record)
+        clash = capture_clash or ledger.existing_capture_marker(
+            existing_ledger_records, ledger_record
+        )
         if clash is None:
             ledger.append_record(ledger_path, ledger_record)
             ledger_result["appended"] = True
