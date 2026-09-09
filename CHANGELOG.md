@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`keel review --from-jury` no longer invents substance for empty or ABSTAIN ballots** (#1150). `ballot_scope` always opened with `Checked the changed-file diff as ai-jury panelist …`, which is keel's own `verdict_substance` escape hatch, so an abstention still passed the gate by construction. Schema ≥1.2 `counts_as_review` / `scope_substantive` / `scope` / `testing` / `abstention_cause` were ignored. Abstentions entered `Panel.ballots`, inflated `panelists` / `jury_panel_size`, and could be posted as `review-verdict-*`.
+  - **One definition of review, the same as ai-jury's `is_review`.** A ballot counts iff it is a panelist, scope is substantive, and the verdict is not `ABSTAIN`. Those ballots are the only members of `Panel.ballots`; `size`, `reviews()`, `vendors`, and the posted `panelists:` line all read that set. `counts_as_review: false` / `ABSTAIN` / a schema-1.1 empty finding list are dropped, not dressed up.
+  - **Report prose wins when present.** A ≥1.2 `scope` / `testing` is used as written rather than re-derived from finding paths. Older reports may still derive a `Checked …` line, but only from real paths on a non-`ABSTAIN` verdict — never the invented opener on an empty ballot.
+  - **Pinned on the posting path, not only the helper.** Tests that fail on the unfixed mapper cover an `ABSTAIN` mixed into a three-seat panel (two verdicts posted, `panelists: 2`), `counts_as_review: false` with paths, a schema-1.1 empty `APPROVE`, and a rendered abstention body that `verdict_substance` refuses.
+
 ## [1.22.0] - 2026-09-09
 
 ### Fixed

@@ -420,8 +420,12 @@ Exactly one of `--reviews` and `--from-jury` is required: the bundle is the host
 panel's. `--from-jury` takes an **ai-jury JSON report** (`jury --format json`, report schema
 1.1+, which carries the top-level `reviewers` ballot array) and maps it onto the same bundle:
 
-- one head-pinned `keel.review-verdict.v1` per panelist, carrying the `vendor:` and `model:`
-  that actually produced that ballot — the chair is not a panelist and does not get one;
+- one head-pinned `keel.review-verdict.v1` per panelist **that counts as a review**,
+  carrying the `vendor:` and `model:` that actually produced that ballot — the chair is
+  not a panelist and does not get one. A ballot counts as a review iff it is a panelist,
+  its scope is substantive, and its verdict is not `ABSTAIN` (ai-jury's `is_review`,
+  honoured via schema ≥1.2 `counts_as_review` / `scope_substantive` when present). An
+  abstention does not inflate `panelists` and is not posted as `review-verdict-*`;
 - the panel's own `keel.jury-verdict.v1` consensus comment, in the same call, so ballots and
   verdict are pinned to the same head SHA by construction. It declares `panelists: <N>`
   beside `vendors: <N>`, which is how the panel's size reaches a later evidence check;
@@ -432,10 +436,11 @@ panel's. `--from-jury` takes an **ai-jury JSON report** (`jury --format json`, r
   --findings` to open the round — the block is a `{"findings": [...]}` envelope, which is
   a shape `--findings` reads as-is, so its array needs no reshaping.
 
-`scope` and `testing` are synthesised from the ballot itself — the files it named, and what
-the verification round upheld — because the JSON report carries no per-ballot prose. They are
-written to satisfy `verdict_substance` by construction, so a clean ballot is still a
-postable verdict.
+`scope` and `testing` come from the report when schema ≥1.2 carries them. Older reports
+may derive a `Checked …` scope from finding paths only when those paths exist and the
+verdict is not `ABSTAIN`. An empty or abstaining ballot never gets an invented
+`Checked the changed-file diff…` opener — that phrase is keel's own `verdict_substance`
+escape hatch, and using it here made an abstention look like a review.
 
 On a tier whose `knobs.team` review policy is `jury`, the required verdict count *is* the
 panel size, so a report with fewer ballots than the panel declared fails closed. A report

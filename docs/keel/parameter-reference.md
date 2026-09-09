@@ -769,9 +769,12 @@ one run for two different gates.
 
 `--from-jury` takes an ai-jury JSON report and maps it onto the same bundle:
 
-- one head-pinned `keel.review-verdict.v1` **per panelist ballot**, carrying the `vendor:`
-  and `model:` that produced that ballot (the chair is the consensus record, not a
-  panelist, and gets no verdict of its own);
+- one head-pinned `keel.review-verdict.v1` **per ballot that counts as a review**, carrying
+  the `vendor:` and `model:` that produced that ballot (the chair is the consensus record,
+  not a panelist, and gets no verdict of its own). A ballot counts as a review iff it is a
+  panelist, its scope is substantive, and its verdict is not `ABSTAIN` — the same
+  `is_review` rule ai-jury applies, honoured via schema ≥1.2 `counts_as_review` /
+  `scope_substantive` when present. Abstentions do not inflate `panel.size` / `panelists`;
 - the panel's own `keel.jury-verdict.v1` consensus comment, posted in the same call, so
   ballots and verdict are pinned to the same head SHA by construction;
 - a `panel` block in `--json` — `ballots`, `size`, the distinct `vendors`, and the
@@ -793,9 +796,10 @@ would leave the tier with no required review evidence at all. Below a panel tier
 keep their usual meaning and `--from-jury` is orthogonal to them — it says *where the
 verdicts come from*, they say *whether the contract requires a jury verdict*.
 
-`scope` and `testing` are synthesised from the ballot itself (the files it named, and what
-the verification round upheld), because the JSON report carries no per-ballot prose; they
-are written to satisfy `verdict_substance` by construction.
+`scope` and `testing` come from the report when schema ≥1.2 carries them. Older reports
+may derive a `Checked …` scope from finding paths only when those paths exist and the
+verdict is not `ABSTAIN`. An empty or abstaining ballot never gets an invented
+`Checked the changed-file diff…` opener.
 
 ### Examples
 

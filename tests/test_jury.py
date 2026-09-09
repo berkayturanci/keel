@@ -334,7 +334,7 @@ BALLOT_REPORT = {
             "vendor": "anthropic",
             "model": "",
             "verdict": "APPROVE",
-            "findings": [],
+            "findings": [0],
             "round1_ok": True,
             "verified_count": 1,
         },
@@ -405,26 +405,61 @@ class TestParsePanel(unittest.TestCase):
     def test_unresolvable_finding_indexes_are_dropped(self):
         panel = jury.parse_panel(
             {
-                "findings": [],
-                "reviewers": [{"name": "a", "verdict": "APPROVE", "findings": [0, "x", True]}],
+                "findings": [{"severity": "nit", "file": "src/a.py", "claim": "x"}],
+                "reviewers": [{"name": "a", "verdict": "APPROVE", "findings": [0, "x", True, 99]}],
             }
         )
-        self.assertEqual(panel.ballots[0].findings, ())
+        self.assertEqual(len(panel.ballots[0].findings), 1)
+        self.assertEqual(panel.ballots[0].findings[0]["path"], "src/a.py")
 
-    def test_a_missing_findings_list_is_no_findings(self):
+    def test_a_missing_findings_list_on_an_old_approve_is_not_a_review(self):
+        """Schema 1.1 empty APPROVE used to enter ballots with an invented Checked scope."""
         panel = jury.parse_panel({"reviewers": [{"name": "a", "verdict": "APPROVE"}]})
+        self.assertEqual(panel.ballots, ())
+        self.assertEqual(panel.size, 0)
+
+    def test_a_schema_12_review_keeps_empty_findings_when_the_report_says_so(self):
+        panel = jury.parse_panel(
+            {
+                "reviewers": [
+                    {
+                        "name": "a",
+                        "verdict": "APPROVE",
+                        "counts_as_review": True,
+                        "scope_substantive": True,
+                        "scope": "Checked src/a.py as stated by the reviewer.",
+                    }
+                ]
+            }
+        )
         self.assertEqual(panel.ballots[0].findings, ())
         self.assertEqual(panel.ballots[0].verified_count, 0)
         self.assertTrue(panel.ballots[0].round1_ok)
 
     def test_a_non_dict_finding_is_dropped(self):
         panel = jury.parse_panel(
-            {"findings": ["nope"], "reviewers": [{"name": "a", "findings": [0]}]}
+            {
+                "findings": ["nope", {"severity": "nit", "file": "src/a.py", "claim": "x"}],
+                "reviewers": [{"name": "a", "verdict": "APPROVE", "findings": [0, 1]}],
+            }
         )
-        self.assertEqual(panel.ballots[0].findings, ())
+        self.assertEqual(len(panel.ballots[0].findings), 1)
+        self.assertEqual(panel.ballots[0].findings[0]["path"], "src/a.py")
 
     def test_a_non_integer_verified_count_reads_as_zero(self):
-        panel = jury.parse_panel({"reviewers": [{"name": "a", "verified_count": "two"}]})
+        panel = jury.parse_panel(
+            {
+                "findings": [{"file": "src/a.py", "claim": "x"}],
+                "reviewers": [
+                    {
+                        "name": "a",
+                        "verdict": "APPROVE",
+                        "findings": [0],
+                        "verified_count": "two",
+                    }
+                ],
+            }
+        )
         self.assertEqual(panel.ballots[0].verified_count, 0)
 
 
@@ -460,10 +495,13 @@ class TestBallotProse(unittest.TestCase):
         self.assertIn("src/keel/review.py", scope)
         self.assertIn("alpha", scope)
 
-    def test_a_clean_ballot_still_says_what_it_checked(self):
-        scope = jury.ballot_scope(jury.parse_panel(BALLOT_REPORT).ballots[2])
-        self.assertIn("Checked", scope)
-        self.assertIn("named no file", scope)
+    def test_an_empty_approve_does_not_invent_a_checked_opener(self):
+        """The #1150 repro: schema 1.1 empty APPROVE used to pass substance by construction."""
+        ballot = jury.Ballot(reviewer="gamma", verdict="LGTM")
+        scope = jury.ballot_scope(ballot)
+        self.assertNotIn("Checked", scope)
+        self.assertIn("did not review", scope)
+        self.assertFalse(jury.ballot_is_review(ballot))
 
     def test_a_long_file_list_is_capped_and_counted(self):
         ballot = jury.Ballot(
@@ -503,6 +541,30 @@ class TestBallotProse(unittest.TestCase):
     def test_a_failed_adapter_is_stated_rather_than_hidden(self):
         ballot = jury.Ballot(reviewer="alpha", verdict="ABSTAIN", round1_ok=False)
         self.assertIn("adapter reported a failed run", jury.ballot_testing(ballot))
+
+    def test_schema_12_scope_and_testing_are_preferred_over_derived_prose(self):
+        ballot = jury.Ballot(
+            reviewer="alpha",
+            verdict="LGTM",
+            counts_as_review=True,
+            scope_substantive=True,
+            scope="Checked `src/keel/review.py` as stated by the reviewer.",
+            testing="Ran python -m unittest tests.test_review -v",
+            findings=(
+                {
+                    "severity": "nit",
+                    "path": "src/other.py",
+                    "line": 1,
+                    "message": "unused",
+                },
+            ),
+        )
+        self.assertEqual(
+            jury.ballot_scope(ballot),
+            "Checked `src/keel/review.py` as stated by the reviewer.",
+        )
+        self.assertEqual(jury.ballot_testing(ballot), "Ran python -m unittest tests.test_review -v")
+        self.assertNotIn("src/other.py", jury.ballot_scope(ballot))
 
 
 class TestReviewsBundle(unittest.TestCase):
@@ -597,13 +659,270 @@ class TestJuryVerdictRecord(unittest.TestCase):
         self.assertIsNone(record["remaining_risks"])
 
     def test_a_chairless_panel_abstains_rather_than_approving(self):
-        panel = jury.parse_panel({"reviewers": [{"name": "a", "verdict": "APPROVE"}]})
+        panel = jury.parse_panel(
+            {
+                "findings": [{"file": "src/a.py", "claim": "x"}],
+                "reviewers": [{"name": "a", "verdict": "APPROVE", "findings": [0]}],
+            }
+        )
         record = jury.jury_verdict(panel)
 
         self.assertEqual(record["verdict"], "ABSTAIN")
         self.assertEqual(record["participants"], ["a"])
         self.assertEqual(record["participating_vendors"], 0)
         self.assertEqual(record["remaining_risks"], "none identified")
+
+
+class TestAbstentionsAreNotReviews(unittest.TestCase):
+    """#1150: ABSTAIN / counts_as_review: false / empty findings must not look like reviews."""
+
+    def test_an_abstain_ballot_is_dropped_from_the_panel_and_the_size(self):
+        panel = jury.parse_panel(
+            {
+                "findings": [{"file": "src/a.py", "claim": "x"}],
+                "reviewers": [
+                    {"name": "alpha", "verdict": "APPROVE", "findings": [0], "vendor": "anthropic"},
+                    {
+                        "name": "beta",
+                        "verdict": "ABSTAIN",
+                        "findings": [0],
+                        "vendor": "google",
+                        "abstention_cause": "named_nothing",
+                    },
+                    {"name": "chair", "role": "chair", "verdict": "APPROVE"},
+                ],
+            }
+        )
+        self.assertEqual([b.reviewer for b in panel.ballots], ["alpha"])
+        self.assertEqual(panel.size, 1)
+        self.assertEqual(panel.vendors, ("anthropic",))
+        self.assertEqual(len(panel.reviews()), 1)
+        self.assertEqual(jury.jury_verdict(panel)["panelists"], 1)
+        self.assertEqual(jury.jury_verdict(panel)["participants"], ["alpha (anthropic)"])
+
+    def test_counts_as_review_false_is_dropped_even_with_paths_and_approve(self):
+        panel = jury.parse_panel(
+            {
+                "schema_version": "1.2",
+                "findings": [{"file": "src/a.py", "claim": "x"}],
+                "reviewers": [
+                    {
+                        "name": "alpha",
+                        "verdict": "APPROVE",
+                        "findings": [0],
+                        "counts_as_review": True,
+                        "scope_substantive": True,
+                        "scope": "Checked `src/a.py`.",
+                    },
+                    {
+                        "name": "beta",
+                        "verdict": "APPROVE",
+                        "findings": [0],
+                        "counts_as_review": False,
+                        "scope_substantive": False,
+                        "abstention_cause": "named_nothing",
+                    },
+                ],
+            }
+        )
+        self.assertEqual([b.reviewer for b in panel.ballots], ["alpha"])
+        self.assertEqual(panel.size, 1)
+
+    def test_scope_substantive_false_fails_closed_without_counts_as_review(self):
+        panel = jury.parse_panel(
+            {
+                "findings": [{"file": "src/a.py", "claim": "x"}],
+                "reviewers": [
+                    {
+                        "name": "alpha",
+                        "verdict": "APPROVE",
+                        "findings": [0],
+                        "scope_substantive": False,
+                    }
+                ],
+            }
+        )
+        self.assertEqual(panel.ballots, ())
+
+    def test_an_empty_findings_approve_on_an_old_report_is_dropped(self):
+        panel = jury.parse_panel(
+            {
+                "schema_version": "1.1",
+                "reviewers": [
+                    {"name": "alpha", "verdict": "APPROVE", "findings": []},
+                    {"name": "beta", "verdict": "COMMENT"},
+                ],
+            }
+        )
+        self.assertEqual(panel.ballots, ())
+        self.assertEqual(panel.size, 0)
+
+    def test_no_quorum_is_an_abstention_and_is_dropped(self):
+        panel = jury.parse_panel({"reviewers": [{"name": "alpha", "verdict": "NO_QUORUM"}]})
+        self.assertEqual(panel.ballots, ())
+
+    def test_a_non_boolean_counts_as_review_is_ignored_and_empty_fails_closed(self):
+        panel = jury.parse_panel(
+            {"reviewers": [{"name": "alpha", "verdict": "APPROVE", "counts_as_review": 1}]}
+        )
+        self.assertEqual(panel.ballots, ())
+
+    def test_abstention_scope_is_anchorless_and_fails_substance(self):
+        from keel import artifacts, evidence
+
+        ballot = jury.Ballot(
+            reviewer="beta",
+            verdict="ABSTAIN",
+            abstention_cause="named_nothing",
+            findings=(
+                {"severity": "nit", "path": "src/a.py", "line": 1, "message": "x"},
+            ),
+        )
+        scope = jury.ballot_scope(ballot)
+        self.assertNotIn("Checked", scope)
+        self.assertNotIn("src/a.py", scope)
+        self.assertNotIn("`", scope)
+        body = artifacts.render_review_verdict(
+            reviewer=ballot.reviewer,
+            head_sha="abc123",
+            verdict=ballot.verdict,
+            scope=scope,
+            findings=[],
+            testing="none",
+        )
+        ok, _reason = evidence.verdict_substance(body, pr_title="chore: unrelated")
+        self.assertFalse(ok)
+
+    def test_as_review_on_an_abstention_does_not_pass_substance(self):
+        from keel import artifacts, evidence
+
+        ballot = jury.Ballot(reviewer="beta", verdict="ABSTAIN")
+        record = ballot.as_review()
+        self.assertNotIn("Checked", record["scope"])
+        body = artifacts.render_review_verdict(
+            reviewer=record["reviewer"],
+            head_sha="abc123",
+            verdict=record["verdict"],
+            scope=record["scope"],
+            findings=record["findings"],
+            testing=record["testing"],
+        )
+        ok, _reason = evidence.verdict_substance(body, pr_title="chore: unrelated")
+        self.assertFalse(ok)
+
+    def test_a_hand_built_panel_does_not_count_an_abstention_in_size_or_reviews(self):
+        review = jury.Ballot(
+            reviewer="alpha",
+            verdict="LGTM",
+            vendor="anthropic",
+            findings=({"severity": "nit", "path": "src/a.py", "line": None, "message": "x"},),
+        )
+        abstain = jury.Ballot(reviewer="beta", verdict="ABSTAIN", vendor="google")
+        panel = jury.Panel(ballots=(review, abstain))
+        self.assertEqual(panel.size, 1)
+        self.assertEqual(panel.vendors, ("anthropic",))
+        self.assertEqual(len(panel.reviews()), 1)
+        self.assertEqual(panel.reviews()[0]["reviewer"], "alpha")
+        self.assertEqual(jury.jury_verdict(panel)["panelists"], 1)
+
+    def test_counts_as_review_true_is_enough_without_scope_substantive(self):
+        panel = jury.parse_panel(
+            {
+                "reviewers": [
+                    {
+                        "name": "a",
+                        "verdict": "APPROVE",
+                        "counts_as_review": True,
+                        "scope": "Checked `src/a.py` as stated.",
+                    }
+                ]
+            }
+        )
+        self.assertEqual(panel.size, 1)
+        self.assertEqual(panel.ballots[0].scope, "Checked `src/a.py` as stated.")
+
+    def test_scope_substantive_true_is_enough_without_counts_as_review(self):
+        panel = jury.parse_panel(
+            {
+                "reviewers": [
+                    {
+                        "name": "a",
+                        "verdict": "COMMENT",
+                        "scope_substantive": True,
+                        "scope": "Checked `src/a.py` as stated.",
+                    }
+                ]
+            }
+        )
+        self.assertEqual(panel.size, 1)
+
+    def test_abstain_wins_over_counts_as_review_true(self):
+        panel = jury.parse_panel(
+            {
+                "reviewers": [
+                    {
+                        "name": "a",
+                        "verdict": "ABSTAIN",
+                        "counts_as_review": True,
+                        "scope_substantive": True,
+                        "scope": "Checked `src/a.py`.",
+                    }
+                ]
+            }
+        )
+        self.assertEqual(panel.ballots, ())
+
+    def test_a_declared_review_without_scope_or_paths_does_not_invent_checked(self):
+        ballot = jury.Ballot(reviewer="a", verdict="LGTM", counts_as_review=True)
+        self.assertTrue(jury.ballot_is_review(ballot))
+        self.assertNotIn("Checked", jury.ballot_scope(ballot))
+
+    def test_blank_and_non_string_scope_fields_are_treated_as_absent(self):
+        panel = jury.parse_panel(
+            {
+                "findings": [{"file": "src/a.py", "claim": "x"}],
+                "reviewers": [
+                    {
+                        "name": "a",
+                        "verdict": "APPROVE",
+                        "findings": [0],
+                        "scope": "   ",
+                        "testing": 5,
+                        "abstention_cause": "",
+                    }
+                ],
+            }
+        )
+        ballot = panel.ballots[0]
+        self.assertIsNone(ballot.scope)
+        self.assertIsNone(ballot.testing)
+        self.assertIsNone(ballot.abstention_cause)
+        self.assertIn("Checked", jury.ballot_scope(ballot))
+        self.assertIn("src/a.py", jury.ballot_scope(ballot))
+
+    def test_parsed_schema_12_fields_are_preserved_on_the_ballot(self):
+        panel = jury.parse_panel(
+            {
+                "reviewers": [
+                    {
+                        "name": "a",
+                        "verdict": "APPROVE",
+                        "counts_as_review": True,
+                        "scope_substantive": True,
+                        "scope": "Checked `src/a.py`.",
+                        "testing": "Ran the unit suite.",
+                        "abstention_cause": "",
+                    }
+                ]
+            }
+        )
+        ballot = panel.ballots[0]
+        self.assertTrue(ballot.counts_as_review)
+        self.assertTrue(ballot.scope_substantive)
+        self.assertEqual(ballot.scope, "Checked `src/a.py`.")
+        self.assertEqual(ballot.testing, "Ran the unit suite.")
+        self.assertIsNone(ballot.abstention_cause)
+        self.assertEqual(jury.ballot_testing(ballot), "Ran the unit suite.")
 
 
 if __name__ == "__main__":

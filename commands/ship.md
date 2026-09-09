@@ -735,11 +735,13 @@ from there, not from the panel's prose.
 `reviewers.count` verdicts.** That field is a *floor*, not a target: `keel plan` and
 `keel ship` resolve the contract with no pull request in reach, so on a panel tier they can
 only publish `jury.min_vendors`. The number of ballots is known to the run that dispatched
-the panel, which is you. `keel review --from-jury` posts one verdict per ballot in the
-report and declares the real size as `panelists: <N>` on the jury verdict, which is how
+the panel, which is you. `keel review --from-jury` posts one verdict per ballot that
+counts as a review (ai-jury `is_review`: panelist, substantive scope, not `ABSTAIN`)
+and declares that size as `panelists: <N>` on the jury verdict, which is how
 `keel evidence-verify` and `keel merge` then require exactly that many. Never trim the
 bundle to `reviewers.count`: a declared count may only ever raise the requirement, so a
-larger panel is honoured and a short one is still held to the floor.
+larger panel is honoured and a short one is still held to the floor. An `ABSTAIN` or
+`counts_as_review: false` ballot is not a review and must not be posted as one.
 
 A panel that spans fewer than `jury.minimum_vendors` distinct vendors is reported by core,
 exactly as it always was — and on a panel tier it changes **nothing** about what is
@@ -747,7 +749,7 @@ required. The bench does not move, the ballots stay required, and the jury verdi
 required: a short panel does not get to excuse itself from the consensus record that says
 it was short (the shortfall surfaces as `review-vendor-distinctness` from
 `evidence-verify` instead). Report the count (`keel evidence-verify --jury-vendors <N>`),
-post every ballot the panel returned, and let core decide. Do not fall back to host
+post every ballot that counts as a review, and let core decide. Do not fall back to host
 reviewers on your own; a tier's reviewers are what its config says they are.
 
 **When the panel cannot be staffed here, core has already decided — read the contract.**
@@ -1404,4 +1406,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=c9c54f762aab5d9bf5f08b03ad3b8662a5eb035df46889016e147d01bbf11bf8 generated_sha256=c9c54f762aab5d9bf5f08b03ad3b8662a5eb035df46889016e147d01bbf11bf8 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=b5baa0b89ab9224fa109a5e24a05c4124aff2b67f79e3323636a5d465632363c generated_sha256=b5baa0b89ab9224fa109a5e24a05c4124aff2b67f79e3323636a5d465632363c -->
