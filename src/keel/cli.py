@@ -8937,10 +8937,12 @@ def _write_learning_sink(
     downgrades the capture to ``skipped:capability-unavailable``. A capture that
     could not be written must not fail a merge that already happened.
     """
-    # A dry run must write nothing. The ledger append is gated the same way, and a
-    # `keel ship` without `--live` that scattered files into a knowledge folder
-    # would be the least expected thing this command does.
-    if not args.live:
+    # A dry run must write nothing. And neither must a run that will record
+    # nothing: the artifact exists to be *named by a ledger record*, so writing one
+    # without `--append-ledger` leaves the same orphan in a knowledge folder that
+    # asking the clash first was added to prevent — reachable by dropping one flag
+    # the adapter happens to pass.
+    if not (args.live and args.append_ledger):
         return None
     # **Redact the values, then render.** Sanitizing the finished document put the
     # replacement *inside* a front-matter scalar the quoter had already decided was

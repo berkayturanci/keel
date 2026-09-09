@@ -780,6 +780,21 @@ class EveryTypoShapeIsRefused(unittest.TestCase):
         self.assertIn("{fingerprint}", errors[0])
         self.assertEqual(capture.learning_sink_errors({"filename": "{slug}-{fingerprint}.md"}), [])
 
+    def test_a_filename_that_is_a_path_is_refused(self):
+        """The reader globs one level and skips directories.
+
+        `{pr}/{fingerprint}.md` passes every other check and `mkdir(parents=True)`
+        creates the directory happily, so the lesson lands where nothing will ever
+        read it — the writer/reader disagreement this whole change opened with,
+        arriving through a template the validator accepted.
+        """
+        for template in ("{pr}/{fingerprint}.md", "a\\{fingerprint}.md"):
+            with self.subTest(template=template):
+                errors = capture.learning_sink_errors({"filename": template})
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("path separator", errors[0])
+        self.assertEqual(capture.learning_sink_errors({"path": "a/b/{repo}"}), [])
+
     def test_the_default_filename_carries_it(self):
         """The rule is only real if the value a project gets without asking obeys it."""
         self.assertIn("{fingerprint}", capture.DEFAULT_LEARNING_SINK_FILENAME)
@@ -1031,6 +1046,42 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(len(written), 1, written)
             self.assertEqual(self.ledger_capture(root)["artifact"], str(written[0]))
 
+    def test_a_run_that_records_nothing_writes_nothing(self):
+        """The artifact exists to be named by a ledger record.
+
+        The write was gated on `--live` and the duplicate clash on `--live
+        --append-ledger`, so a run with the first and not the second wrote a
+        document no row would ever name — the orphan, reachable by dropping one
+        flag the adapter happens to pass.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            code, _, err = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    str(root),
+                    "--live",
+                    "--run-id",
+                    "no-ledger",
+                    "--pull-request",
+                    "1154",
+                    "--issue-title",
+                    "capture: built-in Markdown learning sink",
+                    "--issue-body",
+                    self.BODY,
+                    "--capture-status",
+                    "applied",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+            self.assertEqual(code, 0, err)
+            self.assertFalse(list((Path(root) / "learnings").glob("*.md")))
+
     def test_a_dry_run_writes_nothing(self):
         """`--live` gates it, as it gates the ledger append.
 
@@ -1176,6 +1227,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                     "--root",
                     str(root),
                     "--live",
+                    "--append-ledger",
                     "--issue-title",
                     "a change",
                     "--capture-status",

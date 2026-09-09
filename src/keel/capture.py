@@ -969,6 +969,17 @@ def learning_sink_errors(sink: Any) -> list[str]:
                 "policy_pack.capture.learning.sink.filename must contain {fingerprint}; "
                 "without it two lessons on one pull request overwrite each other"
             )
+        # **A filename is a name, not a path.** `{pr}/{fingerprint}.md` passes every
+        # other check, `mkdir(parents=True)` creates the directory happily, and
+        # `retrieve_relevant_learnings` — the only reader — globs one level and
+        # skips directories, so the lesson is written where nothing will ever read
+        # it. Nesting belongs in `path`, which is the field that names a directory.
+        if field_name == "filename" and ("/" in raw or "\\" in raw):
+            errors.append(
+                "policy_pack.capture.learning.sink.filename must not contain a path "
+                "separator; it names a file inside `path`, and the read path does not "
+                "descend into subdirectories"
+            )
     return errors
 
 

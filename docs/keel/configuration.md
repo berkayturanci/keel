@@ -1375,7 +1375,7 @@ which is the existing durable-artifact rule rather than a new one.
 Three behaviours worth knowing:
 
 - **The path becomes `capture.artifact`.** That field is what makes an `applied` capture
-  provable rather than asserted — `keel capture-reconcile` treats `applied` with no
+  provable rather than asserted — `keel capture-verify` reports `applied` with no
   artifact as a finding — so a project with a sink stops passing `--capture-artifact`
   by hand for a file it did not write.
 - **A `duplicate` learning decision writes nothing**, and records the earlier run's
