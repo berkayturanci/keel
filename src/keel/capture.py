@@ -90,7 +90,14 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
             "requires_redaction": True,
             "redaction_contract": "run_ledger.capture_redaction",
             "core_destination": "run-ledger",
-            "project_destination": "extension-owned",
+            # `extension-owned` was the whole truth until keel shipped a writer.
+            # A project that configures `learning.sink` has **core** writing the
+            # file and filling `capture.artifact`, and an adapter that read this
+            # block and wrote its own would have had it overwritten (#1154).
+            "project_destination": ("sink" if learning_sink_policy(config) else "extension-owned"),
+            "sink": learning_sink_policy(config).get("kind")
+            if learning_sink_policy(config)
+            else None,
         },
         "learning_quality": learning_quality_contract_as_dict(config),
         "session_end_verifier": {
@@ -955,6 +962,10 @@ def _expand(template: str, values: dict[str, str]) -> str:
 #: letters, digits, space and a few punctuation marks that carry no meaning there.
 _YAML_PLAIN = re.compile(r"[A-Za-z][A-Za-z0-9 ._/()+-]*")
 
+#: C0 controls and DEL. Not a taste question: a raw CR splits a line inside quotes
+#: and a NUL makes a real parser refuse the document.
+_YAML_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
 #: Words plain YAML turns into something that is not a string.
 _YAML_KEYWORDS = frozenset(
     {"y", "n", "yes", "no", "true", "false", "on", "off", "null", "none", "~"}
@@ -983,8 +994,13 @@ def _yaml_scalar(value: str) -> str:
         and value.lower() not in _YAML_KEYWORDS
     ):
         return value
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
-    return f'"{escaped}"'
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    # **Every control character, not the newline.** A raw carriage return survives
+    # inside quotes, and `_front_matter` splits lines on it — the reader gets a
+    # title of `"foo` and drops the rest, while a real parser reads `foo bar`, so
+    # the two disagree about the same file. A NUL is worse: PyYAML refuses the
+    # document outright. They become spaces, because a title is a line.
+    return f'"{_YAML_CONTROL.sub(" ", escaped)}"'
 
 
 def _yaml_sequence(key: str, values: list[str] | tuple[str, ...]) -> list[str]:
@@ -1028,8 +1044,11 @@ def render_learning_document(
         f"title: {_yaml_scalar(title or 'Learning')}",
         f"description: {_yaml_scalar(description or '')}",
         f"repo: {_yaml_scalar(repo or '')}",
-        f"pr: {pr_number if pr_number is not None else ''}",
-        f"issue: {issue_number if issue_number is not None else ''}",
+        # `null`, not an empty value. Both read back as `None`; only one of them
+        # says so on purpose, and a bare `issue:` looks like a field somebody forgot
+        # to fill rather than a merge that was linked to no issue.
+        f"pr: {pr_number if pr_number is not None else 'null'}",
+        f"issue: {issue_number if issue_number is not None else 'null'}",
         f"date: {date}",
         f"fingerprint: {fingerprint}",
     ]

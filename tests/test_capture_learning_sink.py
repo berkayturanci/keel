@@ -157,6 +157,32 @@ class ThePlanIsPure(unittest.TestCase):
         self.assertIsNone(self.plan({"kind": "obsidian"}))
 
 
+class TheContractSaysWhoWritesTheFile(unittest.TestCase):
+    """`extension-owned` was the whole truth until keel shipped a writer.
+
+    An adapter that read the contract and wrote its own durable artifact had it
+    overwritten: `_cmd_ship` puts the sink's path into `capture.artifact` when the
+    write succeeds. A machine-readable contract that is wrong about who writes is
+    worse than one that says nothing.
+    """
+
+    def destination(self, sink):
+        return capture.contract_as_dict(_config(sink))["durable_artifacts"]
+
+    def test_a_project_with_no_sink_is_unchanged(self):
+        self.assertEqual(self.destination(None)["project_destination"], "extension-owned")
+        self.assertIsNone(self.destination(None)["sink"])
+        self.assertEqual(
+            capture.contract_as_dict()["durable_artifacts"]["project_destination"],
+            "extension-owned",
+        )
+
+    def test_a_configured_sink_says_core_writes_it(self):
+        block = self.destination({"kind": "markdown-dir"})
+        self.assertEqual(block["project_destination"], "sink")
+        self.assertEqual(block["sink"], "markdown-dir")
+
+
 class TheDecisionDecidesWhetherAnythingIsWritten(unittest.TestCase):
     """A sink names a destination; the learning decision says whether to use it."""
 
@@ -571,6 +597,44 @@ class TheFrontMatterSurvivesARealParser(unittest.TestCase):
             fingerprint="f",
         )
         self.assertIn("title: plain title\n", text)
+
+    #: Characters that do not survive being written into a line. A carriage return
+    #: survives inside quotes, and `_front_matter` splits lines on it — so keel's
+    #: own reader gets a title of `"foo` and drops the rest while a real parser
+    #: reads the whole thing, the two disagreeing about one file. A NUL makes
+    #: PyYAML refuse the document outright. `--issue-title` is a raw CLI string and
+    #: can carry either.
+    CONTROLS = ("foo\rbar", "foo\x00bar", "tab\tseparated", "vertical\x0bspace")
+
+    def test_a_control_character_becomes_a_space(self):
+        for title in self.CONTROLS:
+            with self.subTest(title=title):
+                parsed = self.block(title)["title"]
+                self.assertIsInstance(parsed, str)
+                self.assertNotIn("\r", parsed)
+                self.assertNotIn("\x00", parsed)
+
+    def test_both_readers_agree_about_a_control_character(self):
+        """The property the quoting exists for: *other* tools can read it.
+
+        A value that keel's reader and a real parser disagree about is worse than
+        one neither can read — the file looks fine from inside the repository.
+        """
+        for title in self.CONTROLS:
+            with self.subTest(title=title):
+                document = capture.render_learning_document(
+                    title=title,
+                    description="",
+                    pr_number=1,
+                    issue_number=None,
+                    repo="r",
+                    date="2026-09-09",
+                    labels=(),
+                    changed_files=(),
+                    fingerprint="f",
+                )
+                keel_title, _ = capture._learning_title_and_summary(document, "fallback")
+                self.assertEqual(keel_title, self.block(title)["title"])
 
     def test_a_yaml_keyword_is_quoted_so_it_stays_a_string(self):
         for word in ("yes", "no", "true", "off", "null"):
@@ -989,6 +1053,15 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                 self.assertTrue(Path(path).is_file(), path)
             self.assertIn("core", Path(first).read_text(encoding="utf-8"))
             self.assertIn("docs", Path(second).read_text(encoding="utf-8"))
+
+    def test_an_unlinked_merge_says_null_rather_than_nothing(self):
+        """Both read back as `None`; only one of them says so on purpose."""
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            self.assertEqual(self.ship(root, config)[0], 0)
+            body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
+            self.assertIn("issue: null", body)
+            self.assertIsNone(_front_matter_fields(body)["issue"])
 
     def test_an_empty_label_list_reads_back_as_a_list(self):
         """`labels:` with nothing under it is a **null**, not `[]`.

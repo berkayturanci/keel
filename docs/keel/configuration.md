@@ -1188,7 +1188,7 @@ back to packaged command prose.
 | `workflow_policies` | map command→object | | command-specific workflow policy such as posting mode, reviewer isolation, CI/fix-loop behavior, and completion markers |
 | `reports` | map name→string | | report destinations, paths, or issue prefixes |
 | `capture_redaction` | object | | additional project-owned deny regexes applied before capture artifacts are persisted |
-| `capture` | object | | post-merge capture enablement/mode; content and destinations remain extension-owned |
+| `capture` | object | | post-merge capture enablement/mode; content stays extension-owned, and so does the destination unless [`learning.sink`](#policy_packcapturelearningsink) names one |
 | `review` | object | | project-owned rubric additions and required PR/review sections |
 
 ## `automation`
