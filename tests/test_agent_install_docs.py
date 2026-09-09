@@ -286,6 +286,25 @@ class TheSiteDoesNotPublishAOneAgentRecipe(unittest.TestCase):
                 self.assertIn(agent, landing)
 
 
+class ThePluginPageListsEveryManifestThatExists(unittest.TestCase):
+    """`What ships` is the inventory, so a manifest missing from it is invisible.
+
+    `.codex-plugin/plugin.json` was on disk and absent from the table, under a
+    page that had just been retitled to cover four agents. Discovered from the
+    tree, so the fifth manifest arrives in the table rather than beside it.
+    """
+
+    def test_every_manifest_on_disk_is_in_the_table(self):
+        page = (REPO_ROOT / "docs" / "keel" / "plugin.md").read_text(encoding="utf-8")
+        manifests = sorted(
+            p.relative_to(REPO_ROOT).as_posix() for p in REPO_ROOT.glob(".*/plugin.json")
+        )
+        self.assertGreaterEqual(len(manifests), 3, manifests)
+        for manifest in manifests:
+            with self.subTest(manifest=manifest):
+                self.assertIn(manifest, page)
+
+
 class EveryCrossDocumentAnchorResolves(unittest.TestCase):
     """A link into a heading breaks silently when the heading is reworded.
 

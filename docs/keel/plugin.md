@@ -8,7 +8,7 @@ keel ships its agentic `/keel:<command>` workflows as an **agent plugin** in add
 the `pip install keel-workflow` + `keel install-adapter` path. Both flows are additive and use
 the same project-neutral command bodies; you do not have to choose one.
 
-## Install (no `pip` required)
+## Install (no `install-adapter` required)
 
 This repository is itself a single-plugin **marketplace**. **Installing it — for
 Claude Code, Codex, Antigravity or Cursor, each with its own update path — is
@@ -28,7 +28,8 @@ page is what happens after: the workflows become namespaced slash commands —
 | File | Role |
 |---|---|
 | `.claude-plugin/plugin.json` | Plugin manifest — `name: keel`, `version` (matches `keel.__version__`), description, author, `homepage`, `license: Apache-2.0`. Its `version` is kept in lockstep with the package by a test. |
-| `.cursor-plugin/plugin.json` | Cursor listing metadata — the fields Cursor's plugin reference documents, including `logo`, its listing asset, and the same `skills` path the other manifests name. keel's 18 skills already load in Cursor without it (measured); this is presentation, not enablement, and the GUI listing has not been confirmed from a CLI. Its `version` is a registered release surface. |
+| `.codex-plugin/plugin.json` | Codex plugin manifest — the surface `codex plugin add keel@keel` installs. Its `version` is a registered release surface. |
+| `.cursor-plugin/plugin.json` | Cursor listing metadata — the fields Cursor's plugin reference documents, including `logo`, its listing asset, and the same `skills` path the other manifests name. It is presentation, not enablement, and the GUI listing has not been confirmed from a CLI. **What a *local* Cursor install registers is that `skills` path and nothing else — one skill, `keel-onboard`.** The 18 keel skills a `cursor-agent` session lists come from Claude Code's plugin cache, not from this manifest (see [install.md](install.md#cursor)). Its `version` is a registered release surface. |
 | `.claude-plugin/marketplace.json` | Single-plugin marketplace — `name: keel`, `owner`, one `plugins[]` entry with `source: "./"` (the plugin lives at the repo root). Lets the repo be added via `/plugin marketplace add berkayturanci/keel`. |
 | `commands/<cmd>.md` | The plugin command bodies, discovered from the default `commands/` directory. **Generated** from `src/keel/adapters/commands/`; do not hand-edit. |
 | `skills/keel-onboard/SKILL.md` | The onboarding skill. Named by `plugin.json`'s `skills` field **and** found by Antigravity's root-directory convention, which reads no manifest (#1137). |
