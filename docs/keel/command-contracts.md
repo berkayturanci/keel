@@ -742,9 +742,10 @@ A project sets `knobs.team.review.by_tier."<tier>": jury` (the string `jury` in 
 seat list) to make the panel that tier's whole review. `assignment.review_panel` then reads
 `jury` instead of `reviewers`, and `keel review --from-jury <report.json>` is the command
 that turns an ai-jury JSON report (`jury --format json`, report schema 1.1+) into the
-contract's artifacts: one head-pinned `keel.review-verdict.v1` per panelist ballot —
-carrying the `vendor:` and `model:` that produced that ballot — plus the panel's own
-`keel.jury-verdict.v1` consensus record, posted in the same call so both bind to the same
+contract's artifacts: one head-pinned `keel.review-verdict.v1` per panelist ballot that
+counts as a review (ai-jury `is_review`) — carrying the `vendor:` and `model:` that
+produced that ballot — plus the panel's own `keel.jury-verdict.v1` consensus record,
+posted in the same call so both bind to the same
 head SHA. `--reviews` and `--from-jury` are mutually exclusive: the bundle is the host's or
 the panel's. The `--json` result adds a `panel` block (`ballots`, `size`, `vendors`, and
 the **verified** consensus `findings` in keel's severity vocabulary), which is the
