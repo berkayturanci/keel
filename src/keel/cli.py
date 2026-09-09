@@ -1509,6 +1509,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         capture_not_run=args.capture_status == CAPTURE_STATUS_NOT_RUN,
         capture_reason=capture_reason_value,
         capture_artifact=capture_artifact_value,
+        # The same list the document was written from, so the sink and the ledger
+        # fingerprint one lesson. They did not: the sink got the host's PR files
+        # while the record kept hashing the empty post-merge diff, and a second run
+        # then wrote a second file while recording it as a duplicate of the first.
+        capture_changed_files=capture_changed,
         issue_title=capture_facts[0],
         issue_labels=capture_facts[2],
         existing_records=existing_ledger_records,

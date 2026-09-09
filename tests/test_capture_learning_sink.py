@@ -1290,6 +1290,49 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                 ["src/keel/capture.py", "src/keel/cli.py"],
             )
 
+    def test_the_ledger_fingerprints_the_same_lesson_the_document_does(self):
+        """One lesson, one fingerprint — and they were two.
+
+        The sink was handed the host's PR files while `build_ship_run_record` kept
+        hashing the empty post-merge diff, so the document's front matter and the
+        ledger's `capture.learning.fingerprint` named different lessons. A second
+        ship then wrote a *second* file (the sink found no matching fingerprint)
+        while the record called it a `duplicate` of the first and pointed
+        `capture.artifact` at the new one: dedupe and the applied-artifact claim
+        crossed, on the dogfood command.
+
+        `changes.files` stays what git reported — an empty diff is a fact about
+        this run — so the two lists are deliberately not the same field.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            files = ["src/keel/capture.py", "src/keel/cli.py"]
+            with _github_pr_files(files):
+                self.assertEqual(self.ship_with(root, config, pr=1160)[0], 0)
+            written = sorted((Path(root) / "learnings").glob("*.md"))
+            self.assertEqual(len(written), 1, written)
+            document = _front_matter_fields(written[0].read_text(encoding="utf-8"))
+            block = self.ledger_capture(root)
+            self.assertEqual(document["fingerprint"], block["learning"]["fingerprint"])
+            self.assertTrue(written[0].name.endswith(f"{document['fingerprint'][:12]}.md"))
+
+    def test_a_second_post_merge_run_is_deduped_not_rewritten(self):
+        """The consequence of the crossed fingerprints, through the CLI."""
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            with _github_pr_files(["src/keel/capture.py"]):
+                self.assertEqual(
+                    self.ship_with(root, config, "--head-sha", "a" * 40, pr=1, run_id="one")[0], 0
+                )
+                first = self.ledger_capture(root)["artifact"]
+                self.assertEqual(
+                    self.ship_with(root, config, "--head-sha", "b" * 40, pr=1, run_id="two")[0], 0
+                )
+            self.assertEqual(len(list((Path(root) / "learnings").glob("*.md"))), 1)
+            block = self.ledger_capture(root)
+            self.assertEqual(block["learning"]["decision"], "duplicate")
+            self.assertEqual(block["artifact"], first)
+
     def test_no_host_leaves_the_files_as_the_diff_reported_them(self):
         """Fail-soft: offline the lesson is scored on its title alone, not lost."""
         with tempfile.TemporaryDirectory() as root:
