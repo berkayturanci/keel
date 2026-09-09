@@ -1,4 +1,8 @@
-# keel as a Claude Code plugin
+# keel as an agent plugin
+
+> Installing it — per agent, with the update path for each — is
+> [`docs/keel/install.md`](install.md). This page is about what the plugin
+> *contains*.
 
 keel ships its agentic `/keel:<command>` workflows as a **Claude Code plugin** in addition to
 the `pip install keel-workflow` + `keel install-adapter` path. Both flows are additive and use
