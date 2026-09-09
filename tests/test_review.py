@@ -745,6 +745,7 @@ class TestReviewFromJury(unittest.TestCase):
         self.assertNotIn("beta", jury_posts[0]["body"])
         self.assertEqual(data["panel"]["size"], 2)
         self.assertEqual([b["reviewer"] for b in data["panel"]["ballots"]], ["alpha", "gamma"])
+
     def test_a_malformed_ballot_is_reported_not_dropped(self):
         rc, _, err = self._run({"findings": [], "reviewers": [{"verdict": "APPROVE"}]})
 
