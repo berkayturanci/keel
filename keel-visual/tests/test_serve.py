@@ -53,7 +53,9 @@ class TestLiveServer(unittest.TestCase):
         try:
             port = httpd.server_address[1]
             base = f"http://127.0.0.1:{port}"
-            self.assertEqual(urllib.request.urlopen(base + "/").read(5 * 1024 * 1024), b"<html>LIVE</html>")
+            self.assertEqual(
+                urllib.request.urlopen(base + "/").read(5 * 1024 * 1024), b"<html>LIVE</html>"
+            )
             board = json.loads(urllib.request.urlopen(base + "/board.json").read(5 * 1024 * 1024))
             self.assertEqual(board, _provider())
             with self.assertRaises(urllib.error.HTTPError) as ctx:
