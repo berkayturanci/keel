@@ -1336,7 +1336,7 @@ policy_pack:
       sink:
         kind: markdown-dir
         path: "~/knowledge/projects/{repo}/learnings"
-        filename: "{date}-pr{pr}-{slug}.md"
+        filename: "{date}-pr{pr}-{slug}-{fingerprint}.md"
 ```
 
 `learning.enabled` is not decoration, and neither is `mode`. Together they are what
@@ -1350,13 +1350,20 @@ go if the policy asked for it.
 |---|---|---|---|
 | `kind` | string | `markdown-dir` | the only kind. A directory of Markdown; keel never learns what reads it |
 | `path` | string | `.keel/learning` | destination directory; `~` and the placeholders below expand |
-| `filename` | string | `{date}-pr{pr}-{slug}.md` | file name template, same placeholders |
+| `filename` | string | `{date}-pr{pr}-{slug}-{fingerprint}.md` | file name template, same placeholders; **must contain `{fingerprint}`** |
 
-Placeholders are `{owner}`, `{repo}`, `{base_branch}`, `{date}`, `{pr}` and `{slug}`
-(the issue title, lowercased and hyphenated). **The set is closed**: an unknown
-placeholder is rejected when the config is read, because its only other symptom would
-be a directory literally named `{repoo}`, created successfully, on a machine nobody is
-watching.
+Placeholders are `{owner}`, `{repo}`, `{base_branch}`, `{date}`, `{pr}`, `{slug}` (the
+issue title, lowercased and hyphenated) and `{fingerprint}` (the first 12 characters of
+the learning's dedupe fingerprint). **The set is closed**: an unknown placeholder is
+rejected when the config is read, because its only other symptom would be a directory
+literally named `{repoo}`, created successfully, on a machine nobody is watching.
+
+**`filename` must contain `{fingerprint}`**, and that is refused at load time too. Date,
+PR and slug do not distinguish two lessons: a second `create-learning` run on the same
+pull request the same day is a *different* lesson with a different fingerprint, and
+without it in the name the write destroys the first one — leaving its ledger record
+pointing at a document that says something else. The dedupe cannot help there; it
+suppresses *identical* fingerprints, and these differ.
 
 Each file opens with front matter the read path relies on — `schema`, `title`,
 `description`, `repo`, `pr`, `issue`, `date`, `fingerprint`, `labels`, `changed_files` —

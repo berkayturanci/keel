@@ -843,7 +843,19 @@ LEARNING_SINK_KINDS = ("markdown-dir",)
 #: existing `.keel/learning/` convention, so turning the sink on changes where
 #: files appear only for a project that asked it to.
 DEFAULT_LEARNING_SINK_PATH = ".keel/learning"
-DEFAULT_LEARNING_SINK_FILENAME = "{date}-pr{pr}-{slug}.md"
+
+#: **The fingerprint is in the name because the fingerprint is the identity.** Date,
+#: PR and slug do not distinguish two lessons: a second `create-learning` run on the
+#: same PR the same day — different labels, different files, a different lesson —
+#: resolved to the same path and `os.replace` destroyed the first, leaving the
+#: earlier ledger record pointing at a document that says something else. The dedupe
+#: cannot help; it suppresses *identical* fingerprints, and these differ.
+DEFAULT_LEARNING_SINK_FILENAME = "{date}-pr{pr}-{slug}-{fingerprint}.md"
+
+#: How much of the fingerprint a filename carries. A sha256 prefix this long
+#: distinguishes every learning a project will ever write without making the name
+#: unreadable.
+LEARNING_FINGERPRINT_SLICE = 12
 
 #: The frontmatter contract the reader depends on. Fixed and small on purpose:
 #: `retrieve_relevant_learnings` reads `title` and `description` out of it, so a
@@ -853,7 +865,15 @@ LEARNING_SCHEMA_VERSION = "keel.learning.v1"
 #: Every placeholder a `path` or `filename` template may use. Named rather than
 #: open-ended: an unknown placeholder is a typo that would otherwise write a
 #: directory called `{repoo}` and look like it worked.
-LEARNING_SINK_PLACEHOLDERS = ("owner", "repo", "base_branch", "date", "pr", "slug")
+LEARNING_SINK_PLACEHOLDERS = (
+    "owner",
+    "repo",
+    "base_branch",
+    "date",
+    "pr",
+    "slug",
+    "fingerprint",
+)
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
@@ -902,12 +922,25 @@ def learning_sink_errors(sink: Any) -> list[str]:
         # `[^}]*`, not `[a-z_]*`: a mixed-case or hyphenated typo — `{Repo}`,
         # `{base-branch}` — is exactly as wrong as `{repoo}` and was invisible to a
         # pattern that only matched the shape of a correct name.
-        for name in re.findall(r"\{([^}]*)\}", raw):
+        used = re.findall(r"\{([^}]*)\}", raw)
+        for name in used:
             if name not in LEARNING_SINK_PLACEHOLDERS:
                 errors.append(
                     f"policy_pack.capture.learning.sink.{field_name} uses unknown placeholder "
                     f"{{{name}}}; known: {', '.join(LEARNING_SINK_PLACEHOLDERS)}"
                 )
+        # **A filename must be able to name two lessons.** Date, PR and slug do not
+        # distinguish them: a second `create-learning` run on the same PR the same
+        # day is a *different* lesson with a different fingerprint, and without it in
+        # the name the write destroys the first one — leaving its ledger record
+        # pointing at a document that says something else. Refused here, where the
+        # placeholder typos are refused, because the only other symptom is a file
+        # that quietly stops existing.
+        if field_name == "filename" and "fingerprint" not in used:
+            errors.append(
+                "policy_pack.capture.learning.sink.filename must contain {fingerprint}; "
+                "without it two lessons on one pull request overwrite each other"
+            )
     return errors
 
 
@@ -939,7 +972,16 @@ def _yaml_scalar(value: str) -> str:
     can be any of those. A deny-list has to be right about every character; an
     allow-list only has to be right about the ones it lets through.
     """
-    if value and _YAML_PLAIN.fullmatch(value) and value.lower() not in _YAML_KEYWORDS:
+    # `value == value.strip()` is not tidiness: `yes ` matches the allow-list, is not
+    # in the keyword set, and goes in bare — and a plain YAML scalar drops its
+    # trailing space, so a parser reads `yes` and returns `True`. The same
+    # non-string a keyword produces, through the one gap the keyword check had.
+    if (
+        value
+        and value == value.strip()
+        and _YAML_PLAIN.fullmatch(value)
+        and value.lower() not in _YAML_KEYWORDS
+    ):
         return value
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
     return f'"{escaped}"'
@@ -1081,6 +1123,9 @@ def learning_sink_plan(
     if not learning_sink_writes(config=config, decision=decision, capture_status=capture_status):
         return None
     sink = learning_sink_policy(config)
+    # No `isinstance` re-check: the gate above returned for anything that is not a
+    # `create-learning` mapping, so by here the decision is one.
+    fingerprint = str(decision.get("fingerprint") or "")
     values = {
         "owner": owner or "",
         "repo": repo or "",
@@ -1088,12 +1133,10 @@ def learning_sink_plan(
         "date": date,
         "pr": str(pr_number) if pr_number is not None else "",
         "slug": _slugify(title),
+        "fingerprint": fingerprint[:LEARNING_FINGERPRINT_SLICE],
     }
     directory = _expand(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
     filename = _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
-    # No `isinstance` re-check: the gate above returned for anything that is not a
-    # `create-learning` mapping, so by here the decision is one.
-    fingerprint = str(decision.get("fingerprint") or "")
     return {
         "kind": sink.get("kind", LEARNING_SINK_KINDS[0]),
         "directory": directory,

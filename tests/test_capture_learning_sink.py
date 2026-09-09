@@ -116,15 +116,15 @@ class ThePlanIsPure(unittest.TestCase):
             {
                 "kind": "markdown-dir",
                 "path": "~/k/{owner}/{repo}",
-                "filename": "{date}-pr{pr}-{slug}.md",
+                "filename": "{date}-pr{pr}-{slug}-{fingerprint}.md",
             }
         )
         self.assertEqual(plan["directory"], "~/k/berkayturanci/keel")
         # The slug is capped so a long issue title cannot produce an unusable
         # filename; the cap cuts at a character count, not at a word boundary.
         self.assertTrue(plan["filename"].startswith("2026-09-09-pr1154-capture-built-in"))
-        self.assertTrue(plan["filename"].endswith(".md"))
-        self.assertLessEqual(len(plan["filename"]), 80)
+        self.assertTrue(plan["filename"].endswith("-abc123.md"))
+        self.assertLessEqual(len(plan["filename"]), 96)
 
     def test_an_omitted_path_keeps_the_existing_convention(self):
         """Turning the sink on must not move where a project already looks."""
@@ -503,6 +503,13 @@ class TheFrontMatterSurvivesARealParser(unittest.TestCase):
         "{brace}",
         "[bracket]",
         "yes",
+        # A keyword the allow-list let through because of one trailing space: the
+        # scalar is plain, the padded form is not in the keyword set, and YAML drops
+        # the space and reads `True`.
+        "yes ",
+        "true ",
+        "off ",
+        "null ",
         "@at",
         "`tick",
         "%directive",
@@ -571,6 +578,36 @@ class EveryTypoShapeIsRefused(unittest.TestCase):
     def test_the_documented_set_still_passes(self):
         self.assertEqual(capture.learning_sink_errors({"path": "~/{repo}/{date}/{pr}"}), [])
 
+    def test_a_filename_that_cannot_name_two_lessons_is_refused(self):
+        """Date, PR and slug do not distinguish two lessons, and the second write
+        destroys the first — so the fingerprint is required in the name, refused
+        here where the placeholder typos are refused."""
+        errors = capture.learning_sink_errors({"filename": "{date}-pr{pr}-{slug}.md"})
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("{fingerprint}", errors[0])
+        self.assertEqual(capture.learning_sink_errors({"filename": "{slug}-{fingerprint}.md"}), [])
+
+    def test_the_default_filename_carries_it(self):
+        """The rule is only real if the value a project gets without asking obeys it."""
+        self.assertIn("{fingerprint}", capture.DEFAULT_LEARNING_SINK_FILENAME)
+        self.assertEqual(capture.learning_sink_errors({"kind": "markdown-dir"}), [])
+
+    def test_the_config_loader_refuses_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = write_config(
+                Path(root),
+                [
+                    "  capture:",
+                    "    learning:",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                    "        filename: '{slug}.md'",
+                ],
+            )
+            with self.assertRaises(cfg.ConfigError) as caught:
+                cfg.load_config(path)
+            self.assertIn("{fingerprint}", str(caught.exception))
+
 
 class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
     """End to end, through the CLI, because that is where the I/O lives.
@@ -600,7 +637,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
         "      sink:",
         "        kind: markdown-dir",
         "        path: 'learnings'",
-        "        filename: '{date}-pr{pr}-{slug}.md'",
+        "        filename: '{date}-pr{pr}-{slug}-{fingerprint}.md'",
     ]
 
     def ship(self, root, config, pr=1154, status="applied"):
@@ -629,7 +666,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             ]
         )
 
-    def ship_with(self, root, config, *extra, pr=1154):
+    def ship_with(self, root, config, *extra, pr=1154, run_id=None):
         """`ship`, plus flags a single test needs."""
         return run(
             [
@@ -640,7 +677,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                 "--live",
                 "--append-ledger",
                 "--run-id",
-                f"ship-{pr}",
+                run_id or f"ship-{pr}",
                 "--pull-request",
                 str(pr),
                 "--issue-title",
@@ -708,7 +745,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                     "      sink:",
                     "        kind: markdown-dir",
                     f"        path: {str(Path(root) / 'learnings')!r}",
-                    "        filename: '{date}-pr{pr}-{slug}.md'",
+                    "        filename: '{date}-pr{pr}-{slug}-{fingerprint}.md'",
                 ],
             )
             code, _, _ = self.ship(root, config)
@@ -884,6 +921,39 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             changed = _front_matter_fields(body)["changed_files"]
             self.assertEqual(len(changed), 1)
             self.assertIsInstance(changed[0], str)
+
+    def test_two_lessons_on_one_pr_the_same_day_do_not_overwrite_each_other(self):
+        """The fingerprint is the identity, so it has to be in the name.
+
+        Date, PR and slug do not distinguish two lessons: a second
+        `create-learning` run on the same PR the same day — different labels,
+        different files, a different lesson — resolved to the same path and
+        `os.replace` destroyed the first, leaving its ledger record pointing at a
+        document that says something else. The dedupe cannot help: it suppresses
+        *identical* fingerprints, and these differ.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(Path(root), self.SINK_LINES)
+            # Distinct heads, because that is what two ship runs on one PR are —
+            # and because the ledger keys its clash on (PR, head), so a second
+            # record for the same head would be skipped and this test would be
+            # reading the first one twice.
+            first_code, _, err = self.ship_with(
+                root, config, "--issue-label", "core", "--head-sha", "a" * 40, pr=7, run_id="one"
+            )
+            self.assertEqual(first_code, 0, err)
+            first = self.ledger_capture(root)["artifact"]
+            second_code, _, err = self.ship_with(
+                root, config, "--issue-label", "docs", "--head-sha", "b" * 40, pr=7, run_id="two"
+            )
+            self.assertEqual(second_code, 0, err)
+            second = self.ledger_capture(root)["artifact"]
+            self.assertEqual(len(list((Path(root) / "learnings").glob("*.md"))), 2)
+            self.assertNotEqual(first, second)
+            for path in (first, second):
+                self.assertTrue(Path(path).is_file(), path)
+            self.assertIn("core", Path(first).read_text(encoding="utf-8"))
+            self.assertIn("docs", Path(second).read_text(encoding="utf-8"))
 
     def test_an_empty_label_list_reads_back_as_a_list(self):
         """`labels:` with nothing under it is a **null**, not `[]`.

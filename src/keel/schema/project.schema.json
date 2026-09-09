@@ -894,7 +894,7 @@
                     "filename": {
                       "type": "string",
                       "minLength": 1,
-                      "description": "File name template, same placeholders. Defaults to {date}-pr{pr}-{slug}.md."
+                      "description": "File name template, same placeholders. Must contain {fingerprint}, or two lessons on one pull request overwrite each other. Defaults to {date}-pr{pr}-{slug}-{fingerprint}.md."
                     }
                   },
                   "description": "Where an applied capture writes its durable learning file. Omit it and keel records the marker and writes nothing, which is the behaviour before #1154."
