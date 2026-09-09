@@ -2339,7 +2339,7 @@ never one copy per agent (that would re-introduce file-copy drift):
 | `claude` | `.claude/commands/keel/<cmd>.md` | Claude Code, as native `/keel:<cmd>` |
 | `skills` | `.agents/skills/keel-<cmd>/SKILL.md` | **every non-Claude agent** (Codex, Antigravity, Gemini, …) via its skill discovery / chat-command wrapper — **one shared copy** |
 | `all` | both of the above | |
-| `plugin` | `commands/<cmd>.md` (repo root) | the committed [Claude Code plugin](plugin.md) — `/plugin install keel` exposes `/keel:<cmd>` |
+| `plugin` | `commands/<cmd>.md` (repo root) | the committed [agent plugin](plugin.md) — `/plugin install keel` exposes `/keel:<cmd>`. Installing it in each agent, with the update path: [install.md](install.md) |
 | `site` | `website/params.js` (repo root) | the static site's `window.KEEL_ARGS` — each command's description, `argument-hint` and flag chips |
 
 ```bash
@@ -2352,7 +2352,7 @@ keel install-adapter site            # regenerate the site's argument surface (w
 ```
 
 The `plugin` target is **repo-level**, not per-project: it regenerates the committed
-`commands/<cmd>.md` files that the Claude Code plugin ships (see [plugin.md](plugin.md)).
+`commands/<cmd>.md` files the agent plugin ships (see [plugin.md](plugin.md)).
 `make plugin` is the same command; a drift test fails if the committed files diverge from the
 `src/keel/adapters/commands/` source bodies.
 

@@ -1856,7 +1856,7 @@ keel install-adapter <agent> [--root DIR] [--force]
 
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
-| `agent` | `all` \| `plugin` \| `site` \| `claude` \| `skills` | required | Target surface: `claude` → `.claude/commands/keel/<cmd>.md`; `skills` → `.agents/skills/keel-<cmd>/SKILL.md` (one shared copy for all non-Claude agents); `all` → both; `plugin` → repo-root `commands/<cmd>.md` for the committed Claude Code plugin; `site` → repo-root `website/params.js`, the static site's `window.KEEL_ARGS`, rendered from the same adapter frontmatter. `plugin` and `site` are repo-level, so `all` writes neither. Unknown targets exit 1. |
+| `agent` | `all` \| `plugin` \| `site` \| `claude` \| `skills` | required | Target surface: `claude` → `.claude/commands/keel/<cmd>.md`; `skills` → `.agents/skills/keel-<cmd>/SKILL.md` (one shared copy for all non-Claude agents); `all` → both; `plugin` → repo-root `commands/<cmd>.md` for the committed agent plugin (installing it: [install.md](install.md)); `site` → repo-root `website/params.js`, the static site's `window.KEEL_ARGS`, rendered from the same adapter frontmatter. `plugin` and `site` are repo-level, so `all` writes neither. Unknown targets exit 1. |
 | `--root DIR` | path | `.` | Project root to install into. |
 | `--force` | flag | off | Overwrite existing adapter files (otherwise existing files are skipped, preserving local edits). |
 

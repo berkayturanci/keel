@@ -522,11 +522,13 @@ window.KEEL = {
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/onboarding.md",
     },
     {
-      group: "Start here", title: "Claude Code plugin", slug: "plugin",
-      summary: "Add keel's /keel:&lt;command&gt; workflows in Claude Code with no pip install — this repo is its own plugin marketplace.",
+      group: "Start here", title: "Agent plugin", slug: "plugin",
+      summary: "Add keel's /keel:&lt;command&gt; workflows to Claude Code, Codex, Antigravity or Cursor with no install-adapter step — this repo is its own plugin marketplace. The CLI is still required.",
       body:
-        "<p>The same <code>/keel:&lt;command&gt;</code> flows are packaged as a <b>Claude Code plugin</b>, so you can add them to a session without <code>pip install</code> — straight from this repo's built-in marketplace:</p>" +
-        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Claude Code plugin commands'><code>/plugin marketplace add berkayturanci/keel   <span class='cm'># register the keel marketplace</span>\n/plugin install keel                          <span class='cm'># install → /keel:ship, /keel:regression, …</span></code></pre>" +
+        "<p>The same <code>/keel:&lt;command&gt;</code> flows are packaged as an <b>agent plugin</b>, so an agent gets them straight from this repo's built-in marketplace with no <code>keel install-adapter</code> step. It does not replace the CLI — the command bodies shell out to <code>keel</code>. In Claude Code:</p>" +
+        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Claude Code plugin install commands'><code>/plugin marketplace add berkayturanci/keel   <span class='cm'># register the keel marketplace</span>\n/plugin install keel                          <span class='cm'># install → /keel:ship, /keel:regression, …</span></code></pre>" +
+        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Codex, Antigravity and Cursor plugin commands'><code>codex plugin marketplace add https://github.com/berkayturanci/keel\ncodex plugin add keel@keel\n\nagy plugin install https://github.com/berkayturanci/keel\nagy plugin enable keel\n\ncursor-agent plugin marketplace add https://github.com/berkayturanci/keel   <span class='cm'># then install it from Cursor's /plugins screen</span></code></pre>" +
+        "<p><b>Each has its own <i>update</i> path, and they are not the same shape</b>: for Antigravity, re-running the install <i>is</i> the update; for Codex it is <code>plugin marketplace upgrade</code> then <code>plugin add</code>; and in Claude Code <code>/plugin install</code> is a no-op on an installed plugin, so the command is <code>plugin update keel@keel</code>. All four, with what each route registers, are in <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/install.md'>docs/keel/install.md</a>.</p>" +
         "<p>The plugin ships the <b>same</b> project-neutral command bodies as <code>keel install-adapter</code> — they read every value from <code>.keel/project.yaml</code>, so a project still needs <code>keel setup</code> for the flows to act. The two distribution paths are additive.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/plugin.md",
     },

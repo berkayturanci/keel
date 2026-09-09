@@ -240,15 +240,152 @@ keel install-adapter skills   # one shared keel-<cmd> skill set under .agents/sk
 keel install-adapter all      # both surfaces
 ```
 
-### Claude Code plugin
+### Install into an agent
 
-The same `/keel:<command>` flows are also packaged as a **Claude Code plugin**, so you can
-add them to a session without `pip install` — straight from this repo's built-in marketplace:
+Everything above needs the **CLI on your machine** — [Install](#install) puts it
+there, and `install-adapter` writes files into a project with it. Installing keel
+as a **plugin** is how an agent gets the commands and skills: from this
+repository's own marketplace, with no `install-adapter` step. It is **not** a
+replacement for the CLI — the command bodies shell out to `keel`, so it still has
+to be on your `PATH`. Jump to the agent you use:
 
-```text
-/plugin marketplace add berkayturanci/keel   # register the keel marketplace (this repo)
-/plugin install keel                          # install the keel plugin → /keel:ship, /keel:regression, …
+[![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=flat-square)](#claude-code)
+[![Codex](https://img.shields.io/badge/Codex-install-000000?style=flat-square)](#codex)
+[![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=flat-square)](#antigravity)
+[![Cursor](https://img.shields.io/badge/Cursor-install-6E56CF?style=flat-square)](#cursor)
+
+Each badge jumps to that agent's box; open it for the commands. (A browser scrolls
+to a collapsed `<details>`; it does not expand one.)
+
+<a id="claude-code"></a>
+<details>
+<summary><b>Claude Code</b> — marketplace plugin</summary>
+
+**Install**
+
+```bash
+claude plugin marketplace add https://github.com/berkayturanci/keel
+claude plugin install keel@keel
 ```
+
+In a running session: `/plugin marketplace add berkayturanci/keel` then
+`/plugin install keel`.
+
+**Update**
+
+```bash
+claude plugin marketplace update keel
+claude plugin update keel@keel
+```
+
+`claude plugin install` is a **no-op** on an already-installed plugin, so it is
+not an upgrade path. `plugin update` needs the qualified `name@marketplace`: the
+bare name exits 1 with `Plugin "keel" not found`.
+
+</details>
+
+<a id="codex"></a>
+<details>
+<summary><b>Codex</b> — marketplace plugin</summary>
+
+**Install**
+
+```bash
+codex plugin marketplace add https://github.com/berkayturanci/keel
+codex plugin add keel@keel
+```
+
+**Update**
+
+```bash
+codex plugin marketplace upgrade
+codex plugin add keel@keel
+```
+
+`AGENTS.md` is read by Codex with no plugin at all, which is what makes the plain
+CLI route useful in a container.
+
+</details>
+
+<a id="antigravity"></a>
+<details>
+<summary><b>Antigravity</b> (<code>agy</code>) — git install</summary>
+
+**Install**
+
+```bash
+agy plugin install https://github.com/berkayturanci/keel
+agy plugin enable keel
+```
+
+`install` alone leaves it **disabled**.
+
+**Update**
+
+```bash
+agy plugin install https://github.com/berkayturanci/keel
+```
+
+Overwrites in place, keeps the enabled flag. agy discovers components by
+**root-directory convention only** — keel's root `skills/` and `commands/` — and
+`agy plugin list` reports what was imported rather than what is on disk, so
+re-run the install after a release that adds a component directory.
+
+</details>
+
+<a id="cursor"></a>
+<details>
+<summary><b>Cursor</b> — two routes, and they differ</summary>
+
+Cursor has **no CLI install command** — `cursor-agent plugin` exposes only
+`marketplace` — and the two routes do not register the same things.
+
+**Install — marketplace** (registers the `/keel:` commands)
+
+```bash
+cursor-agent plugin marketplace add https://github.com/berkayturanci/keel
+```
+
+Then install it from Cursor's `/plugins` screen.
+
+**Install — local checkout** (skills only, but its update is a `git pull`)
+
+```bash
+git clone --depth 1 https://github.com/berkayturanci/keel ~/.cursor/plugins/local/keel
+```
+
+Then restart Cursor. It is *reported* to list as `keel (Local)` under
+**Settings → Plugins** — a GUI claim, not confirmed from a CLI session.
+
+**Update**
+
+Whichever route you took — they are alternatives, not steps:
+
+```bash
+git -C ~/.cursor/plugins/local/keel pull                   # if you cloned
+```
+
+```bash
+cursor-agent plugin marketplace update berkayturanci/keel  # if you used the marketplace
+```
+
+Restart Cursor either way. The second re-indexes the **marketplace** — Cursor's
+own words — which is not the same as moving an installed plugin forward, and this
+session did not establish that it does. The two routes trade off: marketplace
+registers the commands, the local checkout has an update that is a `git pull`.
+
+A locally installed Cursor plugin registers **skills only — and here that is one
+skill.** `.cursor-plugin/plugin.json` names `./skills`, and the repository root's
+`skills/` holds `keel-onboard` alone; the 17 workflow skills live in
+`.agents/skills/`, which no plugin manifest points at. keel's 17
+`/keel:<command>` entries, where they appear in Cursor, are being read out of
+Claude Code's plugin cache — pinned to whichever version directory Claude kept.
+The marketplace route is the one that registers commands.
+
+</details>
+
+Full detail, including what each route actually registers:
+[`docs/keel/install.md`](docs/keel/install.md).
 
 The plugin ships the same project-neutral command bodies as `keel install-adapter`; the two
 flows are additive. The plugin's command files under `commands/` are generated from
@@ -290,6 +427,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/evidence.md`](docs/keel/evidence.md) — evidence chain, commit-SHA binding, and compliance auditability
 - [`docs/keel/models.md`](docs/keel/models.md) — supported AI models, providers, and delegate profiles (Claude, OpenAI, Gemini, OpenRouter, DeepSeek, Groq, Ollama, CLI tools)
 - [`docs/keel/parameter-reference.md`](docs/keel/parameter-reference.md) — exhaustive per-flag reference for every CLI command and the `/keel:ship` adapter arguments
+- [`docs/keel/install.md`](docs/keel/install.md) — installing keel **into an agent** (Claude Code, Codex, Antigravity, Cursor), with the update path for each
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
 - [`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) — the live run board (`dash`/`render`/`serve`, the per-run 2D/3D drawer, `--all` multi-project, the auto-stamped `keel activity` channel)
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions

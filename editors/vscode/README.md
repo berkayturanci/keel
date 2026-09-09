@@ -2,6 +2,11 @@
 
 Turn coding agents into work owners directly inside **VS Code** and **Cursor**.
 
+> **This is the editor extension, not the agent plugin.** It adds a status bar, a
+> run tracker and command-palette entries to the *editor*. It does not install
+> keel's skills or the `/keel:<command>` set into an agent — for that, including
+> Cursor, see [`docs/keel/install.md`](../../docs/keel/install.md).
+
 ## Features
 
 - 🟢 **Live Merge Window Status Bar**: Real-time indicator of the nocturnal no-merge window (`Window Open` / `Night Lock Active`).
