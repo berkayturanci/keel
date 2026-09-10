@@ -1091,6 +1091,45 @@ the `hops` walked to reach this round (`start`, `round-failed`, `provider-unavai
 `null` for a `kind: subagent` seat: a host subagent is run by the host agent and never
 reaches `keel delegate run`.
 
+## `keel loop brief --iteration K --brief FILE --gates FILE [--out FILE] [--title TEXT] [--max-iterations N] [--gate-output-max-bytes N] [--tdd] [--root DIR] [--project project.yaml] [--json]`
+
+Decide one s4 loop iteration's outcome and render the next iteration's brief — the pure
+half of the [s4 iteration loop](configuration.md#loop). `--brief` is the base implement
+brief (a file), `--gates` is the gate report the iteration produced: a `keel ship --json`
+document, a `{"gate_outcomes": [...]}` envelope, or a bare list of outcomes. The decision is
+a pure function of the iteration number, the outcomes and the policy:
+
+| status | when | exit |
+| --- | --- | --- |
+| `done` | every blocking gate passed and no blocking gate is unrun — the loop is over, proceed to s5 | 0 |
+| `continue` | a blocking gate failed (or was not run) and the budget allows another iteration — the next brief is rendered | 0 |
+| `budget-exhausted` | a blocking gate is still red after `max_iterations` — the issue is blocked | 1 |
+
+A soft gate (`on_fail: suggest` / `warn`) that failed does not hold the loop open: it never
+held a merge either. The rendered brief is the base brief **verbatim** plus one appended
+section, `## Gate output from iteration K`, carrying each gate's outcome and its output as
+quoted data (blockquoted, `#` escaped, comment opener defanged, trailer keys inline-coded,
+capped at `gate_output_max_bytes` with a visible marker), then the rules for the iteration:
+the gate run decides, one commit with subject `loop(K+1/N): <title>`, never weaken or delete
+a test, and the budget. Byte-stable for identical inputs.
+
+**The policy is required.** `knobs.loop` is the budget, so a config the command cannot read
+is a refusal (`status: no-config`, exit 1) rather than a loop nobody bounded; `--project` /
+`--root` name it, or `--max-iterations N` supplies an explicit budget for this run.
+`--tdd` says the run is in `implement_mode: tdd`, so the published `wraps` reads
+`implementation`.
+
+```bash
+keel ship .keel/project.yaml --root "$WORKTREE" --json --dry-run > "$SCRATCH/iter-1.json"
+keel loop brief --project .keel/project.yaml --root . --iteration 1 \
+  --brief "$SCRATCH/brief.md" --gates "$SCRATCH/iter-1.json" \
+  --title "$ISSUE_TITLE" --out "$SCRATCH/brief-2.md" --json
+```
+
+`--json` prints the whole document: `policy`, `decision` (`status`, `iteration`, `budget`,
+`blocking`, `next_iteration`, `blocked`), the per-gate summary, the rendered `brief` (or
+`null`), `prompt_file`, and `next_action`.
+
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 
 Read the current resumable checkpoint. The default path is
@@ -1885,7 +1924,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--loop] [--loop-iteration K=SHA:pass|fail]... [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -2155,6 +2194,28 @@ provider), which the closure comment renders as
 `Implement: TDD (tests <sha> by <implementer> → implementation <sha> by <implementer>)`.
 A run that does not use the profile records `implement_mode: null` and
 `implement_phases: []`, and its closure comment is unchanged.
+
+### `--loop` (bounded s4 iteration loop)
+
+`--loop` selects the **s4 iteration loop** for a single run; `knobs.loop` is the per-project
+spelling (see [configuration](configuration.md#loop)). It is a policy *around* the s4
+profile, not a third profile: after each implement iteration the orchestrator runs the
+command gates, green ends the loop, red starts the next iteration with the same brief plus
+the gate output, up to `max_iterations`. The gate run is the judge, never the implementer's
+text. Under `implement_mode: tdd` it wraps phase B only.
+
+```bash
+keel ship .keel/project.yaml --root . --loop --dry-run --json
+# contract.implement_mode.loop == {"enabled": true, "max_iterations": 3,
+#   "gate_output_max_bytes": 16384, "source": "flag:--loop", "wraps": "implement"}
+```
+
+The same block is rendered by `keel plan --loop`. There is no `--no-loop`, for the reason
+there is no `--no-tdd`. A `--live --append-ledger` run records `run_context.implement_loop`
+— the policy plus one entry per `--loop-iteration K=SHA:pass|fail` (the iteration's commit,
+whether the gates passed after it, and the implementer) — which the closure comment renders
+as `Implement: loop (k/N iterations: <sha> red → <sha> green)`. A run that uses neither the
+knob nor the flag records `implement_loop: null` and its closure comment is unchanged.
 
 ## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--json]`
 

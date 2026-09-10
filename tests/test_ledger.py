@@ -38,7 +38,7 @@ def _config(
     )
 
 
-def _record(*, config: cfg.ProjectConfig | None = None) -> dict:
+def _record(*, config: cfg.ProjectConfig | None = None, **extra) -> dict:
     outcome = SimpleNamespace(
         gate="build", ok=True, skipped=False, timed_out=False, error=None, findings=[]
     )
@@ -73,6 +73,7 @@ def _record(*, config: cfg.ProjectConfig | None = None) -> dict:
         implementer="codex:gpt-5",
         reviewer_agents=["reviewer-a:gpt-5", "reviewer-b:claude"],
         tester="tester:gpt-5-mini",
+        **extra,
     )
 
 
@@ -931,3 +932,29 @@ class TestGatesPassForHead(unittest.TestCase):
         matched, record = ledger.gates_pass_for_head(records, 42, "head-new")
         self.assertTrue(matched)
         self.assertEqual(record["run_id"], "RUN-1")
+
+
+class TestImplementLoopRecord(unittest.TestCase):
+    """``run_context.implement_loop`` (#1165): the policy and one entry per iteration."""
+
+    def test_a_run_without_a_loop_records_none(self):
+        self.assertIsNone(_record()["run_context"]["implement_loop"])
+
+    def test_a_looped_run_records_the_block_as_given(self):
+        block = {
+            "enabled": True,
+            "max_iterations": 3,
+            "wraps": "implement",
+            "source": "knobs.loop",
+            "iterations": [
+                {"iteration": 1, "commit": "a" * 40, "gates_ok": False, "implementer": "claude"},
+                {"iteration": 2, "commit": "b" * 40, "gates_ok": True, "implementer": "claude"},
+            ],
+        }
+        record = _record(implement_loop=block)
+        self.assertEqual(record["run_context"]["implement_loop"], block)
+        # A copy, not the caller's object.
+        self.assertIsNot(record["run_context"]["implement_loop"], block)
+
+    def test_a_non_mapping_block_degrades_to_none(self):
+        self.assertIsNone(_record(implement_loop="loop")["run_context"]["implement_loop"])

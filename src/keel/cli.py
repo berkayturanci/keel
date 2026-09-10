@@ -54,6 +54,7 @@ from . import (
     juryavail,
     ledger,
     lock,
+    loop,
     mergeverify,
     project_commands,
     providerprobe,
@@ -83,6 +84,14 @@ from .extensions import ExtensionError, load_extensions
 from .gates import GateOutcome, GateSpec
 from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S
 from .runner import command_gate_runner, run_argv
+
+#: Help text for the per-run ``--loop`` flag (#1165), shared by ``ship`` and ``plan``.
+_LOOP_FLAG_HELP = (
+    "run s4 as a bounded, gate-verified iteration loop for this run (knobs.loop): after "
+    "each implement iteration the command gates run; green ends the loop, red starts the "
+    "next iteration with the same brief plus the gate output, up to max_iterations. Wraps "
+    "tdd phase B under implement_mode: tdd"
+)
 
 #: Help text for the per-run ``--tdd`` flag, shared by ``ship``, ``plan`` and
 #: ``run-gates`` so the three cannot describe the same profile differently.
@@ -358,6 +367,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         delegate=args.delegate,
         review_delegates=tuple(args.review_delegate),
         tdd_override=args.tdd,
+        loop_override=getattr(args, "loop", False),
         # The panel-availability probe for the tier this contract is being built at
         # (#1066) — the same measurement `_review_assignment` hands the other six
         # surfaces, so `keel plan` cannot publish a panel the run it plans could not
@@ -1246,6 +1256,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         team_profile=args.team_profile,
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         tdd_override=args.tdd,
+        loop_override=getattr(args, "loop", False),
         # The preflight contract is built before s5 classifies, so its tier is
         # unresolved and no tier's policy can be the panel yet; this probes only when
         # a `review.default: jury` — or the `--team` profile's own `review` — makes the
@@ -1556,6 +1567,15 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                 getattr(args, "phase_implementer", None) or (),
                 default=args.implementer,
             ),
+        ),
+        # The s4 iteration loop (#1165): the policy this run resolved and the iterations
+        # the orchestrator reported, or `None` when it neither configured nor ran one.
+        implement_loop=loop.iteration_block(
+            loop.resolve(
+                config.knobs.loop, flag=getattr(args, "loop", False), implement_mode=mode.name
+            ),
+            getattr(args, "loop_iteration", None) or (),
+            implementer=args.implementer,
         ),
         consent_status=contract["operator_consent"]["status"],
         consent_scopes=contract["operator_consent"]["effective_approved_scope"],
@@ -2469,6 +2489,99 @@ def _cmd_fixloop_brief(args: argparse.Namespace) -> int:
         print(f"warning: {warning}", file=sys.stderr)
     # Fail closed: a spent budget or an unreachable ladder is not a round to dispatch.
     return 1 if document["blocked"] else 0
+
+
+def _loop_policy(args: argparse.Namespace) -> tuple[loop.LoopPolicy | None, str | None]:
+    """``(policy, error)`` — the loop policy for this run, or why there is none.
+
+    ``--max-iterations`` is an explicit budget and needs no config. Otherwise the project's
+    ``knobs.loop`` is the policy, and **an unreadable config is a refusal, not a default**,
+    for the reason ``keel fixloop brief`` refuses: a loop whose budget came from nowhere is
+    a loop nobody bounded.
+    """
+    if args.max_iterations is not None:
+        return (
+            loop.LoopPolicy(
+                True,
+                args.max_iterations,
+                args.gate_output_max_bytes or loop.DEFAULT_GATE_OUTPUT_MAX_BYTES,
+                "flag:--max-iterations",
+                loop.WRAPS_IMPLEMENTATION if args.tdd else loop.WRAPS_IMPLEMENT,
+            ),
+            None,
+        )
+    try:
+        config = cfg.load_config(_fixloop_config_path(args))
+    except FileNotFoundError:
+        return None, "no such file"
+    except cfg.ConfigError as exc:
+        return None, str(exc)
+    mode = tdd.resolve_mode(config.knobs.implement_mode, flag=args.tdd)
+    policy = loop.resolve(config.knobs.loop, flag=True, implement_mode=mode.name)
+    if args.gate_output_max_bytes:
+        policy = loop.LoopPolicy(
+            policy.enabled,
+            policy.max_iterations,
+            args.gate_output_max_bytes,
+            policy.source,
+            policy.wraps,
+        )
+    return policy, None
+
+
+def _cmd_loop_brief(args: argparse.Namespace) -> int:
+    """Decide iteration ``k``'s outcome and render iteration ``k+1``'s brief (#1165)."""
+    try:
+        base = Path(args.brief).read_text(encoding="utf-8")
+        gate_results = loop.parse_gates(json.loads(Path(args.gates).read_text(encoding="utf-8")))
+    except OSError as exc:
+        print(f"cannot read the loop inputs: {exc}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"--gates {args.gates} is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    except loop.LoopError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    policy, config_error = _loop_policy(args)
+    if policy is None:
+        document = {
+            "schema_version": loop.SCHEMA_VERSION,
+            "status": "no-config",
+            "path": _fixloop_config_path(args),
+            "reason": config_error,
+            "next_action": (
+                f"cannot read {_fixloop_config_path(args)} ({config_error}); knobs.loop is "
+                "the budget, so this is a refusal — name the project with --project/--root, "
+                "or pass an explicit --max-iterations"
+            ),
+        }
+        if args.json:
+            print(json.dumps(document, indent=2, sort_keys=True))
+        print(document["next_action"], file=sys.stderr)
+        return 1
+    # `--iteration` is a positive int by construction, so the decision cannot refuse it,
+    # and a brief is rendered only on `continue` — nothing in here raises.
+    document = loop.brief_document(
+        base,
+        iteration=args.iteration,
+        gates=gate_results,
+        policy=policy,
+        title=args.title,
+        prompt_file=args.out or "-",
+    )
+    if args.out and document["brief"] is not None:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(document["brief"], encoding="utf-8")
+    if args.json:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    elif document["brief"] is not None:
+        print(document["brief"], end="")
+    else:
+        print(document["next_action"])
+    # Fail closed: a spent budget is the blocked-issue path, not an iteration to run.
+    return 1 if document["decision"]["blocked"] else 0
 
 
 def _panel_payload(panel: jury.Panel) -> dict[str, Any]:
@@ -4711,6 +4824,25 @@ def _phase_implementer_arg(value: str) -> tuple[str, str]:
     return phase, label
 
 
+def _loop_iteration_arg(value: str) -> tuple[int, str, bool]:
+    """Parse ``--loop-iteration K=SHA:pass|fail`` (#1165)."""
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("--loop-iteration must use K=SHA:pass|fail")
+    number, _, rest = value.partition("=")
+    sha, _, verdict = rest.partition(":")
+    try:
+        iteration = int(number.strip())
+    except ValueError:
+        raise argparse.ArgumentTypeError("--loop-iteration K must be an integer") from None
+    if iteration < 1:
+        raise argparse.ArgumentTypeError("--loop-iteration K is 1-based")
+    if not sha.strip():
+        raise argparse.ArgumentTypeError("--loop-iteration requires the iteration's commit SHA")
+    if verdict.strip().lower() not in ("pass", "fail"):
+        raise argparse.ArgumentTypeError("--loop-iteration verdict must be pass or fail")
+    return iteration, sha.strip(), verdict.strip().lower() == "pass"
+
+
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:
     endpoint = "/".join(args)
     result = run_argv(["gh", "api", endpoint], cwd=cwd)
@@ -6386,6 +6518,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=_TDD_FLAG_HELP,
     )
     p_plan.add_argument(
+        "--loop",
+        action="store_true",
+        help=_LOOP_FLAG_HELP,
+    )
+    p_plan.add_argument(
         "--live",
         action="store_true",
         help="render a live preflight contract and fail if consent is missing",
@@ -7035,6 +7172,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_fb.add_argument("--json", action="store_true", help="emit the structured document")
     p_fb.set_defaults(func=_cmd_fixloop_brief)
+
+    p_loop = sub.add_parser(
+        "loop",
+        help="the bounded, gate-verified s4 iteration loop (#1165)",
+    )
+    p_loop_sub = p_loop.add_subparsers(dest="loop_command", metavar="<subcommand>")
+    p_lb = p_loop_sub.add_parser(
+        "brief", help="decide one iteration's outcome and render the next iteration's brief"
+    )
+    p_lb.add_argument(
+        "--iteration", type=_positive_int, required=True, help="the iteration that just ran"
+    )
+    p_lb.add_argument("--brief", required=True, help="the base implement brief (a file)")
+    p_lb.add_argument(
+        "--gates",
+        required=True,
+        help="that iteration's gate outcomes: a keel ship --json document, a "
+        "{gate_outcomes: [...]} envelope, or a bare list",
+    )
+    p_lb.add_argument(
+        "--title", default=None, help="issue title, for the iteration's commit subject"
+    )
+    p_lb.add_argument(
+        "--out", default=None, help="write the next brief here (a delegate prompt file)"
+    )
+    p_lb.add_argument(
+        "--max-iterations",
+        type=_positive_int,
+        default=None,
+        help="explicit budget for this run; without it knobs.loop is the policy",
+    )
+    p_lb.add_argument(
+        "--gate-output-max-bytes",
+        type=_positive_int,
+        default=None,
+        help="cap on the quoted gate output; defaults to knobs.loop.gate_output_max_bytes",
+    )
+    p_lb.add_argument("--tdd", action="store_true", help="the run is in implement_mode: tdd")
+    p_lb.add_argument("--root", default=".", help="project root")
+    p_lb.add_argument(
+        "--project", dest="path", default=None, help="project.yaml holding knobs.loop"
+    )
+    p_lb.add_argument("--json", action="store_true", help="emit the structured document")
+    p_lb.set_defaults(func=_cmd_loop_brief)
 
     p_attr = sub.add_parser(
         "attribution",
@@ -8645,6 +8826,15 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         "(tests|implementation); defaults to --implementer for both; repeatable",
     )
     parser.add_argument(
+        "--loop-iteration",
+        action="append",
+        default=[],
+        type=_loop_iteration_arg,
+        metavar="K=SHA:pass|fail",
+        help="one s4 loop iteration to record (#1165): its 1-based number, the commit it "
+        "ended with, and whether the gates passed after it; repeatable",
+    )
+    parser.add_argument(
         "--reviewer-agent",
         action="append",
         default=[],
@@ -8739,6 +8929,11 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         "--tdd",
         action="store_true",
         help=_TDD_FLAG_HELP,
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help=_LOOP_FLAG_HELP,
     )
     _add_wizard_arguments(parser)
     parser.add_argument("--json", action="store_true", help="emit structured JSON")

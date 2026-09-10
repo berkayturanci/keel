@@ -27,6 +27,7 @@ from . import (
     intake,
     ledger,
     lock,
+    loop,
     model,
     orchestrator,
     provenance,
@@ -240,6 +241,7 @@ def build_command_contract(
     review_delegates: tuple[str, ...] = (),
     host_agent: str = agents.HOST_DEFAULT,
     tdd_override: bool = False,
+    loop_override: bool = False,
     effort: str | None = None,
     team_profile: str | None = None,
     jury_availability: Mapping[str, Any] | None = None,
@@ -251,6 +253,11 @@ def build_command_contract(
     the same way ``compound`` is a workflow one — and is what selects the ``tdd-order`` gate
     in the contract's ``gates`` list."""
     implement_mode = tdd.resolve_mode(config.knobs.implement_mode, flag=tdd_override)
+    # The s4 iteration policy rides inside `implement_mode` (#1165): it is not a third
+    # profile but a policy around whichever profile is running, and `wraps` says which.
+    loop_policy = loop.resolve(
+        config.knobs.loop, flag=loop_override, implement_mode=implement_mode.name
+    )
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
     graph = command_graph(command, profile=profile)
     if not graph and (project_command := get_project_command(config, command)):
@@ -271,7 +278,7 @@ def build_command_contract(
         "no_mutations": dry_run,
         "project": project_as_dict(config),
         "workflow_profile": workflow_profile(command, profile=profile),
-        "implement_mode": implement_mode.as_dict(),
+        "implement_mode": {**implement_mode.as_dict(), "loop": loop_policy.as_dict()},
         "graph": graph,
         "backbone_plan": orchestrator.plan_as_dict(plan),
         "gates": [

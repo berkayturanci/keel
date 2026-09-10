@@ -279,7 +279,7 @@ keel plan <project.yaml> [--root DIR] [--command COMMAND] [--profile standard|co
           [--live] [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE]
           [--target TEXT] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL]
           [--review-comments inline|summary] [--reviewers 1|2|3]
-          [--jury] [--no-jury] [--jury-advisory] [--tdd] [--json]
+          [--jury] [--no-jury] [--jury-advisory] [--tdd] [--loop] [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
@@ -298,6 +298,7 @@ keel plan <project.yaml> [--root DIR] [--command COMMAND] [--profile standard|co
 | `--reviewers` | `1` \| `2` \| `3` | tier-derived | Reviewer count override in the contract. |
 | `--jury` / `--no-jury` / `--jury-advisory` | flags | off | Jury contract control (shared precedence). |
 | `--tdd` | flag | off | Resolve the test-first s4 profile for this contract (`knobs.implement_mode: tdd` is the per-project spelling), so the plan shows the `tdd-order` gate and `contract.implement_mode` says `tdd`. |
+| `--loop` | flag | off | Resolve the s4 iteration loop for this contract (`knobs.loop` is the per-project spelling), so `contract.implement_mode.loop` reads `enabled: true` with its budget and `wraps`. |
 | `--json` | flag | off | Emit `{contract, plan, capabilities, github_transport}`. |
 
 ### Details
@@ -1096,6 +1097,30 @@ keel fixloop brief --pr 1042 --findings panel-findings.json --round 2 \
 keel fixloop brief --findings findings.json --round 1 --unavailable codex --json
 ```
 
+## `keel loop`
+
+```text
+keel loop brief --iteration K --brief FILE --gates FILE [--out FILE] [--title TEXT]
+                [--max-iterations N] [--gate-output-max-bytes N] [--tdd]
+                [--root DIR] [--project project.yaml] [--json]
+```
+
+| flag | type | default | effect |
+| --- | --- | --- | --- |
+| `--iteration K` | positive int | required | The iteration that just ran (1-based). |
+| `--brief FILE` | path | required | The base implement brief; rendered verbatim at the top of the next brief. |
+| `--gates FILE` | path | required | That iteration's gate outcomes: a `keel ship --json` document, a `{"gate_outcomes": [...]}` envelope, or a bare list. |
+| `--out FILE` | path | none | Write the next brief here (the delegate prompt file); only on `continue`. |
+| `--title TEXT` | string | `<issue title>` | Issue title, for the iteration's commit subject `loop(K+1/N): <title>`. |
+| `--max-iterations N` | positive int | `knobs.loop` | Explicit budget for this run; without it the project's `knobs.loop` is the policy and an unreadable config is a refusal (`no-config`, exit 1). |
+| `--gate-output-max-bytes N` | positive int | `knobs.loop.gate_output_max_bytes` | Cap on the quoted gate output. |
+| `--tdd` | flag | off | The run is in `implement_mode: tdd`, so the loop wraps phase B (`wraps: implementation`). |
+| `--root DIR` / `--project PATH` | path | `.` / `<root>/.keel/project.yaml` | Where `knobs.loop` is read from. |
+| `--json` | flag | off | Emit `{policy, decision, gates, brief, prompt_file, next_action}`. |
+
+Exit `0` on `done` or `continue`, `1` on `budget-exhausted`, `no-config`, or an unreadable
+input. See [`knobs.loop`](configuration.md#loop).
+
 ## `keel checkpoint`
 
 Read or write the resumable checkpoint (the active resume point — not run history).
@@ -1650,7 +1675,8 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
           [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL]
           [--review-comments inline|summary] [--reviewers 1|2|3]
           [--jury] [--no-jury] [--jury-advisory]
-          [--profile standard|compound] [--compound] [--tdd]
+          [--profile standard|compound] [--compound] [--tdd] [--loop]
+          [--loop-iteration K=SHA:pass|fail]
           [--wizard] [--wizard-answer KEY=VALUE]... [--json]
 ```
 
@@ -1674,6 +1700,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--capture-reason TEXT` | string | `None` | Capture outcome reason. |
 | `--capture-artifact REF` | string (path or hash) | `None` | Durable capture artifact reference proving an `applied` capture; `keel capture-verify` reconcile flags `applied` records with no artifact. |
 | `--phase-implementer PHASE=LABEL` | repeatable | `--implementer` for both | Effective implementer for one `implement_mode: tdd` phase (`tests` \| `implementation`), recorded on that phase's `run_context.implement_phases` entry so a run where the two phases differed says so. |
+| `--loop-iteration K=SHA:pass\|fail` | repeatable | none | One s4 loop iteration to record on `run_context.implement_loop`: its 1-based number, the commit it ended with, and whether the gates passed after it. |
 | `--implementer LABEL` | string | `None` | Effective implementer codename or `vendor:model` label for attribution. Its vendor slug is what `keel evidence-verify` cross-checks against the PR's `agent:<vendor>` label when the gate is enforced (`attribution-label` finding on mismatch). |
 | `--reviewer-agent LABEL` | string, repeatable | none | Effective reviewer labels (order-preserving parallel array). |
 | `--tester LABEL` | string | `None` | Effective tester label. |
@@ -1687,6 +1714,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--profile` | `standard` \| `compound` | `standard` | Workflow profile in the contract. |
 | `--compound` | flag | off | Alias for `--profile compound`. |
 | `--tdd` | flag | off | Select the test-first s4 profile for this run (see [`knobs.implement_mode`](configuration.md#implement_mode)): the run plans the blocking `tdd-order` gate, publishes `contract.implement_mode`, and records `run_context.implement_mode` / `run_context.implement_phases` in the ledger. There is no `--no-tdd`. |
+| `--loop` | flag | off | Select the s4 iteration loop for this run (see [`knobs.loop`](configuration.md#loop)): `contract.implement_mode.loop` reads `enabled: true`, and the ledger records `run_context.implement_loop`. There is no `--no-loop`. |
 | `--wizard` | flag | off | Interactive pre-s1 picker for the implementer/gate/reviewer seats, built from the `keel doctor --providers` probe. Only providers the probe found usable are offered. **Only an answered question becomes a flag** — an unanswered one is left to `knobs.team` and the risk tier, so quick-start changes nothing. With no terminal and no `--wizard-answer` it is a logged no-op and the parsed flags stand. |
 | `--wizard-answer KEY=VALUE` | repeatable, or `;`-separated | none | Pre-answer wizard questions without prompting (`mode`, `implement.provider`, `implement.model`, `jury`, `review`, `review_comments` — a run asks only what a run flag can carry, so `gate.provider` and `implement.effort` are `keel init --wizard` keys and `review=jury` is refused). Supplying any key but `mode` implies `mode=customize`; pass `mode=quick-start` explicitly to take every default. A malformed pair, or one naming a choice the wizard does not offer, exits 1 before any gate runs. |
 | `--json` | flag | off | `{contract, result}` with `result.artifact_bodies` (canonical PR body, issue update, review/jury verdict templates, extension result, ship-provenance stamp). |

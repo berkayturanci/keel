@@ -517,9 +517,77 @@ class TestClosureContract(unittest.TestCase):
                 "jury_mode",
                 "jury_panel",
                 "implement_mode",
+                "implement_loop",
                 "consent",
             ],
         )
+
+
+class TestImplementLoopLine(unittest.TestCase):
+    """The ``Implement:`` line for a looped s4 run (#1165)."""
+
+    def test_a_run_without_a_loop_says_nothing(self):
+        record = _record()
+        record["run_context"]["implement_loop"] = None
+        self.assertNotIn("- **Implement:**", closure.render_closure_comment(record))
+
+    def test_a_looped_run_names_every_iteration_and_what_the_gates_said(self):
+        record = _record()
+        record["run_context"]["implement_loop"] = {
+            "enabled": True,
+            "max_iterations": 3,
+            "iterations": [
+                {"iteration": 1, "commit": "a" * 40, "gates_ok": False},
+                {"iteration": 2, "commit": "b" * 40, "gates_ok": True},
+            ],
+        }
+        rendered = closure.render_closure_comment(record)
+        self.assertIn(
+            "- **Implement:** loop (2/3 iterations: aaaaaaa red → bbbbbbb green)", rendered
+        )
+
+    def test_a_configured_loop_that_recorded_no_iteration_still_says_so(self):
+        record = _record()
+        record["run_context"]["implement_loop"] = {
+            "enabled": True,
+            "max_iterations": 2,
+            "iterations": [],
+        }
+        self.assertIn(
+            "- **Implement:** loop (0/2 iterations recorded)",
+            closure.render_closure_comment(record),
+        )
+
+    def test_a_disabled_loop_with_no_iterations_says_nothing(self):
+        record = _record()
+        record["run_context"]["implement_loop"] = {
+            "enabled": False,
+            "max_iterations": 3,
+            "iterations": [],
+        }
+        self.assertNotIn("- **Implement:**", closure.render_closure_comment(record))
+
+    def test_tdd_and_the_loop_share_one_line(self):
+        record = _record()
+        record["run_context"]["implement_mode"] = "tdd"
+        record["run_context"]["implement_phases"] = [
+            {"phase": "tests", "commit": "c" * 40},
+            {"phase": "implementation", "commit": "d" * 40},
+        ]
+        record["run_context"]["implement_loop"] = {
+            "enabled": True,
+            "max_iterations": "?",
+            "iterations": [{"iteration": 1, "commit": "d" * 40, "gates_ok": True}, "junk"],
+        }
+        rendered = closure.render_closure_comment(record)
+        self.assertIn(
+            "- **Implement:** TDD (tests ccccccc → implementation ddddddd) · "
+            "loop (1/? iterations: ddddddd green)",
+            rendered,
+        )
+
+    def test_the_contract_lists_the_field(self):
+        self.assertIn("implement_loop", closure.contract_as_dict()["run_context_fields"])
 
 
 if __name__ == "__main__":

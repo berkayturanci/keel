@@ -101,6 +101,15 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   recorded in the ledger, and `--phase-implementer tests=…` / `implementation=…` records a run
   where the two phases were written by different seats
   ([reference](docs/keel/configuration.md#implement_mode)).
+- **Iterate s4 with the gates as the judge** — `knobs.loop` (or `--loop` for a single run)
+  wraps the implement pass in a **bounded, gate-verified loop**: after each iteration the
+  command gates run; green ends the loop, red starts the next iteration with the same brief
+  plus the gate output, up to `max_iterations`. The completion criterion is the gate run,
+  never the implementer's own "done" — the Ralph loop's iteration without its judge or its
+  amnesia: every iteration is one commit the ledger names, published as
+  `contract.implement_mode.loop` and rendered in the closure comment. It composes with
+  `--tdd` (the loop wraps phase B only) and runs on every host keel runs in
+  ([reference](docs/keel/configuration.md#loop)).
 - **Know which providers this machine can actually dispatch to** — `keel doctor --providers [--json]`
   probes every provider keel supports (agent CLIs, hosted APIs, local Ollama models, delegate profiles
   and registry entries) and reports `available` / `reason` / transport / capabilities / model list for

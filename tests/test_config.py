@@ -1651,5 +1651,39 @@ class TestTeamKnob(unittest.TestCase):
         )
 
 
+class TestLoopKnob(unittest.TestCase):
+    """``knobs.loop`` (#1165): parsed as written, refused when malformed, hash-neutral unset."""
+
+    def test_unset_is_none_and_does_not_rotate_config_hash(self):
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        self.assertIsNone(base.knobs.loop)
+        data = copy.deepcopy(VALID)
+        data["knobs"]["loop"] = {"max_iterations": 2}
+        parsed = cfg.parse_config(data)
+        self.assertEqual(parsed.knobs.loop, {"max_iterations": 2})
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(parsed))
+
+    def test_an_empty_block_is_kept_as_a_declaration(self):
+        data = copy.deepcopy(VALID)
+        data["knobs"]["loop"] = {}
+        self.assertEqual(cfg.parse_config(data).knobs.loop, {})
+
+    def test_malformed_values_are_refused_where_the_config_is_read(self):
+        for bad_loop in (
+            {"max_iterations": 0},
+            {"max_iterations": 11},
+            {"max_iterations": "3"},
+            {"gate_output_max_bytes": 1},
+            {"enabled": "yes"},
+            {"nope": 1},
+            "loop",
+        ):
+            with self.subTest(loop=bad_loop):
+                bad = copy.deepcopy(VALID)
+                bad["knobs"]["loop"] = bad_loop
+                with self.assertRaises(cfg.ConfigError):
+                    cfg.parse_config(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

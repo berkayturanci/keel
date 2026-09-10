@@ -13956,5 +13956,316 @@ class TestTddOrderGateOnTheCli(unittest.TestCase):
         self.assertEqual(run_context["implement_phases"], [])
 
 
+class TestLoopCommand(unittest.TestCase):
+    """``--loop``, ``--loop-iteration`` and ``keel loop brief`` (#1165)."""
+
+    def setUp(self):
+        self.scratch = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (self.scratch / "brief.md").write_text("# Brief\n\nDo it.\n", encoding="utf-8")
+        self.red = self.scratch / "red.json"
+        self.red.write_text(
+            json.dumps(
+                {
+                    "result": {
+                        "gate_outcomes": [
+                            {
+                                "gate": "build",
+                                "ok": False,
+                                "findings": [{"message": "FAIL test_a"}],
+                            },
+                            {"gate": "lint", "ok": True, "findings": []},
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.green = self.scratch / "green.json"
+        self.green.write_text(json.dumps([{"gate": "build", "ok": True}]), encoding="utf-8")
+
+    def _config(self, loop_lines=""):
+        root = self.scratch / "proj"
+        (root / ".keel").mkdir(parents=True, exist_ok=True)
+        path = root / ".keel" / "project.yaml"
+        path.write_text(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n" + loop_lines,
+            encoding="utf-8",
+        )
+        return str(root), str(path)
+
+    def brief(self, *extra):
+        return run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "1",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(self.red),
+                *extra,
+            ]
+        )
+
+    def test_plan_and_ship_publish_the_loop_policy(self):
+        root, config = self._config()
+        rc, out, _ = run(["plan", config, "--root", root, "--command", "ship", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["contract"]["implement_mode"]["loop"]["enabled"], False)
+        rc, out, _ = run(["plan", config, "--root", root, "--command", "ship", "--json", "--loop"])
+        self.assertEqual(rc, 0)
+        loop_block = json.loads(out)["contract"]["implement_mode"]["loop"]
+        self.assertEqual((loop_block["enabled"], loop_block["source"]), (True, "flag:--loop"))
+        rc, out, _ = run(["ship", config, "--root", root, "--loop", "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["contract"]["implement_mode"]["loop"]["wraps"], "implement")
+        block = data["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertEqual((block["enabled"], block["iterations"]), (True, []))
+        self.assertIn(
+            "- **Implement:** loop (0/3 iterations recorded)", data["result"]["closure_comment"]
+        )
+
+    def test_the_knob_selects_the_loop_and_tdd_wraps_phase_b(self):
+        root, config = self._config("  implement_mode: tdd\n  loop:\n    max_iterations: 2\n")
+        rc, out, _ = run(["plan", config, "--root", root, "--command", "ship", "--json"])
+        self.assertEqual(rc, 0)
+        loop_block = json.loads(out)["contract"]["implement_mode"]["loop"]
+        self.assertEqual(loop_block["source"], "knobs.loop")
+        self.assertEqual(loop_block["max_iterations"], 2)
+        self.assertEqual(loop_block["wraps"], "implementation")
+
+    def test_ship_without_the_loop_records_none(self):
+        root, config = self._config()
+        rc, out, _ = run(["ship", config, "--root", root, "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertIsNone(data["result"]["run_ledger"]["record"]["run_context"]["implement_loop"])
+        self.assertNotIn("- **Implement:**", data["result"]["closure_comment"])
+
+    def test_ship_records_each_iteration(self):
+        root, config = self._config()
+        rc, out, _ = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--loop",
+                "--implementer",
+                "claude:opus",
+                "--loop-iteration",
+                "2=" + "b" * 40 + ":pass",
+                "--loop-iteration",
+                "1=" + "a" * 40 + ":FAIL",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        block = data["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertEqual(
+            [(i["iteration"], i["gates_ok"], i["implementer"]) for i in block["iterations"]],
+            [(1, False, "claude:opus"), (2, True, "claude:opus")],
+        )
+        self.assertIn(
+            "- **Implement:** loop (2/3 iterations: aaaaaaa red → bbbbbbb green)",
+            data["result"]["closure_comment"],
+        )
+
+    def _refuses(self, value):
+        root, config = self._config()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ctx:
+            cli.main(["ship", config, "--root", root, "--loop-iteration", value, "--dry-run"])
+        self.assertEqual(ctx.exception.code, 2)
+        return err.getvalue()
+
+    def test_loop_iteration_rejects_malformed_values(self):
+        self.assertIn("must use K=SHA:pass|fail", self._refuses("abc"))
+        self.assertIn("must be an integer", self._refuses("x=abc:pass"))
+        self.assertIn("is 1-based", self._refuses("0=abc:pass"))
+        self.assertIn("requires the iteration's commit SHA", self._refuses("1=:pass"))
+        self.assertIn("must be pass or fail", self._refuses("1=abc:maybe"))
+
+    def test_brief_continue_renders_and_writes_the_next_brief(self):
+        root, config = self._config("  loop:\n    max_iterations: 3\n")
+        out_file = self.scratch / "next.md"
+        rc, out, _ = self.brief(
+            "--project", config, "--root", root, "--title", "x: y", "--out", str(out_file), "--json"
+        )
+        self.assertEqual(rc, 0)
+        document = json.loads(out)
+        self.assertEqual(document["decision"]["status"], "continue")
+        self.assertEqual(document["prompt_file"], str(out_file))
+        text = out_file.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("# Brief\n\nDo it.\n"))
+        self.assertIn("     > FAIL test_a", text)
+        self.assertIn("subject `loop(2/3): x: y`", text)
+        rc, out, _ = self.brief("--project", config, "--root", root)
+        self.assertEqual(rc, 0)
+        self.assertIn("## Gate output from iteration 1", out)
+
+    def test_brief_done_and_exhausted(self):
+        root, config = self._config("  loop:\n    max_iterations: 2\n")
+        rc, out, _ = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "1",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(self.green),
+                "--project",
+                config,
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["decision"]["status"], "done")
+        rc, out, _ = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "1",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(self.green),
+                "--project",
+                config,
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("the loop is done", out)
+        rc, out, err = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "2",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(self.red),
+                "--project",
+                config,
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 1)
+        self.assertTrue(json.loads(out)["decision"]["blocked"])
+        rc, out, _ = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "2",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(self.red),
+                "--project",
+                config,
+            ]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("the issue is blocked", out)
+
+    def test_brief_without_a_readable_config_is_a_refusal(self):
+        rc, out, err = self.brief("--root", str(self.scratch / "nowhere"), "--json")
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["status"], "no-config")
+        self.assertIn("knobs.loop is the budget", err)
+        rc, _, err = self.brief("--root", str(self.scratch / "nowhere"))
+        self.assertEqual(rc, 1)
+        self.assertIn("no such file", err)
+        root, config = self._config("  loop: {max_iterations: 0}\n")
+        rc, _, err = self.brief("--project", config, "--root", root)
+        self.assertEqual(rc, 1)
+        self.assertIn("refusal", err)
+
+    def test_brief_with_an_explicit_budget_needs_no_config(self):
+        rc, out, _ = self.brief(
+            "--max-iterations", "5", "--gate-output-max-bytes", "64", "--tdd", "--json"
+        )
+        self.assertEqual(rc, 0)
+        document = json.loads(out)
+        self.assertEqual(document["policy"]["source"], "flag:--max-iterations")
+        self.assertEqual(document["policy"]["gate_output_max_bytes"], 64)
+        self.assertEqual(document["policy"]["wraps"], "implementation")
+        self.assertEqual(document["decision"]["budget"], 5)
+
+    def test_brief_gate_output_cap_can_be_overridden_against_a_config(self):
+        root, config = self._config("  loop:\n    max_iterations: 3\n")
+        rc, out, _ = self.brief(
+            "--project", config, "--root", root, "--gate-output-max-bytes", "300", "--tdd", "--json"
+        )
+        self.assertEqual(rc, 0)
+        document = json.loads(out)
+        self.assertEqual(document["policy"]["gate_output_max_bytes"], 300)
+        self.assertEqual(document["policy"]["wraps"], "implementation")
+
+    def test_brief_refuses_unreadable_inputs(self):
+        rc, _, err = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "1",
+                "--brief",
+                str(self.scratch / "missing.md"),
+                "--gates",
+                str(self.red),
+                "--max-iterations",
+                "3",
+            ]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot read the loop inputs", err)
+        bad = self.scratch / "bad.json"
+        bad.write_text("{", encoding="utf-8")
+        rc, _, err = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "1",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(bad),
+                "--max-iterations",
+                "3",
+            ]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("not valid JSON", err)
+        shape = self.scratch / "shape.json"
+        shape.write_text(json.dumps({"gate_outcomes": "x"}), encoding="utf-8")
+        rc, _, err = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "1",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(shape),
+                "--max-iterations",
+                "3",
+            ]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("gate report must be", err)
+
+
 if __name__ == "__main__":
     unittest.main()
