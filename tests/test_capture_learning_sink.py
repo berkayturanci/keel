@@ -273,6 +273,13 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
             ({"path": "foo/../../outside"}, False),
             # ...and a `..` that does not actually escape still is inside.
             ({"path": "a/../learnings"}, True),
+            # **Anchored on any platform, not this one.** `C:/knowledge` is not
+            # absolute to POSIX and `/srv/knowledge` is not absolute to Windows, so
+            # each host called the other's absolute path in-repo and would have
+            # committed a `C:` directory into the repository.
+            ({"path": "C:/knowledge/learnings"}, False),
+            ({"path": "C:\\knowledge"}, False),
+            ({"path": "//server/share/knowledge"}, False),
         ):
             with self.subTest(sink=sink):
                 self.assertIs(self.destination(sink)["commit_required"], expected)

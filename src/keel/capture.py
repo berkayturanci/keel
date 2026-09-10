@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+# `workspace` imports nothing from this package's config layer, so naming it here
+# keeps the import graph acyclic — see `_HasPolicyPack` for why that matters.
+from . import workspace
+
 
 class _HasPolicyPack(Protocol):
     """Duck type for a loaded ``ProjectConfig``.
@@ -974,13 +978,20 @@ def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
     path = str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH)
     if path.startswith("~"):
         return False
+    # **Anchored on *any* platform, not this one.** `Path("C:/knowledge").is_absolute()`
+    # is False on POSIX and `Path("/srv/knowledge").is_absolute()` is False on
+    # Windows, so each host called the other's absolute path in-repo and would have
+    # told the adapter to `git add` it — committing a `C:` directory into the
+    # repository, or reaching outside it. A keel config is the same text wherever it
+    # is read; `workspace.is_root_anchored` is the question already asked that way.
+    if workspace.is_root_anchored(path):
+        return False
     # **Normalised, because `../learnings` is relative and still outside.** It is
     # the documented "folder next to the checkout" shape without the leading `~`,
     # and reported as in-repo it would send the adapter to `git add` a path git
     # refuses — leaving the file off `base_branch` and the next worktree empty,
     # which is the failure this flag exists to prevent, arriving through the flag.
-    normalised = Path(os.path.normpath(path))
-    return not normalised.is_absolute() and normalised.parts[:1] != ("..",)
+    return Path(os.path.normpath(path)).parts[:1] != ("..",)
 
 
 def learning_sink_errors(sink: Any) -> list[str]:
@@ -1067,7 +1078,7 @@ def _relative_stays_relative(template: str, values: dict[str, str]) -> str:
     path at the filesystem root.
     """
     expanded = _expand(template, values)
-    if template.startswith("~") or Path(template).is_absolute():
+    if template.startswith("~") or workspace.is_root_anchored(template):
         return expanded
     return expanded.lstrip("/\\") or DEFAULT_LEARNING_SINK_PATH
 
