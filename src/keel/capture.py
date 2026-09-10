@@ -1401,7 +1401,13 @@ def duplicate_learning_artifact(
     """
     if capture_status != "applied":
         return None
-    if learning_sink_policy(config) is None:
+    # **The hook, not just the sink block.** `learning_decision` answers
+    # `duplicate` on a fingerprint match *before* it reads the enabled flags, so
+    # `duplicate` reaches here under a `capture.enabled: false` or `marker-only`
+    # project — and the caller treats a returned path as permission to replace the
+    # operator's own `--capture-artifact` with a stale sink file, for a project
+    # whose contract says `extension-owned`. Fifth reader of the same question.
+    if not capture_hook_enabled(config) or learning_sink_policy(config) is None:
         return None
     if not isinstance(decision, dict) or decision.get("decision") != "duplicate":
         return None

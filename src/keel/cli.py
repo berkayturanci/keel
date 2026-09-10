@@ -9109,7 +9109,12 @@ def _recordable_artifact(target: Path, root: str) -> str:
     absolute = Path(os.path.normpath(target.absolute()))
     base = Path(os.path.normpath(Path(root).absolute()))
     try:
-        return str(absolute.relative_to(base))
+        # **`as_posix()`, not `str()`.** A relative record is written on one
+        # machine and read on another — that is the whole reason it is relative —
+        # and `str(PurePath)` gives `\` on Windows, which a POSIX reader takes as
+        # one filename rather than three components. The tree already uses
+        # `as_posix()` for exactly this in `install.py`.
+        return absolute.relative_to(base).as_posix()
     except ValueError:
         return str(absolute)
 

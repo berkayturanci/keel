@@ -588,6 +588,46 @@ class ADuplicatePointsAtTheFileItDuplicates(unittest.TestCase):
         self.assertIsNone(self.artifact(None, self.records("/k/one.md")))
         self.assertIsNone(self.artifact({"decision": "duplicate"}, self.records("/k/one.md")))
 
+    def test_a_project_that_runs_no_hook_borrows_nothing(self):
+        """`learning_decision` answers `duplicate` *before* it reads the flags.
+
+        So `duplicate` reaches here under a `capture.enabled: false` or
+        `marker-only` project, and the caller treats a returned path as
+        permission to replace the operator's own `--capture-artifact` with a
+        stale sink file — for a project whose contract says `extension-owned`.
+        """
+        for capture_policy in (
+            {"enabled": False, "mode": "extension"},
+            {"enabled": True, "mode": "marker-only"},
+        ):
+            with self.subTest(policy=capture_policy):
+                config = cfg.ProjectConfig(
+                    extends="keel",
+                    core_version="^0.1",
+                    knobs={},
+                    owner="berkayturanci",
+                    repo="keel",
+                    base_branch="main",
+                    policy_pack={
+                        "capture": {
+                            **capture_policy,
+                            "learning": {
+                                "enabled": True,
+                                "mode": "create-learning",
+                                "sink": {"kind": "markdown-dir"},
+                            },
+                        }
+                    },
+                )
+                self.assertIsNone(
+                    capture.duplicate_learning_artifact(
+                        config=config,
+                        decision=self.DUPLICATE,
+                        capture_status="applied",
+                        existing_records=self.records("/k/one.md"),
+                    )
+                )
+
     def test_a_project_with_no_sink_borrows_nothing(self):
         """No sink is no feature. A run that never wrote learnings does not start
         inheriting an operator's hand-passed `--capture-artifact`."""
@@ -1938,6 +1978,62 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                 os.chdir(here)
             self.assertEqual(self.ship(root_path, config, pr=2)[0], 0)
             self.assertEqual(self.ledger_capture(root_path)["artifact"], first)
+
+    def test_an_in_repo_artifact_is_recorded_with_forward_slashes(self):
+        """A relative record is written on one machine and read on another.
+
+        That is the whole reason it is relative — and `str(PurePath)` gives `\\`
+        on Windows, which a POSIX reader takes as one filename rather than three
+        components, so the duplicate reuse finds nothing and records `applied`
+        with no artifact. Same-OS tests hide it because they read back the
+        separators they just wrote.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            config = write_config(
+                Path(root),
+                [
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                ],
+            )
+            self.assertEqual(self.ship(root, config)[0], 0)
+            recorded = self.ledger_capture(root)["artifact"]
+            self.assertNotIn("\\", recorded)
+            self.assertEqual(len(recorded.split("/")), 3, recorded)
+            self.assertTrue((Path(root) / recorded).is_file())
+
+    def test_the_recorded_relative_path_is_built_posix_first(self):
+        """Asserted in the source, because POSIX cannot tell the two apart.
+
+        `str()` and `as_posix()` are identical on this host, so the end-to-end
+        test above only bites on the Windows legs. This one bites everywhere. The
+        needle is built from parts: a guard that contains its own needle passes by
+        reading itself.
+        """
+        import ast
+
+        source = (Path(__file__).resolve().parents[1] / "src" / "keel" / "cli.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(source)
+        function = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_recordable" + "_artifact"
+        )
+        wanted = "as" + "_posix"
+        calls = {
+            node.func.attr
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        self.assertIn(wanted, calls)
 
     def test_a_shared_folder_outside_the_checkout_is_recorded_absolute(self):
         """Nothing else can name it, so the record does.
