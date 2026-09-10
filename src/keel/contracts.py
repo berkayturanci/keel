@@ -992,6 +992,11 @@ def ship_result_as_dict(
                 "ok": outcome.ok,
                 "skipped": outcome.skipped,
                 "timed_out": outcome.timed_out,
+                # The gate's severity and whether it ran at all (#1165): `keel loop brief`
+                # reads this document, and without them a failing *soft* gate would hold
+                # the loop open and an unrun blocking gate would read as a pass.
+                "on_fail": outcome.on_fail,
+                "not_run": outcome.not_run,
                 "error": outcome.error,
                 "findings": [_finding_as_dict(finding) for finding in outcome.findings],
             }

@@ -14212,6 +14212,74 @@ class TestLoopCommand(unittest.TestCase):
         self.assertEqual(document["policy"]["gate_output_max_bytes"], 300)
         self.assertEqual(document["policy"]["wraps"], "implementation")
 
+    def test_a_ship_report_carries_the_severity_the_loop_reads(self):
+        """The documented input path: `keel ship --json` -> `keel loop brief --gates`.
+
+        Without `on_fail` and `not_run` on each outcome a failing *soft* gate would hold
+        the loop open and an unrun blocking gate would read as a pass, so the report
+        has to carry them for the loop's decision to be the one the docs describe.
+        """
+        root, config = self._config("  loop:\n    max_iterations: 3\n")
+        Path(config).write_text(
+            Path(config)
+            .read_text(encoding="utf-8")
+            .replace("build_gate_cmd: 'true'", "build_gate_cmd: 'false'"),
+            encoding="utf-8",
+        )
+        rc, out, _ = run(["ship", config, "--root", root, "--dry-run", "--json"])
+        # A red build blocks the assessment — exit 1 — which is exactly the report the
+        # loop is handed: the run is not done, and the document says why.
+        self.assertEqual(rc, 1)
+        outcome = json.loads(out)["result"]["gate_outcomes"][0]
+        self.assertEqual((outcome["gate"], outcome["ok"]), ("build", False))
+        self.assertEqual((outcome["on_fail"], outcome["not_run"]), ("block", False))
+        report = self.scratch / "ship.json"
+        report.write_text(out, encoding="utf-8")
+        rc, out, _ = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "1",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(report),
+                "--project",
+                config,
+                "--root",
+                root,
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        document = json.loads(out)
+        self.assertEqual(document["decision"]["status"], "continue")
+        self.assertEqual(document["decision"]["blocking"], ["build"])
+        soft = self.scratch / "soft.json"
+        soft.write_text(
+            json.dumps([{"gate": "bandit", "ok": False, "on_fail": "suggest"}]), encoding="utf-8"
+        )
+        rc, out, _ = run(
+            [
+                "loop",
+                "brief",
+                "--iteration",
+                "1",
+                "--brief",
+                str(self.scratch / "brief.md"),
+                "--gates",
+                str(soft),
+                "--project",
+                config,
+                "--root",
+                root,
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["decision"]["status"], "done")
+
     def test_brief_refuses_unreadable_inputs(self):
         rc, _, err = run(
             [
