@@ -1894,6 +1894,39 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(recorded, str(written[0]))
             self.assertTrue(Path(recorded).is_absolute())
 
+    def test_a_windows_absolute_sink_is_not_written_inside_this_checkout(self):
+        """The writer has to ask the same question the predicate does.
+
+        `commit_required` reads `C:/knowledge/learnings` as out-of-repo on every
+        runner — but the writer joined it under `--root` on this host, producing a
+        `C:` directory *inside* the working tree that the adapter is told not to
+        commit, and a ledger path that is relative here and absolute on Windows.
+        Two halves of one question, disagreeing.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root).resolve()
+            config = write_config(
+                Path(root),
+                [
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                    "        path: 'C:/knowledge/learnings'",
+                ],
+            )
+            code, _, err = self.ship(root, config)
+            self.assertEqual(code, 0, err)
+            # Nothing anchored elsewhere may appear under the checkout, and the
+            # capture is downgraded rather than written somewhere wrong.
+            self.assertFalse((root_path / "C:").exists())
+            block = self.ledger_capture(root)
+            self.assertIn(block["status"], (None, "skipped"))
+
     def test_the_next_worktree_finds_the_lesson_the_last_one_wrote(self):
         """The file is committed, so the same lesson lives at a different path.
 

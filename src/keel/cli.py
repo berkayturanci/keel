@@ -9031,7 +9031,20 @@ def _write_learning_sink(
     # the same join then prefixed the root twice (`repo/repo/learnings/…`), found
     # nothing, and recorded `applied` with no artifact — the finding this whole
     # reuse exists to close.
-    target = (_resolve_under_root(plan["directory"], args.root) / plan["filename"]).absolute()
+    directory = _resolve_under_root(plan["directory"], args.root)
+    if workspace.is_root_anchored(plan["directory"]) and not directory.is_absolute():
+        # Anchored somewhere this host cannot write: `C:/knowledge` is a *relative*
+        # path to POSIX, so resolving it here would put a `C:` directory next to
+        # whatever the process happened to be standing in. Fail-soft, as an
+        # unwritable directory does — the machine, not the config, is what cannot
+        # honour it.
+        return {
+            "ok": False,
+            "path": None,
+            "error": f"sink path {plan['directory']!r} is not writable on this platform",
+            "reused": False,
+        }
+    target = directory / plan["filename"]
     # A second pass over the finished document. Redaction before durability is the
     # capture contract's own rule — `contract_as_dict` declares
     # `durable_artifacts.requires_redaction` and the ledger sanitizes every record
@@ -9117,8 +9130,13 @@ def _resolve_under_root(recorded: str, root: str) -> Path:
     find nothing and record `applied` with no artifact, which is the finding this
     reuse exists to prevent.
     """
+    # `workspace.is_root_anchored`, not this host's `is_absolute()`: the predicate
+    # that decides whether the sink is in-repo already asks it that way, and the
+    # writer asking differently is the two halves of one question disagreeing —
+    # `C:/knowledge/learnings` was joined under the root on macOS, producing a `C:`
+    # directory *inside* the working tree that the adapter is told not to commit.
     path = Path(recorded).expanduser()
-    return path if path.is_absolute() else Path(root) / path
+    return path if workspace.is_root_anchored(str(path)) else Path(root) / path
 
 
 def _resolved_capture_status(value: str | None) -> str | None:
