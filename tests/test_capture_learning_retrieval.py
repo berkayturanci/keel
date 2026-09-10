@@ -252,9 +252,20 @@ class ADeclaredPathOutranksARepeatedWord(unittest.TestCase):
             "declares.md",
             learning_document(title="A lesson", changed_files=("src/keel/ledger.py",)),
         )
-        self.write("repeats.md", "# ledger\n\n" + "ledger ledger ledger ledger ledger\n")
-        hits = self.retrieve("ledger", changed_files=["src/keel/ledger.py"])
+        self.write(
+            "repeats.md",
+            "# ledger duplicate marker\n\n" + "ledger duplicate marker blocks merge\n" * 5,
+        )
+        # Several words, which is what `keel ship` builds from a title plus its
+        # declared files. On one word the addition happened to put the declaring
+        # file first; on five, `min(count, 5)` per token compounded and the
+        # coincidence led the brief.
+        hits = self.retrieve(
+            "ledger duplicate marker blocks merge", changed_files=["src/keel/ledger.py"]
+        )
         self.assertEqual([hit["file"] for hit in hits], ["declares.md", "repeats.md"])
+        self.assertGreater(hits[1]["score"], hits[0]["score"])
+        self.assertEqual(hits[0]["matched_files"], ["src/keel/ledger.py"])
 
     def test_a_path_is_matched_however_it_is_spelled(self):
         self.write(
@@ -291,16 +302,18 @@ class ADeclaredPathOutranksARepeatedWord(unittest.TestCase):
     def test_a_handwritten_file_is_identified_by_its_content(self):
         """No front matter is no fingerprint, and a hit still has to be nameable."""
         self.write("plain.md", "# Homebrew taps lag\n")
-        first = self.retrieve("homebrew")[0]["fingerprint"]
+        first = self.retrieve("homebrew taps lag")[0]["fingerprint"]
         self.assertEqual(len(first), 64)
         self.write("plain.md", "# Homebrew taps lag\n\nplus a line\n")
-        self.assertNotEqual(self.retrieve("homebrew")[0]["fingerprint"], first)
+        self.assertNotEqual(self.retrieve("homebrew taps lag")[0]["fingerprint"], first)
 
     def test_a_directory_of_other_files_is_skipped(self):
         (self.dir / "sub").mkdir()
-        self.write("notes.rst", "ledger ledger ledger\n")
-        self.write("notes.md", "ledger ledger ledger\n")
-        self.assertEqual([hit["file"] for hit in self.retrieve("ledger")], ["notes.md"])
+        self.write("notes.rst", "ledger duplicate marker\n")
+        self.write("notes.md", "ledger duplicate marker\n")
+        self.assertEqual(
+            [hit["file"] for hit in self.retrieve("ledger duplicate marker")], ["notes.md"]
+        )
 
 
 class TheSectionIsRenderedOnceForBothBriefs(unittest.TestCase):
@@ -503,6 +516,124 @@ class ShipRetrievesThroughTheCliPath(unittest.TestCase):
                 ],
                 ["ledger.md"],
             )
+
+    def test_a_title_sharing_a_word_with_the_scaffolding_matches_nothing(self):
+        """Every document this writer produces carries the same three headings.
+
+        Counted as prose they are a match every file shares: an issue titled
+        *"What changed in the merge window"* scored `what` and `changed` against
+        all three headings of all three learnings and cleared the floor on every
+        one, so the implement brief opened with three unrelated lessons and the
+        ledger recorded all three as surfaced.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.learnings(root)
+            config = self.project(root, ["      source: 'learnings'"])
+            code, out, err = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    str(root),
+                    "--json",
+                    "--issue-title",
+                    "What changed in the merge window",
+                    "--issue-body",
+                    self.BODY,
+                ]
+            )
+            self.assertEqual(code, 0, err)
+            contract = self.contract(out)
+            self.assertEqual(contract["learnings"]["hits"], [])
+            self.assertEqual(contract["learnings"]["section"], "")
+            record = json.loads(out)["result"]["run_ledger"]["record"]
+            self.assertEqual(record["capture"]["retrieved"], [])
+
+    def test_a_handwritten_lesson_reaches_the_brief(self):
+        """The rule the reader promises has to be the rule the CLI applies.
+
+        The ship path passed its own floor while the unit test used the function
+        default, so `test_plain_markdown_still_ranks` passed against a threshold
+        no real run used — and a person-written note that is not named after its
+        own words never reached a brief. One rule now, and this asserts it where
+        the difference showed.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "learnings"
+            target.mkdir()
+            (target / "plain.md").write_text(
+                "# Homebrew taps lag a release\n\nThe checksum is a second commit.\n",
+                encoding="utf-8",
+            )
+            (target / "unrelated.md").write_text(
+                learning_document(title="A copy button copied half of what it showed"),
+                encoding="utf-8",
+            )
+            config = self.project(root, ["      source: 'learnings'"])
+            code, out, err = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    str(root),
+                    "--json",
+                    "--issue-title",
+                    "homebrew tap checksum is a second commit",
+                    "--issue-body",
+                    self.BODY,
+                ]
+            )
+            self.assertEqual(code, 0, err)
+            block = self.contract(out)["learnings"]
+            self.assertEqual([hit["file"] for hit in block["hits"]], ["plain.md"])
+
+    def test_a_declared_path_leads_the_brief_however_wordy_the_rival(self):
+        """Added together, prose compounded past the declaration bonus.
+
+        `min(count, 5)` per query token accumulates and the exact-match bonus does
+        not, so on the multi-word query `keel ship` actually builds, a file
+        repeating those words outranked the one that *declared* the path the task
+        touches — the ranking this whole scheme exists to get right. Declared
+        matches are the first sort key now; text only orders ties.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "learnings"
+            target.mkdir()
+            (target / "declares.md").write_text(
+                learning_document(
+                    title="An unrelated lesson",
+                    fingerprint="fp-declares",
+                    changed_files=("src/keel/ledger.py",),
+                ),
+                encoding="utf-8",
+            )
+            (target / "repeats.md").write_text(
+                "# ledger duplicate marker\n\n" + "ledger duplicate marker blocks the merge\n" * 6,
+                encoding="utf-8",
+            )
+            config = self.project(root, ["      source: 'learnings'"])
+            code, out, err = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    str(root),
+                    "--json",
+                    "--issue-title",
+                    "ledger: a duplicate marker blocks the merge",
+                    "--declared-file",
+                    "src/keel/ledger.py",
+                    "--issue-body",
+                    self.BODY,
+                ]
+            )
+            self.assertEqual(code, 0, err)
+            hits = self.contract(out)["learnings"]["hits"]
+            self.assertEqual([hit["file"] for hit in hits], ["declares.md", "repeats.md"])
+            self.assertGreater(hits[1]["score"], hits[0]["score"])
 
     def test_the_ledger_records_what_was_surfaced(self):
         with tempfile.TemporaryDirectory() as tmp:

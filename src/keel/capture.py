@@ -1282,17 +1282,17 @@ def render_learning_document(
         "",
         _one_line(description or ""),
         "",
-        "## What changed",
+        LEARNING_SECTION_HEADINGS[0],
         "",
-        what_changed or "_Not recorded._",
+        what_changed or LEARNING_EMPTY_SECTION,
         "",
-        "## What we learned",
+        LEARNING_SECTION_HEADINGS[1],
         "",
-        what_we_learned or "_Not recorded._",
+        what_we_learned or LEARNING_EMPTY_SECTION,
         "",
-        "## What to do differently next time",
+        LEARNING_SECTION_HEADINGS[2],
         "",
-        do_differently or "_Not recorded._",
+        do_differently or LEARNING_EMPTY_SECTION,
         "",
     ]
     return "\n".join(front + body)
@@ -1544,12 +1544,26 @@ LEARNING_RETRIEVAL_SCHEMA_VERSION = "keel.learning-retrieval.v1"
 LEARNING_LABEL_MATCH_SCORE = 6
 LEARNING_FILE_MATCH_SCORE = 8
 
-#: The weakest text match a retrieval accepts. One passing mention of one word is a
-#: coincidence — "keel" appears in every learning this repository writes — and at
-#: `min_score=1` every document matched every task. Four is a word said repeatedly, a
-#: filename that names the subject, or two words at once. An exact front-matter match
-#: clears it on its own, which is the ordering this whole scheme is for.
-LEARNING_TEXT_MATCH_FLOOR = 4
+#: keel's own scaffolding, emitted into **every** document this writer produces. The
+#: scorer subtracts it before counting words: an issue titled *"What changed in the
+#: merge window"* otherwise scored `what` and `changed` against all three headings of
+#: every learning in the directory and cleared the floor on all of them, so three
+#: unrelated lessons opened the brief. Named here rather than spelled twice, so the
+#: writer and the scorer cannot drift.
+LEARNING_SECTION_HEADINGS = (
+    "## What changed",
+    "## What we learned",
+    "## What to do differently next time",
+)
+LEARNING_EMPTY_SECTION = "_Not recorded._"
+
+#: How many **distinct** query words a file must contain to be a text match at all.
+#: One is a coincidence — "keel" appears in every learning this repository writes —
+#: and repetition does not make it less of one, which a point floor could not say: at
+#: four points a single word said four times passed, and a genuine three-word match
+#: in a short handwritten note did not. An exact front-matter match is admitted on
+#: its own, whatever the text says.
+LEARNING_MIN_DISTINCT_TOKENS = 2
 
 #: Words too common to distinguish one learning from another.
 _LEARNING_STOPWORDS = frozenset(
@@ -1682,15 +1696,40 @@ def _learning_tokens(query_text: str) -> set[str]:
     }
 
 
-def _text_score(content_lower: str, filename_lower: str, tokens: set[str]) -> int:
+def _lesson_text(body: str) -> str:
+    """The document's own words, lowercased, with keel's scaffolding removed.
+
+    Every document this writer produces carries the same three headings and, for an
+    unfilled section, the same placeholder. Counted as prose they are a match every
+    file shares, so a query word landing in one of them matched the whole directory.
+    """
+    text = body.lower()
+    for scaffold in (*LEARNING_SECTION_HEADINGS, LEARNING_EMPTY_SECTION):
+        text = text.replace(scaffold.lower(), " ")
+    return text
+
+
+def _text_score(content_lower: str, filename_lower: str, tokens: set[str]) -> tuple[int, int]:
+    """`(points, distinct tokens matched)` for one file.
+
+    The two answer different questions and only one of them decides admission.
+    Points order the results; **distinct tokens** say whether this is a match at
+    all, because repetition is not evidence — a note saying `ledger` twelve times
+    matches a query about ledgers exactly as much as one saying it twice.
+    """
     score = 0
+    distinct = 0
     for token in tokens:
+        hit = False
         if token in filename_lower:
             score += 3
+            hit = True
         count = content_lower.count(token)
         if count > 0:
             score += min(count, 5)
-    return score
+            hit = True
+        distinct += hit
+    return score, distinct
 
 
 def _exact_matches(content: str, labels: set[str], changed_files: set[str]) -> tuple[list, list]:
@@ -1809,6 +1848,7 @@ def retrieve_relevant_learnings(
     *,
     max_results: int = 3,
     min_score: int = 1,
+    min_distinct_tokens: int = LEARNING_MIN_DISTINCT_TOKENS,
     labels: list[str] | tuple[str, ...] = (),
     changed_files: list[str] | tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
@@ -1850,17 +1890,27 @@ def retrieve_relevant_learnings(
 
         fields, body = _front_matter(content)
         matched_labels, matched_files = _exact_matches(content, want_labels, want_files)
+        # **The body, minus keel's own scaffolding.** Front matter is metadata with
+        # its own exact matching, and scoring it as prose made every learning this
+        # repository ever wrote match every task in it (`repo: keel` and `schema:`
+        # name the project in all of them). The section headings are the same problem
+        # one layer down: they are in every document, so a title sharing a word with
+        # one matched the whole directory.
+        text_score, distinct = _text_score(_lesson_text(body), file_path.name.lower(), tokens)
+        declared = len(matched_labels) + len(matched_files)
         score = (
-            # **The body, not the document.** Front matter is metadata with its own
-            # exact matching above, and scoring it as prose made every learning this
-            # repository ever wrote match every task in it: `repo: keel` and
-            # `schema: keel.learning.v1` name the project in every single file.
-            _text_score(body.lower(), file_path.name.lower(), tokens)
+            text_score
             + LEARNING_LABEL_MATCH_SCORE * len(matched_labels)
             + LEARNING_FILE_MATCH_SCORE * len(matched_files)
         )
 
-        if score >= min_score:
+        # **A declaration beats prose, whatever the prose says.** Added together, a
+        # file repeating the query's words a dozen times outscored one that *declared*
+        # the path the task touches — the ranking this whole scheme exists to get
+        # right — because `min(count, 5)` per token compounds and the bonus does not.
+        # It is a lexicographic key now: declared matches first, text only to break
+        # the tie among files that declare the same number.
+        if declared or (distinct >= min_distinct_tokens and text_score >= min_score):
             title, summary = _learning_title_and_summary(content, file_path.name)
             results.append(
                 {
@@ -1869,6 +1919,7 @@ def retrieve_relevant_learnings(
                     "title": title,
                     "summary": summary,
                     "score": score,
+                    "declared": declared,
                     # The writer's own fingerprint when there is one, so a later
                     # run can tell that this exact lesson was surfaced. A file
                     # written by hand has none; its content identifies it.
@@ -1878,7 +1929,7 @@ def retrieve_relevant_learnings(
                 }
             )
 
-    results.sort(key=lambda r: (-r["score"], r["file"]))
+    results.sort(key=lambda r: (-r["declared"], -r["score"], r["file"]))
     return results[:max_results]
 
 

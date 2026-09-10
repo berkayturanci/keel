@@ -1442,13 +1442,23 @@ document, and a directory naming a single PR would retrieve that PR's lesson and
 else. A sink path that uses one of them still works as a *sink*; as a default source it
 is skipped rather than read as a folder literally called `{pr}`.
 
-**How a file is ranked.** Its text is scored against the issue's title, labels and
-declared files. On top of that, a file with `keel.learning.v1` front matter is matched
-*exactly* on the `labels` and `changed_files` it declares — a lesson that names
-`src/keel/ledger.py` is about a task touching `src/keel/ledger.py`, while one that merely
-says "ledger" eight times is worded like it. A file with no front matter is plain
-Markdown and scores on its text alone, so learnings keel wrote and learnings a person
-wrote both rank.
+**How a file is ranked.** A file with `keel.learning.v1` front matter is matched
+*exactly* on the `labels` and `changed_files` it declares, and **a declaration outranks
+any amount of prose**: a lesson naming `src/keel/ledger.py` is about a task touching
+`src/keel/ledger.py`, while one that merely says "ledger" eight times is worded like it.
+Text only orders files that declare the same number of matches — added into one total, a
+wordy rival overtook the declaring file on any query longer than a word or two.
+
+Text matching needs **two distinct query words**, not a point total. One is a
+coincidence — "keel" appears in every learning this repository writes — and repetition
+does not make it less of one, which is what a point floor could not express: at four
+points a single word said four times passed while a genuine three-word match in a short
+handwritten note did not. keel's own section headings are subtracted before counting, or
+an issue titled *"What changed in the merge window"* would match every document this
+sink has ever written.
+
+A file with no front matter is plain Markdown and ranks on its text alone, so learnings
+keel wrote and learnings a person wrote both reach a brief.
 
 At most five reach a brief, under a fixed **Relevant past learnings** heading, each as a
 title, one line and a path. The rendered section is capped so a brief cannot become an

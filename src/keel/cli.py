@@ -8857,14 +8857,16 @@ def _retrieve_learnings(args, config, changed_files) -> dict:
                 query,
                 _resolve_under_root(source, args.root),
                 max_results=capture.DEFAULT_LEARNING_RETRIEVAL_LIMIT,
-                min_score=capture.LEARNING_TEXT_MATCH_FLOOR,
                 labels=labels,
                 changed_files=changed,
             )
         )
     # Re-rank across directories: each one returned its own top-k, and a shared
     # folder's best lesson must be able to outrank a repo-local weak one.
-    hits.sort(key=lambda hit: (-hit["score"], hit["file"]))
+    # The same key `retrieve_relevant_learnings` sorts by, including `declared`:
+    # re-sorting on the score alone here undid the rule that an exact declaration
+    # outranks any amount of prose, for every project that reads two directories.
+    hits.sort(key=lambda hit: (-hit["declared"], -hit["score"], hit["file"]))
     return capture.learning_retrieval_as_dict(
         sources=[str(source) for source in sources],
         hits=capture.dedupe_learning_hits(hits)[: capture.DEFAULT_LEARNING_RETRIEVAL_LIMIT],
