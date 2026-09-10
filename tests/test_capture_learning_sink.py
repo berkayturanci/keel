@@ -28,6 +28,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -1173,7 +1174,9 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(len(written), 1, written)
             block = self.ledger_capture(root)
             self.assertEqual(block["status"], "applied")
-            self.assertEqual(block["artifact"], str(written[0]))
+            # Relative to `--root`: the file is committed, so the same lesson lives
+            # at a different absolute path in the next worktree.
+            self.assertEqual(block["artifact"], str(written[0].relative_to(root)))
             body = written[0].read_text(encoding="utf-8")
             self.assertIn("schema: keel.learning.v1", body)
             self.assertIn("pr: 1154", body)
@@ -1204,7 +1207,9 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(code, 0)
             written = sorted((Path(root) / ".keel" / "learning").glob("*.md"))
             self.assertEqual(len(written), 1, written)
-            self.assertEqual(self.ledger_capture(root)["artifact"], str(written[0]))
+            self.assertEqual(
+                self.ledger_capture(root)["artifact"], str(written[0].relative_to(root))
+            )
 
     def test_a_run_that_records_nothing_writes_nothing(self):
         """The artifact exists to be named by a ledger record.
@@ -1398,7 +1403,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                 args, cfg.load_config(path), [secret], [], [], ("a change", "", ())
             )
             self.assertTrue(result["ok"], result)
-            body = Path(result["path"]).read_text(encoding="utf-8")
+            body = (Path(root) / result["path"]).read_text(encoding="utf-8")
             self.assertNotIn(secret, body)
             changed = _front_matter_fields(body)["changed_files"]
             self.assertEqual(len(changed), 1)
@@ -1433,9 +1438,9 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(len(list((Path(root) / "learnings").glob("*.md"))), 2)
             self.assertNotEqual(first, second)
             for path in (first, second):
-                self.assertTrue(Path(path).is_file(), path)
-            self.assertIn("core", Path(first).read_text(encoding="utf-8"))
-            self.assertIn("docs", Path(second).read_text(encoding="utf-8"))
+                self.assertTrue((Path(root) / path).is_file(), path)
+            self.assertIn("core", (Path(root) / first).read_text(encoding="utf-8"))
+            self.assertIn("docs", (Path(root) / second).read_text(encoding="utf-8"))
 
     def test_an_unlinked_merge_says_null_rather_than_nothing(self):
         """Both read back as `None`; only one of them says so on purpose."""
@@ -1633,7 +1638,9 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(code, 0, err)
             written = sorted((Path(root) / ".keel" / "learning").glob("*.md"))
             self.assertEqual(len(written), 1, written)
-            self.assertEqual(self.ledger_capture(root)["artifact"], str(written[0]))
+            self.assertEqual(
+                self.ledger_capture(root)["artifact"], str(written[0].relative_to(root))
+            )
 
     def test_the_adapters_own_s11_command_still_writes_a_document(self):
         """The command keel dogfoods passes no title and no body.
@@ -1830,10 +1837,10 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
 
         Written as the join of a relative `--root`, the artifact meant "relative to
         the directory *that* run was launched from" — so a later run from a CI
-        runner, a worktree or a cron shell found nothing and recorded `applied` with
-        no artifact, and a relative `--root repo` prefixed the root twice reading
-        its own file back. The recorded path is absolute; both shapes below reach
-        the same file.
+        runner, a worktree or a cron shell found nothing. Written absolute, it named
+        a filesystem location, and the file is *committed*, so the next worktree
+        holds the same lesson somewhere else. It is recorded **relative to the
+        root**; both shapes below reach the same file.
         """
         with tempfile.TemporaryDirectory() as root:
             root_path = Path(root).resolve()
@@ -1843,11 +1850,69 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             try:
                 self.assertEqual(self.ship(".", "project.yaml", pr=1)[0], 0)
                 first = self.ledger_capture(root_path)["artifact"]
-                self.assertTrue(Path(first).is_absolute(), first)
+                self.assertFalse(Path(first).is_absolute(), first)
             finally:
                 os.chdir(here)
             self.assertEqual(self.ship(root_path, config, pr=2)[0], 0)
             self.assertEqual(self.ledger_capture(root_path)["artifact"], first)
+
+    def test_a_shared_folder_outside_the_checkout_is_recorded_absolute(self):
+        """Nothing else can name it, so the record does.
+
+        Pointing the sink at a knowledge folder outside the repository is the
+        feature — git never sees it, `commit_required` is false, and a path
+        relative to a root it does not live under would mean nothing.
+        """
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as shared:
+            shared_path = Path(shared).resolve()
+            config = write_config(
+                Path(root),
+                [
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                    f"        path: {str(shared_path)!r}",
+                ],
+            )
+            code, _, err = self.ship(root, config)
+            self.assertEqual(code, 0, err)
+            written = sorted(shared_path.glob("*.md"))
+            self.assertEqual(len(written), 1, written)
+            recorded = self.ledger_capture(root)["artifact"]
+            self.assertEqual(recorded, str(written[0]))
+            self.assertTrue(Path(recorded).is_absolute())
+
+    def test_the_next_worktree_finds_the_lesson_the_last_one_wrote(self):
+        """The file is committed, so the same lesson lives at a different path.
+
+        s2 cuts the next worktree from `origin/<base_branch>` and CI clones fresh,
+        so an artifact recorded as a filesystem location named a file that is on
+        disk *here* and nowhere the next run will look — and the duplicate reuse
+        then recorded `applied` with no artifact, the finding it exists to close.
+        Recorded relative to the root, the same ledger and the same tree resolve
+        wherever they are checked out.
+        """
+        with tempfile.TemporaryDirectory() as first_root, tempfile.TemporaryDirectory() as second:
+            first_path, second_path = Path(first_root).resolve(), Path(second).resolve()
+            config = write_config(first_path, self.SINK_LINES)
+            self.assertEqual(self.ship(first_path, config, pr=1)[0], 0)
+            recorded = self.ledger_capture(first_path)["artifact"]
+            # What a clone of the merged branch looks like: the same tracked files
+            # in a different directory.
+            for name in ("learnings", "state"):
+                shutil.copytree(first_path / name, second_path / name)
+            second_config = write_config(second_path, self.SINK_LINES)
+            code, _, err = self.ship_with(second_path, second_config, pr=2, run_id="second")
+            self.assertEqual(code, 0, err)
+            block = self.ledger_capture(second_path)
+            self.assertEqual(block["learning"]["decision"], "duplicate")
+            self.assertEqual(block["artifact"], recorded)
+            self.assertTrue((second_path / recorded).is_file())
 
     def test_a_relative_root_finds_its_own_file_back(self):
         """`--root repo` joined the root twice and found nothing.
@@ -1867,7 +1932,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             try:
                 self.assertEqual(self.ship("repo", "repo/project.yaml", pr=1)[0], 0)
                 first = self.ledger_capture(parent_path / "repo")["artifact"]
-                self.assertTrue(Path(first).is_file(), first)
+                self.assertTrue((parent_path / "repo" / first).is_file(), first)
                 self.assertEqual(
                     self.ship_with("repo", "repo/project.yaml", pr=2, run_id="two")[0], 0
                 )
@@ -1907,7 +1972,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             config = write_config(Path(root), self.SINK_LINES)
             self.assertEqual(self.ship(root, config, pr=1)[0], 0)
-            Path(self.ledger_capture(root)["artifact"]).unlink()
+            (Path(root) / self.ledger_capture(root)["artifact"]).unlink()
             self.assertEqual(self.ship(root, config, pr=2)[0], 0)
             self.assertIsNone(self.ledger_capture(root)["artifact"])
 

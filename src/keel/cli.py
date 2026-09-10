@@ -8973,7 +8973,7 @@ def _write_learning_sink(
     # that writes nothing raised an invalid `capture_redaction` pattern from here,
     # past the handler `_cmd_ship` has for exactly that failure.
     if not capture.learning_sink_writes(config=config, decision=decision, capture_status=status):
-        return _duplicate_learning_artifact(config, decision, status, existing_records)
+        return _duplicate_learning_artifact(config, decision, status, existing_records, args.root)
     # **Redact the values, then render.** Sanitizing the finished document put the
     # replacement *inside* a front-matter scalar the quoter had already decided was
     # safe: `ghp_AAA…` is plain YAML (letters, digits, underscore), so it went in
@@ -9043,10 +9043,17 @@ def _write_learning_sink(
         workspace.write_text_atomic(target, result.value)
     except OSError as exc:
         return {"ok": False, "path": None, "error": str(exc), "reused": False}
-    return {"ok": True, "path": str(target), "error": None, "reused": False}
+    return {
+        "ok": True,
+        "path": _recordable_artifact(target, args.root),
+        "error": None,
+        "reused": False,
+    }
 
 
-def _duplicate_learning_artifact(config, decision, capture_status, existing_records) -> dict | None:
+def _duplicate_learning_artifact(
+    config, decision, capture_status, existing_records, root
+) -> dict | None:
     """Point a deduped run at the file the run it duplicates already wrote.
 
     The path is only claimed when it is still there. A record can name a file
@@ -9063,20 +9070,40 @@ def _duplicate_learning_artifact(config, decision, capture_status, existing_reco
     )
     if recorded is None:
         return None
-    if _recorded_artifact(recorded) is None:
+    if _recorded_artifact(recorded, root) is None:
         return None
     return {"ok": True, "path": recorded, "error": None, "reused": True}
 
 
-def _recorded_artifact(recorded: str) -> Path | None:
-    """The recorded artifact on this machine, or `None` when it is not there.
+def _recordable_artifact(target: Path, root: str) -> str:
+    """The artifact path to store: **relative to `--root` when it is inside it.**
 
-    Read as written, and that is the point: the recorded path is **absolute**, so
-    it means one thing. Resolved through the root's own join instead, a relative
-    `--root repo` prefixed the root twice (`repo/repo/learnings/…`), found nothing,
-    and recorded `applied` with no artifact for a file still sitting on disk.
+    Neither obvious answer survives alone, and both were shipped. The join of
+    whatever `--root` happened to be meant "relative to the directory *that* run
+    was launched from", so a relative `--root repo` prefixed the root twice reading
+    its own file back. Made absolute instead, it named a filesystem location — and
+    the file is *committed*, so the next worktree (s2 cuts it from
+    `origin/<base_branch>`) and every CI runner hold the same lesson at a different
+    absolute path, where the duplicate reuse could no longer find it.
+
+    A path inside the checkout is recorded the way the repository names it and
+    resolves against whatever root reads it later; one outside — a shared knowledge
+    folder — stays absolute, because nothing else can name it.
     """
-    path = Path(recorded).expanduser()
+    # Normalised on both sides: `Path(".").absolute()` keeps the `.` component, so
+    # `--root .` — the default, and the shape the adapter uses — never matched its
+    # own root and every record came out absolute again.
+    absolute = Path(os.path.normpath(target.absolute()))
+    base = Path(os.path.normpath(Path(root).absolute()))
+    try:
+        return str(absolute.relative_to(base))
+    except ValueError:
+        return str(absolute)
+
+
+def _recorded_artifact(recorded: str, root: str) -> Path | None:
+    """The recorded artifact on this machine, or `None` when it is not there."""
+    path = _resolve_under_root(recorded, root)
     return path if path.is_file() else None
 
 
