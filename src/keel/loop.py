@@ -586,7 +586,15 @@ def brief_document(
 
 def _next_action(decision: LoopDecision) -> str:
     if decision.status == DONE:
-        return f"iteration {decision.iteration}: gates green — the loop is done; proceed to s5"
+        deferred = (
+            f" (deferred to the phases that run them: {', '.join(decision.deferred)})"
+            if decision.deferred
+            else ""
+        )
+        return (
+            f"iteration {decision.iteration}: the gates the loop judges are green{deferred} — "
+            "the loop is done; proceed to s5"
+        )
     if decision.status == CONTINUE:
         return (
             f"iteration {decision.iteration}: {', '.join(decision.blocking)} red — dispatch "

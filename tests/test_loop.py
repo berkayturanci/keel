@@ -535,6 +535,14 @@ class TestBriefDocument(unittest.TestCase):
         self.assertIsNone(done["brief"])
         self.assertIsNone(done["prompt_file"])
         self.assertIn("proceed to s5", done["next_action"])
+        self.assertNotIn("deferred", done["next_action"])
+        deferred = loop.brief_document(
+            "base",
+            iteration=1,
+            gates=_gates(("build", True), ("manual", True, "block", True)),
+            policy=self.POLICY,
+        )
+        self.assertIn("(deferred to the phases that run them: manual)", deferred["next_action"])
         self.assertTrue(spent["decision"]["blocked"])
         self.assertIn("the issue is blocked", spent["next_action"])
 

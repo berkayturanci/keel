@@ -7275,8 +7275,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_lb.add_argument(
         "--gates",
         required=True,
-        help="that iteration's gate outcomes: a keel ship --json document, a "
-        "{gate_outcomes: [...]} envelope, or a bare list",
+        help="that iteration's gate outcomes: a keel run-gates --json report, a keel ship "
+        "--json document, a {gate_outcomes: [...]} envelope, or a bare list",
     )
     p_lb.add_argument(
         "--title", default=None, help="issue title, for the iteration's commit subject"
