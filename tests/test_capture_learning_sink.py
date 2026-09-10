@@ -238,6 +238,15 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
             ({"path": "learnings"}, True),
             ({"path": "~/knowledge/learnings"}, False),
             ({"path": "/srv/knowledge"}, False),
+            # Relative and still outside: the documented "folder next to the
+            # checkout" shape without the leading `~`. Reported as in-repo it
+            # would send the adapter to `git add` a path git refuses, leaving the
+            # file off `base_branch` — the failure the flag exists to prevent,
+            # arriving through the flag.
+            ({"path": "../learnings"}, False),
+            ({"path": "foo/../../outside"}, False),
+            # ...and a `..` that does not actually escape still is inside.
+            ({"path": "a/../learnings"}, True),
         ):
             with self.subTest(sink=sink):
                 self.assertIs(self.destination(sink)["commit_required"], expected)

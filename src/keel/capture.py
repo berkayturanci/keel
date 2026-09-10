@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os.path
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -971,7 +972,15 @@ def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
     if sink is None:
         return False
     path = str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH)
-    return not (path.startswith("~") or Path(path).is_absolute())
+    if path.startswith("~"):
+        return False
+    # **Normalised, because `../learnings` is relative and still outside.** It is
+    # the documented "folder next to the checkout" shape without the leading `~`,
+    # and reported as in-repo it would send the adapter to `git add` a path git
+    # refuses — leaving the file off `base_branch` and the next worktree empty,
+    # which is the failure this flag exists to prevent, arriving through the flag.
+    normalised = Path(os.path.normpath(path))
+    return not normalised.is_absolute() and normalised.parts[:1] != ("..",)
 
 
 def learning_sink_errors(sink: Any) -> list[str]:
