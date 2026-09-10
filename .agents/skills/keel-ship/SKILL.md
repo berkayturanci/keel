@@ -1242,8 +1242,17 @@ one is a folder git never sees). When it is true, commit the file named by
 `result.run_ledger.record.capture.artifact` and push it on `base_branch`, in its own
 commit, alongside the closure comments:
 
+**On an up-to-date `base_branch`, not on the checkout as s10 left it.** `keel merge`
+squash-merges on GitHub and never fast-forwards this working tree, so committing
+where the run stands puts the file on the leftover feature branch or makes the push
+a non-fast-forward — either way it never reaches `origin/<base_branch>`, which is
+the one ref that matters. The file is untracked, so switching branches carries it:
+
 ```bash
-git add "$ARTIFACT" && git commit -m "capture: learning from PR #<PR>" && git push
+git switch "$BASE_BRANCH" && git pull --ff-only \
+  && git add "$ARTIFACT" \
+  && git commit -m "capture: learning from PR #<PR>" \
+  && git push
 ```
 
 An uncommitted file is one the next worktree never sees — s2 cuts it from
@@ -1427,4 +1436,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=52c2e1f418d50418bcd03c2ddb3b2eb0cd5caec138e7883e5a7e23c737d20a1e generated_sha256=cf445f01a1ec57c6ac07c1ec598d97ba98a11f48868bc859fd539ea1c81fa504 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=2bef42933518cc78c414e6c849b9d8261dd010289f0841d181db359eb1aaf897 generated_sha256=3a620f16fc3c8d55124df973cdde5247b0db473c6650a3ccf372468c3824d496 -->

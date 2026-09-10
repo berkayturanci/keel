@@ -1057,6 +1057,21 @@ def learning_sink_errors(sink: Any) -> list[str]:
 _FILENAME_UNSAFE = re.compile(r"[/\\\x00-\x1f\x7f]+")
 
 
+def _relative_stays_relative(template: str, values: dict[str, str]) -> str:
+    """Expand a directory template without letting it change what it *is*.
+
+    An absolute or `~` template stays what the project wrote. A relative one has
+    to come back relative: a leading placeholder that expands to nothing otherwise
+    turns `{repo}/learnings` into `/learnings`, which the shape-reading predicates
+    still report as inside the repository — so the adapter is told to `git add` a
+    path at the filesystem root.
+    """
+    expanded = _expand(template, values)
+    if template.startswith("~") or Path(template).is_absolute():
+        return expanded
+    return expanded.lstrip("/\\") or DEFAULT_LEARNING_SINK_PATH
+
+
 def _one_component(name: str) -> str:
     """A filename that names exactly one file, whatever the placeholders held.
 
@@ -1300,7 +1315,14 @@ def learning_sink_plan(
         "slug": _slugify(title),
         "fingerprint": fingerprint[:LEARNING_FINGERPRINT_SLICE],
     }
-    directory = _expand(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
+    # **A relative template stays relative.** `{repo}/learnings` with `repo` unset
+    # expands to `/learnings` — absolute, at the filesystem root — while every
+    # reader of the template's shape (`learning_sink_in_worktree`, and so
+    # `commit_required` and the adapter's `git add`) still calls it in-repo. The
+    # filename's expansion was already flattened; the directory's was not.
+    directory = _relative_stays_relative(
+        str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values
+    )
     filename = _one_component(
         _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
     )

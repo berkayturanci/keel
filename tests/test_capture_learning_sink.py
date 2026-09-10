@@ -202,6 +202,31 @@ class ThePlanIsPure(unittest.TestCase):
         )
         self.assertEqual(plan["filename"], "ke-el-abc123.md")
 
+    def test_a_relative_directory_template_stays_relative(self):
+        """`{repo}/learnings` with `repo` unset expanded to `/learnings`.
+
+        Absolute, at the filesystem root — while every reader of the template's
+        shape (`learning_sink_in_worktree`, and so `commit_required` and the
+        adapter's `git add`) still called it in-repo. The filename's expansion was
+        flattened for exactly this; the directory's was not.
+        """
+        for path, repo, expected in (
+            ("{repo}/learnings", None, "learnings"),
+            ("{repo}/learnings", "keel", "keel/learnings"),
+            ("{owner}/{repo}/learnings", "keel", "keel/learnings"),
+        ):
+            with self.subTest(path=path, repo=repo):
+                plan = self.plan({"kind": "markdown-dir", "path": path}, owner=None, repo=repo)
+                self.assertEqual(plan["directory"], expected)
+                self.assertFalse(Path(plan["directory"]).is_absolute())
+
+    def test_an_absolute_template_is_left_as_the_project_wrote_it(self):
+        """Pointing the sink outside the checkout is the feature, not an accident."""
+        for path in ("/srv/{repo}/learnings", "~/knowledge/{repo}"):
+            with self.subTest(path=path):
+                plan = self.plan({"kind": "markdown-dir", "path": path}, repo="keel")
+                self.assertTrue(plan["directory"].startswith(path[0]), plan["directory"])
+
     def test_a_title_that_reduces_to_nothing_still_names_a_file(self):
         plan = self.plan({"kind": "markdown-dir"}, title="::: ---")
         self.assertIn("learning", plan["filename"])
@@ -261,8 +286,16 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
         ):
             with self.subTest(surface=surface):
                 body = (root / surface).read_text(encoding="utf-8")
+                s11 = body[body.index("### s11 capture") :]
                 self.assertIn("commit_required", body)
-                self.assertIn("git add", body[body.index("### s11 capture") :])
+                self.assertIn("git add", s11)
+                # On an up-to-date base branch: `keel merge` squash-merges on
+                # GitHub and never fast-forwards this checkout, so committing where
+                # the run stands puts the file on the leftover feature branch or
+                # makes the push a non-fast-forward. Either way it never reaches
+                # the one ref the next worktree is cut from.
+                self.assertIn("git switch", s11)
+                self.assertIn("git pull --ff-only", s11)
 
     def test_an_empty_sink_block_is_still_a_sink(self):
         block = self.destination({})

@@ -1239,8 +1239,17 @@ one is a folder git never sees). When it is true, commit the file named by
 `result.run_ledger.record.capture.artifact` and push it on `base_branch`, in its own
 commit, alongside the closure comments:
 
+**On an up-to-date `base_branch`, not on the checkout as s10 left it.** `keel merge`
+squash-merges on GitHub and never fast-forwards this working tree, so committing
+where the run stands puts the file on the leftover feature branch or makes the push
+a non-fast-forward — either way it never reaches `origin/<base_branch>`, which is
+the one ref that matters. The file is untracked, so switching branches carries it:
+
 ```bash
-git add "$ARTIFACT" && git commit -m "capture: learning from PR #<PR>" && git push
+git switch "$BASE_BRANCH" && git pull --ff-only \
+  && git add "$ARTIFACT" \
+  && git commit -m "capture: learning from PR #<PR>" \
+  && git push
 ```
 
 An uncommitted file is one the next worktree never sees — s2 cuts it from
