@@ -249,10 +249,10 @@ Keel Swarm anchors multi-agent parallelism inside deterministic engineering inva
 > **Assessment**.
 
 These ship *inside* an agent host (Claude Code, Cursor, Codex, Gemini CLI) as a plugin or a
-skill. Two of them carry a loop of their own — an iteration loop, a plan/work/review/learn
-loop — and the third is what a reader loops over: a knowledge graph built from the
-repository. None of them owns an issue's lifecycle, a merge, or a record; all three touch a
-step keel already has a name for.
+skill. Two of them carry a loop of their own — an iteration loop, a brainstorm-to-compound
+loop — and the third builds the knowledge graph a reader then loops over. None of them
+owns an issue's lifecycle, a merge, or a record; all three touch a step keel already has a
+name for.
 
 ### Ralph loop (`/ralph-loop`)
 - **What**: Anthropic's official Claude Code plugin implementing the "Ralph Wiggum"
@@ -265,10 +265,16 @@ step keel already has a name for.
   been ported to Cursor and OpenCode as separate plugins.
   [awesomeclaude.ai/ralph-wiggum](https://awesomeclaude.ai/ralph-wiggum),
   [paddo.dev](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/),
-  [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
-- **License / model**: free plugin on the official Claude Code marketplace. Its source is
-  published in `anthropics/claude-code`, whose licence file says use is subject to
-  Anthropic's Commercial Terms of Service — source-visible, not open source.
+  [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop),
+  [rot13maxi/opencode-ralph](https://github.com/rot13maxi/opencode-ralph)
+- **License / model**: free plugin on the official Claude Code marketplace, installed as
+  `ralph-loop@claude-plugins-official` from `anthropics/claude-plugins-official`, a
+  repository its listings report as Apache-2.0 — OSS. An earlier copy of the same plugin,
+  `plugins/ralph-wiggum` in `anthropics/claude-code`, sits under that repository's licence
+  file, which says use is subject to Anthropic's Commercial Terms of Service; cite the copy
+  you mean.
+  [anthropics/claude-plugins-official ralph-loop](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/ralph-loop),
+  [context7.com listing](https://context7.com/anthropics/claude-plugins-official),
   [`anthropics/claude-code` LICENSE.md](https://github.com/anthropics/claude-code/blob/main/LICENSE.md).
   The per-host ports are separate projects under their own terms.
   [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
@@ -300,9 +306,9 @@ step keel already has a name for.
 - **What**: Every's official plugin for Claude Code, Codex, Cursor and other hosts — a
   library of dozens of skills and agents around a six-step `brainstorm → plan → work →
   simplify → review → compound` loop, whose last step captures lessons into a file the
-  agent reads on every future session. (Earlier releases spelled a longer full track —
-  constitution, grill-with-docs, deepen-plan, to-issues, triage — which secondary write-ups
-  still describe; the repository's README carries the six-step loop today.)
+  agent reads on every future session. (The plugin's own command docs and the secondary
+  write-ups describe a longer command track around that loop — `/deepen-plan` and
+  `/triage` among them; the README's six steps are the loop itself.)
   [EveryInc/compound-engineering-plugin](https://github.com/everyinc/compound-engineering-plugin),
   [desktheory.com](https://desktheory.com/workflows/compound-engineering-plugin-claude-code),
   [rywalker.com](https://rywalker.com/research/compound-engineering-plugin)
@@ -313,8 +319,8 @@ step keel already has a name for.
 - **What keel does that it does not**: a deterministic core under the loop. keel's
   `--compound` profile models the work → review → compound half of that loop as
   `workflow_profile.step_overrides` on s4 implement, s7 review, s9 fixloop and s11 capture
-  — keel adds a review-fix round the plugin's loop does not name and has no plan step to
-  override — without forking the backbone, and its lessons file is what
+  — keel adds a review-fix round the plugin's loop does not name, and keel has no plan step
+  to override — without forking the backbone, and its lessons file is what
   `policy_pack.capture.learning.sink` writes — but with a config hash,
   a run ledger, a merge window and lock, risk-tiered reviewer counts, and an evidence gate
   the plugin has no equivalent of. keel does not require it and can run it *as* the
@@ -345,14 +351,15 @@ step keel already has a name for.
   with `keel.learning.v1` front matter is plain Markdown a graph builder ingests as-is:
   `labels` cluster lessons, `changed_files` name the code nodes, and keel never learns what
   reads the folder (#1154). Two things decide whether the graph actually shows an edge from
-  a lesson to the file it is about: #1166 renders `changed_files` as relative Markdown
-  links, which a link-following builder resolves; and #1163 lands the file on the base
+  a lesson to the file it is about: #1166 renders `changed_files` as Markdown links
+  (relative for the default in-repo sink), which a link-following builder resolves; and
+  #1163 lands the file on the base
   branch from a worktree run, without which a fresh clone has an empty directory to graph.
 - **What it does that keel does not**: build a graph — and keel should not; its contract
   with every reader is "a directory of Markdown", nothing more.
 - **Idea to borrow**: the edge itself — a lesson a graph builder can link to the file it is
-  about. #1166 adds one relative Markdown link per `changed_files` entry to the document
-  keel already writes; nothing else, because keel builds no graph.
+  about. #1166 adds one Markdown link per `changed_files` entry to the document keel
+  already writes; nothing else, because keel builds no graph.
 
 **Category 5 takeaway (Assessment)**: keel is not a competitor to a host-plugin loop. It is
 the layer that decides *when the loop is done* (the gates, not the model) and *what happens
@@ -430,7 +437,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | **CrewAI / LangGraph / AutoGen** | ✅ (general) | ❌ | ❌ | ◑ (buildable) | ◑ (buildable) | ❌ | ❌ | OSS (MIT / OSS) |
 | **OpenAI Swarm** | ❌ (OpenAI-only) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
 | **MetaGPT / ChatDev** | ❌ (simulated roles) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
-| **Ralph loop** (Claude Code plugin) | ❌ (one host; separate ports) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Prop. (source on GitHub; Anthropic Commercial Terms) |
+| **Ralph loop** (Claude Code plugin) | ❌ (one host; separate ports) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (Apache-2.0 marketplace repo; the earlier `claude-code` copy is under Anthropic's Commercial Terms) |
 | **compound-engineering plugin** | ◑ (Claude Code / Codex / Cursor) | ❌ | ❌ | ◑ (review skills) | ❌ | ❌ | ◑ (skills + agents) | OSS (MIT) |
 | **graphify** | ◑ (Claude Code / Cursor / Codex / Gemini CLI) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (Apache-2.0) |
 
@@ -492,6 +499,9 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 - Ralph Loop plugin (Claude marketplace): https://claude.com/plugins/ralph-loop
 - Ralph Wiggum plugin README: https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md
 - anthropics/claude-code licence (Anthropic Commercial Terms): https://github.com/anthropics/claude-code/blob/main/LICENSE.md
+- Ralph loop, marketplace source (claude-plugins-official): https://github.com/anthropics/claude-plugins-official/tree/main/plugins/ralph-loop
+- claude-plugins-official listing (Context7): https://context7.com/anthropics/claude-plugins-official
+- Ralph loop for OpenCode: https://github.com/rot13maxi/opencode-ralph
 - Ralph Wiggum technique guide: https://awesomeclaude.ai/ralph-wiggum
 - Ralph Wiggum autonomous loops: https://paddo.dev/blog/ralph-wiggum-autonomous-loops/
 - Ralph loop for Cursor: https://github.com/cursor/plugins/tree/main/ralph-loop
