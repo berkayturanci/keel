@@ -1107,12 +1107,14 @@ knobs:
 The contract, which `/keel:ship` drives and `keel loop brief` decides:
 
 - **Iteration 1 is the ordinary implement pass.** After each iteration the orchestrator
-  runs the gates the loop can make green inside the worktree — `keel run-gates --phase s4
-  --defer-jury --json`: the guard- and test-phase gates of kind `command` or built-in (`build`,
-  `lint`, the presets, any `tester`/`test` Lego of kind `command`). An agentic Lego, the
-  jury and a `pre-merge` gate are **deferred**: listed in the brief, never counted as green,
-  never holding the loop open — the review, test and merge phases run them, and no
-  iteration convenes a panel. Green ends the loop; red starts iteration k+1.
+  runs `keel run-gates --phase s4 --defer-jury --json` inside the worktree — it executes
+  every planned command gate and reports the plan beside the outcomes — and the loop judges
+  the guard- and test-phase gates of kind `command` or built-in (`build`, `lint`, the
+  presets, any `tester`/`test` Lego of kind `command`). An agentic Lego, the jury and a
+  `pre-merge` gate are **deferred**: listed in the brief, never counted as green, never
+  holding the loop open — the review, test and merge phases decide them, and no iteration
+  convenes a panel (a `pre-merge` *command* gate is still executed by that run, so a slow
+  one costs every iteration). Green ends the loop; red starts iteration k+1.
 - **The completion criterion is the gate run, never the implementer's text.** A delegate
   that says it is done with red gates is iteration k *failing*, not the loop *ending*. A loop
   whose budget is spent with the gates still red is `budget-exhausted`: `keel loop brief`
