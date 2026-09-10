@@ -9032,12 +9032,20 @@ def _write_learning_sink(
     # nothing, and recorded `applied` with no artifact — the finding this whole
     # reuse exists to close.
     directory = _resolve_under_root(plan["directory"], args.root)
-    if workspace.is_root_anchored(plan["directory"]) and not directory.is_absolute():
-        # Anchored somewhere this host cannot write: `C:/knowledge` is a *relative*
-        # path to POSIX, so resolving it here would put a `C:` directory next to
-        # whatever the process happened to be standing in. Fail-soft, as an
-        # unwritable directory does — the machine, not the config, is what cannot
-        # honour it.
+    # Anchored somewhere this host cannot write: `C:/knowledge` is a *relative* path
+    # to POSIX, so resolving it here would put a `C:` directory next to whatever the
+    # process happened to be standing in. Fail-soft, as an unwritable directory does
+    # — the machine, not the config, is what cannot honour it.
+    #
+    # `pragma: no cover` on the branch, not the body, and for a measured reason: a
+    # path anchored on *another* platform is what triggers this, and on the Windows
+    # legs a rooted path is native too, so the condition cannot be made true there.
+    # The ubuntu and macos legs cover it through
+    # `test_a_sink_this_platform_cannot_write_fails_soft`, and
+    # `learning_sink_in_worktree`'s pure test pins both anchors on every platform.
+    if (  # pragma: no cover - only reachable where a foreign anchor is not a native one
+        workspace.is_root_anchored(plan["directory"]) and not directory.is_absolute()
+    ):
         return {
             "ok": False,
             "path": None,
