@@ -1248,9 +1248,20 @@ the one ref that matters. The file is untracked, so switching branches carries i
 ```bash
 git switch "$BASE_BRANCH" && git pull --ff-only \
   && git add "$ARTIFACT" \
-  && git commit -m "capture: learning from PR #<PR>" \
-  && git push
+  && git commit -m "capture: learning from PR #<PR>"
+for attempt in 1 2 3; do
+  git push && break
+  git pull --rebase || break
+done
 ```
+
+**The push retries, because ships run in parallel.** `swarm` and `overnight`
+finish two s11 steps at once, both on the same `origin/<base_branch>`, and the
+second push is a non-fast-forward — leaving that run's `capture.artifact` naming a
+file the next worktree will never see. The learning is a new file under a
+fingerprinted name, so the rebase has nothing to conflict with; three attempts
+bound it, and a failure after them is a capture that did not land, not a merge that
+did not happen.
 
 An uncommitted file is one the next worktree never sees — s2 cuts it from
 `origin/<base_branch>` — and one every CI runner discards, so skipping this leaves
@@ -1433,4 +1444,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=2bef42933518cc78c414e6c849b9d8261dd010289f0841d181db359eb1aaf897 generated_sha256=2bef42933518cc78c414e6c849b9d8261dd010289f0841d181db359eb1aaf897 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=fd2cddaedfce399b9f48ac347f51f0ab1233477697eba0a48df745671aed647d generated_sha256=fd2cddaedfce399b9f48ac347f51f0ab1233477697eba0a48df745671aed647d -->

@@ -1248,9 +1248,20 @@ the one ref that matters. The file is untracked, so switching branches carries i
 ```bash
 git switch "$BASE_BRANCH" && git pull --ff-only \
   && git add "$ARTIFACT" \
-  && git commit -m "capture: learning from PR #<PR>" \
-  && git push
+  && git commit -m "capture: learning from PR #<PR>"
+for attempt in 1 2 3; do
+  git push && break
+  git pull --rebase || break
+done
 ```
+
+**The push retries, because ships run in parallel.** `swarm` and `overnight`
+finish two s11 steps at once, both on the same `origin/<base_branch>`, and the
+second push is a non-fast-forward — leaving that run's `capture.artifact` naming a
+file the next worktree will never see. The learning is a new file under a
+fingerprinted name, so the rebase has nothing to conflict with; three attempts
+bound it, and a failure after them is a capture that did not land, not a merge that
+did not happen.
 
 An uncommitted file is one the next worktree never sees — s2 cuts it from
 `origin/<base_branch>` — and one every CI runner discards, so skipping this leaves

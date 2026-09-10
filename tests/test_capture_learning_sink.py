@@ -304,6 +304,12 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                 # the one ref the next worktree is cut from.
                 self.assertIn("git switch", s11)
                 self.assertIn("git pull --ff-only", s11)
+                # And a bounded retry: `swarm` and `overnight` finish two s11
+                # steps at once, on the same `origin/<base_branch>`, so the second
+                # push is a non-fast-forward and that run's artifact never reaches
+                # the ref the next worktree is cut from.
+                self.assertIn("git pull --rebase", s11)
+                self.assertIn("for attempt in 1 2 3", s11)
 
     def test_an_empty_sink_block_is_still_a_sink(self):
         block = self.destination({})
