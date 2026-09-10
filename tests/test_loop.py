@@ -159,7 +159,7 @@ class TestParseGates(unittest.TestCase):
         # The plan supplies the severity the outcome did not carry.
         self.assertEqual(bandit.on_fail, "suggest")
         self.assertFalse(bandit.blocking)
-        self.assertEqual(manual.kind, loop.KIND_AGENTIC)
+        self.assertEqual(manual.kind, "agentic")
         self.assertTrue(manual.deferred)
         # A pre-merge gate needs the pull request: listed, never judged here.
         self.assertEqual(release.phase, "pre-merge")
@@ -170,6 +170,14 @@ class TestParseGates(unittest.TestCase):
         self.assertTrue(gitleaks.judged)
         self.assertEqual(gitleaks.on_fail, "warn")
         self.assertFalse(gitleaks.blocking)
+
+    def test_an_unknown_phase_is_refused_not_deferred(self):
+        # A misspelled phase must not turn a red blocking gate into a pass.
+        with self.assertRaisesRegex(loop.LoopError, "unknown phase 'tests'"):
+            loop.parse_gates([{"gate": "build", "ok": False, "phase": "tests"}])
+        planned = [{"id": "build", "kind": "builtin", "phase": "s8", "on_fail": "block"}]
+        with self.assertRaises(loop.LoopError):
+            loop.parse_gates({"gates": planned, "gate_outcomes": [{"gate": "build", "ok": False}]})
 
     def test_a_plan_that_is_not_a_list_of_gates_is_ignored(self):
         for contract in (None, "x", {"gates": "x"}, {"gates": [7, {"kind": "agentic"}]}):

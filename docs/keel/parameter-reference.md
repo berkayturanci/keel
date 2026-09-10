@@ -1113,7 +1113,7 @@ keel loop brief --iteration K --brief FILE --gates FILE [--out FILE] [--title TE
 | `--out FILE` | path | none | Write the next brief here (the delegate prompt file); only on `continue`. |
 | `--title TEXT` | string | `<issue title>` | Issue title, for the iteration's commit subject `loop(K+1/N): <title>`; rendered as one backtick-free line. |
 | `--loop` | flag | off | The run was started with `--loop`: switch the loop on for a project whose `knobs.loop` is absent or disabled, against its numbers — resolved exactly as `keel ship` resolves it, so the published `source` is the truth. |
-| `--max-iterations N` | int 1..10 | `knobs.loop` | Explicit budget for this run; without it the project's `knobs.loop` (and `--loop`) is the policy — a loop that is off is a refusal (`off`, exit 1), as an unreadable config is (`no-config`, exit 1). |
+| `--max-iterations N` | int 1..10 | `knobs.loop` | Explicit budget for a run without a readable config; without it the project's `knobs.loop` (and `--loop`) is the policy — a loop that is off is a refusal (`off`, exit 1), as an unreadable config is (`no-config`, exit 1). Not recordable: `keel ship --loop-iteration` judges each number against the project's policy. |
 | `--gate-output-max-bytes N` | int ≥ 256 | `knobs.loop.gate_output_max_bytes` | Cap on each gate's quoted output. |
 | `--tdd` | flag | off | The run is in `implement_mode: tdd`, so the loop wraps phase B (`wraps: implementation`). |
 | `--root DIR` / `--project PATH` | path | `.` / `<root>/.keel/project.yaml` | Where `knobs.loop` is read from. |

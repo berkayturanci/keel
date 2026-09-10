@@ -1132,8 +1132,11 @@ resolved it, so the published `source` is the truth: a project whose loop is off
 or `enabled: false`) with no `--loop` is a refusal (`status: off`, exit 1), as a config the
 command cannot read is (`status: no-config`, exit 1), rather than a loop nobody bounded;
 `--project` / `--root` name the project, and `--max-iterations N` (1..10) supplies an
-explicit budget for this run. `--gate-output-max-bytes N` (at least 256) overrides the cap;
-both flags hold the bounds the schema holds the knob to. `--tdd` says the run is in
+explicit budget for a run without a readable config. `--gate-output-max-bytes N` (at least
+256) overrides the cap; both flags hold the bounds the schema holds the knob to. The
+explicit budget is not recordable: `keel ship --loop-iteration` judges each number against
+the project's policy (`knobs.loop`, or `--loop`'s default), so a looped run that will be
+recorded needs the knob or the flag, not `--max-iterations`. `--tdd` says the run is in
 `implement_mode: tdd`, so the published `wraps` reads `implementation`.
 
 ```bash
@@ -1571,7 +1574,8 @@ the planned `gates` (id, kind, phase, severity) beside the `gate_outcomes` (each
 the human listing is not printed. `--defer-jury` reports the `jury` built-in `not_run` instead
 of convening a panel, exactly as the command runner reports an agentic gate: the loop's
 per-iteration gate run must not spend a cross-vendor panel on every iteration, and a seat
-nobody staffed is never recorded as a pass.
+nobody staffed is never recorded as a pass. With `--run-id`, the `--phase` stamp's verdict
+is the whole plan's — a failing `pre-merge` command gate included — not the loop's.
 
 ```bash
 keel run-gates .keel/project.yaml --root .

@@ -89,7 +89,10 @@ _BLOCKING_ON_FAIL = "block"
 #: that runs them decides. Without this scope a project with a blocking agentic tester
 #: could never reach ``done``.
 JUDGED_PHASES = ("guard", "test")
-KIND_AGENTIC = "agentic"
+#: The backbone phases a planned gate can carry — the closed vocabulary of
+#: :class:`keel.gates.GateSpec`. A report naming another one is refused rather than
+#: deferred: a typo must not turn a red blocking gate into a pass.
+PHASES = ("guard", "test", "pre-merge")
 _DEFAULT_KIND = "command"
 _DEFAULT_PHASE = "test"
 
@@ -293,6 +296,12 @@ def parse_gates(raw: Any) -> tuple[GateResult, ...]:
         if isinstance(error, str) and error.strip():
             output.append(error)
         spec = specs.get(gate_id.strip(), {})
+        phase = _text(entry, spec, "phase", _DEFAULT_PHASE)
+        if phase not in PHASES:
+            raise LoopError(
+                f"gate outcome {index} ({gate_id.strip()}) names an unknown phase {phase!r}; "
+                f"the phases are {', '.join(PHASES)}"
+            )
         results.append(
             GateResult(
                 id=gate_id.strip(),
@@ -301,7 +310,7 @@ def parse_gates(raw: Any) -> tuple[GateResult, ...]:
                 on_fail=_text(entry, spec, "on_fail", _BLOCKING_ON_FAIL),
                 output=tuple(output),
                 kind=_text(entry, spec, "kind", _DEFAULT_KIND),
-                phase=_text(entry, spec, "phase", _DEFAULT_PHASE),
+                phase=phase,
             )
         )
     return tuple(results)
