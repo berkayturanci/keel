@@ -947,11 +947,12 @@ LEARNING_NO_FILES = "_No files recorded._"
 #: the bracket pair and the backslash; the angle brackets that would start an autolink
 #: or raw HTML from a file name (a merged PR chooses those bytes); the emphasis and
 #: strikethrough delimiters that turned ``__init__.py`` — the most common Python file
-#: name — into bold ``init``; and the ampersand that would decode an entity reference.
-#: Every one is ASCII punctuation, which CommonMark lets a backslash escape. The
-#: destination is percent-encoded instead, so the two halves of a link never disagree
-#: about where a path ends.
-_LINK_TEXT_UNSAFE = re.compile(r"([\\\[\]<>_*~&])")
+#: name — into bold ``init``; the ampersand that would decode an entity reference; and
+#: the backtick, because a code span binds more tightly than the link's brackets and
+#: swallows the characters between a pair. Every one is ASCII punctuation, which
+#: CommonMark lets a backslash escape. The destination is percent-encoded instead, so
+#: the two halves of a link never disagree about where a path ends.
+_LINK_TEXT_UNSAFE = re.compile(r"([\\\[\]<>_*~&`])")
 
 #: The frontmatter contract the reader depends on. Fixed and small on purpose:
 #: `retrieve_relevant_learnings` reads `title` and `description` out of it, so a

@@ -2504,6 +2504,9 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
             ),
             ("a*b*c~~d~~.py", "- [a\\*b\\*c\\~\\~d\\~\\~.py](../../a%2Ab%2Ac~~d~~.py)"),
             ("a&amp;b.py", "- [a\\&amp;b.py](../../a%26amp%3Bb.py)"),
+            # A code span binds more tightly than the link's brackets: unescaped, the
+            # pair swallowed `b` and rendered `ac.py`.
+            ("a`b`c.py", "- [a\\`b\\`c.py](../../a%60b%60c.py)"),
         ):
             with self.subTest(path=path):
                 self.assertEqual(
