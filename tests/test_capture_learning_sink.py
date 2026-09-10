@@ -1970,14 +1970,24 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(recorded, str(written[0]))
             self.assertTrue(Path(recorded).is_absolute())
 
-    def test_a_windows_absolute_sink_is_not_written_inside_this_checkout(self):
+    #: A sink path anchored on the *other* platform, so this reads the same
+    #: property wherever the suite runs: `C:/…` is not absolute to POSIX and
+    #: `/srv/…` is not absolute to Windows. Naming one literal would have tested
+    #: two different things — on Windows `C:/knowledge` is a perfectly good
+    #: absolute path, and `Path(root) / "C:"` resolves to the drive, not a
+    #: subdirectory, so the POSIX form of the assertion is meaningless there.
+    FOREIGN_SINK = "/srv/knowledge/learnings" if os.name == "nt" else "C:/knowledge/learnings"
+
+    def test_a_sink_this_platform_cannot_write_fails_soft(self):
         """The writer has to ask the same question the predicate does.
 
-        `commit_required` reads `C:/knowledge/learnings` as out-of-repo on every
-        runner — but the writer joined it under `--root` on this host, producing a
-        `C:` directory *inside* the working tree that the adapter is told not to
-        commit, and a ledger path that is relative here and absolute on Windows.
-        Two halves of one question, disagreeing.
+        `commit_required` reads a path anchored on another platform as
+        out-of-repo on every runner — but the writer joined it under `--root`,
+        producing a directory *inside* the working tree that the adapter is told
+        not to commit, and a ledger path that is relative here and absolute
+        there. Two halves of one question, disagreeing. Anchored elsewhere means
+        unwritable here, so the capture downgrades instead of landing somewhere
+        invented.
         """
         with tempfile.TemporaryDirectory() as root:
             root_path = Path(root).resolve()
@@ -1992,16 +2002,17 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                     "      mode: create-learning",
                     "      sink:",
                     "        kind: markdown-dir",
-                    "        path: 'C:/knowledge/learnings'",
+                    f"        path: {self.FOREIGN_SINK!r}",
                 ],
             )
             code, _, err = self.ship(root, config)
             self.assertEqual(code, 0, err)
-            # Nothing anchored elsewhere may appear under the checkout, and the
-            # capture is downgraded rather than written somewhere wrong.
-            self.assertFalse((root_path / "C:").exists())
-            block = self.ledger_capture(root)
-            self.assertIn(block["status"], (None, "skipped"))
+            # Nothing named after the foreign anchor may appear under the
+            # checkout. Listed rather than joined: `Path(root) / "C:"` is the
+            # drive on Windows, not a child.
+            anchor = self.FOREIGN_SINK.split("/")[0] or self.FOREIGN_SINK.split("/")[1]
+            self.assertNotIn(anchor, os.listdir(root_path))
+            self.assertIn(self.ledger_capture(root)["status"], (None, "skipped"))
 
     def test_the_next_worktree_finds_the_lesson_the_last_one_wrote(self):
         """The file is committed, so the same lesson lives at a different path.
