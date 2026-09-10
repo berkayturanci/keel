@@ -269,5 +269,12 @@ class TestSplitUnifiedDiff(unittest.TestCase):
         )
 
 
+
+class TestMatchesAny(unittest.TestCase):
+    def test_matches_any_with_empty_globs(self):
+        from keel import classify
+        self.assertFalse(classify._matches_any("a.py", ()))
+
+
 if __name__ == "__main__":
     unittest.main()

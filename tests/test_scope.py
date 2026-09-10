@@ -126,5 +126,12 @@ class TestDeclaredFilesLedgerRoundTrip(unittest.TestCase):
         self.assertIsNone(ledger.declared_files_for_record({"declared": {"files": "x"}}))
 
 
+
+class TestMatchesAny(unittest.TestCase):
+    def test_matches_any_with_empty_globs(self):
+        from keel import scope
+        self.assertFalse(scope._matches_any("a.py", ()))
+
+
 if __name__ == "__main__":
     unittest.main()
