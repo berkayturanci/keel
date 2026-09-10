@@ -1299,7 +1299,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(block["status"], "applied")
             # Relative to `--root`: the file is committed, so the same lesson lives
             # at a different absolute path in the next worktree.
-            self.assertEqual(block["artifact"], str(written[0].relative_to(root)))
+            self.assertEqual(block["artifact"], written[0].relative_to(root).as_posix())
             body = written[0].read_text(encoding="utf-8")
             self.assertIn("schema: keel.learning.v1", body)
             self.assertIn("pr: 1154", body)
@@ -1331,7 +1331,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             written = sorted((Path(root) / ".keel" / "learning").glob("*.md"))
             self.assertEqual(len(written), 1, written)
             self.assertEqual(
-                self.ledger_capture(root)["artifact"], str(written[0].relative_to(root))
+                self.ledger_capture(root)["artifact"], written[0].relative_to(root).as_posix()
             )
 
     def test_a_run_that_records_nothing_writes_nothing(self):
@@ -1762,7 +1762,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             written = sorted((Path(root) / ".keel" / "learning").glob("*.md"))
             self.assertEqual(len(written), 1, written)
             self.assertEqual(
-                self.ledger_capture(root)["artifact"], str(written[0].relative_to(root))
+                self.ledger_capture(root)["artifact"], written[0].relative_to(root).as_posix()
             )
 
     def test_the_adapters_own_s11_command_still_writes_a_document(self):
@@ -2066,14 +2066,13 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(recorded, str(written[0]))
             self.assertTrue(Path(recorded).is_absolute())
 
-    #: A sink path anchored on the *other* platform, so this reads the same
-    #: property wherever the suite runs: `C:/…` is not absolute to POSIX and
-    #: `/srv/…` is not absolute to Windows. Naming one literal would have tested
-    #: two different things — on Windows `C:/knowledge` is a perfectly good
-    #: absolute path, and `Path(root) / "C:"` resolves to the drive, not a
-    #: subdirectory, so the POSIX form of the assertion is meaningless there.
-    FOREIGN_SINK = "/srv/knowledge/learnings" if os.name == "nt" else "C:/knowledge/learnings"
-
+    @unittest.skipIf(
+        os.name == "nt",
+        "poses a POSIX host a Windows path; the mirror case cannot be posed on Windows, "
+        "where `/srv/x` is rooted-but-driveless and resolves against the current drive "
+        "instead of failing. `learning_sink_in_worktree` covers both anchors on every "
+        "platform, in a pure test.",
+    )
     def test_a_sink_this_platform_cannot_write_fails_soft(self):
         """The writer has to ask the same question the predicate does.
 
@@ -2098,7 +2097,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
                     "      mode: create-learning",
                     "      sink:",
                     "        kind: markdown-dir",
-                    f"        path: {self.FOREIGN_SINK!r}",
+                    "        path: 'C:/knowledge/learnings'",
                 ],
             )
             code, _, err = self.ship(root, config)
@@ -2106,8 +2105,7 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             # Nothing named after the foreign anchor may appear under the
             # checkout. Listed rather than joined: `Path(root) / "C:"` is the
             # drive on Windows, not a child.
-            anchor = self.FOREIGN_SINK.split("/")[0] or self.FOREIGN_SINK.split("/")[1]
-            self.assertNotIn(anchor, os.listdir(root_path))
+            self.assertNotIn("C:", os.listdir(root_path))
             self.assertIn(self.ledger_capture(root)["status"], (None, "skipped"))
 
     def test_the_next_worktree_finds_the_lesson_the_last_one_wrote(self):
