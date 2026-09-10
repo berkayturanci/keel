@@ -1669,13 +1669,14 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(self.artifact_findings(root, config, prs=(1, 2)), [])
 
     def test_a_deduped_run_finds_the_file_from_another_working_directory(self):
-        """`--root` defaults to `.`, so a live run records a *relative* artifact.
+        """`--root` is whatever the operator typed, so the record must not be.
 
-        Resolved against the process directory instead, the reuse could only find
-        that file when keel was launched from the repository — and a later run from
-        a CI runner, a worktree or a cron shell would record `applied` with no
-        artifact, which is the finding the reuse exists to prevent. Every test that
-        passes an absolute `--root` is blind to it, which is why this one does not.
+        Written as the join of a relative `--root`, the artifact meant "relative to
+        the directory *that* run was launched from" — so a later run from a CI
+        runner, a worktree or a cron shell found nothing and recorded `applied` with
+        no artifact, and a relative `--root repo` prefixed the root twice reading
+        its own file back. The recorded path is absolute; both shapes below reach
+        the same file.
         """
         with tempfile.TemporaryDirectory() as root:
             root_path = Path(root).resolve()
@@ -1685,11 +1686,39 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             try:
                 self.assertEqual(self.ship(".", "project.yaml", pr=1)[0], 0)
                 first = self.ledger_capture(root_path)["artifact"]
-                self.assertFalse(Path(first).is_absolute(), first)
+                self.assertTrue(Path(first).is_absolute(), first)
             finally:
                 os.chdir(here)
             self.assertEqual(self.ship(root_path, config, pr=2)[0], 0)
             self.assertEqual(self.ledger_capture(root_path)["artifact"], first)
+
+    def test_a_relative_root_finds_its_own_file_back(self):
+        """`--root repo` joined the root twice and found nothing.
+
+        The write stored the already-joined `repo/learnings/<file>.md`; the reuse
+        joined `--root` onto it again (`repo/repo/learnings/…`), `is_file()` was
+        false, and the duplicate recorded `applied` with no artifact — the finding
+        the reuse exists to close, on a file still sitting on disk. Every other
+        test passes `.` or an absolute root, so both of the working shapes hide it.
+        """
+        with tempfile.TemporaryDirectory() as parent:
+            parent_path = Path(parent).resolve()
+            (parent_path / "repo").mkdir()
+            write_config(parent_path / "repo", self.SINK_LINES)
+            here = Path.cwd()
+            os.chdir(parent_path)
+            try:
+                self.assertEqual(self.ship("repo", "repo/project.yaml", pr=1)[0], 0)
+                first = self.ledger_capture(parent_path / "repo")["artifact"]
+                self.assertTrue(Path(first).is_file(), first)
+                self.assertEqual(
+                    self.ship_with("repo", "repo/project.yaml", pr=2, run_id="two")[0], 0
+                )
+                block = self.ledger_capture(parent_path / "repo")
+            finally:
+                os.chdir(here)
+            self.assertEqual(block["learning"]["decision"], "duplicate")
+            self.assertEqual(block["artifact"], first)
 
     def test_a_run_that_never_reached_capture_borrows_nothing(self):
         """Through the CLI, because that is where the contradiction would land.

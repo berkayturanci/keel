@@ -8973,7 +8973,7 @@ def _write_learning_sink(
     # that writes nothing raised an invalid `capture_redaction` pattern from here,
     # past the handler `_cmd_ship` has for exactly that failure.
     if not capture.learning_sink_writes(config=config, decision=decision, capture_status=status):
-        return _duplicate_learning_artifact(config, decision, status, existing_records, args.root)
+        return _duplicate_learning_artifact(config, decision, status, existing_records)
     # **Redact the values, then render.** Sanitizing the finished document put the
     # replacement *inside* a front-matter scalar the quoter had already decided was
     # safe: `ghp_AAA…` is plain YAML (letters, digits, underscore), so it went in
@@ -9024,7 +9024,14 @@ def _write_learning_sink(
         what_we_learned=what_we_learned,
         do_differently=do_differently,
     )
-    target = _resolve_under_root(plan["directory"], args.root) / plan["filename"]
+    # **Absolute, so the recorded path means one thing.** `--root` is whatever the
+    # operator typed: `.`, an absolute path, or a relative `repo`. Recording the
+    # joined-but-still-relative result made the artifact mean "relative to the
+    # directory that run happened to be launched from", and reading it back through
+    # the same join then prefixed the root twice (`repo/repo/learnings/…`), found
+    # nothing, and recorded `applied` with no artifact — the finding this whole
+    # reuse exists to close.
+    target = (_resolve_under_root(plan["directory"], args.root) / plan["filename"]).absolute()
     # A second pass over the finished document. Redaction before durability is the
     # capture contract's own rule — `contract_as_dict` declares
     # `durable_artifacts.requires_redaction` and the ledger sanitizes every record
@@ -9039,9 +9046,7 @@ def _write_learning_sink(
     return {"ok": True, "path": str(target), "error": None, "reused": False}
 
 
-def _duplicate_learning_artifact(
-    config, decision, capture_status, existing_records, root
-) -> dict | None:
+def _duplicate_learning_artifact(config, decision, capture_status, existing_records) -> dict | None:
     """Point a deduped run at the file the run it duplicates already wrote.
 
     The path is only claimed when it is still there. A record can name a file
@@ -9058,9 +9063,21 @@ def _duplicate_learning_artifact(
     )
     if recorded is None:
         return None
-    if not _resolve_under_root(recorded, root).is_file():
+    if _recorded_artifact(recorded) is None:
         return None
     return {"ok": True, "path": recorded, "error": None, "reused": True}
+
+
+def _recorded_artifact(recorded: str) -> Path | None:
+    """The recorded artifact on this machine, or `None` when it is not there.
+
+    Read as written, and that is the point: the recorded path is **absolute**, so
+    it means one thing. Resolved through the root's own join instead, a relative
+    `--root repo` prefixed the root twice (`repo/repo/learnings/…`), found nothing,
+    and recorded `applied` with no artifact for a file still sitting on disk.
+    """
+    path = Path(recorded).expanduser()
+    return path if path.is_file() else None
 
 
 def _resolve_under_root(recorded: str, root: str) -> Path:
