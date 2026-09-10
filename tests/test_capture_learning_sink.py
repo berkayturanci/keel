@@ -971,7 +971,8 @@ class TheFrontMatterSurvivesARealParser(unittest.TestCase):
                 )
                 headings = [line for line in document.splitlines() if line.startswith("#")]
                 self.assertEqual(headings[0], "# foo ## injected")
-                self.assertEqual(len(headings), 4, headings)
+                # The title plus the four fixed sections (#1166 added **Files**).
+                self.assertEqual(len(headings), 5, headings)
 
     def test_the_body_heading_cannot_open_a_section_of_its_own(self):
         """The front matter and the body have to say the same thing.
@@ -1000,6 +1001,7 @@ class TheFrontMatterSurvivesARealParser(unittest.TestCase):
                 "## What changed",
                 "## What we learned",
                 "## What to do differently next time",
+                "## Files",
             ],
         )
 
@@ -2340,6 +2342,215 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(block["status"], "skipped")
             self.assertEqual(block["reason"], "capability-unavailable")
             self.assertIsNone(block["artifact"])
+
+
+class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
+    """The fourth section (#1166): one link per changed file, so a graph reader gets the edge.
+
+    The front-matter list is right for keel's own reader and a string to every
+    *link-following* one — a knowledge-graph builder, a wiki, an agent reading an
+    index. Measured on a document the sink wrote: the body named no file at all, so
+    a graph built over the repository showed every lesson as an isolated node.
+    """
+
+    FILES = ["src/keel/capture.py", "tests/test_capture.py"]
+
+    def document(self, **kwargs):
+        params = {
+            "title": "capture: the learning document links each changed file",
+            "description": "A lesson nobody can reach from the file it is about is lost.",
+            "pr_number": 1170,
+            "issue_number": 1166,
+            "repo": "berkayturanci/keel",
+            "date": "2026-09-10",
+            "labels": ["type:enhancement"],
+            "changed_files": list(self.FILES),
+            "fingerprint": "abc123",
+            "what_changed": "The body gained a Files section.",
+            "what_we_learned": "A YAML list is a string to a link-following reader.",
+            "do_differently": "Write the link, not only the path.",
+            "file_link_base": "../..",
+        }
+        params.update(kwargs)
+        return capture.render_learning_document(**params)
+
+    def plan(self, sink, **kwargs):
+        params = {
+            "config": _config(sink),
+            "decision": {"decision": "create-learning", "fingerprint": "abc123"},
+            "capture_status": "applied",
+            "owner": "berkayturanci",
+            "repo": "keel",
+            "base_branch": "main",
+            "date": "2026-09-10",
+            "pr_number": 1170,
+            "title": "capture: the learning document links each changed file",
+            "changed_files": list(self.FILES),
+            "head_sha": "deadbeefcafe",
+        }
+        params.update(kwargs)
+        return capture.learning_sink_plan(**params)
+
+    @staticmethod
+    def files_section(text: str) -> list[str]:
+        return text.split(capture.LEARNING_FILES_HEADING, 1)[1].strip().splitlines()
+
+    @staticmethod
+    def destinations(lines: list[str]) -> list[str]:
+        return [line[line.index("](") + 2 : -1] for line in lines]
+
+    def test_an_in_repo_sink_links_relative_to_the_document(self):
+        self.assertEqual(
+            self.files_section(self.document()),
+            [
+                "- [src/keel/capture.py](../../src/keel/capture.py)",
+                "- [tests/test_capture.py](../../tests/test_capture.py)",
+            ],
+        )
+
+    def test_the_relative_link_resolves_from_the_documents_directory(self):
+        """The whole point: joined onto the sink directory, the link is the file."""
+        plan = self.plan({})
+        self.assertEqual(plan["directory"], ".keel/learning")
+        self.assertEqual(plan["file_link_base"], "../..")
+        for path, destination in zip(
+            self.FILES, self.destinations(self.files_section(plan["content"])), strict=True
+        ):
+            with self.subTest(path=path):
+                joined = os.path.join(plan["directory"], destination)
+                self.assertEqual(os.path.normpath(joined), path)
+
+    def test_a_nested_in_repo_sink_climbs_as_far_as_it_sits(self):
+        plan = self.plan({"path": "docs/learnings/{repo}"})
+        self.assertEqual(plan["file_link_base"], "../../..")
+        destination = self.destinations(self.files_section(plan["content"]))[0]
+        self.assertEqual(
+            os.path.normpath(os.path.join(plan["directory"], destination)), self.FILES[0]
+        )
+
+    def test_a_sink_outside_the_checkout_links_the_file_on_github(self):
+        plan = self.plan({"path": "~/k/{repo}"})
+        self.assertEqual(
+            plan["file_link_base"], "https://github.com/berkayturanci/keel/blob/deadbeefcafe"
+        )
+        self.assertIn(
+            "- [src/keel/capture.py](https://github.com/berkayturanci/keel/blob/deadbeefcafe/src/keel/capture.py)",
+            self.files_section(plan["content"]),
+        )
+
+    def test_a_folder_next_to_the_checkout_is_outside_it(self):
+        """`../learnings` is relative and still outside — as `commit_required` already says."""
+        plan = self.plan({"path": "../learnings"})
+        self.assertTrue(plan["file_link_base"].startswith("https://github.com/"))
+
+    def test_without_a_head_the_outside_sink_renders_the_bare_path(self):
+        """Never a relative link that resolves to nothing."""
+        plan = self.plan({"path": "~/k/{repo}"}, head_sha=None)
+        self.assertIsNone(plan["file_link_base"])
+        section = self.files_section(plan["content"])
+        self.assertEqual(section[0], "- `src/keel/capture.py`")
+        self.assertNotIn("](", "\n".join(section))
+
+    def test_without_an_owner_it_renders_the_bare_path_too(self):
+        for missing in ("owner", "repo"):
+            with self.subTest(missing=missing):
+                plan = self.plan({"path": "/srv/knowledge"}, **{missing: None})
+                self.assertIsNone(plan["file_link_base"])
+                self.assertIn("- `src/keel/capture.py`", self.files_section(plan["content"]))
+
+    def test_a_space_or_a_parenthesis_cannot_end_the_link_early(self):
+        from urllib.parse import unquote
+
+        line = self.files_section(self.document(changed_files=["docs/a b(c).md"]))[0]
+        self.assertEqual(line, "- [docs/a b(c).md](../../docs/a%20b%28c%29.md)")
+        self.assertEqual(unquote(self.destinations([line])[0]), "../../docs/a b(c).md")
+
+    def test_the_link_text_escapes_what_would_end_it(self):
+        line = self.files_section(self.document(changed_files=["we]ird[\\path.md"]))[0]
+        self.assertEqual(line, "- [we\\]ird\\[\\\\path.md](../../we%5Dird%5B%5Cpath.md)")
+
+    def test_a_control_character_in_a_path_cannot_open_a_line(self):
+        line = self.files_section(self.document(changed_files=["a\nb.md"]))[0]
+        self.assertEqual(line, "- [a b.md](../../a%20b.md)")
+
+    def test_a_backtick_in_a_bare_path_is_written_plain(self):
+        section = self.files_section(
+            self.document(changed_files=["tick`y.md", "plain.md"], file_link_base=None)
+        )
+        self.assertEqual(section, ["- tick`y.md", "- `plain.md`"])
+
+    def test_no_files_says_so(self):
+        for empty in ([], (), None):
+            with self.subTest(empty=empty):
+                text = self.document(changed_files=empty if empty is not None else [])
+                self.assertEqual(self.files_section(text), [capture.LEARNING_NO_FILES])
+
+    def test_the_section_is_last_and_always_there(self):
+        text = self.document()
+        headings = [line for line in text.splitlines() if line.startswith("## ")]
+        self.assertEqual(
+            headings,
+            [
+                "## What changed",
+                "## What we learned",
+                "## What to do differently next time",
+                "## Files",
+            ],
+        )
+
+    def test_the_front_matter_does_not_change_with_the_section(self):
+        """The list above the `---` is what keel's own reader matches on."""
+        blocks = {
+            base: self.document(file_link_base=base).split("---")[1]
+            for base in ("../..", "https://github.com/o/r/blob/abc", None)
+        }
+        self.assertEqual(len(set(blocks.values())), 1)
+        self.assertEqual(_front_matter_fields(self.document())["changed_files"], self.FILES)
+
+    def test_the_readers_summary_fallback_is_untouched(self):
+        """With no description the reader takes the first body line — still not a bullet."""
+        _title, summary = capture._learning_title_and_summary(
+            self.document(description="", what_changed="The body gained a Files section."),
+            "fallback",
+        )
+        self.assertEqual(summary, "The body gained a Files section.")
+
+    def test_a_secret_in_a_path_is_scrubbed_in_the_section_too(self):
+        """The section is part of the rendered text, so the second redaction pass covers it."""
+        from keel import redaction
+
+        token = "ghp_" + "A" * 36
+        plan = self.plan({}, changed_files=[f"src/{token}.py"])
+        self.assertIn(token, plan["content"])
+        scrubbed = redaction.sanitize(plan["content"], redaction.policy_from_config(None)).value
+        section = "\n".join(self.files_section(scrubbed))
+        self.assertNotIn(token, section)
+        self.assertIn("REDACTED", section)
+
+    def test_a_query_naming_only_the_file_finds_the_lesson(self):
+        """The measured side effect: the link text puts every path into the body."""
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (directory / "2026-09-10-pr1170-links-abc123.md").write_text(
+            self.document(
+                changed_files=["src/keel/orchestrator.py"],
+                what_changed="Nothing here names the module.",
+                what_we_learned="Nor here.",
+                do_differently="Nor here.",
+            ),
+            encoding="utf-8",
+        )
+        hits = capture.retrieve_relevant_learnings("orchestrator", directory)
+        self.assertEqual([hit["file"] for hit in hits], ["2026-09-10-pr1170-links-abc123.md"])
+
+    def test_the_base_is_lexical_and_posix(self):
+        base = capture.learning_file_link_base
+        common = {"owner": "o", "repo": "r", "head_sha": "abc"}
+        self.assertEqual(base(directory="docs\\learnings", in_repo=True, **common), "../..")
+        self.assertEqual(base(directory=".", in_repo=True, **common), ".")
+        self.assertEqual(
+            base(directory="/srv/k", in_repo=False, **common), "https://github.com/o/r/blob/abc"
+        )
+        self.assertIsNone(base(directory="/srv/k", in_repo=False, owner="o", repo="r", head_sha=""))
 
 
 if __name__ == "__main__":  # pragma: no cover

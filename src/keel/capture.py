@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os.path
+import posixpath
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import quote
 
 # `workspace` imports nothing from this package's config layer, so naming it here
 # keeps the import graph acyclic — see `_HasPolicyPack` for why that matters.
@@ -934,6 +936,18 @@ LEARNING_READ_SUFFIXES = (".md", ".json", ".txt")
 #: unreadable.
 LEARNING_FINGERPRINT_SLICE = 12
 
+#: The document's fourth section (#1166): one entry per ``changed_files`` path, written
+#: as a Markdown link so a **link-following** reader — a knowledge-graph builder, a
+#: wiki — gets the file ↔ lesson edge. The front-matter list is a string to such a
+#: reader; keel's own reader keeps matching on the list, which is why it stays.
+LEARNING_FILES_HEADING = "## Files"
+LEARNING_NO_FILES = "_No files recorded._"
+
+#: Characters that end or escape a CommonMark link *text*. The destination is
+#: percent-encoded instead, so the two halves of a link never disagree about where
+#: a path ends.
+_LINK_TEXT_UNSAFE = re.compile(r"([\\\[\]])")
+
 #: The frontmatter contract the reader depends on. Fixed and small on purpose:
 #: `retrieve_relevant_learnings` reads `title` and `description` out of it, so a
 #: field added here is a field that side has to be taught.
@@ -1193,6 +1207,66 @@ def _yaml_sequence(key: str, values: list[str] | tuple[str, ...]) -> list[str]:
     return [f"{key}:", *(f"  - {_yaml_scalar(item)}" for item in items)]
 
 
+def learning_file_link_base(
+    *,
+    directory: str,
+    in_repo: bool,
+    owner: str | None,
+    repo: str | None,
+    head_sha: str | None,
+) -> str | None:
+    """Where the **Files** section's links point, or ``None`` for bare paths (#1166).
+
+    Two forms, chosen by where the sink is. A sink **inside the checkout** links
+    relative to the document's own directory — ``../..`` from the default
+    ``.keel/learning`` — so the link resolves on disk from where the file sits, and a
+    graph builder walking the repository makes the edge to a node it already has.
+    The prefix is lexical (:func:`posixpath.relpath`) because a plan touches no
+    filesystem, and POSIX on every platform because the document is read on machines
+    other than the one that wrote it.
+
+    A sink **outside** the checkout has nothing to link to relatively, and a relative
+    link that resolves to nothing is worse than none. It links the file on GitHub at
+    the merged head when the owner, the repository and the head are all known, and
+    otherwise says nothing — the caller renders the bare path.
+    """
+    if in_repo:
+        return posixpath.relpath(".", posixpath.normpath(directory.replace("\\", "/")))
+    if owner and repo and head_sha:
+        return f"https://github.com/{owner}/{repo}/blob/{head_sha}"
+    return None
+
+
+def _file_bullet(path: str, base: str | None) -> str:
+    """One **Files** bullet: a CommonMark link when there is a base, else the bare path.
+
+    The link text is the repository's own name for the file, which also puts every
+    path into the body — and :func:`retrieve_relevant_learnings` scores a document by
+    its text, so a query naming a file now finds the lesson about it. The destination
+    is percent-encoded: a space or a parenthesis in a path would otherwise end the
+    link where the path continues.
+    """
+    name = _one_line(path)
+    if base is None:
+        # A backtick inside a code span ends it; such a path is written plain.
+        return f"- `{name}`" if "`" not in name else f"- {name}"
+    text = _LINK_TEXT_UNSAFE.sub(r"\\\1", name)
+    return f"- [{text}]({base}/{quote(name, safe='/')})"
+
+
+def _files_section(changed_files: list[str] | tuple[str, ...], base: str | None) -> list[str]:
+    """The **Files** section's lines, from the same list the front matter is given.
+
+    An empty list still renders the heading: the document shape is stable — four
+    sections, always — and a lesson about no file says so rather than pointing at
+    nothing.
+    """
+    items = _strings(changed_files)
+    if not items:
+        return [LEARNING_NO_FILES]
+    return [_file_bullet(item, base) for item in items]
+
+
 def render_learning_document(
     *,
     title: str | None,
@@ -1207,12 +1281,18 @@ def render_learning_document(
     what_changed: str = "",
     what_we_learned: str = "",
     do_differently: str = "",
+    file_link_base: str | None = None,
 ) -> str:
-    """One learning file: frontmatter the reader can rely on, then three sections.
+    """One learning file: frontmatter the reader can rely on, then four sections.
 
     The heading is repeated below the frontmatter deliberately. `retrieve_relevant_learnings`
     scores a file by its own text, and a title that lives only in frontmatter is a
     title the search cannot weigh.
+
+    ``file_link_base`` is what :func:`learning_file_link_base` decided for the sink;
+    the **Files** section links each ``changed_files`` entry under it, and renders
+    the bare path when it is ``None``. The front matter does not read it: the list
+    up there is byte-for-byte what it was before the section existed (#1166).
     """
     front = [
         "---",
@@ -1257,6 +1337,10 @@ def render_learning_document(
         "## What to do differently next time",
         "",
         do_differently or "_Not recorded._",
+        "",
+        LEARNING_FILES_HEADING,
+        "",
+        *_files_section(changed_files, file_link_base),
         "",
     ]
     return "\n".join(front + body)
@@ -1314,6 +1398,7 @@ def learning_sink_plan(
     what_changed: str = "",
     what_we_learned: str = "",
     do_differently: str = "",
+    head_sha: str | None = None,
 ) -> dict[str, Any] | None:
     """What to write for this run, or `None` with the reason folded into the caller.
 
@@ -1352,10 +1437,21 @@ def learning_sink_plan(
     filename = _one_component(
         _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
     )
+    # Decided from the sink's *shape*, the way `learning_sink_in_worktree` decides
+    # who commits the file: the same question, and the two answers must agree
+    # about where the document sits.
+    file_link_base = learning_file_link_base(
+        directory=directory,
+        in_repo=learning_sink_in_worktree(config),
+        owner=owner,
+        repo=repo,
+        head_sha=head_sha,
+    )
     return {
         "kind": sink.get("kind", LEARNING_SINK_KINDS[0]),
         "directory": directory,
         "filename": filename,
+        "file_link_base": file_link_base,
         "content": render_learning_document(
             title=title,
             description=description,
@@ -1369,6 +1465,7 @@ def learning_sink_plan(
             what_changed=what_changed,
             what_we_learned=what_we_learned,
             do_differently=do_differently,
+            file_link_base=file_link_base,
         ),
     }
 

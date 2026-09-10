@@ -9023,6 +9023,10 @@ def _write_learning_sink(
         what_changed=what_changed,
         what_we_learned=what_we_learned,
         do_differently=do_differently,
+        # The **Files** section links each path on GitHub at this head when the
+        # sink is outside the checkout (#1166); an in-repo sink links relatively
+        # and never reads it.
+        head_sha=args.head_sha,
     )
     # **Absolute, so the recorded path means one thing.** `--root` is whatever the
     # operator typed: `.`, an absolute path, or a relative `repo`. Recording the

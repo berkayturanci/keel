@@ -1367,10 +1367,27 @@ suppresses *identical* fingerprints, and these differ.
 
 Each file opens with front matter the read path relies on — `schema`, `title`,
 `description`, `repo`, `pr`, `issue`, `date`, `fingerprint`, `labels`, `changed_files` —
-then three fixed sections: **What changed**, **What we learned**, **What to do
-differently next time**. Content passes through
+then four fixed sections: **What changed**, **What we learned**, **What to do
+differently next time**, and **Files**. Content passes through
 [`policy_pack.capture_redaction`](#policy_packcapture_redaction) before it is written,
 which is the existing durable-artifact rule rather than a new one.
+
+**Files** is one Markdown link per `changed_files` entry, so a *link-following* reader — a
+knowledge-graph builder such as graphify, a wiki, an agent that reads an index and follows
+its links — gets the file ↔ lesson edge that a path inside a YAML list cannot give it. The
+link text is the repo-relative path; the destination depends on where the sink is:
+
+| sink | destination | example |
+|---|---|---|
+| inside the checkout (a relative `path`, the default) | relative to the document's own directory, POSIX separators, percent-encoded | `[src/keel/capture.py](../../src/keel/capture.py)` |
+| outside it (an absolute or `~` `path`), owner + repo + head known | the file on GitHub at the merged head | `[src/keel/capture.py](https://github.com/<owner>/<repo>/blob/<head-sha>/src/keel/capture.py)` |
+| outside it, any of those unknown | the bare path in backticks — never a relative link that resolves to nothing | `` `src/keel/capture.py` `` |
+
+An empty `changed_files` renders the heading and `_No files recorded._`, so the document
+always has the same four sections. The front matter is not changed by the section: the
+`changed_files` list above the `---` is what keel's own reader matches on. A side effect
+worth knowing: `retrieve_relevant_learnings` scores a document by its text, and the link
+text puts every path into the body, so a query naming a file now finds the lesson about it.
 
 Three behaviours worth knowing:
 
