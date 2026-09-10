@@ -558,6 +558,25 @@ class TestImplementLoopLine(unittest.TestCase):
             closure.render_closure_comment(record),
         )
 
+    def test_a_record_made_with_the_policy_off_carries_no_budget(self):
+        record = _record()
+        record["run_context"]["implement_loop"] = {
+            "enabled": False,
+            "max_iterations": 5,
+            "iterations": [{"iteration": 7, "commit": "abcdef0" + "1" * 33, "gates_ok": True}],
+        }
+        self.assertIn(
+            "- **Implement:** loop (1 iteration recorded, policy off: abcdef0 green)",
+            closure.render_closure_comment(record),
+        )
+        record["run_context"]["implement_loop"]["iterations"].append(
+            {"iteration": 8, "commit": "b" * 40, "gates_ok": False}
+        )
+        self.assertIn(
+            "loop (2 iterations recorded, policy off: abcdef0 green → bbbbbbb red)",
+            closure.render_closure_comment(record),
+        )
+
     def test_a_disabled_loop_with_no_iterations_says_nothing(self):
         record = _record()
         record["run_context"]["implement_loop"] = {

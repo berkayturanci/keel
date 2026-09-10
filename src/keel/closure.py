@@ -425,6 +425,11 @@ def _loop_part(block: dict[str, Any]) -> str | None:
         f"{_short(entry.get('commit'))} {'green' if entry.get('gates_ok') else 'red'}"
         for entry in iterations
     )
+    if not record.get("enabled"):
+        # A policy that was off bounded nothing, so a count over its nominal budget would
+        # read as a fraction of a budget the run never had.
+        noun = "iteration" if len(iterations) == 1 else "iterations"
+        return f"{LOOP_LABEL} ({len(iterations)} {noun} recorded, policy off: {steps})"
     return f"{LOOP_LABEL} ({len(iterations)}/{budget_text} iterations: {steps})"
 
 

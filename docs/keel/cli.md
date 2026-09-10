@@ -2246,8 +2246,10 @@ The same block is rendered by `keel plan --loop`. There is no `--no-loop`, for t
 there is no `--no-tdd`. A `--live --append-ledger` run records `run_context.implement_loop`
 — the policy plus one entry per `--loop-iteration K=SHA:pass|fail` (the iteration's commit,
 whether the gates passed after it, and the implementer) — which the closure comment renders
-as `Implement: loop (k/N iterations: <sha> red → <sha> green)`. A run that uses neither the
-knob nor the flag records `implement_loop: null` and its closure comment is unchanged. The
+as `Implement: loop (k/N iterations: <sha> red → <sha> green)` — or, for records made while
+the policy was off, `loop (k iterations recorded, policy off: …)`, since a budget the run
+never had is not a denominator. A run that uses neither the knob nor the flag records
+`implement_loop: null` and its closure comment is unchanged. The
 records are checked before the ledger says they happened: a SHA is 7–40 hex characters, and
 a number recorded twice, or past the budget while the loop is on, is refused (exit 2).
 
