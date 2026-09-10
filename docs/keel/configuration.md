@@ -1395,14 +1395,21 @@ the ampersand and the backtick, so `__init__.py` reads as written rather than as
 `init`.
 
 **One directory, two readers.** The sink is a plain Markdown folder, so the same files serve
-a knowledge-graph builder — graphify reads the directory and follows the **Files** links —
-and Obsidian, which opens the folder as a vault, shows the front matter as properties and
-draws the same links in its graph view. Two things on the Obsidian side: open the repository
-root (or any parent of the sink) as the vault, so an in-repo sink's relative links stay
-inside it; and turn on *Detect all file extensions* under *Files and links*, so a `.py` or
-`.yaml` target outside Obsidian's default set is indexed and the edge resolves — without it
-the link still renders, as an unresolved node. keel writes no `.obsidian/` folder and no
-wikilinks (the #1154 contract), so nothing in the vault is keel-specific.
+a knowledge-graph builder and a note vault. graphify ingests the directory as documents: it
+draws reference edges between the Markdown documents it can link, and a link whose target
+is a code file counts as text — the repo-relative path in the link text is what its
+semantic pass reads, so the **Files** section puts each path into the body where a YAML
+list did not. Obsidian opens a folder as a vault, shows the front matter as properties and
+draws the links in its graph view, on three conditions. The vault root must be the
+repository root or a directory above it, so an in-repo sink's relative links stay inside
+the vault. The sink must not sit under a dot-prefixed folder: vanilla Obsidian neither
+shows nor indexes one, so the default `.keel/learning/` is invisible to it — point `path`
+at a visible directory such as `docs/learnings/`, or install a community plugin that
+indexes hidden folders. And *Show all file types* (the setting formerly named *Detect all
+file extensions*, under *Files and links*) must be on, so a `.py` or `.yaml` target is
+indexed and the edge resolves — without it the link still renders, as an unresolved node.
+keel writes no `.obsidian/` folder and no wikilinks (the #1154 contract), so nothing in the
+vault is keel-specific.
 
 Three behaviours worth knowing:
 
