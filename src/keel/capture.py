@@ -1180,6 +1180,16 @@ def learning_sink_writes(
     """
     if capture_status != "applied":
         return False
+    # **The parent switches, before the learning ones.** `policy_pack.capture` is
+    # what says whether this project runs a content hook at all: `enabled: false`
+    # is a project that does not, and `mode: marker-only` records the marker
+    # *without* one — the schema's own words. The sink **is** that hook, so a
+    # configured sink was again permission to write, one level up from the four
+    # `learning.*` refusals already here. `_reconcile_marker_decision` reads the
+    # same pair to answer `skipped:no-policy`.
+    capture_policy = _capture_policy(config)
+    if not capture_policy.get("enabled") or capture_policy.get("mode", "extension") != "extension":
+        return False
     sink = learning_sink_policy(config)
     if sink is None or learning_sink_errors(sink):
         return False

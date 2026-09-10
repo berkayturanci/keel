@@ -269,6 +269,39 @@ class TheDecisionDecidesWhetherAnythingIsWritten(unittest.TestCase):
             title="capture: built-in Markdown learning sink",
         )
 
+    def test_the_parent_policy_is_consulted_too(self):
+        for label, capture_policy in (
+            ("disabled", {"enabled": False, "mode": "extension"}),
+            ("marker-only", {"enabled": True, "mode": "marker-only"}),
+            ("enabled omitted", {"mode": "extension"}),
+        ):
+            with self.subTest(policy=label):
+                config = cfg.ProjectConfig(
+                    extends="keel",
+                    core_version="^0.1",
+                    knobs={},
+                    owner="berkayturanci",
+                    repo="keel",
+                    base_branch="main",
+                    policy_pack={
+                        "capture": {
+                            **capture_policy,
+                            "learning": {
+                                "enabled": True,
+                                "mode": "create-learning",
+                                "sink": {"kind": "markdown-dir"},
+                            },
+                        }
+                    },
+                )
+                self.assertFalse(
+                    capture.learning_sink_writes(
+                        config=config,
+                        decision={"decision": "create-learning", "fingerprint": "a"},
+                        capture_status="applied",
+                    )
+                )
+
     def test_only_create_learning_plans_a_write(self):
         self.assertIsNotNone(self.plan({"decision": "create-learning", "fingerprint": "a"}))
         for decision in ("marker-only", "defer", "duplicate"):
@@ -1753,6 +1786,39 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             Path(self.ledger_capture(root)["artifact"]).unlink()
             self.assertEqual(self.ship(root, config, pr=2)[0], 0)
             self.assertIsNone(self.ledger_capture(root)["artifact"])
+
+    def test_a_capture_policy_that_runs_no_hook_writes_no_file(self):
+        """The parent switches, one level above the `learning.*` refusals.
+
+        `policy_pack.capture` says whether this project runs a content hook at
+        all: `enabled: false` is a project that does not, and `mode: marker-only`
+        records the marker *without* one — the schema's own words. The sink **is**
+        that hook, so a configured sink was again permission to write, and the
+        four inner refusals did not reach it.
+        """
+        for label, capture_lines in (
+            ("capture disabled", ["    enabled: false", "    mode: extension"]),
+            ("marker-only", ["    enabled: true", "    mode: marker-only"]),
+            ("enabled omitted", ["    mode: extension"]),
+        ):
+            with self.subTest(policy=label), tempfile.TemporaryDirectory() as root:
+                config = write_config(
+                    Path(root),
+                    [
+                        "  capture:",
+                        *capture_lines,
+                        "    learning:",
+                        "      enabled: true",
+                        "      mode: create-learning",
+                        "      sink:",
+                        "        kind: markdown-dir",
+                        "        path: 'learnings'",
+                    ],
+                )
+                code, _, err = self.ship(root, config)
+                self.assertEqual(code, 0, err)
+                self.assertFalse(list((Path(root) / "learnings").glob("*.md")))
+                self.assertIsNone(self.ledger_capture(root)["artifact"])
 
     def test_a_policy_that_wants_no_learning_writes_no_file(self):
         """A configured sink is where learnings go, not permission to write one.
