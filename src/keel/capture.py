@@ -944,11 +944,14 @@ LEARNING_FILES_HEADING = "## Files"
 LEARNING_NO_FILES = "_No files recorded._"
 
 #: Characters that end, escape, or open something inside a CommonMark link *text*:
-#: the bracket pair and the backslash, and the angle brackets that would otherwise
-#: start an autolink or raw HTML from a file name (a merged PR chooses those bytes).
-#: The destination is percent-encoded instead, so the two halves of a link never
-#: disagree about where a path ends.
-_LINK_TEXT_UNSAFE = re.compile(r"([\\\[\]<>])")
+#: the bracket pair and the backslash; the angle brackets that would start an autolink
+#: or raw HTML from a file name (a merged PR chooses those bytes); the emphasis and
+#: strikethrough delimiters that turned ``__init__.py`` — the most common Python file
+#: name — into bold ``init``; and the ampersand that would decode an entity reference.
+#: Every one is ASCII punctuation, which CommonMark lets a backslash escape. The
+#: destination is percent-encoded instead, so the two halves of a link never disagree
+#: about where a path ends.
+_LINK_TEXT_UNSAFE = re.compile(r"([\\\[\]<>_*~&])")
 
 #: The frontmatter contract the reader depends on. Fixed and small on purpose:
 #: `retrieve_relevant_learnings` reads `title` and `description` out of it, so a
@@ -1454,8 +1457,10 @@ def learning_sink_plan(
         _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
     )
     # Decided from the sink's *shape*, the way `learning_sink_in_worktree` decides
-    # who commits the file: the same question, and the two answers must agree
-    # about where the document sits.
+    # who commits the file: the same question, and the two answers agree about where
+    # the document sits — except when a placeholder's expansion climbs out of the
+    # checkout, which the link base sees and the template reader does not, and then
+    # the outside form is the safe one.
     file_link_base = learning_file_link_base(
         directory=directory,
         in_repo=learning_sink_in_worktree(config),

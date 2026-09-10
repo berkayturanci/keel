@@ -2405,7 +2405,9 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
             self.files_section(self.document()),
             [
                 "- [src/keel/capture.py](../../src/keel/capture.py)",
-                "- [tests/test_capture.py](../../tests/test_capture.py)",
+                # `_` is an emphasis delimiter, so the text escapes it; the destination
+                # is percent-encoded and `_` is unreserved there.
+                "- [tests/test\\_capture.py](../../tests/test_capture.py)",
             ],
         )
 
@@ -2486,6 +2488,22 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
                 '- [src/\\<a href="https://evil.example/"\\>c\\</a\\>.py]'
                 "(../../src/%3Ca%20href%3D%22https%3A//evil.example/%22%3Ec%3C/a%3E.py)",
             ),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.files_section(self.document(changed_files=[path]))[0], expected
+                )
+
+    def test_emphasis_delimiters_and_the_ampersand_stay_literal(self):
+        """`__init__.py` is the commonest Python file name, and unescaped it renders
+        as bold `init`; `a&amp;b.py` would decode the entity."""
+        for path, expected in (
+            (
+                "src/keel/__init__.py",
+                "- [src/keel/\\_\\_init\\_\\_.py](../../src/keel/__init__.py)",
+            ),
+            ("a*b*c~~d~~.py", "- [a\\*b\\*c\\~\\~d\\~\\~.py](../../a%2Ab%2Ac~~d~~.py)"),
+            ("a&amp;b.py", "- [a\\&amp;b.py](../../a%26amp%3Bb.py)"),
         ):
             with self.subTest(path=path):
                 self.assertEqual(

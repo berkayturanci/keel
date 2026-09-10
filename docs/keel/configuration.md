@@ -1388,7 +1388,9 @@ always has the same four sections. The front matter is not changed by the sectio
 `changed_files` list above the `---` is what keel's own reader matches on. A side effect
 worth knowing: `retrieve_relevant_learnings` scores a document by its text; the front-matter
 list already matched a query naming a file once, and the link text now matches it again, so
-such a lesson scores higher than the front matter alone gave it.
+such a lesson scores higher than the front matter alone gave it. Link text escapes the
+bracket pair, the backslash, the angle brackets, the emphasis delimiters and the ampersand,
+so `__init__.py` reads as written rather than as a bold `init`.
 
 Three behaviours worth knowing:
 
