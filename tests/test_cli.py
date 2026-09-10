@@ -14442,7 +14442,7 @@ class TestLoopCommand(unittest.TestCase):
         return str(root), str(config)
 
     def test_run_gates_json_scopes_the_loop_to_the_gates_it_can_make_green(self):
-        """The packaged recipe: `keel run-gates --no-jury --json` -> `keel loop brief`.
+        """The packaged recipe: `keel run-gates --defer-jury --json` -> `keel loop brief`.
 
         A failing soft gate, an agentic blocking gate nobody ran, a pre-merge gate that
         needs the PR and a jury the loop must not convene are all *listed* — and none of
@@ -14451,7 +14451,7 @@ class TestLoopCommand(unittest.TestCase):
         root, config = self._scoped_project("'true'")
         with patch("keel.git.diff", return_value=""):
             rc, out, _ = run(
-                ["run-gates", config, "--root", root, "--phase", "s4", "--no-jury", "--json"]
+                ["run-gates", config, "--root", root, "--phase", "s4", "--defer-jury", "--json"]
             )
         # release-check is red, so the s8-style exit is 1 — the loop reads the document,
         # not the exit code.
@@ -14481,7 +14481,7 @@ class TestLoopCommand(unittest.TestCase):
         # A red build beside them is still the loop's to fix, and only the build.
         root, config = self._scoped_project("'false'")
         with patch("keel.git.diff", return_value=""):
-            _, out, _ = run(["run-gates", config, "--root", root, "--no-jury", "--json"])
+            _, out, _ = run(["run-gates", config, "--root", root, "--defer-jury", "--json"])
         gates_file.write_text(out, encoding="utf-8")
         rc, out, _ = self.brief(
             "--gates",

@@ -663,13 +663,13 @@ red gate run is its proof). When `enabled` is true:
 1. **Iteration 1 is the ordinary implement pass** above, with the same dispatch table, the
    same retry and fall-back policy, the same attribution.
 2. **After every iteration, run the gates the loop can make green in the worktree and let
-   core decide.** `keel run-gates --no-jury --json` runs the guard- and test-phase command
+   core decide.** `keel run-gates --defer-jury --json` runs the guard- and test-phase command
    gates and reports the plan beside the outcomes; save the report and hand it, with the
    *base* brief, to `keel loop brief`. Add `--loop` to that call when the run was started
    with `--loop`, so it resolves the policy the contract published:
 
    ```bash
-   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --no-jury --json \
+   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
      > "$SCRATCH/iter-$K.json"
    keel loop brief --project .keel/project.yaml --root . --iteration "$K" \
      --brief "$BRIEF" --gates "$SCRATCH/iter-$K.json" --title "$ISSUE_TITLE" \
@@ -1482,4 +1482,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=2bc14ab94ac03eed05fc8feaac8263142099086ac502f2849f888b64283944b1 generated_sha256=2bc14ab94ac03eed05fc8feaac8263142099086ac502f2849f888b64283944b1 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=7aef9f94aafdb33c5e9bb0816daeb84520bb582736eef9e6fff9a6fc0f70920d generated_sha256=7aef9f94aafdb33c5e9bb0816daeb84520bb582736eef9e6fff9a6fc0f70920d -->

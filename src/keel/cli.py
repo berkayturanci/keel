@@ -458,7 +458,7 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
             diff_text,
             jury_mode="gating",
             timeout=config.knobs.gate_timeout_s,
-            run_jury=not args.no_jury,
+            run_jury=not args.defer_jury,
         ),
         config=config,
         root=args.root,
@@ -483,7 +483,7 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         report = {
             "schema_version": "keel.run-gates.v1",
             "phase": args.gate_phase,
-            "jury_run": not args.no_jury,
+            "jury_run": not args.defer_jury,
             "gates": [contracts.gate_as_dict(spec) for spec in specs],
             "gate_outcomes": [contracts.gate_outcome_as_dict(o) for o in outcomes],
             "blocked": verdict.blocked,
@@ -6735,10 +6735,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="add the tdd-order gate to this run, as implement_mode: tdd would",
     )
     p_run.add_argument(
-        "--no-jury",
+        "--defer-jury",
         action="store_true",
-        help="report the jury built-in not_run instead of dispatching a panel — the s4 "
-        "loop's per-iteration gate run (#1165)",
+        help="report the jury built-in not_run — deferred to the phase that convenes it — "
+        "instead of dispatching a panel: the s4 loop's per-iteration gate run (#1165)",
     )
     p_run.add_argument(
         "--json",

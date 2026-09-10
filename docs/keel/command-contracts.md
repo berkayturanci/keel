@@ -464,7 +464,7 @@ done, and if not, what does the next one read?*
   iteration number, the gate outcomes and the policy. The loop judges the gates it can make
   green — the guard- and test-phase gates the command runner executed (`judged_phases`) — and
   `done` needs every blocking one of them green; a soft gate that failed does not hold the
-  loop open; an agentic gate nobody ran, the jury under `--no-jury` and a `pre-merge` gate
+  loop open; an agentic gate nobody ran, the jury under `--defer-jury` and a `pre-merge` gate
   are **deferred** (named in `decision.deferred`, never counted green, never holding the loop
   open — the phase that runs them decides); an empty report is refused; a judged blocking
   gate still red at `max_iterations` is `budget-exhausted`, which exits non-zero and blocks

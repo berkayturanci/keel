@@ -1533,7 +1533,7 @@ keel review-all-day .keel/project.yaml 1 --live --approve-scope github --operato
 Run the project's deterministic command gates (the runnable slice of s8).
 
 ```
-keel run-gates <project.yaml> [--root DIR] [--tdd] [--no-jury] [--json]
+keel run-gates <project.yaml> [--root DIR] [--tdd] [--defer-jury] [--json]
           [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]
 ```
 
@@ -1542,7 +1542,7 @@ keel run-gates <project.yaml> [--root DIR] [--tdd] [--no-jury] [--json]
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Root for commands and extensions. |
 | `--tdd` | flag | off | Add the `tdd-order` gate to this run, as `knobs.implement_mode: tdd` would. |
-| `--no-jury` | flag | off | Report the `jury` built-in `not_run` instead of convening a panel — the s4 loop's per-iteration gate run. |
+| `--defer-jury` | flag | off | Report the `jury` built-in `not_run` instead of convening a panel — the s4 loop's per-iteration gate run. |
 | `--json` | flag | off | Emit the `keel.run-gates.v1` report — the planned `gates` beside the `gate_outcomes` (with `on_fail` and `not_run`), `jury_run`, `blocked` — that `keel loop brief --gates` reads; the exit code is unchanged. |
 
 ### Details

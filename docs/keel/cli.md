@@ -1108,10 +1108,10 @@ function of the iteration number, the outcomes and the policy:
 
 The loop judges the gates `keel ship` runs on the tree before a pull request exists — the
 guard and test phases, of kind `command` or built-in — and that is what the packaged recipe
-runs: `keel run-gates --phase s4 --no-jury --json`, whose report carries the plan beside
+runs: `keel run-gates --phase s4 --defer-jury --json`, whose report carries the plan beside
 the outcomes. A soft gate (`on_fail: suggest` / `warn`) that failed does not hold the loop
 open: it never held a merge either. An agentic gate the command runner did not execute
-(`not_run`), the jury under `--no-jury`, and a `pre-merge` gate are **deferred**: listed in
+(`not_run`), the jury under `--defer-jury`, and a `pre-merge` gate are **deferred**: listed in
 the brief and in `decision.deferred`, never counted as green, never holding the loop open —
 the review, test and merge phases run them. Without that scope a project with a blocking
 agentic tester could never reach `done`. An empty report is refused (exit 1): no gates
@@ -1137,7 +1137,7 @@ both flags hold the bounds the schema holds the knob to. `--tdd` says the run is
 `implement_mode: tdd`, so the published `wraps` reads `implementation`.
 
 ```bash
-keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --no-jury --json \
+keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
   > "$SCRATCH/iter-1.json"
 keel loop brief --project .keel/project.yaml --root . --iteration 1 \
   --brief "$SCRATCH/brief.md" --gates "$SCRATCH/iter-1.json" \
@@ -1499,7 +1499,7 @@ keel plan — example-flutter
     ...
 ```
 
-## `keel run-gates <project.yaml> [--root DIR] [--tdd] [--no-jury] [--json] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
+## `keel run-gates <project.yaml> [--root DIR] [--tdd] [--defer-jury] [--json] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
 
 Run the project's **command gates** (the `command`/`build`/`lint` Lego) under `--root DIR`
 (default `.`) and report each as a structured finding. Agentic gates (review, design
@@ -1568,7 +1568,7 @@ used as-is.
 `--json` emits the machine report the [s4 loop](configuration.md#loop) reads — `keel.run-gates.v1`:
 the planned `gates` (id, kind, phase, severity) beside the `gate_outcomes` (each with `ok`,
 `on_fail`, `not_run`, findings), `jury_run`, and `blocked`; the exit code is unchanged, and
-the human listing is not printed. `--no-jury` reports the `jury` built-in `not_run` instead
+the human listing is not printed. `--defer-jury` reports the `jury` built-in `not_run` instead
 of convening a panel, exactly as the command runner reports an agentic gate: the loop's
 per-iteration gate run must not spend a cross-vendor panel on every iteration, and a seat
 nobody staffed is never recorded as a pass.

@@ -663,13 +663,13 @@ red gate run is its proof). When `enabled` is true:
 1. **Iteration 1 is the ordinary implement pass** above, with the same dispatch table, the
    same retry and fall-back policy, the same attribution.
 2. **After every iteration, run the gates the loop can make green in the worktree and let
-   core decide.** `keel run-gates --no-jury --json` runs the guard- and test-phase command
+   core decide.** `keel run-gates --defer-jury --json` runs the guard- and test-phase command
    gates and reports the plan beside the outcomes; save the report and hand it, with the
    *base* brief, to `keel loop brief`. Add `--loop` to that call when the run was started
    with `--loop`, so it resolves the policy the contract published:
 
    ```bash
-   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --no-jury --json \
+   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
      > "$SCRATCH/iter-$K.json"
    keel loop brief --project .keel/project.yaml --root . --iteration "$K" \
      --brief "$BRIEF" --gates "$SCRATCH/iter-$K.json" --title "$ISSUE_TITLE" \
