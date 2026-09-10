@@ -249,10 +249,10 @@ Keel Swarm anchors multi-agent parallelism inside deterministic engineering inva
 > **Assessment**.
 
 These ship *inside* an agent host (Claude Code, Cursor, Codex, Gemini CLI) as a plugin or a
-skill, and each carries a loop of its own — an iteration loop, a plan/work/review/learn
-loop, or an index-and-follow-links loop over a knowledge graph. None of them owns an
-issue's lifecycle, a merge, or a record; all three touch a step keel already has a name
-for.
+skill. Two of them carry a loop of their own — an iteration loop, a plan/work/review/learn
+loop — and the third is what a reader loops over: a knowledge graph built from the
+repository. None of them owns an issue's lifecycle, a merge, or a record; all three touch a
+step keel already has a name for.
 
 ### Ralph loop (`/ralph-loop`)
 - **What**: Anthropic's official Claude Code plugin implementing the "Ralph Wiggum"
@@ -266,20 +266,30 @@ for.
   [awesomeclaude.ai/ralph-wiggum](https://awesomeclaude.ai/ralph-wiggum),
   [paddo.dev](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/),
   [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
-- **License / model**: free plugin on the official Claude Code marketplace; the per-host
-  ports are separate projects with their own terms.
+- **License / model**: free plugin on the official Claude Code marketplace. Its source is
+  published in `anthropics/claude-code`, whose licence file says use is subject to
+  Anthropic's Commercial Terms of Service — source-visible, not open source.
+  [`anthropics/claude-code` LICENSE.md](https://github.com/anthropics/claude-code/blob/main/LICENSE.md).
+  The per-host ports are separate projects under their own terms.
+  [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
 - **What keel does that it does not**: everything from s5 on — classification, CI,
   independent review, gates, merge window and lock, closeout, capture — and a record. A
   Ralph run leaves no ledger of how many iterations ran, what each changed, or what the
-  tests said between them. Its completion criterion is the model's own claim
-  (`--completion-promise "DONE"`); the Cursor port's own guidance is that the promise "uses
-  exact string matching, which is unreliable" and that `--max-iterations` should always be
-  passed. [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
+  tests said between them: the stop hook deletes its state file when the promise is
+  detected or the iteration limit is reached, and nothing else is written.
+  [`plugins/ralph-wiggum` README](https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md).
+  Its completion criterion is the model's own claim (`--completion-promise "DONE"`): that
+  README says the promise "uses exact string matching, so you cannot use it for multiple
+  completion conditions" and to "always rely on `--max-iterations` as your primary safety
+  mechanism", and the Cursor port says the same — "always pass `--max-iterations` to
+  prevent runaway loops".
+  [`plugins/ralph-wiggum` README](https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md),
+  [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
 - **What it does that keel does not (today)**: iterate the *implement* step itself. keel's
   s4 is one pass; a red gate after it falls to the s9 fix loop (which reads review
-  findings) or to the host. #1165 closes this: the same fixed-brief iteration with the
-  **gates** as the judge, bounded by `knobs.loop.max_iterations`, one commit per iteration
-  in the ledger, on every host keel runs in.
+  findings) or to the host. #1165 is the proposal that closes this: the same fixed-brief
+  iteration with the **gates** as the judge, bounded by `knobs.loop.max_iterations`, one
+  commit per iteration in the ledger, on every host keel runs in.
 - **Idea to borrow**: "the prompt stays fixed and the evidence changes" as the shape of the
   iteration brief — adopted by #1165. **Assessment**: the loop is the right primitive and
   the judge is the wrong one. keel keeps the loop and replaces "the model says DONE" with
@@ -288,28 +298,31 @@ for.
 
 ### Compound engineering plugin
 - **What**: Every's official plugin for Claude Code, Codex, Cursor and other hosts — a
-  library of dozens of skills and agents around a `brainstorm → plan → work → review →
-  compound` loop (the full track adds constitution, grill-with-docs, architecture,
-  deepen-plan, to-issues and triage steps) whose last step captures lessons into a file the
-  agent reads on every future session.
+  library of dozens of skills and agents around a six-step `brainstorm → plan → work →
+  simplify → review → compound` loop, whose last step captures lessons into a file the
+  agent reads on every future session. (Earlier releases spelled a longer full track —
+  constitution, grill-with-docs, deepen-plan, to-issues, triage — which secondary write-ups
+  still describe; the repository's README carries the six-step loop today.)
   [EveryInc/compound-engineering-plugin](https://github.com/everyinc/compound-engineering-plugin),
   [desktheory.com](https://desktheory.com/workflows/compound-engineering-plugin-claude-code),
   [rywalker.com](https://rywalker.com/research/compound-engineering-plugin)
-- **License / model**: OSS (MIT); free plugin; near-daily release cadence and 21k+ GitHub
-  stars as of mid-2026.
-  [desktheory.com](https://desktheory.com/workflows/compound-engineering-plugin-claude-code),
+- **License / model**: OSS (MIT, per the repository's `LICENSE`); free plugin; releases days
+  apart through mid-2026 in its changelog.
+  [EveryInc/compound-engineering-plugin](https://github.com/everyinc/compound-engineering-plugin),
   [context7.com](https://context7.com/everyinc/compound-engineering-plugin)
 - **What keel does that it does not**: a deterministic core under the loop. keel's
-  `--compound` profile models the plugin's four-step shape as
-  `workflow_profile.step_overrides` on s4/s7/s9/s11 without forking the backbone, and its
-  lessons file is what `policy_pack.capture.learning.sink` writes — but with a config hash,
+  `--compound` profile models the work → review → compound half of that loop as
+  `workflow_profile.step_overrides` on s4 implement, s7 review, s9 fixloop and s11 capture
+  — keel adds a review-fix round the plugin's loop does not name and has no plan step to
+  override — without forking the backbone, and its lessons file is what
+  `policy_pack.capture.learning.sink` writes — but with a config hash,
   a run ledger, a merge window and lock, risk-tiered reviewer counts, and an evidence gate
   the plugin has no equivalent of. keel does not require it and can run it *as* the
   compound helper: `ship.md` already says compound helpers "may be supplied by the host
   runtime".
 - **What it does that keel does not**: the front half — brainstorming, plan deepening,
   turning a plan into issues — and the breadth of the skill library. keel starts at a ready
-  issue (s1 intake) and owns it to done.
+  issue (s1 select, behind the intake preflight) and owns it to done.
 - **Idea to borrow**: "lessons the agent reads next session" — #1155 wires retrieved
   learnings into the implement and review briefs. **Assessment**: this is the closest
   overlap in the document, and it is an overlap of *vocabulary* more than of *layer*: a
@@ -320,11 +333,13 @@ for.
   code, docs, SQL schemas, configs, PDFs — into a queryable knowledge graph: code parsed
   locally with tree-sitter (deterministic, no LLM), prose and images through the
   assistant's model, community detection with named clusters, every edge tagged
-  `EXTRACTED` / `INFERRED`, no vector store; the outputs are an interactive `graph.html`, a
-  GraphRAG-ready `graph.json` and a plain-language `GRAPH_REPORT.md`.
+  `EXTRACTED` / `INFERRED` / `AMBIGUOUS`, no vector store; the outputs are an interactive
+  `graph.html`, a GraphRAG-ready `graph.json` and a plain-language `GRAPH_REPORT.md`.
   [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify),
   [graphify.net](https://graphify.net/), [ai-tldr.dev](https://ai-tldr.dev/tools/graphify/)
-- **License / model**: OSS (MIT). [ai-tldr.dev](https://ai-tldr.dev/tools/graphify/)
+- **License / model**: OSS (Apache-2.0). The repository's `LICENSE`, `NOTICE` and changelog
+  record a relicensing from MIT in July 2026, which is why older listings still say MIT.
+  [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify)
 - **What keel does that it does not**: not a comparison — graphify is not a workflow.
   **Assessment**: it is a *reader* of the directory keel's sink writes. `.keel/learning/*.md`
   with `keel.learning.v1` front matter is plain Markdown a graph builder ingests as-is:
@@ -335,7 +350,9 @@ for.
   branch from a worktree run, without which a fresh clone has an empty directory to graph.
 - **What it does that keel does not**: build a graph — and keel should not; its contract
   with every reader is "a directory of Markdown", nothing more.
-- **Idea to borrow**: none for core.
+- **Idea to borrow**: the edge itself — a lesson a graph builder can link to the file it is
+  about. #1166 adds one relative Markdown link per `changed_files` entry to the document
+  keel already writes; nothing else, because keel builds no graph.
 
 **Category 5 takeaway (Assessment)**: keel is not a competitor to a host-plugin loop. It is
 the layer that decides *when the loop is done* (the gates, not the model) and *what happens
@@ -361,8 +378,8 @@ or a learning reader. The one real gap the category exposed — iterating s4 at 
 **Host-plugin loops are not competitors either** (Category 5): the Ralph loop iterates one
 step with the model as the judge; the compound-engineering plugin shares keel's loop *shape*
 and none of its invariants; graphify reads the learnings keel writes. keel is the layer that
-decides when a loop is done — the gates — and what happens after; #1165 gives s4 that loop
-natively.
+decides when a loop is done — the gates — and what happens after; #1165 proposes to give s4
+that loop natively.
 
 ---
 
@@ -413,9 +430,9 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | **CrewAI / LangGraph / AutoGen** | ✅ (general) | ❌ | ❌ | ◑ (buildable) | ◑ (buildable) | ❌ | ❌ | OSS (MIT / OSS) |
 | **OpenAI Swarm** | ❌ (OpenAI-only) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
 | **MetaGPT / ChatDev** | ❌ (simulated roles) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
-| **Ralph loop** (Claude Code plugin) | ❌ (one host; separate ports) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (official marketplace) |
+| **Ralph loop** (Claude Code plugin) | ❌ (one host; separate ports) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | Prop. (source on GitHub; Anthropic Commercial Terms) |
 | **compound-engineering plugin** | ◑ (Claude Code / Codex / Cursor) | ❌ | ❌ | ◑ (review skills) | ❌ | ❌ | ◑ (skills + agents) | OSS (MIT) |
-| **graphify** | ◑ (Claude Code / Cursor / Codex / Gemini CLI) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
+| **graphify** | ◑ (Claude Code / Cursor / Codex / Gemini CLI) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (Apache-2.0) |
 
 > Note: ◑ for the general frameworks under "AI review / debate" means *you could build it*, not that it ships. keel's value is that the backbone is *fixed and shipped*, not assemble-it-yourself.
 >
@@ -474,6 +491,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 - Star Chamber (multi-LLM consensus): https://blog.mozilla.ai/the-star-chamber-multi-llm-consensus-for-code-quality/
 - Ralph Loop plugin (Claude marketplace): https://claude.com/plugins/ralph-loop
 - Ralph Wiggum plugin README: https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md
+- anthropics/claude-code licence (Anthropic Commercial Terms): https://github.com/anthropics/claude-code/blob/main/LICENSE.md
 - Ralph Wiggum technique guide: https://awesomeclaude.ai/ralph-wiggum
 - Ralph Wiggum autonomous loops: https://paddo.dev/blog/ralph-wiggum-autonomous-loops/
 - Ralph loop for Cursor: https://github.com/cursor/plugins/tree/main/ralph-loop
