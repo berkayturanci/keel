@@ -1397,9 +1397,9 @@ the ampersand and the backtick, so `__init__.py` reads as written rather than as
 **One directory, two readers.** The sink is a plain Markdown folder, so the same files serve
 a knowledge-graph builder and a note vault. graphify ingests the directory as documents: it
 draws reference edges between the Markdown documents it can link, and a link whose target
-is a code file counts as text — the repo-relative path in the link text is what its
-semantic pass reads, so the **Files** section puts each path into the body where a YAML
-list did not. Obsidian opens a folder as a vault, shows the front matter as properties and
+is a code file counts as text — its semantic pass reads the whole file, front matter
+included, so the path reaches it either way and the link is for the readers that follow
+links. Obsidian opens a folder as a vault, shows the front matter as properties and
 draws the links in its graph view, on three conditions. The vault root must be the
 repository root or a directory above it, so an in-repo sink's relative links stay inside
 the vault. The sink must not sit under a dot-prefixed folder: vanilla Obsidian neither
@@ -1407,9 +1407,10 @@ shows nor indexes one, so the default `.keel/learning/` is invisible to it — p
 at a visible directory such as `docs/learnings/`, or install a community plugin that
 indexes hidden folders. And *Show all file types* (the setting formerly named *Detect all
 file extensions*, under *Files and links*) must be on, so a `.py` or `.yaml` target is
-indexed and the edge resolves — without it the link still renders, as an unresolved node.
-keel writes no `.obsidian/` folder and no wikilinks (the #1154 contract), so nothing in the
-vault is keel-specific.
+indexed and the edge resolves — without it the link still renders, as an unresolved node —
+and such a target is an attachment in the graph view, drawn only while its *Attachments*
+filter is on. keel writes no `.obsidian/` folder and no wikilinks (the #1154 contract), so
+nothing in the vault is keel-specific.
 
 Three behaviours worth knowing:
 
