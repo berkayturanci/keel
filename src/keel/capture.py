@@ -1256,7 +1256,8 @@ def _file_bullet(path: str, base: str | None) -> str:
     The link text is the repository's own name for the file, which also puts every
     path into the body — and :func:`retrieve_relevant_learnings` scores a document by
     its text, so a query naming a file now scores the lesson about it higher than the
-    front-matter list alone did (the list matched once; the link text matches again).
+    front-matter list alone did (the list matched once; the link matches again — in
+    its text, or in its destination when the text carries an escape).
     The destination is percent-encoded: a space or a parenthesis in a path would
     otherwise end the link where the path continues.
     """
