@@ -81,6 +81,9 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 | Low-noise inline vs summary review UX | CodeRabbit, Qodo / PR-Agent, Cursor Bugbot | shipped basics; refine via review-cycle work |
 | Plugin/marketplace install surface | agent platforms and Claude Code plugin model | #135 |
 | Capability detection and safe degradation | agent platform packaging and local tool variance | shipped basics; reused by #134 |
+| Fixed-brief iteration with the gates as the judge | Ralph loop (Category 5) | #1165 |
+| Lessons read back into the next session's briefs | compound-engineering plugin (Category 5) | #1155 |
+| Learning files a knowledge-graph builder can link | graphify (Category 5) | #1166 (links), #1163 (landing) |
 
 ---
 
@@ -238,6 +241,110 @@ Keel Swarm anchors multi-agent parallelism inside deterministic engineering inva
 
 ---
 
+## Category 5 — Agent-host workflow plugins and autonomous loops
+
+> Added September 2026. The categories above were researched in June 2026; this one was
+> added once keel's own `--compound` profile and learning sink made "is keel a competitor
+> to these?" a recurring question. Same rules: facts cited inline, interpretation labelled
+> **Assessment**.
+
+These ship *inside* an agent host (Claude Code, Cursor, Codex, Gemini CLI) as a plugin or a
+skill, and each carries a loop of its own — an iteration loop, a plan/work/review/learn
+loop, or an index-and-follow-links loop over a knowledge graph. None of them owns an
+issue's lifecycle, a merge, or a record; all three touch a step keel already has a name
+for.
+
+### Ralph loop (`/ralph-loop`)
+- **What**: Anthropic's official Claude Code plugin implementing the "Ralph Wiggum"
+  technique — a stop hook blocks session exit and re-feeds the original prompt until the
+  agent's output carries the completion promise or `--max-iterations` is reached;
+  `/cancel-ralph` stops it. The prompt never changes between iterations; the codebase and
+  the test output do. [claude.com/plugins/ralph-loop](https://claude.com/plugins/ralph-loop),
+  [`plugins/ralph-wiggum` README](https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md).
+  The technique predates the plugin as a bash `while true` loop over a prompt file and has
+  been ported to Cursor and OpenCode as separate plugins.
+  [awesomeclaude.ai/ralph-wiggum](https://awesomeclaude.ai/ralph-wiggum),
+  [paddo.dev](https://paddo.dev/blog/ralph-wiggum-autonomous-loops/),
+  [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
+- **License / model**: free plugin on the official Claude Code marketplace; the per-host
+  ports are separate projects with their own terms.
+- **What keel does that it does not**: everything from s5 on — classification, CI,
+  independent review, gates, merge window and lock, closeout, capture — and a record. A
+  Ralph run leaves no ledger of how many iterations ran, what each changed, or what the
+  tests said between them. Its completion criterion is the model's own claim
+  (`--completion-promise "DONE"`); the Cursor port's own guidance is that the promise "uses
+  exact string matching, which is unreliable" and that `--max-iterations` should always be
+  passed. [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
+- **What it does that keel does not (today)**: iterate the *implement* step itself. keel's
+  s4 is one pass; a red gate after it falls to the s9 fix loop (which reads review
+  findings) or to the host. #1165 closes this: the same fixed-brief iteration with the
+  **gates** as the judge, bounded by `knobs.loop.max_iterations`, one commit per iteration
+  in the ledger, on every host keel runs in.
+- **Idea to borrow**: "the prompt stays fixed and the evidence changes" as the shape of the
+  iteration brief — adopted by #1165. **Assessment**: the loop is the right primitive and
+  the judge is the wrong one. keel keeps the loop and replaces "the model says DONE" with
+  "the project's gates are green", the same move the `tdd-order` gate made for test-first
+  runs.
+
+### Compound engineering plugin
+- **What**: Every's official plugin for Claude Code, Codex, Cursor and other hosts — a
+  library of dozens of skills and agents around a `brainstorm → plan → work → review →
+  compound` loop (the full track adds constitution, grill-with-docs, architecture,
+  deepen-plan, to-issues and triage steps) whose last step captures lessons into a file the
+  agent reads on every future session.
+  [EveryInc/compound-engineering-plugin](https://github.com/everyinc/compound-engineering-plugin),
+  [desktheory.com](https://desktheory.com/workflows/compound-engineering-plugin-claude-code),
+  [rywalker.com](https://rywalker.com/research/compound-engineering-plugin)
+- **License / model**: OSS (MIT); free plugin; near-daily release cadence and 21k+ GitHub
+  stars as of mid-2026.
+  [desktheory.com](https://desktheory.com/workflows/compound-engineering-plugin-claude-code),
+  [context7.com](https://context7.com/everyinc/compound-engineering-plugin)
+- **What keel does that it does not**: a deterministic core under the loop. keel's
+  `--compound` profile models the plugin's four-step shape as
+  `workflow_profile.step_overrides` on s4/s7/s9/s11 without forking the backbone, and its
+  lessons file is what `policy_pack.capture.learning.sink` writes — but with a config hash,
+  a run ledger, a merge window and lock, risk-tiered reviewer counts, and an evidence gate
+  the plugin has no equivalent of. keel does not require it and can run it *as* the
+  compound helper: `ship.md` already says compound helpers "may be supplied by the host
+  runtime".
+- **What it does that keel does not**: the front half — brainstorming, plan deepening,
+  turning a plan into issues — and the breadth of the skill library. keel starts at a ready
+  issue (s1 intake) and owns it to done.
+- **Idea to borrow**: "lessons the agent reads next session" — #1155 wires retrieved
+  learnings into the implement and review briefs. **Assessment**: this is the closest
+  overlap in the document, and it is an overlap of *vocabulary* more than of *layer*: a
+  prompt library and a workflow core can share a loop shape and still not compete.
+
+### graphify (`/graphify`)
+- **What**: a skill for Claude Code, Cursor, Codex and Gemini CLI that turns a repository —
+  code, docs, SQL schemas, configs, PDFs — into a queryable knowledge graph: code parsed
+  locally with tree-sitter (deterministic, no LLM), prose and images through the
+  assistant's model, community detection with named clusters, every edge tagged
+  `EXTRACTED` / `INFERRED`, no vector store; the outputs are an interactive `graph.html`, a
+  GraphRAG-ready `graph.json` and a plain-language `GRAPH_REPORT.md`.
+  [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify),
+  [graphify.net](https://graphify.net/), [ai-tldr.dev](https://ai-tldr.dev/tools/graphify/)
+- **License / model**: OSS (MIT). [ai-tldr.dev](https://ai-tldr.dev/tools/graphify/)
+- **What keel does that it does not**: not a comparison — graphify is not a workflow.
+  **Assessment**: it is a *reader* of the directory keel's sink writes. `.keel/learning/*.md`
+  with `keel.learning.v1` front matter is plain Markdown a graph builder ingests as-is:
+  `labels` cluster lessons, `changed_files` name the code nodes, and keel never learns what
+  reads the folder (#1154). Two things decide whether the graph actually shows an edge from
+  a lesson to the file it is about: #1166 renders `changed_files` as relative Markdown
+  links, which a link-following builder resolves; and #1163 lands the file on the base
+  branch from a worktree run, without which a fresh clone has an empty directory to graph.
+- **What it does that keel does not**: build a graph — and keel should not; its contract
+  with every reader is "a directory of Markdown", nothing more.
+- **Idea to borrow**: none for core.
+
+**Category 5 takeaway (Assessment)**: keel is not a competitor to a host-plugin loop. It is
+the layer that decides *when the loop is done* (the gates, not the model) and *what happens
+after* (review, merge, capture, record), and it can host any of these as an s4 implementer
+or a learning reader. The one real gap the category exposed — iterating s4 at all — is
+#1165.
+
+---
+
 ## Positioning statement (Assessment)
 
 **Is keel's combination unique? Largely yes — by combination, not by any single part.**
@@ -250,6 +357,12 @@ Keel Swarm anchors multi-agent parallelism inside deterministic engineering inva
 - The **merge window + `mkdir` lock as deterministic, stdlib invariants** are not conceptually novel (Mergify schedules; GitHub punts to self-failing Actions), but keel's framing — *native, deterministic, dependency-free, inside the agent pipeline* — is distinctive. The market evidence (GitHub's most-requested-but-absent scheduled-merge feature) confirms the need is real.
 
 **Honest caveat**: keel is *not* a merge queue and shouldn't pretend to be — it lacks (and arguably shouldn't add) batching/bisection/parallel-lane serialization, which is the entire value of Mergify/Trunk/Graphite/bors. keel's "one issue at a time + lock" is a different problem (orchestrated authorship), not a competing one.
+
+**Host-plugin loops are not competitors either** (Category 5): the Ralph loop iterates one
+step with the model as the judge; the compound-engineering plugin shares keel's loop *shape*
+and none of its invariants; graphify reads the learnings keel writes. keel is the layer that
+decides when a loop is done — the gates — and what happens after; #1165 gives s4 that loop
+natively.
 
 ---
 
@@ -300,8 +413,13 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | **CrewAI / LangGraph / AutoGen** | ✅ (general) | ❌ | ❌ | ◑ (buildable) | ◑ (buildable) | ❌ | ❌ | OSS (MIT / OSS) |
 | **OpenAI Swarm** | ❌ (OpenAI-only) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
 | **MetaGPT / ChatDev** | ❌ (simulated roles) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
+| **Ralph loop** (Claude Code plugin) | ❌ (one host; separate ports) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (official marketplace) |
+| **compound-engineering plugin** | ◑ (Claude Code / Codex / Cursor) | ❌ | ❌ | ◑ (review skills) | ❌ | ❌ | ◑ (skills + agents) | OSS (MIT) |
+| **graphify** | ◑ (Claude Code / Cursor / Codex / Gemini CLI) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | OSS (MIT) |
 
 > Note: ◑ for the general frameworks under "AI review / debate" means *you could build it*, not that it ships. keel's value is that the backbone is *fixed and shipped*, not assemble-it-yourself.
+>
+> Note: graphify is a knowledge-graph reader, not a workflow. Its row is here because it reads keel's learning directory (Category 5), not because it competes on any column.
 
 ---
 
@@ -354,3 +472,15 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 - Magentic-One / framework comparison: https://medium.com/data-science-in-your-pocket/magentic-one-autogen-langgraph-crewai-or-openai-swarm-which-multi-ai-agent-framework-is-best-6629d8bd9509
 - MAD for LLM judges (arXiv): https://arxiv.org/html/2510.12697v1
 - Star Chamber (multi-LLM consensus): https://blog.mozilla.ai/the-star-chamber-multi-llm-consensus-for-code-quality/
+- Ralph Loop plugin (Claude marketplace): https://claude.com/plugins/ralph-loop
+- Ralph Wiggum plugin README: https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md
+- Ralph Wiggum technique guide: https://awesomeclaude.ai/ralph-wiggum
+- Ralph Wiggum autonomous loops: https://paddo.dev/blog/ralph-wiggum-autonomous-loops/
+- Ralph loop for Cursor: https://github.com/cursor/plugins/tree/main/ralph-loop
+- Compound Engineering plugin repo: https://github.com/everyinc/compound-engineering-plugin
+- Compound Engineering plugin overview: https://desktheory.com/workflows/compound-engineering-plugin-claude-code
+- Compound Engineering plugin research: https://rywalker.com/research/compound-engineering-plugin
+- Compound Engineering plugin (Context7 listing): https://context7.com/everyinc/compound-engineering-plugin
+- graphify repo: https://github.com/Graphify-Labs/graphify
+- graphify site: https://graphify.net/
+- graphify overview (AI/TLDR): https://ai-tldr.dev/tools/graphify/
