@@ -8594,7 +8594,10 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         "--branch", default=None, help="branch name to store in the run ledger record"
     )
     parser.add_argument(
-        "--head-sha", default=None, help="head commit SHA to store in the run ledger record"
+        "--head-sha",
+        default=None,
+        help="head commit SHA to store in the run ledger record; a learning sink outside "
+        "the checkout links each changed file on GitHub at it (#1166)",
     )
     parser.add_argument(
         "--declared-file",

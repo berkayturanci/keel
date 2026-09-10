@@ -1379,15 +1379,16 @@ link text is the repo-relative path; the destination depends on where the sink i
 
 | sink | destination | example |
 |---|---|---|
-| inside the checkout (a relative `path`, the default) | relative to the document's own directory, POSIX separators, percent-encoded | `[src/keel/capture.py](../../src/keel/capture.py)` |
-| outside it (an absolute or `~` `path`), owner + repo + head known | the file on GitHub at the merged head | `[src/keel/capture.py](https://github.com/<owner>/<repo>/blob/<head-sha>/src/keel/capture.py)` |
-| outside it, any of those unknown | the bare path in backticks — never a relative link that resolves to nothing | `` `src/keel/capture.py` `` |
+| inside the checkout (a relative `path` that stays under the root — the default) | relative to the document's own directory, POSIX separators, percent-encoded; the prefix is derived lexically from the normalised directory | `[src/keel/capture.py](../../src/keel/capture.py)` |
+| outside it (an absolute or `~` `path`, or a relative one that climbs out such as `../learnings`), owner + repo + head known | the file on GitHub at the merged head (`keel ship --head-sha`) | `[src/keel/capture.py](https://github.com/<owner>/<repo>/blob/<head-sha>/src/keel/capture.py)` |
+| outside it, any of those unknown | the bare path in a code span (fenced with a longer backtick run when the path carries one) — never a relative link that resolves to nothing | `` `src/keel/capture.py` `` |
 
 An empty `changed_files` renders the heading and `_No files recorded._`, so the document
 always has the same four sections. The front matter is not changed by the section: the
 `changed_files` list above the `---` is what keel's own reader matches on. A side effect
-worth knowing: `retrieve_relevant_learnings` scores a document by its text, and the link
-text puts every path into the body, so a query naming a file now finds the lesson about it.
+worth knowing: `retrieve_relevant_learnings` scores a document by its text; the front-matter
+list already matched a query naming a file once, and the link text now matches it again, so
+such a lesson scores higher than the front matter alone gave it.
 
 Three behaviours worth knowing:
 

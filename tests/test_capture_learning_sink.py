@@ -28,6 +28,7 @@ import contextlib
 import io
 import json
 import os
+import posixpath
 import shutil
 import tempfile
 import unittest
@@ -2417,15 +2418,17 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
             self.FILES, self.destinations(self.files_section(plan["content"])), strict=True
         ):
             with self.subTest(path=path):
-                joined = os.path.join(plan["directory"], destination)
-                self.assertEqual(os.path.normpath(joined), path)
+                # POSIX on purpose: the directory and the destination are POSIX by the
+                # function's contract, and `ntpath` would answer with backslashes.
+                joined = posixpath.join(plan["directory"], destination)
+                self.assertEqual(posixpath.normpath(joined), path)
 
     def test_a_nested_in_repo_sink_climbs_as_far_as_it_sits(self):
         plan = self.plan({"path": "docs/learnings/{repo}"})
         self.assertEqual(plan["file_link_base"], "../../..")
         destination = self.destinations(self.files_section(plan["content"]))[0]
         self.assertEqual(
-            os.path.normpath(os.path.join(plan["directory"], destination)), self.FILES[0]
+            posixpath.normpath(posixpath.join(plan["directory"], destination)), self.FILES[0]
         )
 
     def test_a_sink_outside_the_checkout_links_the_file_on_github(self):
@@ -2469,15 +2472,52 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
         line = self.files_section(self.document(changed_files=["we]ird[\\path.md"]))[0]
         self.assertEqual(line, "- [we\\]ird\\[\\\\path.md](../../we%5Dird%5B%5Cpath.md)")
 
+    def test_an_angle_bracket_cannot_open_an_autolink_or_raw_html(self):
+        """A merged PR chooses the bytes of a file name; none of them may render as a link
+        to somewhere else."""
+        for path, expected in (
+            (
+                "src/x<https://evil.example/>y.py",
+                "- [src/x\\<https://evil.example/\\>y.py]"
+                "(../../src/x%3Chttps%3A//evil.example/%3Ey.py)",
+            ),
+            (
+                'src/<a href="https://evil.example/">c</a>.py',
+                '- [src/\\<a href="https://evil.example/"\\>c\\</a\\>.py]'
+                "(../../src/%3Ca%20href%3D%22https%3A//evil.example/%22%3Ec%3C/a%3E.py)",
+            ),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.files_section(self.document(changed_files=[path]))[0], expected
+                )
+
     def test_a_control_character_in_a_path_cannot_open_a_line(self):
         line = self.files_section(self.document(changed_files=["a\nb.md"]))[0]
         self.assertEqual(line, "- [a b.md](../../a%20b.md)")
 
-    def test_a_backtick_in_a_bare_path_is_written_plain(self):
+    def test_a_backtick_in_a_bare_path_is_fenced_with_a_longer_run(self):
+        """Written plain, `[click](https://evil.example/)` in a file name would render."""
         section = self.files_section(
-            self.document(changed_files=["tick`y.md", "plain.md"], file_link_base=None)
+            self.document(
+                changed_files=[
+                    "tick`y.md",
+                    "a``b.md",
+                    "[click](https://evil.example/)`.md",
+                    "plain.md",
+                ],
+                file_link_base=None,
+            )
         )
-        self.assertEqual(section, ["- tick`y.md", "- `plain.md`"])
+        self.assertEqual(
+            section,
+            [
+                "- `` tick`y.md ``",
+                "- ``` a``b.md ```",
+                "- `` [click](https://evil.example/)`.md ``",
+                "- `plain.md`",
+            ],
+        )
 
     def test_no_files_says_so(self):
         for empty in ([], (), None):
@@ -2516,7 +2556,9 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
         self.assertEqual(summary, "The body gained a Files section.")
 
     def test_a_secret_in_a_path_is_scrubbed_in_the_section_too(self):
-        """The section is part of the rendered text, so the second redaction pass covers it."""
+        """The section is part of the rendered text, so the content pass covers a token
+        whose alphabet survives percent-encoding; the values pass in `_write_learning_sink`
+        is what guards an encoded destination, and the writer test below drives that."""
         from keel import redaction
 
         token = "ghp_" + "A" * 36
@@ -2527,20 +2569,46 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
         self.assertNotIn(token, section)
         self.assertIn("REDACTED", section)
 
-    def test_a_query_naming_only_the_file_finds_the_lesson(self):
-        """The measured side effect: the link text puts every path into the body."""
-        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        (directory / "2026-09-10-pr1170-links-abc123.md").write_text(
-            self.document(
-                changed_files=["src/keel/orchestrator.py"],
-                what_changed="Nothing here names the module.",
-                what_we_learned="Nor here.",
-                do_differently="Nor here.",
-            ),
-            encoding="utf-8",
+    def test_a_query_naming_only_the_file_scores_the_lesson_higher(self):
+        """The measured side effect, measured: the front-matter list already matched the
+        query once, so the lesson was *found* before this section existed; the link text
+        matches again, so it now scores higher than the front matter alone."""
+        document = self.document(
+            changed_files=["src/keel/orchestrator.py"],
+            what_changed="The prose here names no module.",
+            what_we_learned="Nor here.",
+            do_differently="Nor here.",
         )
-        hits = capture.retrieve_relevant_learnings("orchestrator", directory)
-        self.assertEqual([hit["file"] for hit in hits], ["2026-09-10-pr1170-links-abc123.md"])
+        without_section = document.split(capture.LEARNING_FILES_HEADING, 1)[0]
+        scores = {}
+        for label, text in (("with", document), ("without", without_section)):
+            directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+            (directory / "2026-09-10-pr1170-links-abc123.md").write_text(text, encoding="utf-8")
+            hits = capture.retrieve_relevant_learnings("orchestrator", directory)
+            self.assertEqual([hit["file"] for hit in hits], ["2026-09-10-pr1170-links-abc123.md"])
+            scores[label] = hits[0]["score"]
+        self.assertGreater(scores["with"], scores["without"])
+
+    def test_the_prefix_is_lexical_and_never_climbs_out_of_the_checkout(self):
+        """`{owner}/../learnings` with `owner` unset expands to `../learnings` while the
+        unexpanded template still reads as in-repo; the prefix must not become
+        `../<cwd-basename>` — the same inputs would then render differently per cwd."""
+        plan = self.plan({"path": "{owner}/../learnings"}, owner=None)
+        self.assertEqual(plan["directory"], "../learnings")
+        self.assertIsNone(plan["file_link_base"])
+        self.assertNotIn("](../", plan["content"])
+        base = capture.learning_file_link_base
+        common = {"owner": "o", "repo": "r", "head_sha": "abc"}
+        self.assertEqual(
+            base(directory="../learnings", in_repo=True, **common),
+            "https://github.com/o/r/blob/abc",
+        )
+        original = os.getcwd
+        os.getcwd = lambda: (_ for _ in ()).throw(FileNotFoundError("cwd gone"))
+        try:
+            self.assertEqual(base(directory=".keel/learning", in_repo=True, **common), "../..")
+        finally:
+            os.getcwd = original
 
     def test_the_base_is_lexical_and_posix(self):
         base = capture.learning_file_link_base
@@ -2551,6 +2619,75 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
             base(directory="/srv/k", in_repo=False, **common), "https://github.com/o/r/blob/abc"
         )
         self.assertIsNone(base(directory="/srv/k", in_repo=False, owner="o", repo="r", head_sha=""))
+
+
+class TheWriterLinksAtTheHead(unittest.TestCase):
+    """The one I/O change: `--head-sha` reaches the plan, so a sink outside the checkout
+    links each file on GitHub at the merged head — and the values pass scrubs a secret
+    from the destination, not only from the link text."""
+
+    BODY = (
+        "## Deliverable\nA Markdown learning file per applied capture.\n\n"
+        "## Acceptance criteria\n- one file per applied capture\n"
+    )
+
+    def config(self, root: Path, sink_dir: Path) -> str:
+        path = root / "project.yaml"
+        path.write_text(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "owner: berkayturanci\nrepo: keel\ngates: [build]\nknobs:\n"
+            "  build_gate_cmd: 'true'\npolicy_pack:\n  name: tmp\n  reports:\n"
+            "    run_ledger: 'state/runs.jsonl'\n  capture_redaction:\n"
+            "    deny_patterns:\n      - id: secret-path\n        pattern: 'topsecret'\n"
+            "  capture:\n    enabled: true\n    mode: extension\n    learning:\n"
+            "      enabled: true\n      mode: create-learning\n      sink:\n"
+            f"        kind: markdown-dir\n        path: '{sink_dir.as_posix()}'\n",
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def test_an_outside_sink_links_github_at_the_head_and_scrubs_the_destination(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as sink:
+            config = self.config(Path(root), Path(sink))
+            with _github_pr_files(["src/keel/capture.py", "src/topsecret=hunter2/x.py"]):
+                code, _, err = run(
+                    [
+                        "ship",
+                        config,
+                        "--root",
+                        root,
+                        "--live",
+                        "--append-ledger",
+                        "--run-id",
+                        "ship-1170",
+                        "--pull-request",
+                        "1170",
+                        "--head-sha",
+                        "deadbeefcafe",
+                        "--issue-title",
+                        "capture: the learning document links each changed file",
+                        "--issue-body",
+                        self.BODY,
+                        "--capture-status",
+                        "applied",
+                        "--approve-scope",
+                        "filesystem,git,github",
+                        "--operator",
+                        "tester",
+                    ]
+                )
+            self.assertEqual(code, 0, err)
+            files = list(Path(sink).glob("*.md"))
+            self.assertEqual(len(files), 1, files)
+            text = files[0].read_text(encoding="utf-8")
+        self.assertIn(
+            "- [src/keel/capture.py]"
+            "(https://github.com/berkayturanci/keel/blob/deadbeefcafe/src/keel/capture.py)",
+            text,
+        )
+        self.assertNotIn("topsecret", text)
+        self.assertNotIn("hunter2", text)
+        self.assertIn("REDACTED", text.split(capture.LEARNING_FILES_HEADING, 1)[1])
 
 
 if __name__ == "__main__":  # pragma: no cover

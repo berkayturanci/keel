@@ -943,10 +943,12 @@ LEARNING_FINGERPRINT_SLICE = 12
 LEARNING_FILES_HEADING = "## Files"
 LEARNING_NO_FILES = "_No files recorded._"
 
-#: Characters that end or escape a CommonMark link *text*. The destination is
-#: percent-encoded instead, so the two halves of a link never disagree about where
-#: a path ends.
-_LINK_TEXT_UNSAFE = re.compile(r"([\\\[\]])")
+#: Characters that end, escape, or open something inside a CommonMark link *text*:
+#: the bracket pair and the backslash, and the angle brackets that would otherwise
+#: start an autolink or raw HTML from a file name (a merged PR chooses those bytes).
+#: The destination is percent-encoded instead, so the two halves of a link never
+#: disagree about where a path ends.
+_LINK_TEXT_UNSAFE = re.compile(r"([\\\[\]<>])")
 
 #: The frontmatter contract the reader depends on. Fixed and small on purpose:
 #: `retrieve_relevant_learnings` reads `title` and `description` out of it, so a
@@ -1221,17 +1223,24 @@ def learning_file_link_base(
     relative to the document's own directory — ``../..`` from the default
     ``.keel/learning`` — so the link resolves on disk from where the file sits, and a
     graph builder walking the repository makes the edge to a node it already has.
-    The prefix is lexical (:func:`posixpath.relpath`) because a plan touches no
-    filesystem, and POSIX on every platform because the document is read on machines
-    other than the one that wrote it.
+    The prefix is **lexical** — one ``..`` per component of the normalised directory —
+    because a plan touches no filesystem: :func:`posixpath.relpath` would consult
+    ``os.getcwd()`` for two relative arguments, which made the prefix depend on where
+    the process stood and raise from a deleted directory. It is POSIX on every platform
+    because the document is read on machines other than the one that wrote it.
 
     A sink **outside** the checkout has nothing to link to relatively, and a relative
     link that resolves to nothing is worse than none. It links the file on GitHub at
     the merged head when the owner, the repository and the head are all known, and
-    otherwise says nothing — the caller renders the bare path.
+    otherwise says nothing — the caller renders the bare path. An *expanded* template
+    that climbs out of the checkout (``{owner}/../learnings`` with ``owner`` unset) is
+    outside it whatever the unexpanded template looked like, and takes the same forms.
     """
     if in_repo:
-        return posixpath.relpath(".", posixpath.normpath(directory.replace("\\", "/")))
+        normalised = posixpath.normpath(directory.replace("\\", "/"))
+        parts = [part for part in normalised.split("/") if part not in ("", ".")]
+        if not parts or parts[0] != "..":
+            return "/".join([".."] * len(parts)) or "."
     if owner and repo and head_sha:
         return f"https://github.com/{owner}/{repo}/blob/{head_sha}"
     return None
@@ -1242,14 +1251,21 @@ def _file_bullet(path: str, base: str | None) -> str:
 
     The link text is the repository's own name for the file, which also puts every
     path into the body — and :func:`retrieve_relevant_learnings` scores a document by
-    its text, so a query naming a file now finds the lesson about it. The destination
-    is percent-encoded: a space or a parenthesis in a path would otherwise end the
-    link where the path continues.
+    its text, so a query naming a file now scores the lesson about it higher than the
+    front-matter list alone did (the list matched once; the link text matches again).
+    The destination is percent-encoded: a space or a parenthesis in a path would
+    otherwise end the link where the path continues.
     """
     name = _one_line(path)
     if base is None:
-        # A backtick inside a code span ends it; such a path is written plain.
-        return f"- `{name}`" if "`" not in name else f"- {name}"
+        # A code span ends at a backtick run as long as its opener, so a path carrying
+        # one is fenced with a run one longer, padded as CommonMark allows — never
+        # written plain, where its own Markdown would render.
+        longest = max((len(run) for run in re.findall(r"`+", name)), default=0)
+        if longest == 0:
+            return f"- `{name}`"
+        fence = "`" * (longest + 1)
+        return f"- {fence} {name} {fence}"
     text = _LINK_TEXT_UNSAFE.sub(r"\\\1", name)
     return f"- [{text}]({base}/{quote(name, safe='/')})"
 
