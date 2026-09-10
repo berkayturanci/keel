@@ -117,6 +117,14 @@ def contract_as_dict(config: _HasPolicyPack | None = None) -> dict[str, Any]:
             "sink": (
                 sink_policy.get("kind", LEARNING_SINK_KINDS[0]) if sink_policy is not None else None
             ),
+            # **Whether the file lands in the working tree, and so has to be
+            # committed.** keel writes it and stops there. A relative sink path is
+            # inside the repository, where an uncommitted file is one the next
+            # worktree — cut from `origin/<base>` — and every CI runner never see:
+            # keel would be writing a learning and then throwing it away, which is
+            # the failure classifying `.keel/learning` as committed was for. An
+            # absolute or `~` path is outside the checkout and git never sees it.
+            "commit_required": learning_sink_in_worktree(config),
         },
         "learning_quality": learning_quality_contract_as_dict(config),
         "session_end_verifier": {
@@ -948,6 +956,22 @@ def learning_sink_policy(config: _HasPolicyPack | None) -> dict[str, Any] | None
     """
     sink = _learning_policy(config).get("sink")
     return sink if isinstance(sink, dict) else None
+
+
+def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
+    """Does this project's sink write **inside the repository**?
+
+    Pure, and answered from the path's shape rather than the filesystem: a relative
+    path resolves against `--root`, which is the checkout, while an absolute or `~`
+    path is a folder somewhere else. It decides who has to commit the file — keel
+    writes it and does not, so one inside the working tree is lost to the next
+    worktree and to every CI runner unless the run commits it.
+    """
+    sink = learning_sink_policy(config)
+    if sink is None:
+        return False
+    path = str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH)
+    return not (path.startswith("~") or Path(path).is_absolute())
 
 
 def learning_sink_errors(sink: Any) -> list[str]:

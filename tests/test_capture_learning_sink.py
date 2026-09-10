@@ -223,6 +223,38 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
     def destination(self, sink):
         return capture.contract_as_dict(_config(sink))["durable_artifacts"]
 
+    def test_the_contract_says_who_has_to_commit_the_file(self):
+        """keel writes the file and stops; someone has to keep it.
+
+        An uncommitted file in the working tree is invisible to the next worktree
+        — s2 cuts it from `origin/<base_branch>` — and discarded by every CI
+        runner, so keel would be writing a learning and then throwing it away.
+        Answered from the path's shape, which is the only thing a pure contract
+        can know.
+        """
+        for sink, expected in (
+            (None, False),
+            ({"kind": "markdown-dir"}, True),
+            ({"path": "learnings"}, True),
+            ({"path": "~/knowledge/learnings"}, False),
+            ({"path": "/srv/knowledge"}, False),
+        ):
+            with self.subTest(sink=sink):
+                self.assertIs(self.destination(sink)["commit_required"], expected)
+
+    def test_every_ship_surface_tells_the_adapter_to_commit_it(self):
+        """A contract nothing acts on is the shape of this whole feature's bugs."""
+        root = Path(__file__).resolve().parents[1]
+        for surface in (
+            "src/keel/adapters/commands/ship.md",
+            "commands/ship.md",
+            ".claude/commands/keel/ship.md",
+        ):
+            with self.subTest(surface=surface):
+                body = (root / surface).read_text(encoding="utf-8")
+                self.assertIn("commit_required", body)
+                self.assertIn("git add", body[body.index("### s11 capture") :])
+
     def test_an_empty_sink_block_is_still_a_sink(self):
         block = self.destination({})
         self.assertEqual(block["project_destination"], "sink")

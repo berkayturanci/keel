@@ -1230,6 +1230,24 @@ the failure mode being fixed here, so surface the report in the closure comment 
 only in the run log.
 
 ### s11 capture
+**Commit the learning file when it lands in the working tree.** With
+`policy_pack.capture.learning.sink` configured, `keel ship --live --append-ledger`
+writes one Markdown file and records its path as `capture.artifact` — and it does
+**not** commit it. `capture.durable_artifacts.commit_required` on the contract says
+whether that path is inside the repository (a relative `path` is; an absolute or `~`
+one is a folder git never sees). When it is true, commit the file named by
+`result.run_ledger.record.capture.artifact` and push it on `base_branch`, in its own
+commit, alongside the closure comments:
+
+```bash
+git add "$ARTIFACT" && git commit -m "capture: learning from PR #<PR>" && git push
+```
+
+An uncommitted file is one the next worktree never sees — s2 cuts it from
+`origin/<base_branch>` — and one every CI runner discards, so skipping this leaves
+keel writing a learning and then throwing it away, and leaves the retrieval side
+reading an empty directory on the only path a later run takes.
+
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
 not re-derive them), tier, rounds, window decision, and outcome. When s9 spent a round,
@@ -1406,4 +1424,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=b5baa0b89ab9224fa109a5e24a05c4124aff2b67f79e3323636a5d465632363c generated_sha256=b5baa0b89ab9224fa109a5e24a05c4124aff2b67f79e3323636a5d465632363c -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=52c2e1f418d50418bcd03c2ddb3b2eb0cd5caec138e7883e5a7e23c737d20a1e generated_sha256=52c2e1f418d50418bcd03c2ddb3b2eb0cd5caec138e7883e5a7e23c737d20a1e -->
