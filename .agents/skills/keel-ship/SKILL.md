@@ -1233,43 +1233,24 @@ the failure mode being fixed here, so surface the report in the closure comment 
 only in the run log.
 
 ### s11 capture
-**Commit the learning file when it lands in the working tree.** With
+**keel writes the learning file; it does not commit it.** With
 `policy_pack.capture.learning.sink` configured, `keel ship --live --append-ledger`
-writes one Markdown file and records its path as `capture.artifact` — and it does
-**not** commit it. `capture.durable_artifacts.commit_required` on the contract says
-whether that path is inside the repository (a relative `path` is; an absolute or `~`
-one is a folder git never sees). When it is true, commit the file named by
-`result.run_ledger.record.capture.artifact` and push it on `base_branch`, in its own
-commit, alongside the closure comments:
+writes one Markdown file and records its path as `capture.artifact`.
+`capture.durable_artifacts.commit_required` says whether that path is inside the
+repository — a relative `path` is; an absolute or `~` one is a folder git never sees.
 
-**On an up-to-date `base_branch`, not on the checkout as s10 left it.** `keel merge`
-squash-merges on GitHub and never fast-forwards this working tree, so committing
-where the run stands puts the file on the leftover feature branch or makes the push
-a non-fast-forward — either way it never reaches `origin/<base_branch>`, which is
-the one ref that matters. The file is untracked, so switching branches carries it:
+**When it is true, the file is not durable yet and this step does not make it so.**
+An untracked file in the working tree is one the next worktree never sees — s2 cuts
+that from `origin/<base_branch>` — and one every CI runner discards. Committing it
+from here is not a one-liner on the topology this command runs in: s2, `overnight`
+and `swarm` all execute inside a worktree while the primary checkout holds
+`base_branch`, so `git switch "$BASE_BRANCH"` there exits 128 with *'<base>' is
+already used by worktree*. Landing it correctly is tracked in #1163; do not
+improvise a push here, and do not report the lesson as durable when it is not.
 
-```bash
-git switch "$BASE_BRANCH" && git pull --ff-only \
-  && git add "$ARTIFACT" \
-  && git commit -m "capture: learning from PR #<PR>"
-for attempt in 1 2 3; do
-  git push && break
-  git pull --rebase || break
-done
-```
-
-**The push retries, because ships run in parallel.** `swarm` and `overnight`
-finish two s11 steps at once, both on the same `origin/<base_branch>`, and the
-second push is a non-fast-forward — leaving that run's `capture.artifact` naming a
-file the next worktree will never see. The learning is a new file under a
-fingerprinted name, so the rebase has nothing to conflict with; three attempts
-bound it, and a failure after them is a capture that did not land, not a merge that
-did not happen.
-
-An uncommitted file is one the next worktree never sees — s2 cuts it from
-`origin/<base_branch>` — and one every CI runner discards, so skipping this leaves
-keel writing a learning and then throwing it away, and leaves the retrieval side
-reading an empty directory on the only path a later run takes.
+**Point the sink outside the checkout to get durability today.** An absolute or `~`
+`path` — a shared knowledge folder — is written, recorded and read back with no git
+step at all, and `commit_required` is false for it.
 
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
@@ -1447,4 +1428,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=fd2cddaedfce399b9f48ac347f51f0ab1233477697eba0a48df745671aed647d generated_sha256=ba2e15ff1ea5b8243c12807dfd3a3455339178af878ab4cbc17ed1ec0e16b0f5 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=8422b3fefe58690b6a9838a71e4627861ba6272c8ed4cfe4eada0c858e581b84 generated_sha256=e1d98f38bb71c838900eac1711cfb02169a4e5c5fe4fddd36ecb15523bb792cd -->

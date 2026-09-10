@@ -284,8 +284,16 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
             with self.subTest(sink=sink):
                 self.assertIs(self.destination(sink)["commit_required"], expected)
 
-    def test_every_ship_surface_tells_the_adapter_to_commit_it(self):
-        """A contract nothing acts on is the shape of this whole feature's bugs."""
+    def test_no_ship_surface_hands_out_a_commit_recipe_that_cannot_run(self):
+        """The one thing worse than not committing the file is pretending to.
+
+        s2, `overnight` and `swarm` all run inside a worktree while the primary
+        checkout holds `base_branch`, so `git switch "$BASE_BRANCH"` there exits
+        128 — *already used by worktree*, measured. A recipe built on it looks
+        like durability and delivers none, on exactly the topology keel uses for
+        itself. The surfaces say what is true instead: keel writes the file, does
+        not commit it, and an in-repo sink is not durable yet.
+        """
         root = Path(__file__).resolve().parents[1]
         for surface in (
             "src/keel/adapters/commands/ship.md",
@@ -296,20 +304,12 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                 body = (root / surface).read_text(encoding="utf-8")
                 s11 = body[body.index("### s11 capture") :]
                 self.assertIn("commit_required", body)
-                self.assertIn("git add", s11)
-                # On an up-to-date base branch: `keel merge` squash-merges on
-                # GitHub and never fast-forwards this checkout, so committing where
-                # the run stands puts the file on the leftover feature branch or
-                # makes the push a non-fast-forward. Either way it never reaches
-                # the one ref the next worktree is cut from.
-                self.assertIn("git switch", s11)
-                self.assertIn("git pull --ff-only", s11)
-                # And a bounded retry: `swarm` and `overnight` finish two s11
-                # steps at once, on the same `origin/<base_branch>`, so the second
-                # push is a non-fast-forward and that run's artifact never reaches
-                # the ref the next worktree is cut from.
-                self.assertIn("git pull --rebase", s11)
-                self.assertIn("for attempt in 1 2 3", s11)
+                self.assertIn("already used by worktree", s11)
+                # The property is that s11 hands out no **runnable** recipe. The
+                # prose names the command it warns about, so the needle is the
+                # shell fence, not the string inside the warning.
+                capture_section = s11[: s11.index("### s12")]
+                self.assertNotIn("```" + "bash", capture_section)
 
     def test_an_empty_sink_block_is_still_a_sink(self):
         block = self.destination({})

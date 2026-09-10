@@ -1389,12 +1389,17 @@ Three behaviours worth knowing:
 
 **keel writes the file; it does not commit it.** With a relative `path` the file
 lands in the working tree, and an uncommitted one is invisible to the next worktree
-(s2 cuts it from `origin/<base_branch>`) and discarded by every CI runner — keel
-would be writing a learning and then throwing it away. The capture contract says so
-per project: `durable_artifacts.commit_required` is true exactly when the path is
-inside the repository, and the `/keel:ship` adapter commits the artifact at s11 when
-it is. Point `path` at an absolute or `~` folder and the question does not arise:
-git never sees it, and whatever syncs that folder owns it.
+(s2 cuts it from `origin/<base_branch>`) and discarded by every CI runner. The
+capture contract says which case you are in: `durable_artifacts.commit_required` is
+true exactly when the path is inside the repository.
+
+**An in-repo sink is not durable yet.** Committing the file from the run that wrote
+it is not a one-liner on the topology keel uses — s2, `overnight` and `swarm` all
+run inside a worktree while the primary checkout holds `base_branch`, so
+`git switch <base>` there fails with *already used by worktree*. Until #1163 is
+solved, **point `path` at an absolute or `~` folder**: git never sees it, nothing
+needs committing, `commit_required` is false, and the read path finds it on every
+later run.
 
 The default `.keel/learning/` is **not** runtime-ignored. Everything else keel writes
 under `.keel/` is disposable per-run state; learnings are the exception, because a
