@@ -21,7 +21,14 @@ def _config(
     if deny_patterns is not None:
         policy_pack["capture_redaction"] = {"deny_patterns": deny_patterns}
     if learning_policy is not None:
-        policy_pack["capture"] = {"learning": learning_policy}
+        # The parent pair too: `capture.enabled` is the project saying it runs a
+        # post-merge extension and `mode: extension` is the one mode with a content
+        # hook, so a learning policy without them is one nothing would honour.
+        policy_pack["capture"] = {
+            "enabled": True,
+            "mode": "extension",
+            "learning": learning_policy,
+        }
     return cfg.ProjectConfig(
         extends="keel",
         core_version="^0.7",

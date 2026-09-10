@@ -312,5 +312,44 @@ class CredentialAssignmentRedactionTest(unittest.TestCase):
             self.assertIsInstance(result.value, str)
 
 
+class EveryContainerIsWalked(unittest.TestCase):
+    """A container `sanitize` does not recurse into returns its secrets intact.
+
+    Silently, and looking exactly like a value that has been checked — which is the
+    worst shape a redaction bug can take. `tuple` was that container: keel's own
+    vocabularies are tuples (issue labels, gate ids, declared files) and two of them
+    went out through the learning sink before this was found.
+    """
+
+    SECRET = "http://user:pass@host"
+    CLEAN = "http://[REDACTED:credentials]@host"
+
+    def setUp(self) -> None:
+        self.policy = redaction.policy_from_config()
+
+    def sanitized(self, value):
+        return redaction.sanitize(value, self.policy).value
+
+    def test_a_tuple_is_walked(self):
+        self.assertEqual(self.sanitized((self.SECRET,)), (self.CLEAN,))
+
+    def test_a_tuple_stays_a_tuple(self):
+        """A caller that handed over a tuple still has one."""
+        self.assertIsInstance(self.sanitized((self.SECRET,)), tuple)
+
+    def test_a_tuple_nested_anywhere_is_walked(self):
+        value = {"a": [(self.SECRET,)], "b": ({"c": self.SECRET},)}
+        self.assertEqual(self.sanitized(value), {"a": [(self.CLEAN,)], "b": ({"c": self.CLEAN},)})
+
+    def test_the_audit_counts_what_it_replaced(self):
+        result = redaction.sanitize((self.SECRET, self.SECRET), self.policy)
+        self.assertEqual(_rule_count(result.audit, "credential-url"), 2)
+
+    def test_a_value_it_cannot_walk_is_returned_unchanged(self):
+        for value in (7, None, True, 1.5):
+            with self.subTest(value=value):
+                self.assertEqual(self.sanitized(value), value)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

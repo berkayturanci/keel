@@ -2035,6 +2035,8 @@ class TestShip(unittest.TestCase):
                 "'true'",
                 extra_policy_pack_lines=[
                     "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
                     "    learning:",
                     "      enabled: true",
                     "      mode: create-learning",
@@ -2083,6 +2085,8 @@ class TestShip(unittest.TestCase):
                 "'true'",
                 extra_policy_pack_lines=[
                     "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
                     "    learning:",
                     "      enabled: true",
                     "      mode: create-learning",

@@ -17,7 +17,82 @@ def _config_with_capture_policy(policy):
 
 
 def _config_with_learning_policy(policy):
-    return _config_with_capture_policy({"learning": policy})
+    """A project that runs a content hook, with this learning policy inside it.
+
+    The parent pair is not decoration: `capture.enabled` is the project saying it
+    intends to run a post-merge extension and `mode: extension` is the one mode
+    that has a content hook, so `learning_decision` refuses `create-learning`
+    without them. A learning policy tested against a project that runs no hook is
+    a policy nothing would honour.
+    """
+    return _config_with_capture_policy({"enabled": True, "mode": "extension", "learning": policy})
+
+
+class TheParentPolicyDecidesWhetherThereIsAHook(unittest.TestCase):
+    """`learning.mode: create-learning` under a project that runs no hook.
+
+    Gating only the *write* on the parent pair left the record claiming
+    `create-learning` with `durable_artifact: true` for a run that produced
+    nothing — the write/record disagreement this feature already treats as
+    load-bearing one level down, inverted.
+    """
+
+    def decision(self, capture_policy):
+        return capture.learning_decision(
+            title="a lesson",
+            capture_status="applied",
+            config=_config_with_capture_policy(
+                {
+                    **capture_policy,
+                    "learning": {"enabled": True, "mode": "create-learning"},
+                }
+            ),
+        )
+
+    def test_a_project_that_runs_no_hook_gets_marker_only(self):
+        for label, policy in (
+            ("capture disabled", {"enabled": False, "mode": "extension"}),
+            ("marker-only", {"enabled": True, "mode": "marker-only"}),
+            ("enabled omitted", {"mode": "extension"}),
+            ("nothing declared", {}),
+        ):
+            with self.subTest(policy=label):
+                decision = self.decision(policy)
+                self.assertEqual(decision["decision"], "marker-only")
+                self.assertFalse(decision["durable_artifact"])
+
+    def test_a_project_that_runs_one_still_gets_its_learning(self):
+        decision = self.decision({"enabled": True, "mode": "extension"})
+        self.assertEqual(decision["decision"], "create-learning")
+        self.assertTrue(decision["durable_artifact"])
+
+    def test_the_writer_and_the_decision_answer_the_same_question(self):
+        """One predicate, so they cannot drift apart again."""
+        for policy in (
+            {"enabled": False, "mode": "extension"},
+            {"enabled": True, "mode": "marker-only"},
+            {"enabled": True, "mode": "extension"},
+        ):
+            with self.subTest(policy=policy):
+                config = _config_with_capture_policy(
+                    {
+                        **policy,
+                        "learning": {
+                            "enabled": True,
+                            "mode": "create-learning",
+                            "sink": {"kind": "markdown-dir"},
+                        },
+                    }
+                )
+                decision = capture.learning_decision(
+                    title="a lesson", capture_status="applied", config=config
+                )
+                self.assertEqual(
+                    decision["durable_artifact"],
+                    capture.learning_sink_writes(
+                        config=config, decision=decision, capture_status="applied"
+                    ),
+                )
 
 
 def _record(pr, *, issue=None, marker=None):
@@ -769,6 +844,35 @@ class TestRetrieveRelevantLearnings(unittest.TestCase):
             (p / "lesson.md").write_text("# Lesson\nSome content", encoding="utf-8")
             with patch.object(Path, "read_text", side_effect=OSError("permission denied")):
                 self.assertEqual(capture.retrieve_relevant_learnings("lesson content", td), [])
+
+
+class TestCaptureImportGraph(unittest.TestCase):
+    def test_capture_does_not_import_config(self):
+        """``config`` → ``capture`` is the only allowed edge; the reverse is a CodeQL cycle.
+
+        A ``TYPE_CHECKING`` import is still an edge: CodeQL's ``py/cyclic-import``
+        does not honour that guard, and ``ProjectConfig`` is defined after
+        ``config`` imports this module. Duck-typing ``policy_pack`` is what
+        actually closes it.
+        """
+        import ast
+        from pathlib import Path
+
+        source = Path(capture.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        hits: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                names = [alias.name for alias in node.names]
+                if node.module in {"config", "keel.config"} or (
+                    node.level >= 1 and node.module is None and "config" in names
+                ):
+                    hits.append(ast.unparse(node))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "config" or alias.name.startswith("keel.config"):
+                        hits.append(alias.name)
+        self.assertEqual(hits, [])
 
 
 if __name__ == "__main__":

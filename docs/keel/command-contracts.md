@@ -289,8 +289,12 @@ The block records:
   push code, and never merge PRs
 
 Core owns marker generation, validation, and offline verification. Projects own what to
-learn and where the learning goes through `policy_pack.capture` plus a `capture` or
-`post-merge` extension. `keel capture-verify <project.yaml> --root <repo> --merged-pr <N>`
+learn; where it goes depends on whether they configure a sink. With
+`policy_pack.capture.learning.sink`, **core** writes the file and fills
+`capture.artifact` — `durable_artifacts.project_destination` on the capture contract
+reads `sink`, and an adapter that writes its own artifact has it overwritten. Without
+one it reads `extension-owned` and a `capture` or `post-merge` extension owns the
+destination, which is the behaviour every project had before #1154. `keel capture-verify <project.yaml> --root <repo> --merged-pr <N>`
 reads the configured run ledger and returns `complete` only when every expected merged PR
 has exactly one valid marker. Missing, invalid, or duplicate markers make verification
 `incomplete` and exit non-zero.

@@ -1188,7 +1188,7 @@ back to packaged command prose.
 | `workflow_policies` | map command→object | | command-specific workflow policy such as posting mode, reviewer isolation, CI/fix-loop behavior, and completion markers |
 | `reports` | map name→string | | report destinations, paths, or issue prefixes |
 | `capture_redaction` | object | | additional project-owned deny regexes applied before capture artifacts are persisted |
-| `capture` | object | | post-merge capture enablement/mode; content and destinations remain extension-owned |
+| `capture` | object | | post-merge capture enablement/mode; content stays extension-owned, and so does the destination unless [`learning.sink`](#policy_packcapturelearningsink) names one |
 | `review` | object | | project-owned rubric additions and required PR/review sections |
 
 ## `automation`
@@ -1317,6 +1317,97 @@ Allowed skip reasons are `dry-run`, `deferred`, `merge-failed`, `recursion-guard
 `capability-unavailable`, and `no-policy`. Capture failures after a successful merge are
 fail-soft: the merge is not reverted, but the marker and ledger must record the applied,
 deferred, or allowed skipped state so `keel capture-verify` can surface gaps.
+
+#### `policy_pack.capture.learning.sink`
+
+The built-in capture extension. Declare a sink and an **applied** capture writes one
+Markdown file per run; omit it and keel records the marker and writes nothing, which is
+the behaviour every project had before it existed.
+
+```yaml
+policy_pack:
+  name: example
+  capture:
+    enabled: true
+    mode: extension
+    learning:
+      enabled: true
+      mode: create-learning
+      sink:
+        kind: markdown-dir
+        path: "~/knowledge/projects/{repo}/learnings"
+        filename: "{date}-pr{pr}-{slug}-{fingerprint}.md"
+```
+
+`learning.enabled` is not decoration, and neither is `mode`. Together they are what
+`learning_decision` reads, and **the decision is the gate**: a file is written for
+`create-learning` and for nothing else. `enabled` false, `enabled` omitted, `mode:
+defer` and `mode: marker-only` each declare that this project does not want a durable
+artifact, and a configured sink does not override that — it only says where one would
+go if the policy asked for it.
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `kind` | string | `markdown-dir` | the only kind. A directory of Markdown; keel never learns what reads it |
+| `path` | string | `.keel/learning` | destination directory; `~` and the placeholders below expand |
+| `filename` | string | `{date}-pr{pr}-{slug}-{fingerprint}.md` | file name template, same placeholders; **must contain `{fingerprint}`** |
+
+Placeholders are `{owner}`, `{repo}`, `{base_branch}`, `{date}`, `{pr}`, `{slug}` (the
+issue title, lowercased and hyphenated) and `{fingerprint}` (the first 12 characters of
+the learning's dedupe fingerprint). **The set is closed**: an unknown placeholder is
+rejected when the config is read, because its only other symptom would be a directory
+literally named `{repoo}`, created successfully, on a machine nobody is watching.
+
+**`filename` must contain `{fingerprint}`**, and that is refused at load time too. Date,
+PR and slug do not distinguish two lessons: a second `create-learning` run on the same
+pull request the same day is a *different* lesson with a different fingerprint, and
+without it in the name the write destroys the first one — leaving its ledger record
+pointing at a document that says something else. The dedupe cannot help there; it
+suppresses *identical* fingerprints, and these differ.
+
+Each file opens with front matter the read path relies on — `schema`, `title`,
+`description`, `repo`, `pr`, `issue`, `date`, `fingerprint`, `labels`, `changed_files` —
+then three fixed sections: **What changed**, **What we learned**, **What to do
+differently next time**. Content passes through
+[`policy_pack.capture_redaction`](#policy_packcapture_redaction) before it is written,
+which is the existing durable-artifact rule rather than a new one.
+
+Three behaviours worth knowing:
+
+- **The path becomes `capture.artifact`.** That field is what makes an `applied` capture
+  provable rather than asserted — `keel capture-verify` reports `applied` with no
+  artifact as a finding — so a project with a sink stops passing `--capture-artifact`
+  by hand for a file it did not write.
+- **A `duplicate` learning decision writes nothing**, and records the earlier run's
+  file as its artifact. That is the fingerprint dedupe doing its job — but the run still
+  claims `applied`, and `applied` with no artifact is a finding, so the record points at
+  the file the run it duplicates wrote. Only when that path still resolves: a record can
+  name a file since deleted, or one written on another machine into a shared folder this
+  checkout cannot see, and an artifact that resolves to nothing is worse than none.
+- **A sink that cannot be written is fail-soft**, like every other capture failure: the
+  record becomes `skipped:capability-unavailable` and the merge is untouched.
+
+**keel writes the file; it does not commit it.** With a relative `path` the file
+lands in the working tree, and an uncommitted one is invisible to the next worktree
+(s2 cuts it from `origin/<base_branch>`) and discarded by every CI runner. The
+capture contract says which case you are in: `durable_artifacts.commit_required` is
+true exactly when the path is inside the repository.
+
+**An in-repo sink is not durable yet.** Committing the file from the run that wrote
+it is not a one-liner on the topology keel uses — s2, `overnight` and `swarm` all
+run inside a worktree while the primary checkout holds `base_branch`, so
+`git switch <base>` there fails with *already used by worktree*. Until #1163 is
+solved, **point `path` at an absolute or `~` folder** for the closest thing to
+durability: git never sees it, nothing needs committing, and `commit_required` is
+false. **A path outside the checkout is durable on the machine that wrote it, and only
+there.** The recorded `capture.artifact` is that machine's absolute path, and the run
+ledger *is* committed — so a teammate or a CI runner reading the same record finds no
+file, the dedupe cannot point at it, and the run records `applied` with no artifact.
+Portable artifact references are part of #1163 too.
+
+The default `.keel/learning/` is **not** runtime-ignored. Everything else keel writes
+under `.keel/` is disposable per-run state; learnings are the exception, because a
+learning git throws away is one the read path can never find.
 
 ### `policy_pack.risk_rules`
 

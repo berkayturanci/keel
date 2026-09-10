@@ -1230,6 +1230,28 @@ the failure mode being fixed here, so surface the report in the closure comment 
 only in the run log.
 
 ### s11 capture
+**keel writes the learning file; it does not commit it.** With
+`policy_pack.capture.learning.sink` configured, `keel ship --live --append-ledger`
+writes one Markdown file and records its path as `capture.artifact`.
+`capture.durable_artifacts.commit_required` says whether that path is inside the
+repository — a relative `path` is; an absolute or `~` one is a folder git never sees.
+
+**When it is true, the file is not durable yet and this step does not make it so.**
+An untracked file in the working tree is one the next worktree never sees — s2 cuts
+that from `origin/<base_branch>` — and one every CI runner discards. Committing it
+from here is not a one-liner on the topology this command runs in: s2, `overnight`
+and `swarm` all execute inside a worktree while the primary checkout holds
+`base_branch`, so `git switch "$BASE_BRANCH"` there exits 128 with *'<base>' is
+already used by worktree*. Landing it correctly is tracked in #1163; do not
+improvise a push here, and do not report the lesson as durable when it is not.
+
+**A sink outside the checkout needs no git step** — an absolute or `~` `path` is
+written and read back directly, and `commit_required` is false for it. **A path outside the checkout is durable on the machine that wrote it, and only
+there.** The recorded `capture.artifact` is that machine's absolute path, and the run
+ledger *is* committed — so a teammate or a CI runner reading the same record finds no
+file, the dedupe cannot point at it, and the run records `applied` with no artifact.
+Portable artifact references are part of #1163 too.
+
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
 not re-derive them), tier, rounds, window decision, and outcome. When s9 spent a round,
@@ -1406,4 +1428,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=b5baa0b89ab9224fa109a5e24a05c4124aff2b67f79e3323636a5d465632363c generated_sha256=b5baa0b89ab9224fa109a5e24a05c4124aff2b67f79e3323636a5d465632363c -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=75dff82294101410984e0af368ee4425310d319ba9a4171687fe9e8a6ff68ca8 generated_sha256=75dff82294101410984e0af368ee4425310d319ba9a4171687fe9e8a6ff68ca8 -->

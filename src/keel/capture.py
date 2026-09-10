@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+import os.path
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from . import config as cfg
+# `workspace` imports nothing from this package's config layer, so naming it here
+# keeps the import graph acyclic — see `_HasPolicyPack` for why that matters.
+from . import workspace
+
+
+class _HasPolicyPack(Protocol):
+    """Duck type for a loaded ``ProjectConfig``.
+
+    This module only reads ``policy_pack``. Naming ``config.ProjectConfig`` here
+    would import ``config``, and ``config`` already imports this module to
+    validate ``policy_pack.capture.learning``. CodeQL counts even a
+    ``TYPE_CHECKING`` import as that reverse edge — the cycle it reports as
+    ``py/cyclic-import``, because ``ProjectConfig`` is defined *after*
+    ``config``'s import of ``capture``.
+    """
+
+    policy_pack: Any
+
 
 CAPTURE_SCHEMA_VERSION = "keel.capture.v1"
 RECONCILE_SCHEMA_VERSION = "keel.capture-reconcile.v1"
@@ -60,9 +78,15 @@ class CaptureMarker:
         }
 
 
-def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
+def contract_as_dict(config: _HasPolicyPack | None = None) -> dict[str, Any]:
     """Return the stable capture contract consumed by adapters and verifiers."""
     capture_policy = _capture_policy(config)
+    # **The sink core will actually use**, not merely one written down. A dormant
+    # `sink:` block under `capture.enabled: false` or `mode: marker-only` published
+    # `project_destination: "sink"` — telling an adapter core would write — while
+    # `learning_sink_writes` refused, so neither wrote and the contract had promised
+    # one of them would. Third reader of the same question; they all ask it here.
+    sink_policy = learning_sink_policy(config) if capture_hook_enabled(config) else None
     return {
         "schema_version": CAPTURE_SCHEMA_VERSION,
         "marker": {
@@ -90,7 +114,27 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
             "requires_redaction": True,
             "redaction_contract": "run_ledger.capture_redaction",
             "core_destination": "run-ledger",
-            "project_destination": "extension-owned",
+            # `extension-owned` was the whole truth until keel shipped a writer.
+            # A project that configures `learning.sink` has **core** writing the
+            # file and filling `capture.artifact`, and an adapter that read this
+            # block and wrote its own would have had it overwritten (#1154).
+            "project_destination": "sink" if sink_policy is not None else "extension-owned",
+            # Defaulted the way `learning_sink_plan` defaults it. Read without the
+            # fallback, a sink that did not spell out its `kind` — which the schema,
+            # the docs and the validator all allow — published
+            # `{project_destination: sink, sink: None}`: a contract disagreeing with
+            # itself about the writer it had just named.
+            "sink": (
+                sink_policy.get("kind", LEARNING_SINK_KINDS[0]) if sink_policy is not None else None
+            ),
+            # **Whether the file lands in the working tree, and so has to be
+            # committed.** keel writes it and stops there. A relative sink path is
+            # inside the repository, where an uncommitted file is one the next
+            # worktree — cut from `origin/<base>` — and every CI runner never see:
+            # keel would be writing a learning and then throwing it away, which is
+            # the failure classifying `.keel/learning` as committed was for. An
+            # absolute or `~` path is outside the checkout and git never sees it.
+            "commit_required": learning_sink_in_worktree(config),
         },
         "learning_quality": learning_quality_contract_as_dict(config),
         "session_end_verifier": {
@@ -118,7 +162,7 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
     }
 
 
-def learning_quality_contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
+def learning_quality_contract_as_dict(config: _HasPolicyPack | None = None) -> dict[str, Any]:
     """Return the consumer-neutral durable-learning quality contract."""
     policy = _learning_policy(config)
     dedupe = policy.get("dedupe") if isinstance(policy.get("dedupe"), dict) else {}
@@ -200,7 +244,7 @@ def record_marker(
     labels: list[str] | tuple[str, ...] = (),
     changed_files: list[str] | tuple[str, ...] = (),
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
-    config: cfg.ProjectConfig | None = None,
+    config: _HasPolicyPack | None = None,
     not_run: bool = False,
 ) -> dict[str, Any]:
     """Build the capture block stored in a ship run ledger record.
@@ -282,7 +326,7 @@ def learning_decision(
     capture_status: str | None = None,
     capture_reason: str | None = None,
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
-    config: cfg.ProjectConfig | None = None,
+    config: _HasPolicyPack | None = None,
 ) -> dict[str, Any]:
     """Classify whether a merged PR deserves a durable learning artifact.
 
@@ -306,7 +350,11 @@ def learning_decision(
                 duplicate_of=duplicate_of,
                 policy=policy,
             )
-    if not policy.get("enabled"):
+    # **The same parent pair the writer consults.** Gating only the write left the
+    # record claiming `create-learning` with `durable_artifact: true` for a run that
+    # produced nothing — the write/record disagreement this feature already treats
+    # as load-bearing one level down, inverted. One predicate answers both.
+    if not policy.get("enabled") or not capture_hook_enabled(config):
         return _learning_result(
             "marker-only",
             reason="policy-unavailable",
@@ -315,10 +363,18 @@ def learning_decision(
         )
     mode = policy.get("mode", "marker-only")
     if mode == "create-learning":
-        if capture_status and capture_status.startswith("skipped"):
+        # **Anything but `applied`**, not just `skipped:*`. `deferred` fell through
+        # and answered `create-learning` with `durable_artifact: true`, while
+        # `learning_sink_writes` refuses every status but `applied` — the same
+        # write/record disagreement, one status over.
+        if capture_status != "applied":
             return _learning_result(
                 "marker-only",
-                reason="capture-skipped",
+                reason=(
+                    "capture-skipped"
+                    if (capture_status or "").startswith("skipped")
+                    else "capture-not-applied"
+                ),
                 fingerprint=fingerprint,
                 policy=policy,
             )
@@ -341,6 +397,20 @@ def learning_decision(
         fingerprint=fingerprint,
         policy=policy,
     )
+
+
+def capture_hook_enabled(config: _HasPolicyPack | None) -> bool:
+    """Whether this project runs a post-merge **content hook** at all.
+
+    `policy_pack.capture.enabled` is the project saying it intends to; `mode:
+    marker-only` records the core marker *without* one, which is the schema's own
+    wording. The learning sink is that hook, and so is the decision that says a
+    durable artifact is wanted — both ask here, because a writer and a record that
+    answer this differently is the disagreement this feature keeps producing.
+    `_reconcile_marker_decision` reads the same pair for `skipped:no-policy`.
+    """
+    policy = _capture_policy(config)
+    return bool(policy.get("enabled")) and policy.get("mode", "extension") == "extension"
 
 
 def learning_fingerprint(
@@ -388,7 +458,7 @@ def reconcile_session(
     records: list[dict[str, Any]],
     merged_prs: list[int | dict[str, Any]] | tuple[int | dict[str, Any], ...],
     *,
-    config: cfg.ProjectConfig | None = None,
+    config: _HasPolicyPack | None = None,
     capture_capability_available: bool = False,
 ) -> dict[str, Any]:
     """Plan idempotent post-merge reconciliation actions for capture gaps.
@@ -477,7 +547,7 @@ def _reconcile_pr(
     records: list[dict[str, Any]],
     item: dict[str, Any],
     *,
-    config: cfg.ProjectConfig | None,
+    config: _HasPolicyPack | None,
     capture_capability_available: bool,
 ) -> dict[str, Any]:
     pr_number = item["number"]
@@ -675,7 +745,7 @@ def _reconcile_result(
 def _reconcile_marker_decision(
     item: dict[str, Any],
     *,
-    config: cfg.ProjectConfig | None,
+    config: _HasPolicyPack | None,
     capture_capability_available: bool,
 ) -> tuple[str, str | None, str]:
     if recursion_guard(
@@ -734,14 +804,14 @@ def _action(
     return action
 
 
-def _capture_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
+def _capture_policy(config: _HasPolicyPack | None) -> dict[str, Any]:
     if config is None or not isinstance(config.policy_pack, dict):
         return {}
     policy = config.policy_pack.get("capture")
     return policy if isinstance(policy, dict) else {}
 
 
-def _learning_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
+def _learning_policy(config: _HasPolicyPack | None) -> dict[str, Any]:
     policy = _capture_policy(config)
     learning = policy.get("learning") if isinstance(policy, dict) else None
     return learning if isinstance(learning, dict) else {}
@@ -833,6 +903,587 @@ def _normalize_path(value: str) -> str:
     return "/".join(value.strip().lower().replace("\\", "/").split("/"))
 
 
+#: The one sink kind this issue ships. A directory of Markdown with stable
+#: frontmatter is the whole contract — no vault format, no wikilinks, no plugin
+#: API — so a project can point it at whatever reads Markdown and keel never
+#: learns what that is.
+LEARNING_SINK_KINDS = ("markdown-dir",)
+
+#: Where a sink writes when a project configures capture but names no path. The
+#: existing `.keel/learning/` convention, so turning the sink on changes where
+#: files appear only for a project that asked it to.
+DEFAULT_LEARNING_SINK_PATH = ".keel/learning"
+
+#: **The fingerprint is in the name because the fingerprint is the identity.** Date,
+#: PR and slug do not distinguish two lessons: a second `create-learning` run on the
+#: same PR the same day — different labels, different files, a different lesson —
+#: resolved to the same path and `os.replace` destroyed the first, leaving the
+#: earlier ledger record pointing at a document that says something else. The dedupe
+#: cannot help; it suppresses *identical* fingerprints, and these differ.
+DEFAULT_LEARNING_SINK_FILENAME = "{date}-pr{pr}-{slug}-{fingerprint}.md"
+
+#: The suffixes the reader opens. Named because the *writer* is validated against
+#: them: a sink filename ending `.markdown`, or in nothing at all, was written
+#: successfully into the sink and then skipped by the only thing that reads it —
+#: the writer/reader disagreement this feature exists inside, arriving through a
+#: template the validator accepted.
+LEARNING_READ_SUFFIXES = (".md", ".json", ".txt")
+
+#: How much of the fingerprint a filename carries. A sha256 prefix this long
+#: distinguishes every learning a project will ever write without making the name
+#: unreadable.
+LEARNING_FINGERPRINT_SLICE = 12
+
+#: The frontmatter contract the reader depends on. Fixed and small on purpose:
+#: `retrieve_relevant_learnings` reads `title` and `description` out of it, so a
+#: field added here is a field that side has to be taught.
+LEARNING_SCHEMA_VERSION = "keel.learning.v1"
+
+#: Every placeholder a `path` or `filename` template may use. Named rather than
+#: open-ended: an unknown placeholder is a typo that would otherwise write a
+#: directory called `{repoo}` and look like it worked.
+LEARNING_SINK_PLACEHOLDERS = (
+    "owner",
+    "repo",
+    "base_branch",
+    "date",
+    "pr",
+    "slug",
+    "fingerprint",
+)
+
+_SLUG_STRIP = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(text: str | None, *, limit: int = 48) -> str:
+    """A filename-safe slug, or `learning` when the title reduces to nothing."""
+    slug = _SLUG_STRIP.sub("-", (text or "").lower()).strip("-")
+    if not slug:
+        return "learning"
+    return slug[:limit].rstrip("-")
+
+
+def learning_sink_policy(config: _HasPolicyPack | None) -> dict[str, Any] | None:
+    """The `policy_pack.capture.learning.sink` block, or `None` when unset.
+
+    `None` and `{}` are different answers and the difference is load-bearing: every
+    field of a sink is optional, so `sink: {}` is a project taking the documented
+    defaults — `markdown-dir` into `.keel/learning`. Collapsed to `{}`, that
+    declaration read as *no sink at all* and the project got the pre-#1154
+    behaviour of writing nothing, while the same block naming its `kind` wrote.
+    """
+    sink = _learning_policy(config).get("sink")
+    return sink if isinstance(sink, dict) else None
+
+
+def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
+    """Does this project's sink write **inside the repository**?
+
+    Pure, and answered from the path's shape rather than the filesystem: a relative
+    path resolves against `--root`, which is the checkout, while an absolute or `~`
+    path is a folder somewhere else. It decides who has to commit the file — keel
+    writes it and does not, so one inside the working tree is lost to the next
+    worktree and to every CI runner unless the run commits it.
+    """
+    # Gated on the hook too: a dormant `sink:` under a disabled capture writes
+    # nothing, so nothing needs committing. Fourth reader of the same question.
+    sink = learning_sink_policy(config) if capture_hook_enabled(config) else None
+    if sink is None:
+        return False
+    path = str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH)
+    if path.startswith("~"):
+        return False
+    # **Anchored on *any* platform, not this one.** `Path("C:/knowledge").is_absolute()`
+    # is False on POSIX and `Path("/srv/knowledge").is_absolute()` is False on
+    # Windows, so each host called the other's absolute path in-repo and would have
+    # told the adapter to `git add` it — committing a `C:` directory into the
+    # repository, or reaching outside it. A keel config is the same text wherever it
+    # is read; `workspace.is_root_anchored` is the question already asked that way.
+    if workspace.is_root_anchored(path):
+        return False
+    # **Normalised, because `../learnings` is relative and still outside.** It is
+    # the documented "folder next to the checkout" shape without the leading `~`,
+    # and reported as in-repo it would send the adapter to `git add` a path git
+    # refuses — leaving the file off `base_branch` and the next worktree empty,
+    # which is the failure this flag exists to prevent, arriving through the flag.
+    return Path(os.path.normpath(path)).parts[:1] != ("..",)
+
+
+def learning_sink_errors(sink: Any) -> list[str]:
+    """Why this `sink` block cannot be used, or `[]`.
+
+    Validated where the config is read rather than where the file is written: a
+    template naming `{repoo}` is a typo whose only symptom would otherwise be a
+    directory by that name, created successfully, on a machine nobody is watching.
+    """
+    if sink in (None, {}):
+        return []
+    if not isinstance(sink, dict):
+        return ["policy_pack.capture.learning.sink must be a mapping"]
+    errors: list[str] = []
+    kind = sink.get("kind", LEARNING_SINK_KINDS[0])
+    if kind not in LEARNING_SINK_KINDS:
+        errors.append(
+            f"policy_pack.capture.learning.sink.kind must be one of "
+            f"{', '.join(LEARNING_SINK_KINDS)} (got {kind!r})"
+        )
+    for field_name in ("path", "filename"):
+        raw = sink.get(field_name)
+        if raw is None:
+            continue
+        if not isinstance(raw, str) or not raw.strip():
+            errors.append(
+                f"policy_pack.capture.learning.sink.{field_name} must be a non-empty string"
+            )
+            continue
+        # `[^}]*`, not `[a-z_]*`: a mixed-case or hyphenated typo — `{Repo}`,
+        # `{base-branch}` — is exactly as wrong as `{repoo}` and was invisible to a
+        # pattern that only matched the shape of a correct name.
+        used = re.findall(r"\{([^}]*)\}", raw)
+        for name in used:
+            if name not in LEARNING_SINK_PLACEHOLDERS:
+                errors.append(
+                    f"policy_pack.capture.learning.sink.{field_name} uses unknown placeholder "
+                    f"{{{name}}}; known: {', '.join(LEARNING_SINK_PLACEHOLDERS)}"
+                )
+        # **A filename must be able to name two lessons.** Date, PR and slug do not
+        # distinguish them: a second `create-learning` run on the same PR the same
+        # day is a *different* lesson with a different fingerprint, and without it in
+        # the name the write destroys the first one — leaving its ledger record
+        # pointing at a document that says something else. Refused here, where the
+        # placeholder typos are refused, because the only other symptom is a file
+        # that quietly stops existing.
+        if field_name == "filename" and "fingerprint" not in used:
+            errors.append(
+                "policy_pack.capture.learning.sink.filename must contain {fingerprint}; "
+                "without it two lessons on one pull request overwrite each other"
+            )
+        # **A filename is a name, not a path.** `{pr}/{fingerprint}.md` passes every
+        # other check, `mkdir(parents=True)` creates the directory happily, and
+        # `retrieve_relevant_learnings` — the only reader — globs one level and
+        # skips directories, so the lesson is written where nothing will ever read
+        # it. Nesting belongs in `path`, which is the field that names a directory.
+        if field_name == "filename" and not raw.endswith(LEARNING_READ_SUFFIXES):
+            errors.append(
+                f"policy_pack.capture.learning.sink.filename must end in one of "
+                f"{', '.join(LEARNING_READ_SUFFIXES)}; the read path opens no other "
+                f"suffix, so anything else is written and never found"
+            )
+        if field_name == "filename" and ("/" in raw or "\\" in raw):
+            errors.append(
+                "policy_pack.capture.learning.sink.filename must not contain a path "
+                "separator; it names a file inside `path`, and the read path does not "
+                "descend into subdirectories"
+            )
+    return errors
+
+
+#: Anything that would make a filename more than one path component, or unwritable.
+#: `/` and `\\` split it; the control characters are the same class one field over.
+_FILENAME_UNSAFE = re.compile(r"[/\\\x00-\x1f\x7f]+")
+
+
+def _relative_stays_relative(template: str, values: dict[str, str]) -> str:
+    """Expand a directory template without letting it change what it *is*.
+
+    An absolute or `~` template stays what the project wrote. A relative one has
+    to come back relative: a leading placeholder that expands to nothing otherwise
+    turns `{repo}/learnings` into `/learnings`, which the shape-reading predicates
+    still report as inside the repository — so the adapter is told to `git add` a
+    path at the filesystem root.
+    """
+    expanded = _expand(template, values)
+    if template.startswith("~") or workspace.is_root_anchored(template):
+        return expanded
+    return expanded.lstrip("/\\") or DEFAULT_LEARNING_SINK_PATH
+
+
+def _one_component(name: str) -> str:
+    """A filename that names exactly one file, whatever the placeholders held.
+
+    Refusing a separator in the *template* is not enough: `{base_branch}` is a legal
+    filename placeholder and `feat/sink` is a normal branch, so
+    `{date}-pr{pr}-{base_branch}-{fingerprint}.md` expands to a name with a slash in
+    it, `mkdir(parents=True)` makes the directory, and the lesson lands one level
+    below where `retrieve_relevant_learnings` looks. Only `{slug}` was slugified;
+    every other value went in raw.
+    """
+    return _FILENAME_UNSAFE.sub("-", name)
+
+
+def _expand(template: str, values: dict[str, str]) -> str:
+    out = template
+    for name, value in values.items():
+        out = out.replace("{" + name + "}", value)
+    return out
+
+
+#: A value plain YAML reads back unchanged: starts with a letter, contains only
+#: letters, digits, space and a few punctuation marks that carry no meaning there.
+_YAML_PLAIN = re.compile(r"[A-Za-z][A-Za-z0-9 ._/()+-]*")
+
+#: **Everything `str.splitlines()` treats as a line break**, plus the rest of C0 and
+#: DEL. Not a taste question and not only the obvious ones: a raw CR splits a line
+#: inside quotes, a NUL makes a real parser refuse the document, and `\x85` (NEL),
+#: `\u2028` (LINE SEPARATOR) and `\u2029` (PARAGRAPH SEPARATOR) are line breaks to
+#: Python while looking like nothing at all — a C0-only pattern let a title open a
+#: Markdown section of its own through the very guard written to stop it.
+_YAML_CONTROL = re.compile("[\x00-\x1f\x7f\x85\u2028\u2029]")
+
+#: Words plain YAML turns into something that is not a string.
+_YAML_KEYWORDS = frozenset(
+    {"y", "n", "yes", "no", "true", "false", "on", "off", "null", "none", "~"}
+)
+
+
+def _one_line(value: str) -> str:
+    """A value that cannot start a second line, wherever it is written.
+
+    :func:`_yaml_scalar` applies this before quoting, and the **body** needs it too:
+    the document's `# {title}` heading took the raw string, so a title carrying a
+    newline wrote a heading and then whatever followed it as Markdown of its own —
+    `foo\n## injected` became `# foo` and an `## injected` section. The front matter
+    and the body have to say the same thing about the same field.
+    """
+    return _YAML_CONTROL.sub(" ", value)
+
+
+def _yaml_scalar(value: str) -> str:
+    """A front-matter value that survives a real YAML parser.
+
+    **Quote unless the value is plainly safe**, rather than quoting a list of
+    dangerous characters. The first cut listed `:`, `#`, `"` and a newline, and a
+    dozen other shapes went through it: a leading `-`, `*`, `&`, `!`, `@`, `%`,
+    `|`, `>` or backtick either fails to parse or comes back as something else,
+    `{a}` becomes a mapping, `[a]` a list, and `yes` becomes `True`. An issue title
+    can be any of those. A deny-list has to be right about every character; an
+    allow-list only has to be right about the ones it lets through.
+    """
+    # `value == value.strip()` is not tidiness: `yes ` matches the allow-list, is not
+    # in the keyword set, and goes in bare — and a plain YAML scalar drops its
+    # trailing space, so a parser reads `yes` and returns `True`. The same
+    # non-string a keyword produces, through the one gap the keyword check had.
+    if (
+        value
+        and value == value.strip()
+        and _YAML_PLAIN.fullmatch(value)
+        and value.lower() not in _YAML_KEYWORDS
+    ):
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    # **Every control character, not the newline.** A raw carriage return survives
+    # inside quotes, and `_front_matter` splits lines on it — the reader gets a
+    # title of `"foo` and drops the rest, while a real parser reads `foo bar`, so
+    # the two disagree about the same file. A NUL is worse: PyYAML refuses the
+    # document outright. They become spaces, because a title is a line.
+    return f'"{_one_line(escaped)}"'
+
+
+def _yaml_sequence(key: str, values: list[str] | tuple[str, ...]) -> list[str]:
+    """A front-matter list, written so an empty one reads back as an empty list.
+
+    `key:` with nothing under it is a **null** to a YAML parser, not `[]`, and the
+    contract calls these fields sequences — a consumer that iterates them raises
+    `TypeError` on a merge that touched nothing it recorded. `key: []` is the same
+    field with the type it promised.
+    """
+    items = _strings(values)
+    if not items:
+        return [f"{key}: []"]
+    return [f"{key}:", *(f"  - {_yaml_scalar(item)}" for item in items)]
+
+
+def render_learning_document(
+    *,
+    title: str | None,
+    description: str | None,
+    pr_number: int | None,
+    issue_number: int | None,
+    repo: str | None,
+    date: str,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
+    fingerprint: str = "",
+    what_changed: str = "",
+    what_we_learned: str = "",
+    do_differently: str = "",
+) -> str:
+    """One learning file: frontmatter the reader can rely on, then three sections.
+
+    The heading is repeated below the frontmatter deliberately. `retrieve_relevant_learnings`
+    scores a file by its own text, and a title that lives only in frontmatter is a
+    title the search cannot weigh.
+    """
+    front = [
+        "---",
+        f"schema: {LEARNING_SCHEMA_VERSION}",
+        f"title: {_yaml_scalar(title or 'Learning')}",
+        f"description: {_yaml_scalar(description or '')}",
+        f"repo: {_yaml_scalar(repo or '')}",
+        # `null`, not an empty value. Both read back as `None`; only one of them
+        # says so on purpose, and a bare `issue:` looks like a field somebody forgot
+        # to fill rather than a merge that was linked to no issue.
+        f"pr: {pr_number if pr_number is not None else 'null'}",
+        f"issue: {issue_number if issue_number is not None else 'null'}",
+        # Quoted like every other scalar in the block. Left bare, `2026-09-09` is a
+        # YAML *timestamp*: a real parser returns `datetime.date` where keel's reader
+        # returns the string, which is the one disagreement all this quoting exists
+        # to prevent.
+        f"date: {_yaml_scalar(date)}",
+        # Quoted like every other scalar: a sha256 that happens to be all digits is
+        # an `int` to a real parser and a 64-character string to keel's reader, and
+        # this is the field that *identifies* the lesson.
+        f"fingerprint: {_yaml_scalar(fingerprint)}",
+    ]
+    front += _yaml_sequence("labels", labels)
+    front += _yaml_sequence("changed_files", changed_files)
+    front.append("---")
+    body = [
+        "",
+        # Through `_one_line`, like the front matter above: a heading built from a
+        # raw title let a newline open a section of its own inside the document.
+        f"# {_one_line(title or 'Learning')}",
+        "",
+        _one_line(description or ""),
+        "",
+        "## What changed",
+        "",
+        what_changed or "_Not recorded._",
+        "",
+        "## What we learned",
+        "",
+        what_we_learned or "_Not recorded._",
+        "",
+        "## What to do differently next time",
+        "",
+        do_differently or "_Not recorded._",
+        "",
+    ]
+    return "\n".join(front + body)
+
+
+def learning_sink_writes(
+    *,
+    config: _HasPolicyPack | None,
+    decision: dict[str, Any] | None,
+    capture_status: str | None,
+) -> bool:
+    """Whether this run writes a learning file at all.
+
+    Split out so a caller can answer it **before** doing anything expensive — the
+    writer redacts its values before rendering, and reaching for the redaction
+    policy on a run with no sink turned an invalid `capture_redaction` pattern into
+    an exception raised from the wrong place, past the handler `keel ship` has for
+    exactly that. :func:`learning_sink_plan` asks the same question through this
+    function, so the two cannot drift.
+
+    Three conditions, and the third is the one that took two rounds to get right.
+    **The decision is the gate**, not merely the dedupe: `learning_decision` already
+    answers whether this run earns a durable artifact, and `create-learning` is the
+    one answer whose `durable_artifact` is true. Refusing only `duplicate` let four
+    other answers through — `learning.enabled` false, `enabled` omitted, `mode:
+    defer`, `mode: marker-only` — each planning a write while the record beside it
+    said the policy had decided not to keep one. A configured sink is where a
+    project's learnings go, not permission to write one whatever the policy says.
+    """
+    if capture_status != "applied":
+        return False
+    if not capture_hook_enabled(config):
+        return False
+    sink = learning_sink_policy(config)
+    if sink is None or learning_sink_errors(sink):
+        return False
+    return isinstance(decision, dict) and decision.get("decision") == "create-learning"
+
+
+def learning_sink_plan(
+    *,
+    config: _HasPolicyPack | None,
+    decision: dict[str, Any] | None,
+    capture_status: str | None,
+    owner: str | None,
+    repo: str | None,
+    base_branch: str | None,
+    date: str,
+    pr_number: int | None,
+    title: str | None = None,
+    description: str | None = None,
+    labels: list[str] | tuple[str, ...] = (),
+    changed_files: list[str] | tuple[str, ...] = (),
+    issue_number: int | None = None,
+    what_changed: str = "",
+    what_we_learned: str = "",
+    do_differently: str = "",
+) -> dict[str, Any] | None:
+    """What to write for this run, or `None` with the reason folded into the caller.
+
+    Pure: it resolves a path and renders a document and touches no filesystem and no
+    clock — `date` is passed in for the same reason every other plan in this package
+    takes its facts as arguments.
+
+    Returns `None` when :func:`learning_sink_writes` says there is nothing to write:
+    no sink configured, a capture that is not `applied`, or a learning decision that
+    does not call for a durable artifact — a `duplicate`, which is the dedupe doing
+    its job, but equally a project whose policy said `marker-only`.
+    """
+    if not learning_sink_writes(config=config, decision=decision, capture_status=capture_status):
+        return None
+    sink = learning_sink_policy(config) or {}
+    # No `isinstance` re-check: the gate above returned for anything that is not a
+    # `create-learning` mapping, so by here the decision is one.
+    fingerprint = str(decision.get("fingerprint") or "")
+    values = {
+        "owner": owner or "",
+        "repo": repo or "",
+        "base_branch": base_branch or "",
+        "date": date,
+        "pr": str(pr_number) if pr_number is not None else "",
+        "slug": _slugify(title),
+        "fingerprint": fingerprint[:LEARNING_FINGERPRINT_SLICE],
+    }
+    # **A relative template stays relative.** `{repo}/learnings` with `repo` unset
+    # expands to `/learnings` — absolute, at the filesystem root — while every
+    # reader of the template's shape (`learning_sink_in_worktree`, and so
+    # `commit_required` and the adapter's `git add`) still calls it in-repo. The
+    # filename's expansion was already flattened; the directory's was not.
+    directory = _relative_stays_relative(
+        str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values
+    )
+    filename = _one_component(
+        _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
+    )
+    return {
+        "kind": sink.get("kind", LEARNING_SINK_KINDS[0]),
+        "directory": directory,
+        "filename": filename,
+        "content": render_learning_document(
+            title=title,
+            description=description,
+            pr_number=pr_number,
+            issue_number=issue_number,
+            repo=repo,
+            date=date,
+            labels=labels,
+            changed_files=changed_files,
+            fingerprint=fingerprint,
+            what_changed=what_changed,
+            what_we_learned=what_we_learned,
+            do_differently=do_differently,
+        ),
+    }
+
+
+def duplicate_learning_artifact(
+    *,
+    config: _HasPolicyPack | None,
+    decision: dict[str, Any] | None,
+    capture_status: str | None,
+    existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
+) -> str | None:
+    """The artifact an earlier run already wrote for this same learning, or `None`.
+
+    A `duplicate` decision writes no file — that is the dedupe working — but the
+    run still records `applied`, and `applied` with no artifact is exactly what
+    `capture-verify` reports as a finding. The lesson is not missing: it is on
+    disk, under the run this one duplicates. Naming that file keeps the claim
+    provable instead of letting the dedupe manufacture the gap the artifact
+    exists to close.
+
+    **Only for an `applied` capture**, and that gate is the whole point rather than
+    a precaution: `learning_decision` answers `duplicate` on a fingerprint match
+    before it looks at the status, so without it a `not-run` or `skipped` record
+    was handed the earlier run's path — the exact contradiction the CLI refuses at
+    its flag boundary, *a run that never reached capture produced no artifact*, and
+    the one `record_marker` states for `deferred` and `skipped`.
+
+    Pure: it reads recorded paths and never asks whether one still exists. The
+    caller that can answer that is the caller that touches the filesystem.
+    """
+    if capture_status != "applied":
+        return None
+    # **The hook, not just the sink block.** `learning_decision` answers
+    # `duplicate` on a fingerprint match *before* it reads the enabled flags, so
+    # `duplicate` reaches here under a `capture.enabled: false` or `marker-only`
+    # project — and the caller treats a returned path as permission to replace the
+    # operator's own `--capture-artifact` with a stale sink file, for a project
+    # whose contract says `extension-owned`. Fifth reader of the same question.
+    if not capture_hook_enabled(config) or learning_sink_policy(config) is None:
+        return None
+    if not isinstance(decision, dict) or decision.get("decision") != "duplicate":
+        return None
+    fingerprint = decision.get("fingerprint")
+    if not fingerprint:
+        return None
+    artifact: str | None = None
+    for record in existing_records:
+        if not isinstance(record, dict):
+            continue
+        capture_block = record.get("capture")
+        if not isinstance(capture_block, dict):
+            continue
+        learning = capture_block.get("learning")
+        if not isinstance(learning, dict) or learning.get("fingerprint") != fingerprint:
+            continue
+        candidate = capture_block.get("artifact")
+        if isinstance(candidate, str) and candidate.strip():
+            # Keep scanning: the ledger is append-only and the newest record
+            # holding this fingerprint is the one whose path is current.
+            artifact = candidate.strip()
+    return artifact
+
+
+def _unquote(value: str) -> str:
+    """Undo :func:`_yaml_scalar` for the fields this reader uses.
+
+    The writer quotes any value containing a colon — an issue title usually does —
+    so a reader that took the raw text would hand back a title wrapped in quotes.
+    """
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+
+def _front_matter(content: str) -> tuple[dict[str, str], str]:
+    """Split a leading `---` block off, as `(fields, body)`.
+
+    Only the scalar fields this contract defines are read; a list value (`labels:`)
+    is skipped rather than parsed, because the caller wants a title and a sentence
+    and nothing here should grow into a YAML parser.
+    """
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, content
+    fields: dict[str, str] = {}
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return fields, "\n".join(lines[index + 1 :])
+        key, sep, value = line.partition(":")
+        if sep and not key.startswith(" "):
+            fields[key.strip()] = _unquote(value.strip())
+    # No closing delimiter: not front matter, whatever it looked like.
+    return {}, content
+
+
+def _learning_title_and_summary(content: str, fallback: str) -> tuple[str, str]:
+    """A learning file's title and one-line summary.
+
+    Front matter first, because that is what the writer fills. Read line-by-line
+    instead, a file written by `render_learning_document` would be titled `---` and
+    summarised `schema: keel.learning.v1` — measured, and the reason the reader is
+    part of the change that added the writer.
+    """
+    fields, body = _front_matter(content)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    title = fields.get("title") or (lines[0].lstrip("#").strip() if lines else fallback)
+    summary = fields.get("description") or ""
+    if not summary:
+        for line in lines[1:]:
+            if not line.startswith("#"):
+                summary = line
+                break
+    return title or fallback, summary
+
+
 def retrieve_relevant_learnings(
     query_text: str,
     learning_dir: str | Path,
@@ -860,7 +1511,7 @@ def retrieve_relevant_learnings(
 
     results: list[dict[str, Any]] = []
     for file_path in sorted(path.glob("*")):
-        if not file_path.is_file() or file_path.suffix not in {".md", ".json", ".txt"}:
+        if not file_path.is_file() or file_path.suffix not in LEARNING_READ_SUFFIXES:
             continue
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
@@ -879,9 +1530,7 @@ def retrieve_relevant_learnings(
                 score += min(count, 5)
 
         if score >= min_score:
-            lines = [line.strip() for line in content.splitlines() if line.strip()]
-            title = lines[0].lstrip("#").strip() if lines else file_path.name
-            summary = lines[1] if len(lines) > 1 else ""
+            title, summary = _learning_title_and_summary(content, file_path.name)
             results.append(
                 {
                     "file": file_path.name,

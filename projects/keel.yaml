@@ -119,6 +119,28 @@ extensions_dir: .keel/extensions
 policy_pack:
   name: keel-python
   presets: ["bandit"]
+  # keel dogfoods its own capture extension (#1154). The default sink, so an
+  # applied capture writes one Markdown learning into `.keel/learning/` and
+  # `capture.artifact` names it — which is what stops keel being a project that
+  # ships a capture contract and captures nothing from its own runs.
+  capture:
+    enabled: true
+    mode: extension
+    learning:
+      # `enabled` is what `learning_decision` reads; without it the decision is
+      # `marker-only` however the mode reads, so a dogfood that omitted it would
+      # write files while recording that it had decided not to.
+      enabled: true
+      mode: create-learning
+      sink:
+        # The default sink writes into `.keel/learning/`, and keel runs its own
+        # ships inside a worktree that s10 then removes — so the file is written
+        # and thrown away until #1163 lands it on the base branch. It is on
+        # deliberately: the writer, the redaction, the dedupe and the fingerprint
+        # are exercised on every keel merge, and #1163 is the step that keeps the
+        # result. It does **not** yet make keel a project that captures its own
+        # runs across sessions; do not read it as that.
+        kind: markdown-dir
   labels:
     status: ["status:backlog", "status:in-progress", "status:needs-review", "status:done"]
     priority: ["priority:high", "priority:medium", "priority:low"]

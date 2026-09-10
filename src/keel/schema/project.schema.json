@@ -874,12 +874,36 @@
                       "description": "Whether stable learning fingerprints suppress duplicate durable learning candidates."
                     }
                   }
+                },
+                "sink": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "markdown-dir"
+                      ],
+                      "description": "The only sink kind: a directory of Markdown files with stable frontmatter. keel never learns what reads that directory."
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Destination directory. Expands ~ and the placeholders {owner}, {repo}, {base_branch}, {date}, {pr}, {slug}, {fingerprint}. Defaults to .keel/learning."
+                    },
+                    "filename": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "File name template, same placeholders. Must contain {fingerprint}, or two lessons on one pull request overwrite each other. Defaults to {date}-pr{pr}-{slug}-{fingerprint}.md."
+                    }
+                  },
+                  "description": "Where an applied capture writes its durable learning file. Omit it and keel records the marker and writes nothing, which is the behaviour before #1154."
                 }
               },
               "description": "Policy for optional durable learning artifacts. Core records the decision in capture.learning and suppresses duplicates by stable fingerprint."
             }
           },
-          "description": "Project-owned post-merge capture policy. Core owns marker/verifier mechanics; capture content and destinations remain extension-owned."
+          "description": "Project-owned post-merge capture policy. Core owns marker/verifier mechanics and capture content stays extension-owned; so does the destination, unless learning.sink names one — then core writes the file and fills capture.artifact."
         },
         "review": {
           "type": "object",

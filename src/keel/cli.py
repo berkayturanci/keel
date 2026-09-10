@@ -57,6 +57,7 @@ from . import (
     mergeverify,
     project_commands,
     providerprobe,
+    redaction,
     review,
     runcontrols,
     runtime,
@@ -1462,6 +1463,49 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # The same events say *who* ran each round, which is what lets the closure comment
     # name the seat an s9 escalation handed the fix to (#1016).
     run_fix_attribution = runcontrols.fix_attribution(run_control_events)
+    # The built-in capture extension (#1154). `policy_pack.capture.learning.sink`
+    # names a directory of Markdown; keel renders the document and writes it, and
+    # the path becomes `capture.artifact` — which is already the field that makes
+    # an `applied` capture provable rather than asserted. A project with no sink
+    # keeps today's behaviour exactly, including an operator-supplied
+    # `--capture-artifact`.
+    # Resolved once, so the document the sink writes and the record the ledger
+    # appends fingerprint the same lesson.
+    capture_facts = _capture_issue_facts(args)
+    capture_changed = _capture_changed_files(args, changed_read)
+    # **Ask the clash first.** The append no-ops when this (PR, head) already
+    # carries a marker, and the write ran before that was known — so a retry whose
+    # fingerprint had moved (a `gh` outage on the first attempt, a label fetched on
+    # the second) scattered a second document into the sink, possibly a shared
+    # knowledge folder, that no ledger record would ever name.
+    capture_clash = (
+        ledger.capture_marker_for_head(
+            existing_ledger_records,
+            pr_number=args.ledger_pr or args.pr,
+            head_sha=args.head_sha,
+        )
+        if args.append_ledger and args.live
+        else None
+    )
+    capture_write = (
+        None
+        if capture_clash is not None
+        else _write_learning_sink(
+            args, config, capture_changed, existing_ledger_records, outcomes, capture_facts
+        )
+    )
+    capture_status_value = _resolved_capture_status(args.capture_status)
+    capture_reason_value = args.capture_reason
+    capture_artifact_value = args.capture_artifact
+    if capture_write is not None:
+        if capture_write["ok"]:
+            capture_artifact_value = capture_write["path"]
+        else:
+            # Fail-soft, as the capture contract requires: a sink that cannot be
+            # written does not touch the merge, it downgrades the claim.
+            capture_status_value = "skipped"
+            capture_reason_value = "capability-unavailable"
+            capture_artifact_value = None
     ledger_record = ledger.build_ship_run_record(
         command=command,
         base_branch=config.base_branch,
@@ -1479,12 +1523,17 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         pr_number=args.ledger_pr or args.pr,
         branch=args.branch,
         head_sha=args.head_sha,
-        capture_status=_resolved_capture_status(args.capture_status),
+        capture_status=capture_status_value,
         capture_not_run=args.capture_status == CAPTURE_STATUS_NOT_RUN,
-        capture_reason=args.capture_reason,
-        capture_artifact=args.capture_artifact,
-        issue_title=args.issue_title,
-        issue_labels=_issue_labels(args),
+        capture_reason=capture_reason_value,
+        capture_artifact=capture_artifact_value,
+        # The same list the document was written from, so the sink and the ledger
+        # fingerprint one lesson. They did not: the sink got the host's PR files
+        # while the record kept hashing the empty post-merge diff, and a second run
+        # then wrote a second file while recording it as a duplicate of the first.
+        capture_changed_files=capture_changed,
+        issue_title=capture_facts[0],
+        issue_labels=capture_facts[2],
         existing_records=existing_ledger_records,
         config=config,
         implementer=args.implementer,
@@ -1547,7 +1596,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         ],
     }
     if args.append_ledger and args.live:
-        clash = ledger.existing_capture_marker(existing_ledger_records, ledger_record)
+        clash = capture_clash or ledger.existing_capture_marker(
+            existing_ledger_records, ledger_record
+        )
         if clash is None:
             ledger.append_record(ledger_path, ledger_record)
             ledger_result["appended"] = True
@@ -8736,6 +8787,369 @@ def _parse_pr_issue_mapping(value: str) -> tuple[int, int]:
     except (argparse.ArgumentTypeError, ValueError) as exc:
         raise argparse.ArgumentTypeError("linked issue mapping must be PR=ISSUE") from exc
     return pr, issue
+
+
+def _today() -> str:
+    """Today's UTC date, as the sink's `{date}` placeholder and frontmatter field.
+
+    Here rather than in `capture`: the pure core takes no wall clock, so the date is
+    read at the one edge that is allowed to and passed in.
+    """
+    import datetime
+
+    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+
+
+def _capture_changed_files(args, changed_files) -> list[str]:
+    """The files this capture is about.
+
+    **The local diff is empty on the path that matters.** s11 runs after s10 has
+    squash-merged, so `--root .` is the primary checkout sitting on `base_branch`
+    and `git diff --name-only main...HEAD` reports nothing — measured. The document
+    then records `changed_files: []` and, worse, `learning_fingerprint` hashes an
+    empty file list, so the field the sink filename exists to distinguish two
+    lessons by stops distinguishing anything.
+
+    `--pull-request` names the PR whose files those were, so they are read from the
+    host when the local diff has none. Fail-soft, like the issue facts beside it:
+    offline, the empty list stands and the lesson is scored on its title alone.
+    """
+    local = list(changed_files or ())
+    # `args.ledger_pr or args.pr`, the same pair the sink resolves its `{pr}` from:
+    # `--pull-request` lands on `ledger_pr`, and reading only `args.pr` asked the
+    # host about nothing on the very command this exists for.
+    pr = getattr(args, "ledger_pr", None) or getattr(args, "pr", None)
+    if local or pr is None:
+        return local
+    return github.pr_files(pr, cwd=args.root) or []
+
+
+def _capture_issue_facts(args) -> tuple[str, str, tuple[str, ...]]:
+    """The issue's title, body and labels for the learning document.
+
+    **The adapter's s11 command does not pass them.** `--issue-title` and
+    `--issue-body` are `keel plan` flags at the start of a run; the ship that
+    records capture is `keel ship … --live --append-ledger --issue <N>
+    --pull-request <PR> --capture-status applied`, and a later invocation inherits
+    nothing. Measured on exactly that command: one file titled `Learning`, an empty
+    description, a `learning` slug and `_Not recorded._` under every heading — the
+    empty-document failure this feature was already once burned on, on the only path
+    keel dogfoods.
+
+    So when `--issue` names one and the flags are empty, the facts are read from the
+    host. Fail-soft, like :func:`_gather_issue_facts`, which does the same for the
+    blocker gate: offline, the flags stand and the document says what it can.
+    """
+    title = args.issue_title or ""
+    body = args.issue_body or ""
+    labels = _issue_labels(args)
+    issue = getattr(args, "issue", None)
+    if issue is None or (title and body and labels):
+        return title, body, labels
+    result = github.issue_facts(issue, cwd=args.root, fields="title,body,labels")
+    if not result.ok:
+        return title, body, labels
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return title, body, labels
+    if not isinstance(data, dict):
+        return title, body, labels
+    if not title and isinstance(data.get("title"), str):
+        title = data["title"]
+    if not body and isinstance(data.get("body"), str):
+        body = data["body"]
+    if not labels and isinstance(data.get("labels"), list):
+        labels = tuple(
+            str(item["name"])
+            for item in data["labels"]
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        )
+    return title, body, labels
+
+
+def _gate_word(outcome) -> str:
+    """What a gate outcome says in a learning document."""
+    if outcome.skipped:
+        return "skipped"
+    if outcome.not_run:
+        return "not run"
+    return "ok" if outcome.ok else "failed"
+
+
+def _learning_sections(args, outcomes, body: str) -> tuple[str, str, str, str]:
+    """The document's prose: description, and the three contracted sections.
+
+    Built from what the run already carries — the issue body and the gate outcomes
+    — rather than from a model. The extension "fills them from the run ledger and
+    the closure summary; it does not call any model itself", and a document whose
+    three sections all read `_Not recorded._` is a file with a filename and nothing
+    else in it.
+    """
+    body = (body or "").strip()
+    # **Not the first line — the first line that says something.** A keel issue opens
+    # with `## Deliverable` or `## Problem`, so the first non-empty line is a heading,
+    # and the front matter carried it as the lesson's one-line summary. The reader
+    # already skips headings when it falls back to the body; the writer was feeding
+    # one through the field that bypasses that.
+    description = next(
+        (
+            line.strip()[:200]
+            for line in body.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ),
+        "",
+    )
+    files = ", ".join(sorted(changed)) if (changed := list(args.declared_file or ())) else ""
+    what_changed = body or "_Not recorded._"
+    if files:
+        what_changed = f"{what_changed}\n\nDeclared files: {files}"
+    # `not_run` before `ok`: an agentic gate reaches the command runner as
+    # `ok=True, not_run=True` so a soft gate does not spuriously fail the run, and
+    # a document that recorded it as `ok` would teach the next run that a gate
+    # nobody executed had passed — inside the artifact that makes `applied`
+    # provable. `gates.record_gates_passed` refuses exactly this certification.
+    gates = [f"{outcome.gate}: {_gate_word(outcome)}" for outcome in outcomes or ()]
+    what_we_learned = "Gates on the merged head — " + (", ".join(gates) if gates else "none run")
+    do_differently = (
+        "Recorded automatically from the run. Edit this file to say what the next "
+        "run should do differently; the read path scores on its text."
+    )
+    return description, what_changed, what_we_learned, do_differently
+
+
+def _write_learning_sink(
+    args, config, changed_files, existing_records, outcomes, facts
+) -> dict | None:
+    """Write this run's learning document, or `None` when there is nothing to write.
+
+    The plan is pure (:func:`keel.capture.learning_sink_plan`); this is the thin I/O
+    around it, which is why it lives here and not in `capture`. It returns
+    ``{"ok": bool, "path": str | None, "error": str | None, "reused": bool}`` so the
+    caller can decide what the record says — a writer that reached into the record
+    itself would put policy in the I/O layer.
+
+    ``reused`` marks the one result that wrote nothing: a `duplicate` decision, whose
+    artifact is the file the run it duplicates already wrote (see
+    :func:`_duplicate_learning_artifact`).
+
+    Fail-soft by contract: any `OSError` becomes ``ok: False`` and the caller
+    downgrades the capture to ``skipped:capability-unavailable``. A capture that
+    could not be written must not fail a merge that already happened.
+    """
+    # A dry run must write nothing. And neither must a run that will record
+    # nothing: the artifact exists to be *named by a ledger record*, so writing one
+    # without `--append-ledger` leaves the same orphan in a knowledge folder that
+    # asking the clash first was added to prevent — reachable by dropping one flag
+    # the adapter happens to pass.
+    if not (args.live and args.append_ledger):
+        return None
+    # **Redact the values, then render.** Sanitizing the finished document put the
+    # replacement *inside* a front-matter scalar the quoter had already decided was
+    # safe: `ghp_AAA…` is plain YAML (letters, digits, underscore), so it went in
+    # bare, and `[REDACTED:github-token]` in its place makes a real parser read a
+    # list where a title should be. A redacted value is quoted like any other value
+    # when it goes through `_yaml_scalar` — and the filename, built from the title,
+    # stops carrying most of the token through `_slugify`.
+    status = _resolved_capture_status(args.capture_status)
+    title, body, labels = facts
+    decision = capture.learning_decision(
+        # The *unredacted* title and labels, and the same ones the ledger's own
+        # `record_marker` is given: this is the dedupe fingerprint, and a sink that
+        # fingerprinted the host's title while the record fingerprinted an empty flag
+        # would dedupe against a value nothing else computes.
+        title=title,
+        labels=labels,
+        changed_files=changed_files or (),
+        capture_status=status,
+        capture_reason=args.capture_reason,
+        # The records the dedupe needs. Without them `learning_decision` can
+        # never answer `duplicate`, so the skip this feature documents was
+        # unreachable on the only path that writes.
+        existing_records=existing_records or (),
+        config=config,
+    )
+    # Asked before anything expensive happens. Reading the redaction policy on a run
+    # that writes nothing raised an invalid `capture_redaction` pattern from here,
+    # past the handler `_cmd_ship` has for exactly that failure.
+    if not capture.learning_sink_writes(config=config, decision=decision, capture_status=status):
+        return _duplicate_learning_artifact(config, decision, status, existing_records, args.root)
+    # **Redact the values, then render.** Sanitizing the finished document put the
+    # replacement *inside* a front-matter scalar the quoter had already decided was
+    # safe: `ghp_AAA…` is plain YAML (letters, digits, underscore), so it went in
+    # bare, and `[REDACTED:github-token]` in its place makes a real parser read a
+    # list where a title should be. A redacted value is quoted like any other when
+    # it goes through `_yaml_scalar` — and the filename, built from the title, stops
+    # carrying most of the token through `_slugify`.
+    try:
+        policy = redaction.policy_from_config(config)
+    except redaction.RedactionError as exc:
+        # Fail-soft, like an unwritable directory: an invalid `capture_redaction`
+        # pattern must not kill a run whose merge already happened. `_cmd_ship`
+        # reports the policy properly when the *ledger* is sanitized; raising from
+        # here reached no handler at all and ended the command in a traceback.
+        return {"ok": False, "path": None, "error": str(exc), "reused": False}
+    fields = redaction.sanitize(
+        {
+            # **Every value the document is rendered from**, not the ones a secret
+            # is most likely to be in. A `changed_files` path or a label that *is* a
+            # token — `ghp_…` and nothing else — is plain YAML, so it went in bare
+            # and the document pass put the replacement inside it: the same break as
+            # the title, one field over, twice. This is the whole set.
+            "title": title,
+            "labels": labels,
+            "changed_files": changed_files or (),
+            "sections": _learning_sections(args, outcomes, body),
+        },
+        policy,
+    ).value
+    description, what_changed, what_we_learned, do_differently = fields["sections"]
+    # Not `None` by construction: `learning_sink_writes` above is the same gate this
+    # consults, which is why it exists as its own function.
+    plan = capture.learning_sink_plan(
+        config=config,
+        decision=decision,
+        capture_status=status,
+        owner=config.owner,
+        repo=config.repo,
+        base_branch=config.base_branch,
+        date=_today(),
+        pr_number=args.ledger_pr or args.pr,
+        title=fields["title"],
+        issue_number=args.issue,
+        labels=fields["labels"],
+        changed_files=fields["changed_files"],
+        description=description,
+        what_changed=what_changed,
+        what_we_learned=what_we_learned,
+        do_differently=do_differently,
+    )
+    # **Absolute, so the recorded path means one thing.** `--root` is whatever the
+    # operator typed: `.`, an absolute path, or a relative `repo`. Recording the
+    # joined-but-still-relative result made the artifact mean "relative to the
+    # directory that run happened to be launched from", and reading it back through
+    # the same join then prefixed the root twice (`repo/repo/learnings/…`), found
+    # nothing, and recorded `applied` with no artifact — the finding this whole
+    # reuse exists to close.
+    directory = _resolve_under_root(plan["directory"], args.root)
+    # Anchored somewhere this host cannot write: `C:/knowledge` is a *relative* path
+    # to POSIX, so resolving it here would put a `C:` directory next to whatever the
+    # process happened to be standing in. Fail-soft, as an unwritable directory does
+    # — the machine, not the config, is what cannot honour it.
+    #
+    # `pragma: no cover` on the branch, not the body, and for a measured reason: a
+    # path anchored on *another* platform is what triggers this, and on the Windows
+    # legs a rooted path is native too, so the condition cannot be made true there.
+    # The ubuntu and macos legs cover it through
+    # `test_a_sink_this_platform_cannot_write_fails_soft`, and
+    # `learning_sink_in_worktree`'s pure test pins both anchors on every platform.
+    if (  # pragma: no cover - only reachable where a foreign anchor is not a native one
+        workspace.is_root_anchored(plan["directory"]) and not directory.is_absolute()
+    ):
+        return {
+            "ok": False,
+            "path": None,
+            "error": f"sink path {plan['directory']!r} is not writable on this platform",
+            "reused": False,
+        }
+    target = directory / plan["filename"]
+    # A second pass over the finished document. Redaction before durability is the
+    # capture contract's own rule — `contract_as_dict` declares
+    # `durable_artifacts.requires_redaction` and the ledger sanitizes every record
+    # it writes — and this catches anything the renderer itself carried in. A no-op
+    # on values already sanitized above.
+    result = redaction.sanitize(plan["content"], policy)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        workspace.write_text_atomic(target, result.value)
+    except OSError as exc:
+        return {"ok": False, "path": None, "error": str(exc), "reused": False}
+    return {
+        "ok": True,
+        "path": _recordable_artifact(target, args.root),
+        "error": None,
+        "reused": False,
+    }
+
+
+def _duplicate_learning_artifact(
+    config, decision, capture_status, existing_records, root
+) -> dict | None:
+    """Point a deduped run at the file the run it duplicates already wrote.
+
+    The path is only claimed when it is still there. A record can name a file
+    that has since been deleted, or one written on another machine into a shared
+    knowledge folder this checkout cannot see, and an `artifact` that resolves to
+    nothing is a worse answer than no artifact at all: `capture-verify` would
+    report a clean session while the proof it names does not exist.
+    """
+    recorded = capture.duplicate_learning_artifact(
+        config=config,
+        decision=decision,
+        capture_status=capture_status,
+        existing_records=existing_records or (),
+    )
+    if recorded is None:
+        return None
+    if _recorded_artifact(recorded, root) is None:
+        return None
+    return {"ok": True, "path": recorded, "error": None, "reused": True}
+
+
+def _recordable_artifact(target: Path, root: str) -> str:
+    """The artifact path to store: **relative to `--root` when it is inside it.**
+
+    Neither obvious answer survives alone, and both were shipped. The join of
+    whatever `--root` happened to be meant "relative to the directory *that* run
+    was launched from", so a relative `--root repo` prefixed the root twice reading
+    its own file back. Made absolute instead, it named a filesystem location — and
+    the file is *committed*, so the next worktree (s2 cuts it from
+    `origin/<base_branch>`) and every CI runner hold the same lesson at a different
+    absolute path, where the duplicate reuse could no longer find it.
+
+    A path inside the checkout is recorded the way the repository names it and
+    resolves against whatever root reads it later; one outside — a shared knowledge
+    folder — stays absolute, because nothing else can name it.
+    """
+    # Normalised on both sides: `Path(".").absolute()` keeps the `.` component, so
+    # `--root .` — the default, and the shape the adapter uses — never matched its
+    # own root and every record came out absolute again.
+    absolute = Path(os.path.normpath(target.absolute()))
+    base = Path(os.path.normpath(Path(root).absolute()))
+    try:
+        # **`as_posix()`, not `str()`.** A relative record is written on one
+        # machine and read on another — that is the whole reason it is relative —
+        # and `str(PurePath)` gives `\` on Windows, which a POSIX reader takes as
+        # one filename rather than three components. The tree already uses
+        # `as_posix()` for exactly this in `install.py`.
+        return absolute.relative_to(base).as_posix()
+    except ValueError:
+        return str(absolute)
+
+
+def _recorded_artifact(recorded: str, root: str) -> Path | None:
+    """The recorded artifact on this machine, or `None` when it is not there."""
+    path = _resolve_under_root(recorded, root)
+    return path if path.is_file() else None
+
+
+def _resolve_under_root(recorded: str, root: str) -> Path:
+    """Where a recorded artifact path actually is on this machine.
+
+    The same rule the write path applies, and it has to be: `--root` defaults to
+    `.`, so a live run from the repository records a **relative**
+    `.keel/learning/…md`. Resolved against the process directory instead, a later
+    run launched from anywhere else — a CI runner, a worktree, a cron shell — would
+    find nothing and record `applied` with no artifact, which is the finding this
+    reuse exists to prevent.
+    """
+    # `workspace.is_root_anchored`, not this host's `is_absolute()`: the predicate
+    # that decides whether the sink is in-repo already asks it that way, and the
+    # writer asking differently is the two halves of one question disagreeing —
+    # `C:/knowledge/learnings` was joined under the root on macOS, producing a `C:`
+    # directory *inside* the working tree that the adapter is told not to commit.
+    path = Path(recorded).expanduser()
+    return path if workspace.is_root_anchored(str(path)) else Path(root) / path
 
 
 def _resolved_capture_status(value: str | None) -> str | None:

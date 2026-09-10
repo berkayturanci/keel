@@ -100,6 +100,12 @@ def build_ship_run_record(
     capture_status: str | None = None,
     capture_reason: str | None = None,
     capture_artifact: str | None = None,
+    #: The files the *capture* is about, when they are not the files this run's git
+    #: diff reported. On a post-merge s11 the local diff is empty and the sink reads
+    #: the PR's files from the host; the ledger has to hash the same list or the
+    #: dedupe compares two fingerprints of one lesson. ``None`` keeps
+    #: ``changed_files``, which is every other caller.
+    capture_changed_files: list[str] | tuple[str, ...] | None = None,
     capture_not_run: bool = False,
     issue_title: str | None = None,
     issue_labels: list[str] | tuple[str, ...] = (),
@@ -208,7 +214,12 @@ def build_ship_run_record(
             artifact=capture_artifact,
             title=issue_title,
             labels=issue_labels,
-            changed_files=changed_files,
+            # Not `changed_files`: `changes.files` above records what this run's git
+            # diff reported, which must stay None-preserving, while the capture
+            # fingerprint has to be the one the document on disk was written with.
+            changed_files=(
+                capture_changed_files if capture_changed_files is not None else changed_files
+            ),
             existing_records=existing_records or [],
             config=config,
             not_run=capture_not_run,
@@ -573,6 +584,36 @@ def record_head_sha(record: Mapping[str, Any]) -> str | None:
     return head.strip() if isinstance(head, str) and head.strip() else None
 
 
+def capture_marker_for_head(
+    records: list[dict[str, Any]],
+    *,
+    pr_number: int | None,
+    head_sha: str | None,
+) -> dict[str, Any] | None:
+    """The recorded capture marker for this ``(pull request, head)``, if any.
+
+    The same rule :func:`existing_capture_marker` enforces, asked **before** a
+    record exists. The clash is keyed on the pair and nothing else, so a caller
+    about to do durable work for this run can find out whether its append will
+    land — a learning file written ahead of an append that then no-ops is a
+    document on disk that no ledger record will ever point at.
+    """
+    if not isinstance(pr_number, int):
+        return None
+    head = head_sha.strip() if isinstance(head_sha, str) and head_sha.strip() else None
+    for existing in records:
+        if existing.get("record_type") != RECORD_TYPE_SHIP_RUN:
+            continue
+        other = existing.get("pull_request")
+        if (other.get("number") if isinstance(other, dict) else None) != pr_number:
+            continue
+        if record_head_sha(existing) != head:
+            continue
+        if _capture_marker(existing) is not None:
+            return existing
+    return None
+
+
 def existing_capture_marker(
     records: list[dict[str, Any]], record: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -609,18 +650,7 @@ def existing_capture_marker(
     pr = pull_request.get("number") if isinstance(pull_request, dict) else None
     if not isinstance(pr, int):
         return None
-    head = record_head_sha(record)
-    for existing in records:
-        if existing.get("record_type") != RECORD_TYPE_SHIP_RUN:
-            continue
-        other = existing.get("pull_request")
-        if (other.get("number") if isinstance(other, dict) else None) != pr:
-            continue
-        if record_head_sha(existing) != head:
-            continue
-        if _capture_marker(existing) is not None:
-            return existing
-    return None
+    return capture_marker_for_head(records, pr_number=pr, head_sha=record_head_sha(record))
 
 
 def append_record(path: str | Path, record: dict[str, Any]) -> None:
