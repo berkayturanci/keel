@@ -332,7 +332,11 @@ def learning_decision(
                 duplicate_of=duplicate_of,
                 policy=policy,
             )
-    if not policy.get("enabled"):
+    # **The same parent pair the writer consults.** Gating only the write left the
+    # record claiming `create-learning` with `durable_artifact: true` for a run that
+    # produced nothing — the write/record disagreement this feature already treats
+    # as load-bearing one level down, inverted. One predicate answers both.
+    if not policy.get("enabled") or not capture_hook_enabled(config):
         return _learning_result(
             "marker-only",
             reason="policy-unavailable",
@@ -367,6 +371,20 @@ def learning_decision(
         fingerprint=fingerprint,
         policy=policy,
     )
+
+
+def capture_hook_enabled(config: _HasPolicyPack | None) -> bool:
+    """Whether this project runs a post-merge **content hook** at all.
+
+    `policy_pack.capture.enabled` is the project saying it intends to; `mode:
+    marker-only` records the core marker *without* one, which is the schema's own
+    wording. The learning sink is that hook, and so is the decision that says a
+    durable artifact is wanted — both ask here, because a writer and a record that
+    answer this differently is the disagreement this feature keeps producing.
+    `_reconcile_marker_decision` reads the same pair for `skipped:no-policy`.
+    """
+    policy = _capture_policy(config)
+    return bool(policy.get("enabled")) and policy.get("mode", "extension") == "extension"
 
 
 def learning_fingerprint(
@@ -1180,15 +1198,7 @@ def learning_sink_writes(
     """
     if capture_status != "applied":
         return False
-    # **The parent switches, before the learning ones.** `policy_pack.capture` is
-    # what says whether this project runs a content hook at all: `enabled: false`
-    # is a project that does not, and `mode: marker-only` records the marker
-    # *without* one — the schema's own words. The sink **is** that hook, so a
-    # configured sink was again permission to write, one level up from the four
-    # `learning.*` refusals already here. `_reconcile_marker_decision` reads the
-    # same pair to answer `skipped:no-policy`.
-    capture_policy = _capture_policy(config)
-    if not capture_policy.get("enabled") or capture_policy.get("mode", "extension") != "extension":
+    if not capture_hook_enabled(config):
         return False
     sink = learning_sink_policy(config)
     if sink is None or learning_sink_errors(sink):
