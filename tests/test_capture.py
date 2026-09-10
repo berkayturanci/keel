@@ -771,5 +771,34 @@ class TestRetrieveRelevantLearnings(unittest.TestCase):
                 self.assertEqual(capture.retrieve_relevant_learnings("lesson content", td), [])
 
 
+class TestCaptureImportGraph(unittest.TestCase):
+    def test_capture_does_not_import_config(self):
+        """``config`` → ``capture`` is the only allowed edge; the reverse is a CodeQL cycle.
+
+        A ``TYPE_CHECKING`` import is still an edge: CodeQL's ``py/cyclic-import``
+        does not honour that guard, and ``ProjectConfig`` is defined after
+        ``config`` imports this module. Duck-typing ``policy_pack`` is what
+        actually closes it.
+        """
+        import ast
+        from pathlib import Path
+
+        source = Path(capture.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        hits: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                names = [alias.name for alias in node.names]
+                if node.module in {"config", "keel.config"} or (
+                    node.level >= 1 and node.module is None and "config" in names
+                ):
+                    hits.append(ast.unparse(node))
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "config" or alias.name.startswith("keel.config"):
+                        hits.append(alias.name)
+        self.assertEqual(hits, [])
+
+
 if __name__ == "__main__":
     unittest.main()

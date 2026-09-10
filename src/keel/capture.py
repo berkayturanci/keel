@@ -5,17 +5,22 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
-if TYPE_CHECKING:  # pragma: no cover
-    # **Type-checking only, to keep the import graph acyclic.** `config` reads this
-    # module to validate `policy_pack.capture.learning`, and this module named
-    # `config` for annotations alone — every use of `cfg` here is a
-    # `cfg.ProjectConfig` in a signature, which `from __future__ import
-    # annotations` already leaves as a string at runtime. The pair still imported
-    # each other at import time, which is what CodeQL reports and what forced
-    # `config` to do its own import inside a function.
-    from . import config as cfg
+
+class _HasPolicyPack(Protocol):
+    """Duck type for a loaded ``ProjectConfig``.
+
+    This module only reads ``policy_pack``. Naming ``config.ProjectConfig`` here
+    would import ``config``, and ``config`` already imports this module to
+    validate ``policy_pack.capture.learning``. CodeQL counts even a
+    ``TYPE_CHECKING`` import as that reverse edge — the cycle it reports as
+    ``py/cyclic-import``, because ``ProjectConfig`` is defined *after*
+    ``config``'s import of ``capture``.
+    """
+
+    policy_pack: Any
+
 
 CAPTURE_SCHEMA_VERSION = "keel.capture.v1"
 RECONCILE_SCHEMA_VERSION = "keel.capture-reconcile.v1"
@@ -68,7 +73,7 @@ class CaptureMarker:
         }
 
 
-def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
+def contract_as_dict(config: _HasPolicyPack | None = None) -> dict[str, Any]:
     """Return the stable capture contract consumed by adapters and verifiers."""
     capture_policy = _capture_policy(config)
     sink_policy = learning_sink_policy(config)
@@ -139,7 +144,7 @@ def contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
     }
 
 
-def learning_quality_contract_as_dict(config: cfg.ProjectConfig | None = None) -> dict[str, Any]:
+def learning_quality_contract_as_dict(config: _HasPolicyPack | None = None) -> dict[str, Any]:
     """Return the consumer-neutral durable-learning quality contract."""
     policy = _learning_policy(config)
     dedupe = policy.get("dedupe") if isinstance(policy.get("dedupe"), dict) else {}
@@ -221,7 +226,7 @@ def record_marker(
     labels: list[str] | tuple[str, ...] = (),
     changed_files: list[str] | tuple[str, ...] = (),
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
-    config: cfg.ProjectConfig | None = None,
+    config: _HasPolicyPack | None = None,
     not_run: bool = False,
 ) -> dict[str, Any]:
     """Build the capture block stored in a ship run ledger record.
@@ -303,7 +308,7 @@ def learning_decision(
     capture_status: str | None = None,
     capture_reason: str | None = None,
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
-    config: cfg.ProjectConfig | None = None,
+    config: _HasPolicyPack | None = None,
 ) -> dict[str, Any]:
     """Classify whether a merged PR deserves a durable learning artifact.
 
@@ -409,7 +414,7 @@ def reconcile_session(
     records: list[dict[str, Any]],
     merged_prs: list[int | dict[str, Any]] | tuple[int | dict[str, Any], ...],
     *,
-    config: cfg.ProjectConfig | None = None,
+    config: _HasPolicyPack | None = None,
     capture_capability_available: bool = False,
 ) -> dict[str, Any]:
     """Plan idempotent post-merge reconciliation actions for capture gaps.
@@ -498,7 +503,7 @@ def _reconcile_pr(
     records: list[dict[str, Any]],
     item: dict[str, Any],
     *,
-    config: cfg.ProjectConfig | None,
+    config: _HasPolicyPack | None,
     capture_capability_available: bool,
 ) -> dict[str, Any]:
     pr_number = item["number"]
@@ -696,7 +701,7 @@ def _reconcile_result(
 def _reconcile_marker_decision(
     item: dict[str, Any],
     *,
-    config: cfg.ProjectConfig | None,
+    config: _HasPolicyPack | None,
     capture_capability_available: bool,
 ) -> tuple[str, str | None, str]:
     if recursion_guard(
@@ -755,14 +760,14 @@ def _action(
     return action
 
 
-def _capture_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
+def _capture_policy(config: _HasPolicyPack | None) -> dict[str, Any]:
     if config is None or not isinstance(config.policy_pack, dict):
         return {}
     policy = config.policy_pack.get("capture")
     return policy if isinstance(policy, dict) else {}
 
 
-def _learning_policy(config: cfg.ProjectConfig | None) -> dict[str, Any]:
+def _learning_policy(config: _HasPolicyPack | None) -> dict[str, Any]:
     policy = _capture_policy(config)
     learning = policy.get("learning") if isinstance(policy, dict) else None
     return learning if isinstance(learning, dict) else {}
@@ -907,7 +912,7 @@ def _slugify(text: str | None, *, limit: int = 48) -> str:
     return slug[:limit].rstrip("-")
 
 
-def learning_sink_policy(config: cfg.ProjectConfig | None) -> dict[str, Any] | None:
+def learning_sink_policy(config: _HasPolicyPack | None) -> dict[str, Any] | None:
     """The `policy_pack.capture.learning.sink` block, or `None` when unset.
 
     `None` and `{}` are different answers and the difference is load-bearing: every
@@ -1151,7 +1156,7 @@ def render_learning_document(
 
 def learning_sink_writes(
     *,
-    config: cfg.ProjectConfig | None,
+    config: _HasPolicyPack | None,
     decision: dict[str, Any] | None,
     capture_status: str | None,
 ) -> bool:
@@ -1183,7 +1188,7 @@ def learning_sink_writes(
 
 def learning_sink_plan(
     *,
-    config: cfg.ProjectConfig | None,
+    config: _HasPolicyPack | None,
     decision: dict[str, Any] | None,
     capture_status: str | None,
     owner: str | None,
@@ -1253,7 +1258,7 @@ def learning_sink_plan(
 
 def duplicate_learning_artifact(
     *,
-    config: cfg.ProjectConfig | None,
+    config: _HasPolicyPack | None,
     decision: dict[str, Any] | None,
     capture_status: str | None,
     existing_records: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),

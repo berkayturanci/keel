@@ -22,6 +22,8 @@ from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+# capture does not import this module — even under TYPE_CHECKING — so this
+# edge is one-way. A reverse import is the py/cyclic-import CodeQL reports.
 from . import capture, jsonschema_min
 from . import tdd as tdd_mode
 from . import team as team_policy
