@@ -1245,9 +1245,12 @@ and `swarm` all execute inside a worktree while the primary checkout holds
 already used by worktree*. Landing it correctly is tracked in #1163; do not
 improvise a push here, and do not report the lesson as durable when it is not.
 
-**Point the sink outside the checkout to get durability today.** An absolute or `~`
-`path` — a shared knowledge folder — is written, recorded and read back with no git
-step at all, and `commit_required` is false for it.
+**A sink outside the checkout needs no git step** — an absolute or `~` `path` is
+written and read back directly, and `commit_required` is false for it. **A path outside the checkout is durable on the machine that wrote it, and only
+there.** The recorded `capture.artifact` is that machine's absolute path, and the run
+ledger *is* committed — so a teammate or a CI runner reading the same record finds no
+file, the dedupe cannot point at it, and the run records `applied` with no artifact.
+Portable artifact references are part of #1163 too.
 
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does

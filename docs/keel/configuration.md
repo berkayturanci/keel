@@ -1397,9 +1397,13 @@ true exactly when the path is inside the repository.
 it is not a one-liner on the topology keel uses — s2, `overnight` and `swarm` all
 run inside a worktree while the primary checkout holds `base_branch`, so
 `git switch <base>` there fails with *already used by worktree*. Until #1163 is
-solved, **point `path` at an absolute or `~` folder**: git never sees it, nothing
-needs committing, `commit_required` is false, and the read path finds it on every
-later run.
+solved, **point `path` at an absolute or `~` folder** for the closest thing to
+durability: git never sees it, nothing needs committing, and `commit_required` is
+false. **A path outside the checkout is durable on the machine that wrote it, and only
+there.** The recorded `capture.artifact` is that machine's absolute path, and the run
+ledger *is* committed — so a teammate or a CI runner reading the same record finds no
+file, the dedupe cannot point at it, and the run records `applied` with no artifact.
+Portable artifact references are part of #1163 too.
 
 The default `.keel/learning/` is **not** runtime-ignored. Everything else keel writes
 under `.keel/` is disposable per-run state; learnings are the exception, because a

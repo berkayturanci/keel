@@ -81,7 +81,12 @@ class CaptureMarker:
 def contract_as_dict(config: _HasPolicyPack | None = None) -> dict[str, Any]:
     """Return the stable capture contract consumed by adapters and verifiers."""
     capture_policy = _capture_policy(config)
-    sink_policy = learning_sink_policy(config)
+    # **The sink core will actually use**, not merely one written down. A dormant
+    # `sink:` block under `capture.enabled: false` or `mode: marker-only` published
+    # `project_destination: "sink"` — telling an adapter core would write — while
+    # `learning_sink_writes` refused, so neither wrote and the contract had promised
+    # one of them would. Third reader of the same question; they all ask it here.
+    sink_policy = learning_sink_policy(config) if capture_hook_enabled(config) else None
     return {
         "schema_version": CAPTURE_SCHEMA_VERSION,
         "marker": {
@@ -358,10 +363,18 @@ def learning_decision(
         )
     mode = policy.get("mode", "marker-only")
     if mode == "create-learning":
-        if capture_status and capture_status.startswith("skipped"):
+        # **Anything but `applied`**, not just `skipped:*`. `deferred` fell through
+        # and answered `create-learning` with `durable_artifact: true`, while
+        # `learning_sink_writes` refuses every status but `applied` — the same
+        # write/record disagreement, one status over.
+        if capture_status != "applied":
             return _learning_result(
                 "marker-only",
-                reason="capture-skipped",
+                reason=(
+                    "capture-skipped"
+                    if (capture_status or "").startswith("skipped")
+                    else "capture-not-applied"
+                ),
                 fingerprint=fingerprint,
                 policy=policy,
             )
@@ -972,7 +985,9 @@ def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
     writes it and does not, so one inside the working tree is lost to the next
     worktree and to every CI runner unless the run commits it.
     """
-    sink = learning_sink_policy(config)
+    # Gated on the hook too: a dormant `sink:` under a disabled capture writes
+    # nothing, so nothing needs committing. Fourth reader of the same question.
+    sink = learning_sink_policy(config) if capture_hook_enabled(config) else None
     if sink is None:
         return False
     path = str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH)

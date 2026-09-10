@@ -311,6 +311,42 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                 capture_section = s11[: s11.index("### s12")]
                 self.assertNotIn("```" + "bash", capture_section)
 
+    def test_a_dormant_sink_under_a_disabled_capture_promises_nothing(self):
+        """The contract must name the writer that will actually write.
+
+        A `sink:` block left in `project.yaml` under `capture.enabled: false` or
+        `mode: marker-only` published `project_destination: "sink"` — telling an
+        adapter core would handle it — while `learning_sink_writes` refused. So
+        neither wrote, and the contract had promised one of them would.
+        """
+        for label, capture_policy in (
+            ("disabled", {"enabled": False, "mode": "extension"}),
+            ("marker-only", {"enabled": True, "mode": "marker-only"}),
+        ):
+            with self.subTest(policy=label):
+                config = cfg.ProjectConfig(
+                    extends="keel",
+                    core_version="^0.1",
+                    knobs={},
+                    owner="berkayturanci",
+                    repo="keel",
+                    base_branch="main",
+                    policy_pack={
+                        "capture": {
+                            **capture_policy,
+                            "learning": {
+                                "enabled": True,
+                                "mode": "create-learning",
+                                "sink": {"kind": "markdown-dir"},
+                            },
+                        }
+                    },
+                )
+                block = capture.contract_as_dict(config)["durable_artifacts"]
+                self.assertEqual(block["project_destination"], "extension-owned")
+                self.assertIsNone(block["sink"])
+                self.assertFalse(block["commit_required"])
+
     def test_an_empty_sink_block_is_still_a_sink(self):
         block = self.destination({})
         self.assertEqual(block["project_destination"], "sink")
@@ -389,6 +425,40 @@ class TheDecisionDecidesWhetherAnythingIsWritten(unittest.TestCase):
                         capture_status="applied",
                     )
                 )
+
+    def test_a_status_that_is_not_applied_wants_no_durable_artifact(self):
+        """`deferred` is not `applied`, and only `skipped:*` was being caught.
+
+        It fell through and answered `create-learning` with `durable_artifact:
+        true` while `learning_sink_writes` refuses every status but `applied` —
+        the same write/record disagreement, one status over.
+        """
+        config = cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.1",
+            knobs={},
+            owner="berkayturanci",
+            repo="keel",
+            base_branch="main",
+            policy_pack={
+                "capture": {
+                    "enabled": True,
+                    "mode": "extension",
+                    "learning": {"enabled": True, "mode": "create-learning"},
+                }
+            },
+        )
+        for status in ("deferred", "skipped", "skipped:capability-unavailable", None):
+            with self.subTest(status=status):
+                decision = capture.learning_decision(
+                    title="a lesson", capture_status=status, config=config
+                )
+                self.assertEqual(decision["decision"], "marker-only")
+                self.assertFalse(decision["durable_artifact"])
+        applied = capture.learning_decision(
+            title="a lesson", capture_status="applied", config=config
+        )
+        self.assertEqual(applied["decision"], "create-learning")
 
     def test_only_create_learning_plans_a_write(self):
         self.assertIsNotNone(self.plan({"decision": "create-learning", "fingerprint": "a"}))

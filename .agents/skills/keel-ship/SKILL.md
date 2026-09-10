@@ -1248,9 +1248,12 @@ and `swarm` all execute inside a worktree while the primary checkout holds
 already used by worktree*. Landing it correctly is tracked in #1163; do not
 improvise a push here, and do not report the lesson as durable when it is not.
 
-**Point the sink outside the checkout to get durability today.** An absolute or `~`
-`path` — a shared knowledge folder — is written, recorded and read back with no git
-step at all, and `commit_required` is false for it.
+**A sink outside the checkout needs no git step** — an absolute or `~` `path` is
+written and read back directly, and `commit_required` is false for it. **A path outside the checkout is durable on the machine that wrote it, and only
+there.** The recorded `capture.artifact` is that machine's absolute path, and the run
+ledger *is* committed — so a teammate or a CI runner reading the same record finds no
+file, the dedupe cannot point at it, and the run records `applied` with no artifact.
+Portable artifact references are part of #1163 too.
 
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
@@ -1428,4 +1431,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=8422b3fefe58690b6a9838a71e4627861ba6272c8ed4cfe4eada0c858e581b84 generated_sha256=e1d98f38bb71c838900eac1711cfb02169a4e5c5fe4fddd36ecb15523bb792cd -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=75dff82294101410984e0af368ee4425310d319ba9a4171687fe9e8a6ff68ca8 generated_sha256=4e9cc5ba10fdaf9eced09295dd64713dfe8b6c4bee98319f847ba5a0d716a3d9 -->
