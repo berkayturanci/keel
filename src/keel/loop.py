@@ -105,6 +105,10 @@ _COMMENT_OPENER = "<!--"
 _COMMENT_DEFANGED = "< !--"
 _COMMENT_CLOSER = "-->"
 _COMMENT_CLOSER_DEFANGED = "-- >"
+#: Dropped from quoted output: NUL, and every separator ``str.splitlines`` honours beyond
+#: ``\n`` / ``\r`` — a consumer reading the brief line by line would otherwise see a line
+#: after them that no ``> `` prefix reached.
+_DROPPED = dict.fromkeys(map(ord, "\x00\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"))
 #: A title reaches the middle of a rendered line, so it is one line, capped, with no
 #: backtick — the same treatment ``keel fixloop brief`` gives a reviewer-supplied value.
 _MAX_TITLE_CHARS = 120
@@ -396,11 +400,11 @@ def decide(iteration: int, gates: Sequence[GateResult], policy: LoopPolicy) -> L
 
 def _neutralise(text: str) -> str:
     """Defang the HTML-comment delimiters — visibly, so a reader sees what was quoted —
-    and drop NUL, which no prompt file should carry."""
+    and drop NUL and the line separators the quote does not split on."""
     return (
         text.replace(_COMMENT_OPENER, _COMMENT_DEFANGED)
         .replace(_COMMENT_CLOSER, _COMMENT_CLOSER_DEFANGED)
-        .replace("\x00", "")
+        .translate(_DROPPED)
     )
 
 
@@ -634,14 +638,15 @@ def iteration_problem(
 
     The closure comment asserts them as evidence — ``loop (k/N iterations: …)`` — so a
     number recorded twice, or one past the budget the policy bounded, is refused before
-    the ledger says it happened.
+    the ledger says it happened. A policy that is off bounded nothing: its records are
+    kept as reported (:func:`iteration_block`), and only a duplicate is refused.
     """
     seen: set[int] = set()
     for number, _sha, _ok in iterations:
         if number in seen:
             return f"iteration {number} is recorded twice"
         seen.add(number)
-        if number > policy.max_iterations:
+        if policy.enabled and number > policy.max_iterations:
             return f"iteration {number} exceeds the budget of {policy.max_iterations}"
     return None
 

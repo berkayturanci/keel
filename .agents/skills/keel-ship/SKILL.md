@@ -674,7 +674,7 @@ red gate run is its proof). When `enabled` is true:
 
    ```bash
    keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
-     > "$SCRATCH/iter-$K.json"
+     > "$SCRATCH/iter-$K.json" || true
    keel loop brief --project .keel/project.yaml --root . --iteration "$K" \
      --brief "$BRIEF" --gates "$SCRATCH/iter-$K.json" --title "$ISSUE_TITLE" \
      --out "$SCRATCH/brief-$((K + 1)).md" --json
@@ -684,7 +684,9 @@ red gate run is its proof). When `enabled` is true:
    — proceed to s5), `continue` (dispatch iteration K+1 with the rendered brief), or
    `budget-exhausted` (non-zero exit — the issue is **blocked**; do not iterate again and do
    not ask the implementer whether it is finished). `run-gates`'s own exit code is not the
-   verdict. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
+   verdict: it exits 1 whenever any planned gate is red — a deferred `pre-merge` gate
+   included — which is why the fence tolerates it; an unreadable report fails at `keel loop
+   brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
    (`decision.deferred`): they are s6–s10's to run, never the implementer's to turn green
    here, and never counted as green. **The gate run decides, never the delegate's text:** a
    result that says it is done with red gates is iteration K failing.
@@ -1486,4 +1488,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=0b1c0223317767c0be3b645b80db9517ad2e6ffd6bb8e7c958cc8a9a4ee93ac1 generated_sha256=8a61ec10563b200d99dab2949cca96251fa5fbe736ce14341e87d91ce3da38da -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=acbf9a031dd230760e04d29aa87e9cd7741fb67df6f4a9cb9646602b51565160 generated_sha256=5e8b4f4814368fcb947f93740c181937dc048d7e48e5f2628e3646de9db2dfc4 -->

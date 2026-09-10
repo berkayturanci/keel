@@ -483,7 +483,8 @@ done, and if not, what does the next one read?*
 - the **record** — `run_context.implement_loop` on the ship ledger record: the policy and one
   entry per `--loop-iteration` (commit, `gates_ok`, implementer), `null` for a run that
   neither configured nor recorded a loop. Emit-only, like `implement_phases` — but checked:
-  a SHA is 7–40 hex characters, and a number recorded twice or past the budget is refused.
+  a SHA is 7–40 hex characters (recorded in lowercase), and a number recorded twice, or
+  past the budget while the loop is on, is refused.
 
 ## Fix-loop block
 

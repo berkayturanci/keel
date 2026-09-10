@@ -1141,7 +1141,7 @@ recorded needs the knob or the flag, not `--max-iterations`. `--tdd` says the ru
 
 ```bash
 keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
-  > "$SCRATCH/iter-1.json"
+  > "$SCRATCH/iter-1.json" || true   # exits 1 on any red gate, a deferred one included
 keel loop brief --project .keel/project.yaml --root . --iteration 1 \
   --brief "$SCRATCH/brief.md" --gates "$SCRATCH/iter-1.json" \
   --title "$ISSUE_TITLE" --out "$SCRATCH/brief-2.md" --json
@@ -1571,7 +1571,9 @@ used as-is.
 `--json` emits the machine report the [s4 loop](configuration.md#loop) reads — `keel.run-gates.v1`:
 the planned `gates` (id, kind, phase, severity) beside the `gate_outcomes` (each with `ok`,
 `on_fail`, `not_run`, findings), `jury_run`, and `blocked`; the exit code is unchanged, and
-the human listing is not printed. `--defer-jury` reports the `jury` built-in `not_run` instead
+the human listing is not printed — and it is the s8 verdict, a red `pre-merge` gate the loop
+defers included, so the loop recipe tolerates it and reads the report instead. `--defer-jury`
+reports the `jury` built-in `not_run` instead
 of convening a panel, exactly as the command runner reports an agentic gate: the loop's
 per-iteration gate run must not spend a cross-vendor panel on every iteration, and a seat
 nobody staffed is never recorded as a pass. With `--run-id`, the `--phase` stamp's verdict
@@ -2247,7 +2249,7 @@ whether the gates passed after it, and the implementer) — which the closure co
 as `Implement: loop (k/N iterations: <sha> red → <sha> green)`. A run that uses neither the
 knob nor the flag records `implement_loop: null` and its closure comment is unchanged. The
 records are checked before the ledger says they happened: a SHA is 7–40 hex characters, and
-a number recorded twice or past the budget is refused (exit 2).
+a number recorded twice, or past the budget while the loop is on, is refused (exit 2).
 
 ## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--json]`
 

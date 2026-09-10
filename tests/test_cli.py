@@ -872,6 +872,41 @@ class TestRunGates(unittest.TestCase):
         self.assertIn("FAIL", out)
         self.assertIn("BLOCKED", out)
 
+    def test_the_order_gate_reads_only_the_gates_s4_can_make_green(self):
+        """A red pre-merge gate must not turn tdd-order red (#1165, round-2 review).
+
+        Under the loop a deferred pre-merge gate would otherwise re-enter through the
+        order gate, which is judged, and the loop could never finish.
+        """
+        from keel import tdd as tdd_mod
+        from keel.gates import GateOutcome, GateSpec
+
+        specs = (
+            GateSpec("build", "builtin", "test", "block"),
+            GateSpec("release-check", "command", "pre-merge", "block"),
+            GateSpec(tdd_mod.GATE_ID, "builtin", "test", "block"),
+        )
+        seen = []
+
+        def fake_order(spec, config, root, *, gates_green):
+            seen.append(gates_green)
+            return GateOutcome(gate=spec.id, ok=True), None
+
+        def runner(spec):
+            return (spec.id != "release-check", [], False, False)
+
+        with patch("keel.cli._tdd_order_outcome", side_effect=fake_order):
+            outcomes, _ = cli._run_planned_gates(specs, runner, config=None, root=".")
+        self.assertEqual([o.gate for o in outcomes], ["build", "release-check", tdd_mod.GATE_ID])
+        self.assertEqual(seen, [True])
+
+        def red_build(spec):
+            return (spec.id != "build", [], False, False)
+
+        with patch("keel.cli._tdd_order_outcome", side_effect=fake_order):
+            cli._run_planned_gates(specs, red_build, config=None, root=".")
+        self.assertEqual(seen, [True, False])
+
     def test_json_reports_the_plan_beside_the_outcomes(self):
         rc, out, _ = run(["run-gates", _write_config("'true'"), "--root", ".", "--json"])
         self.assertEqual(rc, 0)
@@ -14414,6 +14449,23 @@ class TestLoopCommand(unittest.TestCase):
         rc, _, err = run(base + ["9=" + "c" * 40 + ":pass"])
         self.assertEqual(rc, 2)
         self.assertIn("iteration 9 exceeds the budget of 3", err)
+        # A SHA is recorded as git spells it, and a policy that is off bounds nothing.
+        root, config = self._config()
+        rc, out, _ = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--dry-run",
+                "--json",
+                "--loop-iteration",
+                "4=ABCDEF0:pass",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        block = json.loads(out)["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertEqual((block["enabled"], block["iterations"][0]["commit"]), (False, "abcdef0"))
 
     LEGOS = {
         "soft-scan.md": "---\nid: soft-scan\nslot: tester\nkind: command\non_fail: suggest\n"

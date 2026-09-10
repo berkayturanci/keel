@@ -1136,8 +1136,10 @@ The contract, which `/keel:ship` drives and `keel loop brief` decides:
 - **Composes with `tdd`.** Under `implement_mode: tdd` the loop wraps **phase B only**:
   phase A (the failing tests) is one commit and never iterates, because its red gate run is
   its proof. The `tdd-order` gate reads the *first* implementation commit, so a looped
-  test-first branch passes it unchanged. The published `wraps` says which phase the loop is
-  around (`implement` or `implementation`).
+  test-first branch passes it unchanged; its *other gates green* input is the judged gates
+  (guard and test), so a deferred `pre-merge` gate cannot turn it red on every iteration.
+  The published `wraps` says which phase the loop is around (`implement` or
+  `implementation`).
 - **Published and recorded.** `keel plan` / `keel ship --json` publish
   `contract.implement_mode.loop` — `{enabled, max_iterations, gate_output_max_bytes, source,
   wraps}` — beside the s4 profile. A `--live --append-ledger` run records

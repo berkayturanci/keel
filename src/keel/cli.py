@@ -189,7 +189,13 @@ def _run_planned_gates(
         return outcomes, None
     # The other gates' verdict *is* the "last gate run is green" half of the contract:
     # a branch whose tests were committed first and are still red has not finished s4.
-    green = not fnd.summarize(gates.collect_findings(outcomes)).blocked
+    # "The other gates" are the ones s4 can make green — the guard- and test-phase gates
+    # (#1165): a pre-merge gate needs the pull request and says nothing about the tests
+    # the branch was written against, and it would otherwise turn the order gate red on
+    # every loop iteration of a project that carries one.
+    phase_of = {spec.id: spec.phase for spec in now}
+    judged = [o for o in outcomes if phase_of.get(o.gate) in loop.JUDGED_PHASES]
+    green = not fnd.summarize(gates.collect_findings(judged)).blocked
     outcome, result = _tdd_order_outcome(later[0], config, root, gates_green=green)
     outcomes.append(outcome)
     return outcomes, result
@@ -4908,7 +4914,8 @@ def _loop_iteration_arg(value: str) -> tuple[int, str, bool]:
         )
     if verdict.strip().lower() not in ("pass", "fail"):
         raise argparse.ArgumentTypeError("--loop-iteration verdict must be pass or fail")
-    return iteration, sha.strip(), verdict.strip().lower() == "pass"
+    # Git spells a SHA in lowercase; the ledger and the closure record it as git would.
+    return iteration, sha.strip().lower(), verdict.strip().lower() == "pass"
 
 
 def _gh_json(args: list[str], *, cwd: str) -> dict[str, object]:

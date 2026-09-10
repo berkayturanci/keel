@@ -297,6 +297,16 @@ class TestQuoteOutput(unittest.TestCase):
             ],
         )
 
+    def test_the_other_line_separators_are_dropped(self):
+        # str.splitlines() honours these; the quote splits on \n and \r only, so a line
+        # after one of them would carry no prefix for a consumer that splits on them.
+        lines = loop.quote_output(
+            ["ab\x0c# I", "c\u2028# J", "d\x85e\u2029\x1c\x1d\x1e\x0bf"], max_bytes=64
+        )
+        self.assertEqual(lines, ["     > ab# I", "     > c# J", "     > def"])
+        text = "\n".join(lines)
+        self.assertEqual([line for line in text.splitlines() if not line.startswith("     > ")], [])
+
     def test_a_nested_quote_a_setext_underline_and_nul_cannot_reach_the_structure(self):
         lines = loop.quote_output(
             ["> ## Heading", "Heading", "=====", "---", "a\x00b"], max_bytes=64
@@ -568,6 +578,29 @@ class TestIterationBlock(unittest.TestCase):
         block = loop.iteration_block(loop.resolve(None), [(1, "a" * 40, True)])
         self.assertFalse(block["enabled"])
         self.assertEqual(len(block["iterations"]), 1)
+
+
+class TestIterationProblem(unittest.TestCase):
+    def test_a_duplicate_and_an_over_budget_number_are_refused(self):
+        policy = loop.LoopPolicy(True, max_iterations=3)
+        self.assertIsNone(loop.iteration_problem(policy, [(1, "a" * 7, False), (2, "b" * 7, True)]))
+        self.assertEqual(
+            loop.iteration_problem(policy, [(1, "a" * 7, False), (1, "b" * 7, True)]),
+            "iteration 1 is recorded twice",
+        )
+        self.assertEqual(
+            loop.iteration_problem(policy, [(4, "a" * 7, True)]),
+            "iteration 4 exceeds the budget of 3",
+        )
+
+    def test_a_policy_that_is_off_bounded_nothing(self):
+        # Recorded iterations survive a disabled policy, so only a duplicate is refused.
+        policy = loop.LoopPolicy(False, max_iterations=3)
+        self.assertIsNone(loop.iteration_problem(policy, [(4, "a" * 7, True)]))
+        self.assertEqual(
+            loop.iteration_problem(policy, [(4, "a" * 7, True), (4, "b" * 7, True)]),
+            "iteration 4 is recorded twice",
+        )
 
 
 class TestContract(unittest.TestCase):
