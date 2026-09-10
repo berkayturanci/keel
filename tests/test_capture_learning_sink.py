@@ -850,6 +850,37 @@ class EveryTypoShapeIsRefused(unittest.TestCase):
                 self.assertIn("path separator", errors[0])
         self.assertEqual(capture.learning_sink_errors({"path": "a/b/{repo}"}), [])
 
+    def test_a_filename_the_reader_would_skip_is_refused(self):
+        """The reader opens `.md`, `.json` and `.txt` and nothing else.
+
+        A filename ending `.markdown`, or in no suffix at all, was written into the
+        sink successfully and then skipped by the only thing that reads it, with
+        `capture.artifact` still naming it — so `applied` looked provable while the
+        lesson was invisible. Same class as the path separator, one field over.
+        """
+        for template in ("{fingerprint}", "{fingerprint}.markdown", "{fingerprint}.mdx"):
+            with self.subTest(template=template):
+                errors = capture.learning_sink_errors({"filename": template})
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("must end in one of", errors[0])
+        for suffix in capture.LEARNING_READ_SUFFIXES:
+            with self.subTest(suffix=suffix):
+                self.assertEqual(
+                    capture.learning_sink_errors({"filename": f"{{fingerprint}}{suffix}"}), []
+                )
+
+    def test_the_reader_opens_exactly_the_suffixes_the_writer_is_held_to(self):
+        """One tuple, so a suffix added to one side reaches the other."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for suffix in (*capture.LEARNING_READ_SUFFIXES, ".markdown", ""):
+                (root / f"lesson{suffix}").write_text("ledger ledger ledger\n", encoding="utf-8")
+            found = {
+                Path(hit["file"]).suffix
+                for hit in capture.retrieve_relevant_learnings("ledger", root, max_results=9)
+            }
+            self.assertEqual(found, set(capture.LEARNING_READ_SUFFIXES))
+
     def test_the_default_filename_carries_it(self):
         """The rule is only real if the value a project gets without asking obeys it."""
         self.assertIn("{fingerprint}", capture.DEFAULT_LEARNING_SINK_FILENAME)
@@ -1474,6 +1505,25 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             self.assertEqual(code, 0, err)
             body = sorted((Path(root) / "learnings").glob("*.md"))[0].read_text(encoding="utf-8")
             self.assertEqual(_front_matter_fields(body)["changed_files"], [])
+
+    def test_an_all_digit_fingerprint_reads_back_as_a_string(self):
+        """A sha256 that happens to be all digits is an `int` to a real parser.
+
+        This is the field that *identifies* the lesson, and it was the one
+        contracted scalar still written bare after the date was quoted.
+        """
+        document = capture.render_learning_document(
+            title="t",
+            description="",
+            pr_number=1,
+            issue_number=None,
+            repo="r",
+            date="2026-09-09",
+            labels=(),
+            changed_files=(),
+            fingerprint="0" * 64,
+        )
+        self.assertEqual(_front_matter_fields(document)["fingerprint"], "0" * 64)
 
     def test_the_date_reads_back_as_a_string(self):
         """`2026-09-09` bare is a YAML *timestamp*: a real parser returns a `date`

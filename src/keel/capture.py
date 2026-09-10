@@ -896,6 +896,13 @@ DEFAULT_LEARNING_SINK_PATH = ".keel/learning"
 #: cannot help; it suppresses *identical* fingerprints, and these differ.
 DEFAULT_LEARNING_SINK_FILENAME = "{date}-pr{pr}-{slug}-{fingerprint}.md"
 
+#: The suffixes the reader opens. Named because the *writer* is validated against
+#: them: a sink filename ending `.markdown`, or in nothing at all, was written
+#: successfully into the sink and then skipped by the only thing that reads it —
+#: the writer/reader disagreement this feature exists inside, arriving through a
+#: template the validator accepted.
+LEARNING_READ_SUFFIXES = (".md", ".json", ".txt")
+
 #: How much of the fingerprint a filename carries. A sha256 prefix this long
 #: distinguishes every learning a project will ever write without making the name
 #: unreadable.
@@ -997,6 +1004,12 @@ def learning_sink_errors(sink: Any) -> list[str]:
         # `retrieve_relevant_learnings` — the only reader — globs one level and
         # skips directories, so the lesson is written where nothing will ever read
         # it. Nesting belongs in `path`, which is the field that names a directory.
+        if field_name == "filename" and not raw.endswith(LEARNING_READ_SUFFIXES):
+            errors.append(
+                f"policy_pack.capture.learning.sink.filename must end in one of "
+                f"{', '.join(LEARNING_READ_SUFFIXES)}; the read path opens no other "
+                f"suffix, so anything else is written and never found"
+            )
         if field_name == "filename" and ("/" in raw or "\\" in raw):
             errors.append(
                 "policy_pack.capture.learning.sink.filename must not contain a path "
@@ -1143,7 +1156,10 @@ def render_learning_document(
         # returns the string, which is the one disagreement all this quoting exists
         # to prevent.
         f"date: {_yaml_scalar(date)}",
-        f"fingerprint: {fingerprint}",
+        # Quoted like every other scalar: a sha256 that happens to be all digits is
+        # an `int` to a real parser and a 64-character string to keel's reader, and
+        # this is the field that *identifies* the lesson.
+        f"fingerprint: {_yaml_scalar(fingerprint)}",
     ]
     front += _yaml_sequence("labels", labels)
     front += _yaml_sequence("changed_files", changed_files)
@@ -1408,7 +1424,7 @@ def retrieve_relevant_learnings(
 
     results: list[dict[str, Any]] = []
     for file_path in sorted(path.glob("*")):
-        if not file_path.is_file() or file_path.suffix not in {".md", ".json", ".txt"}:
+        if not file_path.is_file() or file_path.suffix not in LEARNING_READ_SUFFIXES:
             continue
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
