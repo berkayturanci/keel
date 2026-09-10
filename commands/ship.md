@@ -662,21 +662,28 @@ red gate run is its proof). When `enabled` is true:
 
 1. **Iteration 1 is the ordinary implement pass** above, with the same dispatch table, the
    same retry and fall-back policy, the same attribution.
-2. **After every iteration, run the command gates in the worktree and let core decide.**
-   Save the gate report and hand it, with the *base* brief, to `keel loop brief`:
+2. **After every iteration, run the gates the loop can make green in the worktree and let
+   core decide.** `keel run-gates --no-jury --json` runs the guard- and test-phase command
+   gates and reports the plan beside the outcomes; save the report and hand it, with the
+   *base* brief, to `keel loop brief`. Add `--loop` to that call when the run was started
+   with `--loop`, so it resolves the policy the contract published:
 
    ```bash
-   keel ship .keel/project.yaml --root "$WORKTREE" --json --dry-run > "$SCRATCH/iter-$K.json"
+   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --no-jury --json \
+     > "$SCRATCH/iter-$K.json"
    keel loop brief --project .keel/project.yaml --root . --iteration "$K" \
      --brief "$BRIEF" --gates "$SCRATCH/iter-$K.json" --title "$ISSUE_TITLE" \
      --out "$SCRATCH/brief-$((K + 1)).md" --json
    ```
 
-   `decision.status` is the whole verdict: `done` (every blocking gate green — proceed to
-   s5), `continue` (dispatch iteration K+1 with the rendered brief), or `budget-exhausted`
-   (non-zero exit — the issue is **blocked**; do not iterate again and do not ask the
-   implementer whether it is finished). **The gate run decides, never the delegate's text:**
-   a result that says it is done with red gates is iteration K failing.
+   `decision.status` is the whole verdict: `done` (every blocking gate the loop judges green
+   — proceed to s5), `continue` (dispatch iteration K+1 with the rendered brief), or
+   `budget-exhausted` (non-zero exit — the issue is **blocked**; do not iterate again and do
+   not ask the implementer whether it is finished). `run-gates`'s own exit code is not the
+   verdict. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
+   (`decision.deferred`): they are s6–s10's to run, never the implementer's to turn green
+   here, and never counted as green. **The gate run decides, never the delegate's text:** a
+   result that says it is done with red gates is iteration K failing.
 3. **Same seat, one commit per iteration.** Re-dispatch `assignment.implementer` — the loop
    never escalates; that is s9's ladder — with the rendered brief as `--prompt-file`. Each
    iteration ends with one commit (`loop(K/N): <title>`); never amend or squash an earlier
@@ -1475,4 +1482,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=4847b7e5fc9a808924eb7edcd9dcf898af93103d1a70cd2598df3e02548583ce generated_sha256=4847b7e5fc9a808924eb7edcd9dcf898af93103d1a70cd2598df3e02548583ce -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=2bc14ab94ac03eed05fc8feaac8263142099086ac502f2849f888b64283944b1 generated_sha256=2bc14ab94ac03eed05fc8feaac8263142099086ac502f2849f888b64283944b1 -->

@@ -117,19 +117,29 @@ def _gate_status(outcome) -> str:
 
 
 def _gate_runner(
-    root: str, diff_text: str, *, jury_mode: str = "gating", timeout: int = DEFAULT_GATE_TIMEOUT_S
+    root: str,
+    diff_text: str,
+    *,
+    jury_mode: str = "gating",
+    timeout: int = DEFAULT_GATE_TIMEOUT_S,
+    run_jury: bool = True,
 ):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
 
     ``timeout`` is the project's ``knobs.gate_timeout_s``; it covers any command spec
     that reached the runner without a resolved per-gate limit. The jury builtin reads
     its own budget off ``spec.timeout``, which ``plan_gates`` resolves from
-    ``knobs.jury_timeout_s``.
+    ``knobs.jury_timeout_s``. With ``run_jury`` false the jury is reported ``not_run``,
+    exactly as the command runner reports an agentic gate: the s4 loop's per-iteration
+    gate run (#1165) must not dispatch a cross-vendor panel on every iteration, and a
+    seat nobody staffed is never recorded as a pass.
     """
     commands = command_gate_runner(root, timeout=timeout)
 
     def run(spec: GateSpec):
         if spec.kind == "builtin" and spec.id == "jury":
+            if not run_jury:
+                return True, [], False, True
             jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
             return jury.run_gate(diff_text, cwd=root, mode=jury_mode, timeout=jury_limit)
         return commands(spec)
@@ -443,7 +453,13 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
     outcomes, _tdd_result = _run_planned_gates(
         specs,
-        _gate_runner(args.root, diff_text, jury_mode="gating", timeout=config.knobs.gate_timeout_s),
+        _gate_runner(
+            args.root,
+            diff_text,
+            jury_mode="gating",
+            timeout=config.knobs.gate_timeout_s,
+            run_jury=not args.no_jury,
+        ),
         config=config,
         root=args.root,
     )
@@ -461,6 +477,19 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         issue=getattr(args, "issue", None),
         pr=getattr(args, "pull_request", None),
     )  # the run reached the test gate (s8)
+    if args.json:
+        # The machine report the s4 loop reads (#1165): the plan beside the outcomes, so
+        # `keel loop brief` can tell a command gate from an agentic or pre-merge one.
+        report = {
+            "schema_version": "keel.run-gates.v1",
+            "phase": args.gate_phase,
+            "jury_run": not args.no_jury,
+            "gates": [contracts.gate_as_dict(spec) for spec in specs],
+            "gate_outcomes": [contracts.gate_outcome_as_dict(o) for o in outcomes],
+            "blocked": verdict.blocked,
+        }
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 1 if verdict.blocked else 0
     for o in outcomes:
         # A timeout still blocks; it is labelled apart so a slow host does not read
         # as a broken test (and a hanging command still reads as red).
@@ -1216,6 +1245,15 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     mode = tdd.resolve_mode(config.knobs.implement_mode, flag=args.tdd)
+    loop_policy = loop.resolve(
+        config.knobs.loop, flag=getattr(args, "loop", False), implement_mode=mode.name
+    )
+    loop_problem = loop.iteration_problem(loop_policy, getattr(args, "loop_iteration", None) or ())
+    if loop_problem:
+        # The closure comment asserts these as evidence; a contradictory record is refused
+        # before the ledger says it happened.
+        print(f"--loop-iteration: {loop_problem}", file=sys.stderr)
+        return 2
     try:
         plan = orch.build_plan(config, loaded, implement_mode=mode.name)
     except gates.GateError as exc:
@@ -1571,9 +1609,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         # The s4 iteration loop (#1165): the policy this run resolved and the iterations
         # the orchestrator reported, or `None` when it neither configured nor ran one.
         implement_loop=loop.iteration_block(
-            loop.resolve(
-                config.knobs.loop, flag=getattr(args, "loop", False), implement_mode=mode.name
-            ),
+            loop_policy,
             getattr(args, "loop_iteration", None) or (),
             implementer=args.implementer,
         ),
@@ -2491,13 +2527,18 @@ def _cmd_fixloop_brief(args: argparse.Namespace) -> int:
     return 1 if document["blocked"] else 0
 
 
-def _loop_policy(args: argparse.Namespace) -> tuple[loop.LoopPolicy | None, str | None]:
-    """``(policy, error)`` — the loop policy for this run, or why there is none.
+_LOOP_OFF = "off"
+
+
+def _loop_policy(args: argparse.Namespace) -> tuple[loop.LoopPolicy | None, str, str | None]:
+    """``(policy, status, reason)`` — the loop policy for this run, or why there is none.
 
     ``--max-iterations`` is an explicit budget and needs no config. Otherwise the project's
-    ``knobs.loop`` is the policy, and **an unreadable config is a refusal, not a default**,
-    for the reason ``keel fixloop brief`` refuses: a loop whose budget came from nowhere is
-    a loop nobody bounded.
+    ``knobs.loop`` and the ``--loop`` flag resolve the policy exactly as ``keel ship``
+    resolved it — the same :func:`keel.loop.resolve`, so the published ``source`` is the
+    truth — and **a policy that is off is a refusal, not a default**, as an unreadable
+    config is, for the reason ``keel fixloop brief`` refuses: a loop whose budget came
+    from nowhere is a loop nobody bounded.
     """
     if args.max_iterations is not None:
         return (
@@ -2508,16 +2549,19 @@ def _loop_policy(args: argparse.Namespace) -> tuple[loop.LoopPolicy | None, str 
                 "flag:--max-iterations",
                 loop.WRAPS_IMPLEMENTATION if args.tdd else loop.WRAPS_IMPLEMENT,
             ),
+            "ok",
             None,
         )
     try:
         config = cfg.load_config(_fixloop_config_path(args))
     except FileNotFoundError:
-        return None, "no such file"
+        return None, "no-config", "no such file"
     except cfg.ConfigError as exc:
-        return None, str(exc)
+        return None, "no-config", str(exc)
     mode = tdd.resolve_mode(config.knobs.implement_mode, flag=args.tdd)
-    policy = loop.resolve(config.knobs.loop, flag=True, implement_mode=mode.name)
+    policy = loop.resolve(config.knobs.loop, flag=args.loop, implement_mode=mode.name)
+    if not policy.enabled:
+        return None, _LOOP_OFF, "knobs.loop is absent or enabled: false, and --loop was not passed"
     if args.gate_output_max_bytes:
         policy = loop.LoopPolicy(
             policy.enabled,
@@ -2526,7 +2570,21 @@ def _loop_policy(args: argparse.Namespace) -> tuple[loop.LoopPolicy | None, str 
             policy.source,
             policy.wraps,
         )
-    return policy, None
+    return policy, "ok", None
+
+
+def _print_text(text: str) -> None:
+    """Write text the console codec may not be able to encode, without dying.
+
+    Gate output carries whatever a test runner printed — ``✓``, ``→`` — and a Windows
+    pipe defaults to a codec that cannot encode them; a brief that was already written to
+    ``--out`` must not turn into a traceback on the way to stdout.
+    """
+    try:
+        sys.stdout.write(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        sys.stdout.write(text.encode(encoding, "backslashreplace").decode(encoding))
 
 
 def _cmd_loop_brief(args: argparse.Namespace) -> int:
@@ -2543,33 +2601,41 @@ def _cmd_loop_brief(args: argparse.Namespace) -> int:
     except loop.LoopError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    policy, config_error = _loop_policy(args)
+    policy, status, reason = _loop_policy(args)
     if policy is None:
+        path = _fixloop_config_path(args)
+        next_action = (
+            f"the loop is off for {path} ({reason}); pass --loop to switch it on against "
+            "the project's numbers, or an explicit --max-iterations"
+            if status == _LOOP_OFF
+            else f"cannot read {path} ({reason}); knobs.loop is the budget, so this is a "
+            "refusal — name the project with --project/--root, or pass an explicit "
+            "--max-iterations"
+        )
         document = {
             "schema_version": loop.SCHEMA_VERSION,
-            "status": "no-config",
-            "path": _fixloop_config_path(args),
-            "reason": config_error,
-            "next_action": (
-                f"cannot read {_fixloop_config_path(args)} ({config_error}); knobs.loop is "
-                "the budget, so this is a refusal — name the project with --project/--root, "
-                "or pass an explicit --max-iterations"
-            ),
+            "status": status,
+            "path": path,
+            "reason": reason,
+            "next_action": next_action,
         }
         if args.json:
             print(json.dumps(document, indent=2, sort_keys=True))
         print(document["next_action"], file=sys.stderr)
         return 1
-    # `--iteration` is a positive int by construction, so the decision cannot refuse it,
-    # and a brief is rendered only on `continue` — nothing in here raises.
-    document = loop.brief_document(
-        base,
-        iteration=args.iteration,
-        gates=gate_results,
-        policy=policy,
-        title=args.title,
-        prompt_file=args.out or "-",
-    )
+    try:
+        document = loop.brief_document(
+            base,
+            iteration=args.iteration,
+            gates=gate_results,
+            policy=policy,
+            title=args.title,
+            prompt_file=args.out or "-",
+        )
+    except loop.LoopError as exc:
+        # An empty gate report, or a base brief that is already a rendered one.
+        print(str(exc), file=sys.stderr)
+        return 1
     if args.out and document["brief"] is not None:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -2577,7 +2643,7 @@ def _cmd_loop_brief(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(document, indent=2, sort_keys=True))
     elif document["brief"] is not None:
-        print(document["brief"], end="")
+        _print_text(document["brief"])
     else:
         print(document["next_action"])
     # Fail closed: a spent budget is the blocked-issue path, not an iteration to run.
@@ -4836,8 +4902,10 @@ def _loop_iteration_arg(value: str) -> tuple[int, str, bool]:
         raise argparse.ArgumentTypeError("--loop-iteration K must be an integer") from None
     if iteration < 1:
         raise argparse.ArgumentTypeError("--loop-iteration K is 1-based")
-    if not sha.strip():
-        raise argparse.ArgumentTypeError("--loop-iteration requires the iteration's commit SHA")
+    if not re.fullmatch(r"[0-9a-fA-F]{7,40}", sha.strip()):
+        raise argparse.ArgumentTypeError(
+            "--loop-iteration requires the iteration's commit SHA (7-40 hex characters)"
+        )
     if verdict.strip().lower() not in ("pass", "fail"):
         raise argparse.ArgumentTypeError("--loop-iteration verdict must be pass or fail")
     return iteration, sha.strip(), verdict.strip().lower() == "pass"
@@ -6666,6 +6734,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="add the tdd-order gate to this run, as implement_mode: tdd would",
     )
+    p_run.add_argument(
+        "--no-jury",
+        action="store_true",
+        help="report the jury built-in not_run instead of dispatching a panel — the s4 "
+        "loop's per-iteration gate run (#1165)",
+    )
+    p_run.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the machine report — the plan beside the outcomes — that keel loop "
+        "brief --gates reads; the exit code is unchanged",
+    )
     p_run.set_defaults(func=_cmd_run_gates)
 
     p_window = sub.add_parser("window", help="is the merge window open now?")
@@ -7198,16 +7278,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--out", default=None, help="write the next brief here (a delegate prompt file)"
     )
     p_lb.add_argument(
+        "--loop",
+        action="store_true",
+        help="the run was started with --loop: switch the loop on for a project whose "
+        "knobs.loop is absent or disabled, against its numbers",
+    )
+    p_lb.add_argument(
         "--max-iterations",
-        type=_positive_int,
+        type=_bounded_int(loop.MIN_ITERATIONS, loop.MAX_ITERATIONS_LIMIT),
         default=None,
-        help="explicit budget for this run; without it knobs.loop is the policy",
+        help="explicit budget for this run (1..10); without it knobs.loop is the policy",
     )
     p_lb.add_argument(
         "--gate-output-max-bytes",
-        type=_positive_int,
+        type=_bounded_int(loop.MIN_GATE_OUTPUT_BYTES),
         default=None,
-        help="cap on the quoted gate output; defaults to knobs.loop.gate_output_max_bytes",
+        help="cap on each gate's quoted output (at least 256); defaults to "
+        "knobs.loop.gate_output_max_bytes",
     )
     p_lb.add_argument("--tdd", action="store_true", help="the run is in implement_mode: tdd")
     p_lb.add_argument("--root", default=".", help="project root")
@@ -8963,6 +9050,19 @@ def _positive_int(value: str) -> int:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return parsed
+
+
+def _bounded_int(low: int, high: int | None = None):
+    """An argparse type holding a flag to the bounds the schema holds the knob to."""
+
+    def integer(value: str) -> int:
+        parsed = int(value)
+        if parsed < low or (high is not None and parsed > high):
+            bounds = f"{low}..{high}" if high is not None else f"at least {low}"
+            raise argparse.ArgumentTypeError(f"must be an integer in {bounds}")
+        return parsed
+
+    return integer
 
 
 def _nonnegative_int(value: str) -> int:

@@ -25,7 +25,8 @@ This module is the pure half:
 * :func:`parse_gates` — the gate outcomes of one iteration, as ``keel ship --json`` (or
   ``keel run-gates``'s consumer) reports them -> :class:`GateResult` records;
 * :func:`decide` — *continue*, *done* or *budget-exhausted*, from the iteration number,
-  the outcomes and the policy, and nothing else;
+  the outcomes and the policy, and nothing else — judging the gates ``keel ship`` runs on
+  the tree (:data:`JUDGED_PHASES`) and deferring the rest to the phases that run them;
 * :func:`render_brief` — iteration ``k+1``'s prompt: the base brief **verbatim**, plus one
   appended section carrying iteration ``k``'s gate output as quoted data;
 * :func:`iteration_block` — the ledger's ``run_context.implement_loop`` record.
@@ -80,13 +81,30 @@ STATUSES = (CONTINUE, DONE, BUDGET_EXHAUSTED)
 #: failed never held a merge either, so it does not keep the implementer iterating.
 _BLOCKING_ON_FAIL = "block"
 
+#: The backbone phases whose gates the loop judges: what ``keel ship`` runs on the tree
+#: before a pull request exists — the guard scans and the test-phase gates, built-in or
+#: ``command``. A ``pre-merge`` gate needs the PR and is s10's; an ``agentic`` gate needs a
+#: seat the command runner does not have and reports ``not_run``. Both are *deferred*:
+#: listed in the brief, never counted as green, never holding the loop open — the phase
+#: that runs them decides. Without this scope a project with a blocking agentic tester
+#: could never reach ``done``.
+JUDGED_PHASES = ("guard", "test")
+KIND_AGENTIC = "agentic"
+_DEFAULT_KIND = "command"
+_DEFAULT_PHASE = "test"
+
 #: Rendering. The trailer keys are the brief's own structure, so a line of gate output
 #: that reads as one is rendered as inline code rather than as a trailer.
 _TRAILER_KEYS = ("blocking:", "iteration:", "budget:")
 _QUOTE_INDENT = "     "
 _TRUNCATED = "… (truncated at {limit} bytes)"
 _COMMENT_OPENER = "<!--"
-_COMMENT_DEFANGED = "<!​--"
+_COMMENT_DEFANGED = "< !--"
+_COMMENT_CLOSER = "-->"
+_COMMENT_CLOSER_DEFANGED = "-- >"
+#: A title reaches the middle of a rendered line, so it is one line, capped, with no
+#: backtick — the same treatment ``keel fixloop brief`` gives a reviewer-supplied value.
+_MAX_TITLE_CHARS = 120
 
 
 class LoopError(ValueError):
@@ -172,23 +190,47 @@ class GateResult:
     on_fail: str = _BLOCKING_ON_FAIL
     #: The finding text the implementer is handed back, in report order.
     output: tuple[str, ...] = ()
+    #: ``command`` / ``builtin`` / ``agentic`` and the backbone phase, as ``contract.gates``
+    #: in the same ``keel ship --json`` document publishes them. A bare outcome list has
+    #: neither and reads as a command gate at the test phase — the loop's own gates.
+    kind: str = _DEFAULT_KIND
+    phase: str = _DEFAULT_PHASE
+
+    @property
+    def judged(self) -> bool:
+        """Is this outcome the loop's to judge?
+
+        A gate the runner executed at a :data:`JUDGED_PHASES` phase is. A gate it did not
+        run (``not_run`` — an agentic gate reached the command-only runner) is not, and
+        neither is a gate of another phase: a ``pre-merge`` check needs the pull request.
+        """
+        return not self.not_run and self.phase in JUDGED_PHASES
+
+    @property
+    def deferred(self) -> bool:
+        """Listed for the implementer, decided by the phase that runs it — never green here."""
+        return not self.judged
 
     @property
     def blocking(self) -> bool:
         """Does this outcome keep the loop open?
 
-        A failed **blocking** gate does; so does a blocking gate nobody ran — ``not_run``
-        is not a pass, exactly as :func:`keel.ledger.record_gates_passed` refuses to
-        certify one. A soft gate that failed does not: it never held a merge either.
+        A failed **blocking** gate the loop judges does. A soft gate that failed does not:
+        it never held a merge either. A deferred gate does not either — ``not_run`` is not
+        a pass, exactly as :func:`keel.ledger.record_gates_passed` refuses to certify one,
+        so it is never *counted* green; but a seat the loop cannot staff cannot be what
+        keeps the implementer iterating.
         """
-        if self.on_fail != _BLOCKING_ON_FAIL:
+        if self.on_fail != _BLOCKING_ON_FAIL or not self.judged:
             return False
-        return self.not_run or not self.ok
+        return not self.ok
 
     @property
     def word(self) -> str:
         if self.not_run:
-            return "not run"
+            return "not run here (the phase that runs it decides)"
+        if not self.judged:
+            return f"not judged here (a {self.phase} gate; its own phase decides)"
         return "passed" if self.ok else "failed"
 
 
@@ -207,16 +249,24 @@ def _finding_text(raw: Any) -> str | None:
 def parse_gates(raw: Any) -> tuple[GateResult, ...]:
     """The gate outcomes of one iteration, in report order.
 
-    Three shapes are read, so the file ``keel ship --json`` writes can be passed through
-    unchanged: a bare list of outcomes, a ``{"gate_outcomes": [...]}`` envelope, or the
-    whole ``{"result": {"gate_outcomes": [...]}}`` document. Each outcome carries the
-    fields :class:`keel.gates.GateOutcome` publishes — ``gate``, ``ok``, ``findings``,
-    ``error`` — plus the optional ``not_run`` and ``on_fail`` a fuller record adds.
+    Three shapes are read, so the file ``keel run-gates --json`` or ``keel ship --json``
+    writes can be passed through unchanged: a bare list of outcomes, a
+    ``{"gate_outcomes": [...]}`` envelope (``run-gates`` puts the plan beside it as
+    ``gates``), or the whole ``{"result": {"gate_outcomes": [...]}}`` ship document, whose
+    ``contract.gates`` is the plan. Each outcome carries the fields
+    :class:`keel.gates.GateOutcome` publishes — ``gate``, ``ok``, ``findings``, ``error``,
+    ``not_run``, ``on_fail`` — and the plan supplies each gate's ``kind`` and ``phase`` (an
+    outcome may also carry them itself), which is what scopes the loop to the gates it
+    can make green.
     """
     outcomes = raw
+    specs: dict[str, Mapping[str, Any]] = {}
     if isinstance(outcomes, Mapping) and "result" in outcomes:
+        specs = _planned_gates(outcomes.get("contract"))
         outcomes = outcomes.get("result")
     if isinstance(outcomes, Mapping):
+        # `keel run-gates --json` puts the plan beside the outcomes as `gates`.
+        specs = specs or _planned_gates(outcomes)
         outcomes = outcomes.get("gate_outcomes")
     if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)):
         raise LoopError(
@@ -242,17 +292,40 @@ def parse_gates(raw: Any) -> tuple[GateResult, ...]:
         error = entry.get("error")
         if isinstance(error, str) and error.strip():
             output.append(error)
-        on_fail = entry.get("on_fail")
+        spec = specs.get(gate_id.strip(), {})
         results.append(
             GateResult(
                 id=gate_id.strip(),
                 ok=bool(entry.get("ok")),
                 not_run=bool(entry.get("not_run")),
-                on_fail=on_fail if isinstance(on_fail, str) and on_fail else _BLOCKING_ON_FAIL,
+                on_fail=_text(entry, spec, "on_fail", _BLOCKING_ON_FAIL),
                 output=tuple(output),
+                kind=_text(entry, spec, "kind", _DEFAULT_KIND),
+                phase=_text(entry, spec, "phase", _DEFAULT_PHASE),
             )
         )
     return tuple(results)
+
+
+def _planned_gates(contract: Any) -> dict[str, Mapping[str, Any]]:
+    """``contract.gates`` by id — the plan the outcomes were run from, when it is there."""
+    planned = contract.get("gates") if isinstance(contract, Mapping) else None
+    if not isinstance(planned, Sequence) or isinstance(planned, (str, bytes)):
+        return {}
+    return {
+        spec["id"]: spec
+        for spec in planned
+        if isinstance(spec, Mapping) and isinstance(spec.get("id"), str)
+    }
+
+
+def _text(entry: Mapping[str, Any], spec: Mapping[str, Any], key: str, default: str) -> str:
+    """The outcome's own value for ``key``, else the planned gate's, else ``default``."""
+    for source in (entry, spec):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return default
 
 
 @dataclass(frozen=True)
@@ -263,6 +336,8 @@ class LoopDecision:
     iteration: int
     budget: int
     blocking: tuple[str, ...] = ()
+    #: Gates listed but not judged here — deferred to the phase that runs them.
+    deferred: tuple[str, ...] = ()
 
     @property
     def next_iteration(self) -> int | None:
@@ -278,6 +353,7 @@ class LoopDecision:
             "iteration": self.iteration,
             "budget": self.budget,
             "blocking": list(self.blocking),
+            "deferred": list(self.deferred),
             "next_iteration": self.next_iteration,
             "blocked": self.blocked,
         }
@@ -286,34 +362,55 @@ class LoopDecision:
 def decide(iteration: int, gates: Sequence[GateResult], policy: LoopPolicy) -> LoopDecision:
     """*continue*, *done* or *budget-exhausted* — a pure function of these three inputs.
 
-    ``done`` needs every blocking gate green and no blocking gate unrun. Anything else is
-    iteration ``k`` *failing*, whatever the implementer's text said about it: that is the
-    contract's whole point. A failure at the last iteration the budget allows is
-    ``budget-exhausted``, which blocks the issue rather than quietly ending as if it had
-    passed.
+    ``done`` needs every blocking gate the loop judges green. Anything else is iteration
+    ``k`` *failing*, whatever the implementer's text said about it: that is the contract's
+    whole point. A failure at the last iteration the budget allows is ``budget-exhausted``,
+    which blocks the issue rather than quietly ending as if it had passed. A deferred gate
+    (:attr:`GateResult.deferred`) is named in the decision and never counted green; it is
+    not a failure here because no iteration could turn it green.
     """
     if iteration < 1:
         raise LoopError("iteration is 1-based")
+    if not gates:
+        # The precedent is :func:`keel.ledger.record_gates_passed`: no gates recorded is
+        # not a pass. An empty report is a truncated or hand-fed one, never a green run.
+        raise LoopError("the gate report names no gate: a run that recorded no gates is not a pass")
     blocking = tuple(gate.id for gate in gates if gate.blocking)
+    deferred = tuple(gate.id for gate in gates if gate.deferred)
+    budget = policy.max_iterations
     if not blocking:
-        return LoopDecision(DONE, iteration, policy.max_iterations)
-    if iteration >= policy.max_iterations:
-        return LoopDecision(BUDGET_EXHAUSTED, iteration, policy.max_iterations, blocking)
-    return LoopDecision(CONTINUE, iteration, policy.max_iterations, blocking)
+        return LoopDecision(DONE, iteration, budget, deferred=deferred)
+    if iteration >= budget:
+        return LoopDecision(BUDGET_EXHAUSTED, iteration, budget, blocking, deferred)
+    return LoopDecision(CONTINUE, iteration, budget, blocking, deferred)
 
 
 def _neutralise(text: str) -> str:
-    """Defang the HTML-comment opener so quoted output cannot forge a second marker."""
-    return text.replace(_COMMENT_OPENER, _COMMENT_DEFANGED)
+    """Defang the HTML-comment delimiters — visibly, so a reader sees what was quoted —
+    and drop NUL, which no prompt file should carry."""
+    return (
+        text.replace(_COMMENT_OPENER, _COMMENT_DEFANGED)
+        .replace(_COMMENT_CLOSER, _COMMENT_CLOSER_DEFANGED)
+        .replace("\x00", "")
+    )
 
 
 def _quoted_line(line: str) -> str:
     stripped = line.strip()
-    if stripped.startswith("#"):
-        return line.rstrip().replace("#", "\\#", 1)
+    # A leading `#` or `>` would nest a heading or a second quote inside the quote, and a
+    # line of `=` or `-` alone would underline the line above it into a setext heading.
+    if stripped.startswith(("#", ">")) or (stripped and not stripped.strip("=-")):
+        return "\\" + line.rstrip().lstrip()
     if stripped.lower().startswith(_TRAILER_KEYS):
         return "`" + stripped.replace("`", "'") + "`"
     return line.rstrip()
+
+
+def _clip(line: str, room: int) -> str:
+    """The longest prefix of ``line`` that fits ``room`` bytes of UTF-8, whole characters."""
+    if room <= 0:
+        return ""
+    return line.encode("utf-8")[:room].decode("utf-8", "ignore")
 
 
 def quote_output(lines: Iterable[str], *, max_bytes: int) -> list[str]:
@@ -322,9 +419,12 @@ def quote_output(lines: Iterable[str], *, max_bytes: int) -> list[str]:
     The brief becomes the implementer's prompt file and the gate output is the one part
     of it keel did not write — a test suite prints whatever a test (or a fixture an
     implementer wrote in iteration ``k``) told it to. So every line is prefixed with
-    ``> ``, the comment opener is defanged, a leading ``#`` is escaped, a line reading as
-    one of the brief's trailer keys becomes inline code, and the whole field is capped at
-    ``max_bytes`` of UTF-8 with a visible marker: a prompt has a budget.
+    ``> ``, the comment delimiters are defanged, a leading ``#`` or ``>`` is escaped, a
+    line reading as one of the brief's trailer keys becomes inline code, and the gate's
+    text is capped at ``max_bytes`` of UTF-8 with a visible marker: a prompt has a budget.
+    The cap counts the gate's own bytes, one per newline; the quote prefix and the
+    escapes sit outside it. A line longer than what is left is clipped at a character
+    boundary rather than dropped, so a one-line report still shows its head.
     """
     rendered: list[str] = []
     used = 0
@@ -334,15 +434,28 @@ def quote_output(lines: Iterable[str], *, max_bytes: int) -> list[str]:
             size = len(line.encode("utf-8")) + 1
             if used + size > max_bytes:
                 truncated = True
-                break
+                line = _clip(line, max_bytes - used - 1)
+                if not line:
+                    break
             used += size
             content = _quoted_line(line)
             rendered.append(f"{_QUOTE_INDENT}> {content}" if content else f"{_QUOTE_INDENT}>")
+            if truncated:
+                break
         if truncated:
             break
     if truncated:
         rendered.append(f"{_QUOTE_INDENT}> {_TRUNCATED.format(limit=max_bytes)}")
     return rendered
+
+
+def _inline_title(title: str | None) -> str:
+    """The issue title as one code-span-safe line: first line, defanged, no backtick, capped."""
+    first = _neutralise(title or "").strip().splitlines()
+    text = first[0].strip().replace("`", "'") if first else ""
+    if len(text) > _MAX_TITLE_CHARS:
+        text = text[:_MAX_TITLE_CHARS].rstrip() + "…"
+    return text or "<issue title>"
 
 
 def render_brief(
@@ -358,11 +471,20 @@ def render_brief(
     Byte-stable for identical inputs. The base brief is not touched — the point of the
     loop is that the brief stays fixed and only the evidence changes — and the appended
     section is the only thing the implementer sees that it did not see in iteration 1.
+    A base that already carries :data:`BRIEF_MARKER` is a *rendered* brief handed back by
+    mistake, and is refused: the marker appears once, by construction, not by convention.
+    Each gate's output is capped separately at ``policy.gate_output_max_bytes``, so one
+    noisy gate cannot starve the others of their room.
     """
     if decision.status != CONTINUE:
         raise LoopError(f"no next iteration to brief: the loop is {decision.status}")
+    if BRIEF_MARKER in base_brief:
+        raise LoopError(
+            "the base brief already carries the loop marker: pass the base brief, not the "
+            "brief a previous iteration rendered"
+        )
     k, n = decision.iteration, policy.max_iterations
-    subject = f"loop({k + 1}/{n}): {title.strip() if title and title.strip() else '<issue title>'}"
+    subject = f"loop({k + 1}/{n}): {_inline_title(title)}"
     lines = [
         base_brief.rstrip("\n"),
         "",
@@ -379,8 +501,15 @@ def render_brief(
     for gate in gates:
         status = gate.word + (" (blocking)" if gate.blocking else "")
         lines.append(f"- **{gate.id}** — {status}")
-        if gate.output:
+        if gate.output and gate.judged:
             lines.extend(quote_output(gate.output, max_bytes=policy.gate_output_max_bytes))
+    if any(gate.deferred for gate in gates):
+        lines += [
+            "",
+            "A gate marked *not run here* or *not judged here* is not yours to turn green in",
+            "this loop: the review and test phases run it. It is listed so you know it exists;",
+            "it is never counted as passed.",
+        ]
     lines += [
         "",
         "### Rules for this iteration",
@@ -424,7 +553,16 @@ def brief_document(
         "policy": policy.as_dict(),
         "decision": decision.as_dict(),
         "gates": [
-            {"gate": gate.id, "ok": gate.ok, "not_run": gate.not_run, "blocking": gate.blocking}
+            {
+                "gate": gate.id,
+                "ok": gate.ok,
+                "not_run": gate.not_run,
+                "on_fail": gate.on_fail,
+                "kind": gate.kind,
+                "phase": gate.phase,
+                "judged": gate.judged,
+                "blocking": gate.blocking,
+            }
             for gate in gates
         ],
         "brief": brief,
@@ -480,12 +618,36 @@ def iteration_block(
     }
 
 
+def iteration_problem(
+    policy: LoopPolicy, iterations: Iterable[tuple[int, str, bool]]
+) -> str | None:
+    """Why these ``--loop-iteration`` records cannot be written, or ``None``.
+
+    The closure comment asserts them as evidence — ``loop (k/N iterations: …)`` — so a
+    number recorded twice, or one past the budget the policy bounded, is refused before
+    the ledger says it happened.
+    """
+    seen: set[int] = set()
+    for number, _sha, _ok in iterations:
+        if number in seen:
+            return f"iteration {number} is recorded twice"
+        seen.add(number)
+        if number > policy.max_iterations:
+            return f"iteration {number} exceeds the budget of {policy.max_iterations}"
+    return None
+
+
 def contract_as_dict() -> dict[str, Any]:
     """The consumer-neutral loop contract, for ``docs/keel/command-contracts.md`` readers."""
     return {
         "schema_version": SCHEMA_VERSION,
         "policy_source": "knobs.loop, or --loop for one run",
         "judge": "the gate run — never the implementer's text",
+        "judged_phases": list(JUDGED_PHASES),
+        "deferred": (
+            "an agentic gate the command runner did not execute, or a gate outside the "
+            "judged phases: listed, never counted green, never holding the loop open"
+        ),
         "statuses": list(STATUSES),
         "default_max_iterations": DEFAULT_MAX_ITERATIONS,
         "max_iterations_limit": MAX_ITERATIONS_LIMIT,

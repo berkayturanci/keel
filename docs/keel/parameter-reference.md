@@ -1101,7 +1101,7 @@ keel fixloop brief --findings findings.json --round 1 --unavailable codex --json
 
 ```text
 keel loop brief --iteration K --brief FILE --gates FILE [--out FILE] [--title TEXT]
-                [--max-iterations N] [--gate-output-max-bytes N] [--tdd]
+                [--loop] [--max-iterations N] [--gate-output-max-bytes N] [--tdd]
                 [--root DIR] [--project project.yaml] [--json]
 ```
 
@@ -1109,17 +1109,19 @@ keel loop brief --iteration K --brief FILE --gates FILE [--out FILE] [--title TE
 | --- | --- | --- | --- |
 | `--iteration K` | positive int | required | The iteration that just ran (1-based). |
 | `--brief FILE` | path | required | The base implement brief; rendered verbatim at the top of the next brief. |
-| `--gates FILE` | path | required | That iteration's gate outcomes: a `keel ship --json` document, a `{"gate_outcomes": [...]}` envelope, or a bare list. |
+| `--gates FILE` | path | required | That iteration's gate outcomes: a `keel run-gates --json` document (the plan beside the outcomes), a `keel ship --json` document, a `{"gate_outcomes": [...]}` envelope, or a bare list. |
 | `--out FILE` | path | none | Write the next brief here (the delegate prompt file); only on `continue`. |
-| `--title TEXT` | string | `<issue title>` | Issue title, for the iteration's commit subject `loop(K+1/N): <title>`. |
-| `--max-iterations N` | positive int | `knobs.loop` | Explicit budget for this run; without it the project's `knobs.loop` is the policy and an unreadable config is a refusal (`no-config`, exit 1). |
-| `--gate-output-max-bytes N` | positive int | `knobs.loop.gate_output_max_bytes` | Cap on the quoted gate output. |
+| `--title TEXT` | string | `<issue title>` | Issue title, for the iteration's commit subject `loop(K+1/N): <title>`; rendered as one backtick-free line. |
+| `--loop` | flag | off | The run was started with `--loop`: switch the loop on for a project whose `knobs.loop` is absent or disabled, against its numbers — resolved exactly as `keel ship` resolves it, so the published `source` is the truth. |
+| `--max-iterations N` | int 1..10 | `knobs.loop` | Explicit budget for this run; without it the project's `knobs.loop` (and `--loop`) is the policy — a loop that is off is a refusal (`off`, exit 1), as an unreadable config is (`no-config`, exit 1). |
+| `--gate-output-max-bytes N` | int ≥ 256 | `knobs.loop.gate_output_max_bytes` | Cap on each gate's quoted output. |
 | `--tdd` | flag | off | The run is in `implement_mode: tdd`, so the loop wraps phase B (`wraps: implementation`). |
 | `--root DIR` / `--project PATH` | path | `.` / `<root>/.keel/project.yaml` | Where `knobs.loop` is read from. |
 | `--json` | flag | off | Emit `{policy, decision, gates, brief, prompt_file, next_action}`. |
 
-Exit `0` on `done` or `continue`, `1` on `budget-exhausted`, `no-config`, or an unreadable
-input. See [`knobs.loop`](configuration.md#loop).
+Exit `0` on `done` or `continue`, `1` on `budget-exhausted`, `off`, `no-config`, an empty
+report, a base brief that already carries the loop marker, or an unreadable input. See
+[`knobs.loop`](configuration.md#loop).
 
 ## `keel checkpoint`
 
@@ -1531,7 +1533,7 @@ keel review-all-day .keel/project.yaml 1 --live --approve-scope github --operato
 Run the project's deterministic command gates (the runnable slice of s8).
 
 ```
-keel run-gates <project.yaml> [--root DIR] [--tdd]
+keel run-gates <project.yaml> [--root DIR] [--tdd] [--no-jury] [--json]
           [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]
 ```
 
@@ -1540,6 +1542,8 @@ keel run-gates <project.yaml> [--root DIR] [--tdd]
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Root for commands and extensions. |
 | `--tdd` | flag | off | Add the `tdd-order` gate to this run, as `knobs.implement_mode: tdd` would. |
+| `--no-jury` | flag | off | Report the `jury` built-in `not_run` instead of convening a panel — the s4 loop's per-iteration gate run. |
+| `--json` | flag | off | Emit the `keel.run-gates.v1` report — the planned `gates` beside the `gate_outcomes` (with `on_fail` and `not_run`), `jury_run`, `blocked` — that `keel loop brief --gates` reads; the exit code is unchanged. |
 
 ### Details
 

@@ -1102,13 +1102,17 @@ knobs:
 |---|---|---|---|
 | `enabled` | boolean | `true` when the block is present | `false` keeps the block's numbers and switches the loop off; `--loop` switches it back on for one run |
 | `max_iterations` | integer 1–10 | `3` | how many implement iterations s4 may run before a red gate run blocks the issue |
-| `gate_output_max_bytes` | integer ≥ 256 | `16384` | cap on the gate output quoted into the next iteration's brief, in bytes of UTF-8 |
+| `gate_output_max_bytes` | integer ≥ 256 | `16384` | cap on each gate's output quoted into the next iteration's brief, in bytes of UTF-8 of gate text (the quote prefix and the escapes sit outside the count) |
 
 The contract, which `/keel:ship` drives and `keel loop brief` decides:
 
 - **Iteration 1 is the ordinary implement pass.** After each iteration the orchestrator
-  runs the project's command gates (`build`, `lint`, and any `tester`/`test` Lego of kind
-  `command`) inside the worktree. Green ends the loop; red starts iteration k+1.
+  runs the gates the loop can make green inside the worktree — `keel run-gates --phase s4
+  --no-jury --json`: the guard- and test-phase gates of kind `command` or built-in (`build`,
+  `lint`, the presets, any `tester`/`test` Lego of kind `command`). An agentic Lego, the
+  jury and a `pre-merge` gate are **deferred**: listed in the brief, never counted as green,
+  never holding the loop open — the review, test and merge phases run them, and no
+  iteration convenes a panel. Green ends the loop; red starts iteration k+1.
 - **The completion criterion is the gate run, never the implementer's text.** A delegate
   that says it is done with red gates is iteration k *failing*, not the loop *ending*. A loop
   whose budget is spent with the gates still red is `budget-exhausted`: `keel loop brief`
@@ -1116,11 +1120,13 @@ The contract, which `/keel:ship` drives and `keel loop brief` decides:
   so a spent loop cannot be mistaken for an iteration to run.
 - **The brief is fixed; the evidence changes.** Iteration k+1 receives the same brief as
   iteration 1 plus one appended section, **Gate output from iteration k**, rendered by core
-  from the gate outcomes — gate id, passed / failed / not run, the finding text, truncated
-  at `gate_output_max_bytes` with a visible marker. Gate output is **quoted data**, never
-  instructions: every line is blockquoted, a leading `#` is escaped, the comment opener is
-  defanged and a line reading as one of the brief's trailer keys becomes inline code, so a
-  test's output cannot contribute a heading, a marker or a rule to the prompt.
+  from the gate outcomes — gate id, passed / failed / deferred, the finding text, each
+  gate's output truncated at `gate_output_max_bytes` with a visible marker (a line longer
+  than what is left is clipped, not dropped). Gate output is **quoted data**, never
+  instructions: every line is blockquoted, a leading `#` or `>` is escaped, the comment
+  delimiters are defanged and a line reading as one of the brief's trailer keys becomes
+  inline code, so a test's output cannot contribute a heading, a marker or a rule to the
+  prompt; the issue title is rendered as one backtick-free line for the same reason.
 - **Same seat, one commit per iteration.** The loop re-dispatches `assignment.implementer`
   and never escalates — escalation is s9's ladder. Each iteration ends with one commit,
   subject `loop(k/N): <issue title>`, so the ledger and the closure can point at what each

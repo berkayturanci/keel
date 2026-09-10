@@ -867,6 +867,25 @@ def gate_as_dict(spec: gates.GateSpec) -> dict[str, Any]:
     return asdict(spec)
 
 
+def gate_outcome_as_dict(outcome: gates.GateOutcome) -> dict[str, Any]:
+    """One gate outcome as ``keel ship --json`` and ``keel run-gates --json`` publish it.
+
+    The severity and whether the gate ran at all travel with it (#1165): ``keel loop
+    brief`` reads these documents, and without them a failing *soft* gate would hold the
+    loop open and an unrun blocking gate would read as a pass.
+    """
+    return {
+        "gate": outcome.gate,
+        "ok": outcome.ok,
+        "skipped": outcome.skipped,
+        "timed_out": outcome.timed_out,
+        "on_fail": outcome.on_fail,
+        "not_run": outcome.not_run,
+        "error": outcome.error,
+        "findings": [_finding_as_dict(finding) for finding in outcome.findings],
+    }
+
+
 def extension_hooks_as_dict(
     config: cfg.ProjectConfig, loaded: dict[str, list[Extension]]
 ) -> dict[str, list[dict[str, Any]]]:
@@ -986,22 +1005,7 @@ def ship_result_as_dict(
         "run_ledger": run_ledger,
         "closure_comment": closure_comment,
         "artifact_bodies": artifact_bodies,
-        "gate_outcomes": [
-            {
-                "gate": outcome.gate,
-                "ok": outcome.ok,
-                "skipped": outcome.skipped,
-                "timed_out": outcome.timed_out,
-                # The gate's severity and whether it ran at all (#1165): `keel loop brief`
-                # reads this document, and without them a failing *soft* gate would hold
-                # the loop open and an unrun blocking gate would read as a pass.
-                "on_fail": outcome.on_fail,
-                "not_run": outcome.not_run,
-                "error": outcome.error,
-                "findings": [_finding_as_dict(finding) for finding in outcome.findings],
-            }
-            for outcome in outcomes
-        ],
+        "gate_outcomes": [gate_outcome_as_dict(outcome) for outcome in outcomes],
         "verdict": {
             "blocked": verdict.blocked,
             "counts": dict(verdict.counts),

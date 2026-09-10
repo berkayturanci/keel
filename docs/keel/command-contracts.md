@@ -461,21 +461,29 @@ round has a different actor from the implementer, and the closure has to be able
 done, and if not, what does the next one read?*
 
 - the **decision** — `done`, `continue` or `budget-exhausted`, a pure function of the
-  iteration number, the gate outcomes and the policy. `done` needs every blocking gate green
-  and no blocking gate unrun; a soft gate that failed does not hold the loop open; a blocking
+  iteration number, the gate outcomes and the policy. The loop judges the gates it can make
+  green — the guard- and test-phase gates the command runner executed (`judged_phases`) — and
+  `done` needs every blocking one of them green; a soft gate that failed does not hold the
+  loop open; an agentic gate nobody ran, the jury under `--no-jury` and a `pre-merge` gate
+  are **deferred** (named in `decision.deferred`, never counted green, never holding the loop
+  open — the phase that runs them decides); an empty report is refused; a judged blocking
   gate still red at `max_iterations` is `budget-exhausted`, which exits non-zero and blocks
   the issue rather than ending the loop as a pass. The gate run is the judge, never the
   implementer's text.
 - the **brief** — the base brief verbatim plus one appended section carrying the gate output
-  as quoted data (blockquoted, `#` escaped, comment opener defanged, trailer keys
-  inline-coded, capped at `gate_output_max_bytes`), then the iteration's rules. Deterministic:
-  identical inputs render byte-identical text.
-- the **policy** — `knobs.loop` or an explicit `--max-iterations`; an unreadable config is a
-  refusal (`no-config`), because a loop whose budget came from nowhere is a loop nobody
-  bounded.
+  as quoted data (blockquoted, a leading `#` or `>` escaped, the comment delimiters
+  defanged, trailer keys inline-coded, each gate's output capped at `gate_output_max_bytes`),
+  then the iteration's rules; the title is rendered as one backtick-free line, and a base
+  that already carries the marker is refused. Deterministic: identical inputs render
+  byte-identical text.
+- the **policy** — `knobs.loop` and `--loop`, resolved as `keel ship` resolves them so the
+  published `source` is the truth, or an explicit `--max-iterations` (1..10); a loop that is
+  off is a refusal (`off`), as an unreadable config is (`no-config`), because a loop whose
+  budget came from nowhere is a loop nobody bounded.
 - the **record** — `run_context.implement_loop` on the ship ledger record: the policy and one
   entry per `--loop-iteration` (commit, `gates_ok`, implementer), `null` for a run that
-  neither configured nor recorded a loop. Emit-only, like `implement_phases`.
+  neither configured nor recorded a loop. Emit-only, like `implement_phases` — but checked:
+  a SHA is 7–40 hex characters, and a number recorded twice or past the budget is refused.
 
 ## Fix-loop block
 

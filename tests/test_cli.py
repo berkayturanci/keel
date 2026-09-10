@@ -872,6 +872,23 @@ class TestRunGates(unittest.TestCase):
         self.assertIn("FAIL", out)
         self.assertIn("BLOCKED", out)
 
+    def test_json_reports_the_plan_beside_the_outcomes(self):
+        rc, out, _ = run(["run-gates", _write_config("'true'"), "--root", ".", "--json"])
+        self.assertEqual(rc, 0)
+        report = json.loads(out)
+        self.assertEqual([g["id"] for g in report["gates"]], ["build"])
+        outcome = report["gate_outcomes"][0]
+        self.assertEqual(
+            (outcome["gate"], outcome["ok"], outcome["on_fail"]), ("build", True, "block")
+        )
+        self.assertFalse(outcome["not_run"])
+        self.assertFalse(report["blocked"])
+        self.assertTrue(report["jury_run"])
+        self.assertNotIn("  ok", out)
+        rc, out, _ = run(["run-gates", _write_config("'false'"), "--root", ".", "--json"])
+        self.assertEqual(rc, 1)
+        self.assertTrue(json.loads(out)["blocked"])
+
     def test_a_failing_gate_shows_the_whole_captured_tail(self):
         """`runner._tail` keeps 20 lines; the display used to print one (#973).
 
@@ -14089,7 +14106,11 @@ class TestLoopCommand(unittest.TestCase):
         self.assertIn("must be an integer", self._refuses("x=abc:pass"))
         self.assertIn("is 1-based", self._refuses("0=abc:pass"))
         self.assertIn("requires the iteration's commit SHA", self._refuses("1=:pass"))
-        self.assertIn("must be pass or fail", self._refuses("1=abc:maybe"))
+        # A SHA is hex, 7-40 characters: a shell-shaped string or one with a space is not
+        # recorded verbatim into the closure comment.
+        self.assertIn("7-40 hex characters", self._refuses("1=abc:pass"))
+        self.assertIn("7-40 hex characters", self._refuses("1=$(id) abc:pass"))
+        self.assertIn("must be pass or fail", self._refuses("1=abcdef1:maybe"))
 
     def test_brief_continue_renders_and_writes_the_next_brief(self):
         root, config = self._config("  loop:\n    max_iterations: 3\n")
@@ -14193,12 +14214,12 @@ class TestLoopCommand(unittest.TestCase):
 
     def test_brief_with_an_explicit_budget_needs_no_config(self):
         rc, out, _ = self.brief(
-            "--max-iterations", "5", "--gate-output-max-bytes", "64", "--tdd", "--json"
+            "--max-iterations", "5", "--gate-output-max-bytes", "300", "--tdd", "--json"
         )
         self.assertEqual(rc, 0)
         document = json.loads(out)
         self.assertEqual(document["policy"]["source"], "flag:--max-iterations")
-        self.assertEqual(document["policy"]["gate_output_max_bytes"], 64)
+        self.assertEqual(document["policy"]["gate_output_max_bytes"], 300)
         self.assertEqual(document["policy"]["wraps"], "implementation")
         self.assertEqual(document["decision"]["budget"], 5)
 
@@ -14279,6 +14300,204 @@ class TestLoopCommand(unittest.TestCase):
         )
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out)["decision"]["status"], "done")
+
+    def test_brief_resolves_the_policy_as_ship_did(self):
+        """`loop brief` publishes the source the contract published — no `flag:--loop`
+        for a knob-derived budget, and a project whose loop is off is a refusal."""
+        root, config = self._config()
+        rc, out, err = self.brief("--project", config, "--root", root, "--json")
+        self.assertEqual(rc, 1)
+        document = json.loads(out)
+        self.assertEqual(document["status"], "off")
+        self.assertIn("pass --loop", err)
+        rc, out, _ = self.brief("--project", config, "--root", root, "--loop", "--json")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["policy"]["source"], "flag:--loop")
+        root, config = self._config("  loop:\n    max_iterations: 4\n")
+        rc, out, _ = self.brief("--project", config, "--root", root, "--json")
+        self.assertEqual(rc, 0)
+        policy = json.loads(out)["policy"]
+        self.assertEqual((policy["source"], policy["max_iterations"]), ("knobs.loop", 4))
+        root, config = self._config("  loop:\n    enabled: false\n    max_iterations: 4\n")
+        rc, out, _ = self.brief("--project", config, "--root", root, "--json")
+        self.assertEqual((rc, json.loads(out)["status"]), (1, "off"))
+        rc, out, _ = self.brief("--project", config, "--root", root, "--loop", "--json")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["policy"]["max_iterations"], 4)
+
+    def test_brief_flags_hold_the_bounds_the_schema_holds_the_knob_to(self):
+        for flag, value, bounds in (
+            ("--max-iterations", "50", "1..10"),
+            ("--max-iterations", "0", "1..10"),
+            ("--gate-output-max-bytes", "1", "at least 256"),
+        ):
+            with self.subTest(flag=flag, value=value):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ctx:
+                    cli.main(
+                        [
+                            "loop",
+                            "brief",
+                            "--iteration",
+                            "1",
+                            "--brief",
+                            str(self.scratch / "brief.md"),
+                            "--gates",
+                            str(self.red),
+                            flag,
+                            value,
+                        ]
+                    )
+                self.assertEqual(ctx.exception.code, 2)
+                self.assertIn(f"must be an integer in {bounds}", err.getvalue())
+
+    def test_brief_refuses_an_empty_report_and_a_rendered_base(self):
+        empty = self.scratch / "empty.json"
+        empty.write_text("[]", encoding="utf-8")
+        rc, _, err = self.brief("--gates", str(empty), "--max-iterations", "3")
+        self.assertEqual(rc, 1)
+        self.assertIn("names no gate", err)
+        rc, out, _ = self.brief("--max-iterations", "3")
+        self.assertEqual(rc, 0)
+        rendered = self.scratch / "rendered.md"
+        rendered.write_text(out, encoding="utf-8")
+        rc, _, err = self.brief("--brief", str(rendered), "--max-iterations", "3")
+        self.assertEqual(rc, 1)
+        self.assertIn("already carries the loop marker", err)
+
+    def test_the_brief_survives_a_console_that_cannot_encode_it(self):
+        """Windows pipes default to a codec without ✓; --out is written, stdout degrades."""
+        ticks = self.scratch / "ticks.json"
+        ticks.write_text(
+            json.dumps([{"gate": "build", "ok": False, "findings": [{"message": "✓ 3 ✗ 1"}]}]),
+            encoding="utf-8",
+        )
+
+        class Narrow(io.StringIO):
+            encoding = "ascii"
+
+            def write(self, text):
+                text.encode("ascii")  # raises UnicodeEncodeError as a cp1252 pipe would
+                return super().write(text)
+
+        out, err = Narrow(), io.StringIO()
+        target = self.scratch / "next.md"
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(
+                [
+                    "loop",
+                    "brief",
+                    "--iteration",
+                    "1",
+                    "--brief",
+                    str(self.scratch / "brief.md"),
+                    "--gates",
+                    str(ticks),
+                    "--max-iterations",
+                    "3",
+                    "--out",
+                    str(target),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("\\u2713 3 \\u2717 1", out.getvalue())
+        self.assertIn("✓ 3 ✗ 1", target.read_text(encoding="utf-8"))
+
+    def test_ship_refuses_a_contradictory_iteration_record(self):
+        root, config = self._config("  loop:\n    max_iterations: 3\n")
+        base = ["ship", config, "--root", root, "--dry-run", "--json", "--loop-iteration"]
+        rc, _, err = run(
+            base + ["1=" + "a" * 40 + ":fail", "--loop-iteration", "1=" + "b" * 40 + ":pass"]
+        )
+        self.assertEqual(rc, 2)
+        self.assertIn("iteration 1 is recorded twice", err)
+        rc, _, err = run(base + ["9=" + "c" * 40 + ":pass"])
+        self.assertEqual(rc, 2)
+        self.assertIn("iteration 9 exceeds the budget of 3", err)
+
+    LEGOS = {
+        "soft-scan.md": "---\nid: soft-scan\nslot: tester\nkind: command\non_fail: suggest\n"
+        "run: 'false'\n---\n",
+        "design-parity.md": "---\nid: design-parity\nslot: tester\nkind: agentic\n"
+        "on_fail: block\nagent: inherit\n---\nCompare the screens.\n",
+        "release-check.md": "---\nid: release-check\nslot: pre-merge\nkind: command\n"
+        "on_fail: block\nrun: 'false'\n---\n",
+    }
+
+    def _scoped_project(self, build_cmd):
+        root = self.scratch / "scoped"
+        ext = root / ".keel" / "extensions"
+        ext.mkdir(parents=True, exist_ok=True)
+        for name, text in self.LEGOS.items():
+            (ext / name).write_text(text, encoding="utf-8")
+        config = root / ".keel" / "project.yaml"
+        config.write_text(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+            "gates: [build, jury]\nknobs:\n"
+            f"  build_gate_cmd: {build_cmd}\n  loop:\n    max_iterations: 2\n"
+            "extensions:\n  tester: [soft-scan.md, design-parity.md]\n"
+            "  pre-merge: [release-check.md]\n",
+            encoding="utf-8",
+        )
+        return str(root), str(config)
+
+    def test_run_gates_json_scopes_the_loop_to_the_gates_it_can_make_green(self):
+        """The packaged recipe: `keel run-gates --no-jury --json` -> `keel loop brief`.
+
+        A failing soft gate, an agentic blocking gate nobody ran, a pre-merge gate that
+        needs the PR and a jury the loop must not convene are all *listed* — and none of
+        them holds the loop open or counts as green. Only the build decides.
+        """
+        root, config = self._scoped_project("'true'")
+        with patch("keel.git.diff", return_value=""):
+            rc, out, _ = run(
+                ["run-gates", config, "--root", root, "--phase", "s4", "--no-jury", "--json"]
+            )
+        # release-check is red, so the s8-style exit is 1 — the loop reads the document,
+        # not the exit code.
+        self.assertEqual(rc, 1)
+        report = json.loads(out)
+        self.assertEqual(report["schema_version"], "keel.run-gates.v1")
+        self.assertFalse(report["jury_run"])
+        by_id = {o["gate"]: o for o in report["gate_outcomes"]}
+        self.assertEqual((by_id["jury"]["not_run"], by_id["jury"]["ok"]), (True, True))
+        self.assertTrue(by_id["design-parity"]["not_run"])
+        self.assertEqual(by_id["soft-scan"]["on_fail"], "suggest")
+        self.assertEqual(
+            {g["id"]: g["phase"] for g in report["gates"]}["release-check"], "pre-merge"
+        )
+        gates_file = self.scratch / "iter-1.json"
+        gates_file.write_text(out, encoding="utf-8")
+        rc, out, _ = self.brief(
+            "--gates", str(gates_file), "--project", config, "--root", root, "--json"
+        )
+        self.assertEqual(rc, 0)
+        document = json.loads(out)
+        self.assertEqual(document["decision"]["status"], "done")
+        self.assertEqual(document["decision"]["blocking"], [])
+        self.assertEqual(
+            document["decision"]["deferred"], ["jury", "design-parity", "release-check"]
+        )
+        # A red build beside them is still the loop's to fix, and only the build.
+        root, config = self._scoped_project("'false'")
+        with patch("keel.git.diff", return_value=""):
+            _, out, _ = run(["run-gates", config, "--root", root, "--no-jury", "--json"])
+        gates_file.write_text(out, encoding="utf-8")
+        rc, out, _ = self.brief(
+            "--gates",
+            str(gates_file),
+            "--project",
+            config,
+            "--root",
+            root,
+            "--iteration",
+            "2",
+            "--json",
+        )
+        self.assertEqual(rc, 1)
+        document = json.loads(out)
+        self.assertEqual(document["decision"]["status"], "budget-exhausted")
+        self.assertEqual(document["decision"]["blocking"], ["build"])
 
     def test_brief_refuses_unreadable_inputs(self):
         rc, _, err = run(
