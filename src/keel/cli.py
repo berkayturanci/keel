@@ -8869,7 +8869,10 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         "--branch", default=None, help="branch name to store in the run ledger record"
     )
     parser.add_argument(
-        "--head-sha", default=None, help="head commit SHA to store in the run ledger record"
+        "--head-sha",
+        default=None,
+        help="head commit SHA to store in the run ledger record; a learning sink outside "
+        "the checkout links each changed file on GitHub at it (#1166)",
     )
     parser.add_argument(
         "--declared-file",
@@ -9325,6 +9328,10 @@ def _write_learning_sink(
         what_changed=what_changed,
         what_we_learned=what_we_learned,
         do_differently=do_differently,
+        # The **Files** section links each path on GitHub at this head when the
+        # sink is outside the checkout (#1166); an in-repo sink links relatively
+        # and never reads it.
+        head_sha=args.head_sha,
     )
     # **Absolute, so the recorded path means one thing.** `--root` is whatever the
     # operator typed: `.`, an absolute path, or a relative `repo`. Recording the
