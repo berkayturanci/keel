@@ -751,6 +751,94 @@ class ShipRetrievesThroughTheCliPath(unittest.TestCase):
                 ["paths.md"],
             )
 
+    def test_the_plan_contract_carries_the_section_too(self):
+        """s4 composes the implement brief from `keel plan`, not from `keel ship`.
+
+        The adapter is told at s0 not to re-derive the plan, and s5 is where ship
+        runs — so wiring retrieval into ship alone meant the implement brief, the
+        thing this whole change exists for, never saw a lesson on the path the
+        adapter actually takes.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.learnings(root)
+            config = self.project(root, ["      source: 'learnings'"])
+            code, out, err = run(
+                [
+                    "plan",
+                    config,
+                    "--root",
+                    str(root),
+                    "--command",
+                    "ship",
+                    "--json",
+                    "--issue-title",
+                    "ledger: a duplicate marker blocks the merge",
+                    "--issue-label",
+                    "core",
+                ]
+            )
+            self.assertEqual(code, 0, err)
+            contract = json.loads(out)["contract"]
+            block = contract["learnings"]
+            self.assertEqual([hit["file"] for hit in block["hits"]], ["ledger.md"])
+            self.assertIn(capture.LEARNING_BRIEF_HEADING, block["section"])
+            self.assertEqual(
+                [
+                    hit["file"]
+                    for hit in contract["review_merge_contract"]["reviewers"]["past_learnings"]
+                ],
+                ["ledger.md"],
+            )
+
+    def test_a_plan_with_no_learnings_still_carries_an_empty_block(self):
+        """A key that is sometimes absent is a key every reader has to guard."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self.project(root, ["      source: 'nowhere'"])
+            code, out, err = run(
+                ["plan", config, "--root", str(root), "--command", "ship", "--json"]
+            )
+            self.assertEqual(code, 0, err)
+            block = json.loads(out)["contract"]["learnings"]
+            self.assertEqual(block["hits"], [])
+            self.assertEqual(block["section"], "")
+
+    def test_metadata_lines_are_not_prose_in_any_suffix(self):
+        """The reader opens `.json` and `.txt`, which carry no `---` delimiter.
+
+        `_front_matter` hands their whole contents back as body, so the contract's
+        own field names — `schema: keel.learning.v1`, `repo: keel` — were counted
+        as words again: the same false positive the Markdown fix closed, in the
+        suffixes the reader promises to open.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "keel.learning.v1",
+                        "repo": "keel",
+                        "title": "Unrelated website copy button",
+                    },
+                    indent=1,
+                ),
+                encoding="utf-8",
+            )
+            (root / "b.txt").write_text("schema: keel.learning.v1\nrepo: keel\n", encoding="utf-8")
+            self.assertEqual(
+                capture.retrieve_relevant_learnings(
+                    "keel learning retrieval schema", root, max_results=9
+                ),
+                [],
+            )
+            # …and a real lesson in those suffixes still ranks.
+            (root / "c.txt").write_text(
+                "The homebrew tap checksum is a second commit.\n", encoding="utf-8"
+            )
+            hits = capture.retrieve_relevant_learnings("homebrew tap checksum", root)
+            self.assertEqual([hit["file"] for hit in hits], ["c.txt"])
+
     def test_the_contract_declares_where_it_reads_from(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

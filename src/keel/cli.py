@@ -353,6 +353,10 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
         issue_title=args.issue_title,
         issue_body=args.issue_body,
+        # Retrieved here as well as in `_cmd_ship`: s4 composes the implement
+        # brief from what `keel plan` printed, long before s5 runs `keel ship`,
+        # so the brief this feature exists for saw nothing when only ship had it.
+        learnings=_retrieve_learnings(args, config, None),
         issue_labels=_issue_labels(args),
         role=args.role,
         delegate=args.delegate,
@@ -1234,6 +1238,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
         issue_title=args.issue_title,
         issue_body=args.issue_body,
+        # Retrieved here as well as in `_cmd_ship`: s4 composes the implement
+        # brief from what `keel plan` printed, long before s5 runs `keel ship`,
+        # so the brief this feature exists for saw nothing when only ship had it.
+        learnings=_retrieve_learnings(args, config, None),
         issue_labels=_issue_labels(args),
         role=args.role,
         delegate=args.delegate,
@@ -8833,7 +8841,10 @@ def _retrieve_learnings(args, config, changed_files) -> dict:
     # re-run on an implemented branch. Not deduped either: the query is tokenised
     # into a set and the path match is a set intersection, so a file named twice is
     # a file named once.
-    changed = [*(args.declared_file or ()), *(changed_files or ())]
+    # `getattr`, because `keel plan` carries no `--declared-file`: the plan contract
+    # is built before anything has declared a scope, and it retrieves on the title
+    # and labels alone. Reading the attribute directly raised there.
+    changed = [*(getattr(args, "declared_file", None) or ()), *(changed_files or ())]
     sources = capture.learning_source_dirs(
         config,
         values={

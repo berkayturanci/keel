@@ -1696,6 +1696,16 @@ def _learning_tokens(query_text: str) -> set[str]:
     }
 
 
+#: A metadata line in any of the suffixes the reader opens: one of the contract's own
+#: field names at the start of a line, with its value. Lowercased, because
+#: `_lesson_text` works on the lowered text.
+_LEARNING_METADATA_LINE = re.compile(
+    r'^\s*["\']?(?:schema|title|description|repo|pr|issue|date|fingerprint|labels'
+    r'|changed_files)["\']?\s*[:=].*$',
+    re.MULTILINE,
+)
+
+
 def _lesson_text(body: str) -> str:
     """The document's own words, lowercased, with keel's scaffolding removed.
 
@@ -1706,7 +1716,12 @@ def _lesson_text(body: str) -> str:
     text = body.lower()
     for scaffold in (*LEARNING_SECTION_HEADINGS, LEARNING_EMPTY_SECTION):
         text = text.replace(scaffold.lower(), " ")
-    return text
+    # **And the contract's own field names, wherever they appear.** Subtracting the
+    # `---` block covers Markdown; the reader also opens `.json` and `.txt`, which
+    # carry no delimiter, so `_front_matter` hands their whole contents back as body
+    # and `schema: keel.learning.v1` / `repo: keel` were counted as prose again — the
+    # same false positive, in the suffixes the reader promises to open.
+    return _LEARNING_METADATA_LINE.sub(" ", text)
 
 
 def _text_score(content_lower: str, filename_lower: str, tokens: set[str]) -> tuple[int, int]:
