@@ -477,6 +477,28 @@
           "enum": ["default", "tdd"],
           "description": "The s4 implement profile. 'default' (the default) is the single implement pass. 'tdd' splits s4 into two phases against the same provider - a test-only commit carrying the failing tests derived from the issue's acceptance criteria, then the implementation that turns them green - and adds the pure 'tdd-order' gate at s8, which verifies that commit order against policy_pack.test_groups paths. Backbone step ids are unchanged; this is an s4 profile like the compound workflow profile. --tdd selects it for a single run."
         },
+        "loop": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether the s4 iteration loop is on. Defaults to true when the loop block is present; false keeps the block's numbers and switches the loop off (--loop switches it back on for one run)."
+            },
+            "max_iterations": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "description": "How many implement iterations s4 may run before a red gate run blocks the issue. Default 3; 1 is the single pass keel has always run."
+            },
+            "gate_output_max_bytes": {
+              "type": "integer",
+              "minimum": 256,
+              "description": "Cap on each gate's output quoted into the next iteration's brief, in bytes of UTF-8 of gate text. Default 16384. A prompt has a budget."
+            }
+          },
+          "description": "The s4 iteration loop (#1165). After each implement iteration the orchestrator runs the gates the loop can make green (keel run-gates --defer-jury --json: the guard and test phases, command or built-in; agentic, jury and pre-merge gates are deferred to the phases that run them); green ends the loop, red starts the next iteration with the same brief plus the gate output, up to max_iterations. The gate run is the judge, never the implementer's text. Composes with implement_mode: tdd, where it wraps phase B only. --loop selects it for a single run."
+        },
         "build_gate_cmd": { "type": "string", "minLength": 1 },
         "lint_cmd": { "type": "string" },
         "tier3_globs": { "type": "array", "items": { "type": "string" } },

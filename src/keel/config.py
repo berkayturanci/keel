@@ -276,6 +276,11 @@ class Knobs:
     #: The s4 implement profile: ``default`` (one pass) or ``tdd`` (test-first, two
     #: phases, with the pure ``tdd-order`` gate at s8). See :mod:`keel.tdd`.
     implement_mode: str = tdd_mode.DEFAULT_MODE
+    #: The s4 iteration policy (#1165): ``None`` when the project never wrote a ``loop``
+    #: block. Kept as the mapping the project wrote — the schema owns its shape and
+    #: :func:`keel.loop.resolve` reads it — so an added optional knob cannot rotate
+    #: ``config_hash`` for a project that never set it.
+    loop: dict | None = None
     #: Wall-clock seconds a command gate may run before it is killed. Raise this on a
     #: slow host; a single slower gate can override it with ``timeout:`` frontmatter.
     gate_timeout_s: int = DEFAULT_GATE_TIMEOUT_S
@@ -508,6 +513,7 @@ def _build(data: dict) -> ProjectConfig:
             else bool(k["evidence_require_distinct_vendors"])
         ),
         implement_mode=k.get("implement_mode", tdd_mode.DEFAULT_MODE),
+        loop=dict(k["loop"]) if isinstance(k.get("loop"), dict) else None,
         swarm_review_evidence=bool(k.get("swarm_review_evidence", True)),
         gate_timeout_s=int(k.get("gate_timeout_s", DEFAULT_GATE_TIMEOUT_S)),
         jury_timeout_s=int(k.get("jury_timeout_s", DEFAULT_JURY_TIMEOUT_S)),
@@ -1082,6 +1088,8 @@ def _canonical(config: ProjectConfig) -> dict:
                 if config.knobs.implement_mode != tdd_mode.DEFAULT_MODE
                 else {}
             ),
+            # Same rule (#1165): present only when the project wrote it.
+            **({"loop": dict(config.knobs.loop)} if config.knobs.loop is not None else {}),
             "swarm_review_evidence": config.knobs.swarm_review_evidence,
             "gate_timeout_s": config.knobs.gate_timeout_s,
             "jury_timeout_s": config.knobs.jury_timeout_s,

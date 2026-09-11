@@ -43,6 +43,7 @@ Every contract includes:
 | `mode` / `dry_run` / `no_mutations` | Whether this record represents a non-mutating rehearsal. |
 | `project` | Resolved project config summary plus stable `config_hash`. |
 | `workflow_profile` | Command profile metadata. `ship` is `standard` by default; `keel ship --compound` (`--profile compound`) selects a first-class `compound` profile that inherits the shared ship primitives and declares step overrides. |
+| `implement_mode` | The resolved s4 profile (`mode`: `default` \| `tdd`, its `source`, `phases`, `gate`) and, beside it, the s4 iteration loop as `loop` — `{enabled, max_iterations, gate_output_max_bytes, source, wraps}`, resolved from `knobs.loop` and `--loop` (`wraps` is `implementation` under `tdd`, else `implement`). A project with neither knob publishes `mode: default` and `loop.enabled: false`. |
 | `graph` | Command step graph. `ship` (both profiles) uses the fixed backbone steps; other adapters expose their command-local steps; project commands expose a single `project_command` graph entry. |
 | `backbone_plan` | Fixed keel backbone with gates, add-only extension slots, and loaded hooks slotted onto steps. |
 | `gates` | Planned gate specs, including kind, phase, failure behavior, source, and capability declarations. |
@@ -453,6 +454,37 @@ label `keel delegate run` computed for it, the fix-ladder `stage`, and its `roun
 implementation actor, one record per fix round, and the deterministic `sentence` the s11
 closure comment embeds ("implemented by agy, fixed by opus in round 2"). An escalated fix
 round has a different actor from the implementer, and the closure has to be able to say so.
+
+## Loop block
+
+`keel loop brief` publishes `keel.loop.v1`: the pure-core answer to *is this s4 iteration
+done, and if not, what does the next one read?*
+
+- the **decision** — `done`, `continue` or `budget-exhausted`, a pure function of the
+  iteration number, the gate outcomes and the policy. The loop judges the gates it can make
+  green — the guard- and test-phase gates the command runner executed (`judged_phases`) — and
+  `done` needs every blocking one of them green; a soft gate that failed does not hold the
+  loop open; an agentic gate nobody ran, the jury under `--defer-jury` and a `pre-merge` gate
+  are **deferred** (named in `decision.deferred`, never counted green, never holding the loop
+  open — the phase that runs them decides); an empty report is refused; a judged blocking
+  gate still red at `max_iterations` is `budget-exhausted`, which exits non-zero and blocks
+  the issue rather than ending the loop as a pass. The gate run is the judge, never the
+  implementer's text.
+- the **brief** — the base brief verbatim plus one appended section carrying the gate output
+  as quoted data (blockquoted, a leading `#` or `>` escaped, the comment delimiters
+  defanged, trailer keys inline-coded, each gate's output capped at `gate_output_max_bytes`),
+  then the iteration's rules; the title is rendered as one backtick-free line, and a base
+  that already carries the marker is refused. Deterministic: identical inputs render
+  byte-identical text.
+- the **policy** — `knobs.loop` and `--loop`, resolved as `keel ship` resolves them so the
+  published `source` is the truth, or an explicit `--max-iterations` (1..10); a loop that is
+  off is a refusal (`off`), as an unreadable config is (`no-config`), because a loop whose
+  budget came from nowhere is a loop nobody bounded.
+- the **record** — `run_context.implement_loop` on the ship ledger record: the policy and one
+  entry per `--loop-iteration` (commit, `gates_ok`, implementer), `null` for a run that
+  neither configured nor recorded a loop. Emit-only, like `implement_phases` — but checked:
+  a SHA is 7–40 hex characters (recorded in lowercase), and a number recorded twice, or
+  past the budget while the loop is on, is refused.
 
 ## Fix-loop block
 

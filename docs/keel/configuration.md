@@ -173,6 +173,7 @@ contracts, but executable project behavior remains in extension files or project
 | `evidence_require_distinct_vendors` | boolean | `false` | requires each required review verdict to carry vendor provenance, and no two to share a vendor. **Opt-in: unset is `false` on every risk tier**; set it to `true` on a project whose reviewer bench really spans vendors |
 | `swarm_review_evidence` | boolean | | Swarm landings enforce the same per-PR review-evidence contract as ship s10 (default `true`); `false` is the explicit, logged opt-out |
 | `implement_mode` | `default` \| `tdd` | | the s4 implement profile: one pass (default), or test-first in two phases with the blocking `tdd-order` gate at s8 |
+| `loop` | object | | the s4 iteration loop: after each implement iteration the command gates run; green ends the loop, red starts the next with the same brief plus the gate output, up to `max_iterations` (1–10, default `3`). The gate run is the judge, never the implementer's text; composes with `implement_mode: tdd` (wraps phase B) |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
 | `jury_timeout_s` | integer ≥ 1 | | wall-clock seconds the `jury` built-in may run before it is killed (default `600`) |
 
@@ -1077,6 +1078,86 @@ A `default` run records neither key's value — `implement_mode` is `null` and
 
 Backbone step ids are unchanged: `tdd` is an s4 profile the way `compound` is a workflow
 profile. Setting it to `default` (or leaving it out) does not change `config_hash`.
+
+#### `loop`
+
+The **s4 iteration loop**. s4 has always been one implement pass: when the gates come back
+red after it, nothing in the backbone sends the work back to the seat that wrote it — the
+s9 fix loop reads *review findings*, and the s6 retry budget is for a branch that has
+already been pushed — so a red `make test` after a single pass fell to the host, or blocked
+an issue that was two iterations from green. `knobs.loop` keeps the implementer iterating,
+with **the gates as the judge**:
+
+```yaml
+knobs:
+  build_gate_cmd: "make test"
+  implement_mode: tdd          # optional; the loop composes with default and tdd alike
+  loop:
+    enabled: true              # defaults to true when the block is present
+    max_iterations: 3          # 1..10; 1 is the single pass keel has always run
+    gate_output_max_bytes: 16384
+```
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `enabled` | boolean | `true` when the block is present | `false` keeps the block's numbers and switches the loop off; `--loop` switches it back on for one run |
+| `max_iterations` | integer 1–10 | `3` | how many implement iterations s4 may run before a red gate run blocks the issue |
+| `gate_output_max_bytes` | integer ≥ 256 | `16384` | cap on each gate's output quoted into the next iteration's brief, in bytes of UTF-8 of gate text (the quote prefix and the escapes sit outside the count) |
+
+The contract, which `/keel:ship` drives and `keel loop brief` decides:
+
+- **Iteration 1 is the ordinary implement pass.** After each iteration the orchestrator
+  runs `keel run-gates --phase s4 --defer-jury --json` inside the worktree — it executes
+  every planned command gate and reports the plan beside the outcomes — and the loop judges
+  the guard- and test-phase gates of kind `command` or built-in (`build`, `lint`, the
+  presets, any `tester`/`test` Lego of kind `command`). An agentic Lego, the jury and a
+  `pre-merge` gate are **deferred**: listed in the brief, never counted as green, never
+  holding the loop open — the review, test and merge phases decide them, and no iteration
+  convenes a panel (a `pre-merge` *command* gate is still executed by that run, so a slow
+  one costs every iteration). Green ends the loop; red starts iteration k+1.
+- **The completion criterion is the gate run, never the implementer's text.** A delegate
+  that says it is done with red gates is iteration k *failing*, not the loop *ending*. A loop
+  whose budget is spent with the gates still red is `budget-exhausted`: `keel loop brief`
+  exits non-zero and the issue is blocked, the same exit shape `keel fixloop brief` uses,
+  so a spent loop cannot be mistaken for an iteration to run.
+- **The brief is fixed; the evidence changes.** Iteration k+1 receives the same brief as
+  iteration 1 plus one appended section, **Gate output from iteration k**, rendered by core
+  from the gate outcomes — gate id, passed / failed / deferred, the finding text, each
+  gate's output truncated at `gate_output_max_bytes` with a visible marker (a line longer
+  than what is left is clipped, not dropped). Gate output is **quoted data**, never
+  instructions: every line is blockquoted, a leading `#` or `>` is escaped, the comment
+  delimiters are defanged and a line reading as one of the brief's trailer keys becomes
+  inline code, so a test's output cannot contribute a heading, a marker or a rule to the
+  prompt; the issue title is rendered as one backtick-free line for the same reason.
+- **Same seat, one commit per iteration.** The loop re-dispatches `assignment.implementer`
+  and never escalates — escalation is s9's ladder. Each iteration ends with one commit,
+  subject `loop(k/N): <issue title>`, so the ledger and the closure can point at what each
+  iteration changed. s10 squash-merges as always, so the base branch history is unaffected.
+- **Composes with `tdd`.** Under `implement_mode: tdd` the loop wraps **phase B only**:
+  phase A (the failing tests) is one commit and never iterates, because its red gate run is
+  its proof. The `tdd-order` gate reads the *first* implementation commit, so a looped
+  test-first branch passes it unchanged; its *other gates green* input is the judged gates
+  (guard and test), so a deferred `pre-merge` gate cannot turn it red on every iteration.
+  The published `wraps` says which phase the loop is around (`implement` or
+  `implementation`).
+- **Published and recorded.** `keel plan` / `keel ship --json` publish
+  `contract.implement_mode.loop` — `{enabled, max_iterations, gate_output_max_bytes, source,
+  wraps}` — beside the s4 profile. A `--live --append-ledger` run records
+  `run_context.implement_loop` with the policy and one entry per iteration
+  (`--loop-iteration K=SHA:pass|fail`: its commit, whether the gates passed after it, and
+  the implementer), and the closure comment renders
+  `Implement: loop (k/N iterations: <sha> red → <sha> green)` — after the TDD phases on a
+  test-first run. A project with neither the knob nor the flag publishes `enabled: false`,
+  records `implement_loop: null`, and its `config_hash` does not rotate.
+- **There is no `--no-loop`**, for the reason there is no `--no-tdd`: a project that
+  configured the contract has said the contract is the policy.
+
+Why this shape and not another: a host stop hook (the Ralph loop) exists in one host and
+leaves no record, while keel runs inside Claude Code, Codex, Gemini CLI and Antigravity
+through one backbone; s9 is post-PR and post-review with a seat ladder, and folding a
+compile error into it would spend review budget on what `make test` already said; and a
+third `implement_mode` value would make `tdd` and the loop mutually exclusive, when the
+loop against tests the implementer has to satisfy is the combination worth having.
 
 #### `gate_timeout_s`
 

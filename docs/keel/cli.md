@@ -1091,6 +1091,66 @@ the `hops` walked to reach this round (`start`, `round-failed`, `provider-unavai
 `null` for a `kind: subagent` seat: a host subagent is run by the host agent and never
 reaches `keel delegate run`.
 
+## `keel loop brief --iteration K --brief FILE --gates FILE [--out FILE] [--title TEXT] [--loop] [--max-iterations N] [--gate-output-max-bytes N] [--tdd] [--root DIR] [--project project.yaml] [--json]`
+
+Decide one s4 loop iteration's outcome and render the next iteration's brief — the pure
+half of the [s4 iteration loop](configuration.md#loop). `--brief` is the base implement
+brief (a file), `--gates` is the gate report the iteration produced: a `keel run-gates
+--json` document (the plan beside the outcomes), a `keel ship --json` document, a
+`{"gate_outcomes": [...]}` envelope, or a bare list of outcomes. The decision is a pure
+function of the iteration number, the outcomes and the policy:
+
+| status | when | exit |
+| --- | --- | --- |
+| `done` | every blocking gate the loop judges passed — the loop is over, proceed to s5 | 0 |
+| `continue` | a judged blocking gate failed and the budget allows another iteration — the next brief is rendered | 0 |
+| `budget-exhausted` | a judged blocking gate is still red after `max_iterations` — the issue is blocked | 1 |
+
+The loop judges the gates `keel ship` runs on the tree before a pull request exists — the
+guard and test phases, of kind `command` or built-in — and that is what the packaged recipe
+runs: `keel run-gates --phase s4 --defer-jury --json`, whose report carries the plan beside
+the outcomes. A soft gate (`on_fail: suggest` / `warn`) that failed does not hold the loop
+open: it never held a merge either. An agentic gate the command runner did not execute
+(`not_run`), the jury under `--defer-jury`, and a `pre-merge` gate are **deferred**: listed in
+the brief and in `decision.deferred`, never counted as green, never holding the loop open —
+the review, test and merge phases run them. Without that scope a project with a blocking
+agentic tester could never reach `done`. An empty report is refused (exit 1): no gates
+recorded is not a pass.
+
+The rendered brief is the base brief **verbatim** plus one appended section, `## Gate output
+from iteration K`, carrying each gate's outcome and its output as quoted data (blockquoted,
+a leading `#` or `>` escaped, the comment delimiters defanged, trailer keys inline-coded,
+each gate's output capped at `gate_output_max_bytes` of gate text with a visible marker — a
+line longer than what is left is clipped, not dropped), then the rules for the iteration:
+the gate run decides, one commit with subject `loop(K+1/N): <title>` (`--title` is rendered
+as one backtick-free line), never weaken or delete a test, and the budget. Byte-stable for
+identical inputs. A base brief that already carries the loop marker is a rendered brief
+handed back by mistake, and is refused (exit 1).
+
+**The policy is required.** `--loop` and `knobs.loop` resolve it exactly as `keel ship`
+resolved it, so the published `source` is the truth: a project whose loop is off (no block,
+or `enabled: false`) with no `--loop` is a refusal (`status: off`, exit 1), as a config the
+command cannot read is (`status: no-config`, exit 1), rather than a loop nobody bounded;
+`--project` / `--root` name the project, and `--max-iterations N` (1..10) supplies an
+explicit budget for a run without a readable config. `--gate-output-max-bytes N` (at least
+256) overrides the cap; both flags hold the bounds the schema holds the knob to. The
+explicit budget is not recordable: `keel ship --loop-iteration` judges each number against
+the project's policy (`knobs.loop`, or `--loop`'s default), so a looped run that will be
+recorded needs the knob or the flag, not `--max-iterations`. `--tdd` says the run is in
+`implement_mode: tdd`, so the published `wraps` reads `implementation`.
+
+```bash
+keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
+  > "$SCRATCH/iter-1.json" || true   # exits 1 on any red gate, a deferred one included
+keel loop brief --project .keel/project.yaml --root . --iteration 1 \
+  --brief "$SCRATCH/brief.md" --gates "$SCRATCH/iter-1.json" \
+  --title "$ISSUE_TITLE" --out "$SCRATCH/brief-2.md" --json
+```
+
+`--json` prints the whole document: `policy`, `decision` (`status`, `iteration`, `budget`,
+`blocking`, `next_iteration`, `blocked`), the per-gate summary, the rendered `brief` (or
+`null`), `prompt_file`, and `next_action`.
+
 ## `keel checkpoint <project.yaml> [--root DIR] [--json]`
 
 Read the current resumable checkpoint. The default path is
@@ -1442,7 +1502,7 @@ keel plan — example-flutter
     ...
 ```
 
-## `keel run-gates <project.yaml> [--root DIR] [--tdd] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
+## `keel run-gates <project.yaml> [--root DIR] [--tdd] [--defer-jury] [--json] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
 
 Run the project's **command gates** (the `command`/`build`/`lint` Lego) under `--root DIR`
 (default `.`) and report each as a structured finding. Agentic gates (review, design
@@ -1507,6 +1567,17 @@ always runs the jury in gating mode, so all three block here; `keel ship` uses t
 its review contract resolved. A nonzero exit that *does* carry a parseable report is a
 completed review — that is how ai-jury signals "request changes" — so its findings are
 used as-is.
+
+`--json` emits the machine report the [s4 loop](configuration.md#loop) reads — `keel.run-gates.v1`:
+the planned `gates` (id, kind, phase, severity) beside the `gate_outcomes` (each with `ok`,
+`on_fail`, `not_run`, findings), `jury_run`, and `blocked`; the exit code is unchanged, and
+the human listing is not printed — and it is the s8 verdict, a red `pre-merge` gate the loop
+defers included, so the loop recipe tolerates it and reads the report instead. `--defer-jury`
+reports the `jury` built-in `not_run` instead
+of convening a panel, exactly as the command runner reports an agentic gate: the loop's
+per-iteration gate run must not spend a cross-vendor panel on every iteration, and a seat
+nobody staffed is never recorded as a pass. With `--run-id`, the `--phase` stamp's verdict
+is the whole plan's — a failing `pre-merge` command gate included — not the loop's.
 
 ```bash
 keel run-gates .keel/project.yaml --root .
@@ -1885,7 +1956,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--loop] [--loop-iteration K=SHA:pass|fail]... [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -2155,6 +2226,32 @@ provider), which the closure comment renders as
 `Implement: TDD (tests <sha> by <implementer> → implementation <sha> by <implementer>)`.
 A run that does not use the profile records `implement_mode: null` and
 `implement_phases: []`, and its closure comment is unchanged.
+
+### `--loop` (bounded s4 iteration loop)
+
+`--loop` selects the **s4 iteration loop** for a single run; `knobs.loop` is the per-project
+spelling (see [configuration](configuration.md#loop)). It is a policy *around* the s4
+profile, not a third profile: after each implement iteration the orchestrator runs the
+command gates, green ends the loop, red starts the next iteration with the same brief plus
+the gate output, up to `max_iterations`. The gate run is the judge, never the implementer's
+text. Under `implement_mode: tdd` it wraps phase B only.
+
+```bash
+keel ship .keel/project.yaml --root . --loop --dry-run --json
+# contract.implement_mode.loop == {"enabled": true, "max_iterations": 3,
+#   "gate_output_max_bytes": 16384, "source": "flag:--loop", "wraps": "implement"}
+```
+
+The same block is rendered by `keel plan --loop`. There is no `--no-loop`, for the reason
+there is no `--no-tdd`. A `--live --append-ledger` run records `run_context.implement_loop`
+— the policy plus one entry per `--loop-iteration K=SHA:pass|fail` (the iteration's commit,
+whether the gates passed after it, and the implementer) — which the closure comment renders
+as `Implement: loop (k/N iterations: <sha> red → <sha> green)` — or, for records made while
+the policy was off, `loop (k iterations recorded, policy off: …)`, since a budget the run
+never had is not a denominator. A run that uses neither the knob nor the flag records
+`implement_loop: null` and its closure comment is unchanged. The
+records are checked before the ledger says they happened: a SHA is 7–40 hex characters, and
+a number recorded twice, or past the budget while the loop is on, is refused (exit 2).
 
 ## `keel implement <project.yaml> <issue> [--root DIR] [--delegate AGENT] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--json]`
 
