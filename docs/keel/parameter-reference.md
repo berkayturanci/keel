@@ -1669,7 +1669,7 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--issue N` | positive int | `None` | Issue number for the ledger record. |
 | `--pull-request N` | positive int | `None` | PR number for the ledger record **without** a CI lookup (distinct from `--pr`). Ledger precedence: `--pull-request` wins over `--pr`. |
 | `--branch NAME` | string | `None` | Branch stored in the ledger record. |
-| `--head-sha SHA` | string | `None` | Head SHA stored in the ledger record. |
+| `--head-sha SHA` | string | `None` | Head SHA stored in the ledger record; a learning sink outside the checkout links each changed file on GitHub at it (#1166). |
 | `--capture-status` | `applied` \| `deferred` \| `skipped:<reason>` \| `not-run` | `None` | Capture outcome for the ledger record. **Required** when `--live --append-ledger` (exit 1 otherwise). Allowed skip reasons: `dry-run`, `deferred`, `merge-failed`, `recursion-guard`, `capability-unavailable`, `no-policy`. `not-run` is not an outcome — it records that this run never reached capture, so the record carries no marker; use it to re-record gates for a rebased head. |
 | `--capture-reason TEXT` | string | `None` | Capture outcome reason. |
 | `--capture-artifact REF` | string (path or hash) | `None` | Durable capture artifact reference proving an `applied` capture; `keel capture-verify` reconcile flags `applied` records with no artifact. |

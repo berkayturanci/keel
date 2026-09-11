@@ -1367,10 +1367,50 @@ suppresses *identical* fingerprints, and these differ.
 
 Each file opens with front matter the read path relies on — `schema`, `title`,
 `description`, `repo`, `pr`, `issue`, `date`, `fingerprint`, `labels`, `changed_files` —
-then three fixed sections: **What changed**, **What we learned**, **What to do
-differently next time**. Content passes through
+then four fixed sections: **What changed**, **What we learned**, **What to do
+differently next time**, and **Files**. Content passes through
 [`policy_pack.capture_redaction`](#policy_packcapture_redaction) before it is written,
 which is the existing durable-artifact rule rather than a new one.
+
+**Files** is one Markdown link per `changed_files` entry, so a *link-following* reader — a
+knowledge-graph builder such as graphify, a wiki, an agent that reads an index and follows
+its links — gets the file ↔ lesson edge that a path inside a YAML list cannot give it. The
+link text is the repo-relative path; the destination depends on where the sink is:
+
+| sink | destination | example |
+|---|---|---|
+| inside the checkout (a relative `path` that stays under the root — the default) | relative to the document's own directory, POSIX separators, percent-encoded; the prefix is derived lexically from the normalised directory | `[src/keel/capture.py](../../src/keel/capture.py)` |
+| outside it (an absolute or `~` `path`, or a relative one that climbs out such as `../learnings`), owner + repo + head known | the file on GitHub at the merged head (`keel ship --head-sha`) | `[src/keel/capture.py](https://github.com/<owner>/<repo>/blob/<head-sha>/src/keel/capture.py)` |
+| outside it, any of those unknown | the bare path in a code span (fenced with a longer backtick run when the path carries one) — never a relative link that resolves to nothing | `` `src/keel/capture.py` `` |
+
+An empty `changed_files` renders the heading and `_No files recorded._`, so the document
+always has the same four sections. The front matter is not changed by the section: the
+`changed_files` list above the `---` is what keel's own reader matches on. A side effect
+worth knowing: `retrieve_relevant_learnings` scores a document by its text; the front-matter
+list already matched a query naming a file once, and the link matches it again (in its text,
+or in its destination when the text carries an escape), so such a lesson scores higher than
+the front matter alone gave it. Link text escapes the
+bracket pair, the backslash, the angle brackets, the emphasis and strikethrough delimiters,
+the ampersand and the backtick, so `__init__.py` reads as written rather than as a bold
+`init`.
+
+**One directory, two readers.** The sink is a plain Markdown folder, so the same files serve
+a knowledge-graph builder and a note vault. graphify ingests the directory as documents: it
+draws reference edges between the Markdown documents it can link, and a link whose target
+is a code file counts as text — its semantic pass reads the whole file, front matter
+included, so the path reaches it either way and the link is for the readers that follow
+links. Obsidian opens a folder as a vault, shows the front matter as properties and
+draws the links in its graph view, on three conditions. The vault root must be the
+repository root or a directory above it, so an in-repo sink's relative links stay inside
+the vault. The sink must not sit under a dot-prefixed folder: vanilla Obsidian neither
+shows nor indexes one, so the default `.keel/learning/` is invisible to it — point `path`
+at a visible directory such as `docs/learnings/`, or install a community plugin that
+indexes hidden folders. And *Show all file types* (the setting formerly named *Detect all
+file extensions*, under *Files and links*) must be on, so a `.py` or `.yaml` target is
+indexed and the edge resolves — without it the link still renders, as an unresolved node —
+and such a target is an attachment in the graph view, drawn only while its *Attachments*
+filter is on. keel writes no `.obsidian/` folder and no wikilinks (the #1154 contract), so
+nothing in the vault is keel-specific.
 
 Three behaviours worth knowing:
 
