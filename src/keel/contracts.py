@@ -235,6 +235,12 @@ def build_command_contract(
     jury_advisory: bool = False,
     issue_title: str | None = None,
     issue_body: str | None = None,
+    #: The retrieved past learnings for this task (#1155), measured by the caller
+    #: because reading a directory is I/O. The **plan** contract carries it as well
+    #: as ship's: s4 composes the implement brief from what `keel plan` printed,
+    #: long before s5 runs `keel ship`, so wiring it into ship alone meant the brief
+    #: this feature exists for never saw a lesson.
+    learnings: dict[str, Any] | None = None,
     issue_labels: tuple[str, ...] = (),
     role: str | None = None,
     delegate: str | None = None,
@@ -294,6 +300,9 @@ def build_command_contract(
         "github_transport": transport.as_dict(),
         "checkpoint": checkpoint.checkpoint_contract_as_dict(config),
         "capture": capture.contract_as_dict(config),
+        # The same block `keel ship` publishes, so s4 can open the implement brief
+        # from the plan it was told not to re-derive.
+        "learnings": learnings if learnings is not None else capture.learning_retrieval_as_dict(),
         "run_ledger": ledger.ledger_contract_as_dict(config),
         "resource_claims": lock.contract_as_dict(),
         "side_effects": {
@@ -387,6 +396,7 @@ def build_command_contract(
             jury_advisory=jury_advisory,
             require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
             assignment=assignment,
+            learnings=learnings,
         )
         if command == "ship":
             contract["evidence"] = evidence.contract_as_dict(

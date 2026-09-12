@@ -696,7 +696,13 @@ class TheDocumentIsReadableByTheReaderThatExists(unittest.TestCase):
 
     def test_a_body_of_headings_alone_summarises_to_nothing(self):
         """No non-heading line to take, so the summary is empty rather than a heading."""
-        hits = self.read_back("---\ntitle: Ledger deadlock\ndescription:\n---\n\n# One\n\n## Two\n")
+        # Every body line is a heading — that is the case under test — and they
+        # carry the query's words, because scoring reads the body and admission
+        # needs two distinct ones.
+        hits = self.read_back(
+            "---\ntitle: Ledger deadlock\ndescription:\n---\n\n"
+            "# Ledger deadlock\n\n## Append-only\n"
+        )
         self.assertEqual(hits[0]["title"], "Ledger deadlock")
         self.assertEqual(hits[0]["summary"], "")
 
@@ -1075,10 +1081,12 @@ class EveryTypoShapeIsRefused(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for suffix in (*capture.LEARNING_READ_SUFFIXES, ".markdown", ""):
-                (root / f"lesson{suffix}").write_text("ledger ledger ledger\n", encoding="utf-8")
+                (root / f"lesson{suffix}").write_text("ledger duplicate marker\n", encoding="utf-8")
             found = {
                 Path(hit["file"]).suffix
-                for hit in capture.retrieve_relevant_learnings("ledger", root, max_results=9)
+                for hit in capture.retrieve_relevant_learnings(
+                    "ledger duplicate marker", root, max_results=9
+                )
             }
             self.assertEqual(found, set(capture.LEARNING_READ_SUFFIXES))
 
@@ -2605,7 +2613,9 @@ class TheDocumentLinksTheFilesItIsAbout(unittest.TestCase):
         for label, text in (("with", document), ("without", without_section)):
             directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
             (directory / "2026-09-10-pr1170-links-abc123.md").write_text(text, encoding="utf-8")
-            hits = capture.retrieve_relevant_learnings("orchestrator", directory)
+            # Two distinct query tokens are still required for text admission.
+            # The declared path supplies both; the rendered link repeats them.
+            hits = capture.retrieve_relevant_learnings("src orchestrator", directory)
             self.assertEqual([hit["file"] for hit in hits], ["2026-09-10-pr1170-links-abc123.md"])
             scores[label] = hits[0]["score"]
         self.assertGreater(scores["with"], scores["without"])

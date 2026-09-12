@@ -378,6 +378,10 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         jury_advisory=args.jury_advisory,
         issue_title=args.issue_title,
         issue_body=args.issue_body,
+        # Retrieved here as well as in `_cmd_ship`: s4 composes the implement
+        # brief from what `keel plan` printed, long before s5 runs `keel ship`,
+        # so the brief this feature exists for saw nothing when only ship had it.
+        learnings=_retrieve_learnings(args, config, None),
         issue_labels=_issue_labels(args),
         role=args.role,
         delegate=args.delegate,
@@ -1440,6 +1444,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # rollup reports "test (py3.13 / ubuntu-latest)".
     ci_wf_names = github.ci_workflow_names(args.pr, cwd=args.root) if read_ci else None
 
+    # #1155: the read side of capture. Measured here because it reads directories,
+    # and handed to `assess` the way `jury_availability` is — the assessment stays
+    # pure and the contract carries one section both briefs render.
+    retrieved_learnings = _retrieve_learnings(args, config, changed_read)
     a = ship.assess(
         # None-preserving on purpose: assess classifies an unreadable diff fail-closed,
         # and collapsing it to [] here is what made this whole guard inert.
@@ -1483,8 +1491,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         jury_availability=review_contract["jury"]["availability"],
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
+        learnings=retrieved_learnings,
     )
     contract["review_merge_contract"] = a.review_contract
+    # The same block at the top level, because the s4 implement brief is composed
+    # before any reviewer exists and must not have to read the review contract to
+    # find its own section.
+    contract["learnings"] = retrieved_learnings
     # The tier is only known once the diff has been read, so the assignment the plan
     # rendered against an unresolved tier is superseded by the one the assessment
     # resolved against the real one.
@@ -1587,6 +1600,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         # while the record kept hashing the empty post-merge diff, and a second run
         # then wrote a second file while recording it as a duplicate of the first.
         capture_changed_files=capture_changed,
+        # What was surfaced, so a later run can tell a lesson nobody had from one
+        # that was put in front of the implementer and still not applied (#1155).
+        capture_retrieved=retrieved_learnings["fingerprints"],
         issue_title=capture_facts[0],
         issue_labels=capture_facts[2],
         existing_records=existing_ledger_records,
@@ -6639,6 +6655,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="issue label for intake/readiness; repeat or comma-separate",
     )
     p_plan.add_argument(
+        "--declared-file",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="expected repo-relative file for learning retrieval; repeat per file",
+    )
+    p_plan.add_argument(
         "--role",
         default=None,
         help="issue role label used to resolve knobs.team.implement.by_role",
@@ -9103,6 +9126,68 @@ def _today() -> str:
     import datetime
 
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+
+
+def _retrieve_learnings(args, config, changed_files) -> dict:
+    """Read this project's learning directories and rank them against this task.
+
+    The I/O half of #1155, here rather than in `capture` for the same reason
+    `_write_learning_sink` is: `capture.retrieve_relevant_learnings` reads a
+    directory, everything that *decides* anything is pure beside it, and `assess`
+    takes the result as an argument the way it takes `jury_availability`.
+
+    Always returns a block, even when there is nothing to retrieve. A project with
+    no learnings gets empty `hits` and an empty `section`, and an empty section is
+    what the briefs render nothing from — so a directory that is missing, empty or
+    unreadable costs a `Path.is_dir()` and changes no brief.
+    """
+    labels = _issue_labels(args)
+    # **Declared files first, and they are the point.** Retrieval runs at s3, before
+    # s4 has written a line, so the diff is empty on exactly the run that most needs
+    # a lesson. `--declared-file` is what the run *states* it will touch, which is
+    # the only file list that exists that early; the read diff joins it for a
+    # re-run on an implemented branch. Not deduped either: the query is tokenised
+    # into a set and the path match is a set intersection, so a file named twice is
+    # a file named once.
+    # Commands without a declared scope still retrieve by title and labels.
+    changed = [*(getattr(args, "declared_file", None) or ()), *(changed_files or ())]
+    sources = capture.learning_source_dirs(
+        config,
+        values={
+            "owner": config.owner or "",
+            "repo": config.repo or "",
+            "base_branch": config.base_branch or "",
+        },
+    )
+    query = capture.learning_query_text(
+        title=args.issue_title,
+        labels=labels,
+        changed_files=changed,
+    )
+    hits: list[dict] = []
+    for source in sources:
+        # Relative to `--root`, through the same resolver the sink writes with: the
+        # default `.keel/learning` otherwise reads wherever keel was launched from,
+        # which on a CI runner is not the repository.
+        hits.extend(
+            capture.retrieve_relevant_learnings(
+                query,
+                _resolve_under_root(source, args.root),
+                max_results=capture.DEFAULT_LEARNING_RETRIEVAL_LIMIT,
+                labels=labels,
+                changed_files=changed,
+            )
+        )
+    # Re-rank across directories: each one returned its own top-k, and a shared
+    # folder's best lesson must be able to outrank a repo-local weak one.
+    # The same key `retrieve_relevant_learnings` sorts by, including `declared`:
+    # re-sorting on the score alone here undid the rule that an exact declaration
+    # outranks any amount of prose, for every project that reads two directories.
+    hits.sort(key=lambda hit: (-hit["declared"], -hit["score"], hit["file"]))
+    return capture.learning_retrieval_as_dict(
+        sources=[str(source) for source in sources],
+        hits=capture.dedupe_learning_hits(hits)[: capture.DEFAULT_LEARNING_RETRIEVAL_LIMIT],
+    )
 
 
 def _capture_changed_files(args, changed_files) -> list[str]:
