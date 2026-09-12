@@ -461,7 +461,6 @@ def learning_fingerprint(
 ) -> str:
     """Return a stable, consumer-neutral dedupe fingerprint for learning candidates."""
     import hashlib
-    import json
 
     payload = {
         "title": _normalize_text(title),
