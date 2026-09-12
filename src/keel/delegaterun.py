@@ -71,15 +71,12 @@ _MAX_RESPONSE_BYTES = 50 * 1024 * 1024
 #: transcript that triggered the bug was several hundred KB, where a sha or a line number
 #: carrying those digits is a near certainty. The other markers are phrases, which do not
 #: have that problem.
-_RATE_LIMIT_MARKERS = (
-    re.compile(r"rate[ _-]?limit"),
-    re.compile(r"resource_exhausted"),
-    re.compile(r"quota exceeded"),
-    re.compile(r"usage limit"),
-    re.compile(r"too many requests"),
-    # `HTTP 429`, `status: 429`, `429 Too Many Requests`, `error 429` — never a bare 429.
-    re.compile(r"(?:http[/ ]|status[: ]+|code[: ]+|error[: ]+)429\b"),
-    re.compile(r"\b429\s+(?:too many|client error|error\b)"),
+# ⚡ Bolt Optimization: Combined multiple regular expressions into a single compiled pattern
+# using the | (OR) operator for faster evaluation.
+_RATE_LIMIT_MARKERS = re.compile(
+    r"rate[ _-]?limit|resource_exhausted|quota exceeded|usage limit|too many requests|"
+    r"(?:http[/ ]|status[: ]+|code[: ]+|error[: ]+)429\b|"
+    r"\b429\s+(?:too many|client error|error\b)"
 )
 
 #: Phrases with which a vendor reports **its own** timeout, as distinct from the wall-clock
@@ -91,11 +88,10 @@ _RATE_LIMIT_MARKERS = (
 #: vendor's prose is how the defect this fixes arrived, so what makes matching prose safe
 #: here is not the list but :func:`failure_signal`, which keeps these patterns away from
 #: the delegate's *answer* and shows them only the vendor's own error.
-_VENDOR_TIMEOUT_MARKERS = (
-    re.compile(r"timeout waiting for"),
-    re.compile(r"\btimed[ -]out\b"),
-    re.compile(r"deadline exceeded"),
-    re.compile(r"\btimeout\b.*\bexceeded\b"),
+# ⚡ Bolt Optimization: Combined multiple regular expressions into a single compiled pattern
+# using the | (OR) operator for faster evaluation.
+_VENDOR_TIMEOUT_MARKERS = re.compile(
+    r"timeout waiting for|\btimed[ -]out\b|deadline exceeded|\btimeout\b.*\bexceeded\b"
 )
 
 
@@ -290,7 +286,7 @@ def rate_limited(text: str) -> bool:
     timed out was reported as a quota refusal (#1133).
     """
     lowered = (text or "").lower()
-    return any(marker.search(lowered) for marker in _RATE_LIMIT_MARKERS)
+    return bool(_RATE_LIMIT_MARKERS.search(lowered))
 
 
 def vendor_timed_out(text: str) -> bool:
@@ -302,7 +298,7 @@ def vendor_timed_out(text: str) -> bool:
     one of them leaves an exit code of 124.
     """
     lowered = (text or "").lower()
-    return any(marker.search(lowered) for marker in _VENDOR_TIMEOUT_MARKERS)
+    return bool(_VENDOR_TIMEOUT_MARKERS.search(lowered))
 
 
 def final_stream_event(stdout: str) -> dict[str, Any] | None:
