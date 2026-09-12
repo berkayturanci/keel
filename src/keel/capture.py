@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import os.path
+import posixpath
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import quote
 
 # `workspace` imports nothing from this package's config layer, so naming it here
 # keeps the import graph acyclic — see `_HasPolicyPack` for why that matters.
 from . import workspace
+from . import yaml_helper as yaml
 
 
 class _HasPolicyPack(Protocol):
@@ -970,6 +974,24 @@ LEARNING_READ_SUFFIXES = (".md", ".json", ".txt")
 #: unreadable.
 LEARNING_FINGERPRINT_SLICE = 12
 
+#: The document's fourth section (#1166): one entry per ``changed_files`` path, written
+#: as a Markdown link so a **link-following** reader — a knowledge-graph builder, a
+#: wiki — gets the file ↔ lesson edge. The front-matter list is a string to such a
+#: reader; keel's own reader keeps matching on the list, which is why it stays.
+LEARNING_FILES_HEADING = "## Files"
+LEARNING_NO_FILES = "_No files recorded._"
+
+#: Characters that end, escape, or open something inside a CommonMark link *text*:
+#: the bracket pair and the backslash; the angle brackets that would start an autolink
+#: or raw HTML from a file name (a merged PR chooses those bytes); the emphasis and
+#: strikethrough delimiters that turned ``__init__.py`` — the most common Python file
+#: name — into bold ``init``; the ampersand that would decode an entity reference; and
+#: the backtick, because a code span binds more tightly than the link's brackets and
+#: swallows the characters between a pair. Every one is ASCII punctuation, which
+#: CommonMark lets a backslash escape. The destination is percent-encoded instead, so
+#: the two halves of a link never disagree about where a path ends.
+_LINK_TEXT_UNSAFE = re.compile(r"([\\\[\]<>_*~&`])")
+
 #: The frontmatter contract the reader depends on. Fixed and small on purpose:
 #: `retrieve_relevant_learnings` reads `title` and `description` out of it, so a
 #: field added here is a field that side has to be taught.
@@ -1229,6 +1251,81 @@ def _yaml_sequence(key: str, values: list[str] | tuple[str, ...]) -> list[str]:
     return [f"{key}:", *(f"  - {_yaml_scalar(item)}" for item in items)]
 
 
+def learning_file_link_base(
+    *,
+    directory: str,
+    in_repo: bool,
+    owner: str | None,
+    repo: str | None,
+    head_sha: str | None,
+) -> str | None:
+    """Where the **Files** section's links point, or ``None`` for bare paths (#1166).
+
+    Two forms, chosen by where the sink is. A sink **inside the checkout** links
+    relative to the document's own directory — ``../..`` from the default
+    ``.keel/learning`` — so the link resolves on disk from where the file sits, and a
+    graph builder walking the repository makes the edge to a node it already has.
+    The prefix is **lexical** — one ``..`` per component of the normalised directory —
+    because a plan touches no filesystem: :func:`posixpath.relpath` would consult
+    ``os.getcwd()`` for two relative arguments, which made the prefix depend on where
+    the process stood and raise from a deleted directory. It is POSIX on every platform
+    because the document is read on machines other than the one that wrote it.
+
+    A sink **outside** the checkout has nothing to link to relatively, and a relative
+    link that resolves to nothing is worse than none. It links the file on GitHub at
+    the merged head when the owner, the repository and the head are all known, and
+    otherwise says nothing — the caller renders the bare path. An *expanded* template
+    that climbs out of the checkout (``{owner}/../learnings`` with ``owner`` unset) is
+    outside it whatever the unexpanded template looked like, and takes the same forms.
+    """
+    if in_repo:
+        normalised = posixpath.normpath(directory.replace("\\", "/"))
+        parts = [part for part in normalised.split("/") if part not in ("", ".")]
+        if not parts or parts[0] != "..":
+            return "/".join([".."] * len(parts)) or "."
+    if owner and repo and head_sha:
+        return f"https://github.com/{owner}/{repo}/blob/{head_sha}"
+    return None
+
+
+def _file_bullet(path: str, base: str | None) -> str:
+    """One **Files** bullet: a CommonMark link when there is a base, else the bare path.
+
+    The link text is the repository's own name for the file, which also puts every
+    path into the body — and :func:`retrieve_relevant_learnings` scores a document by
+    its text, so a query naming a file now scores the lesson about it higher than the
+    front-matter list alone did (the list matched once; the link matches again — in
+    its text, or in its destination when the text carries an escape).
+    The destination is percent-encoded: a space or a parenthesis in a path would
+    otherwise end the link where the path continues.
+    """
+    name = _one_line(path)
+    if base is None:
+        # A code span ends at a backtick run as long as its opener, so a path carrying
+        # one is fenced with a run one longer, padded as CommonMark allows — never
+        # written plain, where its own Markdown would render.
+        longest = max((len(run) for run in re.findall(r"`+", name)), default=0)
+        if longest == 0:
+            return f"- `{name}`"
+        fence = "`" * (longest + 1)
+        return f"- {fence} {name} {fence}"
+    text = _LINK_TEXT_UNSAFE.sub(r"\\\1", name)
+    return f"- [{text}]({base}/{quote(name, safe='/')})"
+
+
+def _files_section(changed_files: list[str] | tuple[str, ...], base: str | None) -> list[str]:
+    """The **Files** section's lines, from the same list the front matter is given.
+
+    An empty list still renders the heading: the document shape is stable — four
+    sections, always — and a lesson about no file says so rather than pointing at
+    nothing.
+    """
+    items = _strings(changed_files)
+    if not items:
+        return [LEARNING_NO_FILES]
+    return [_file_bullet(item, base) for item in items]
+
+
 def render_learning_document(
     *,
     title: str | None,
@@ -1243,12 +1340,18 @@ def render_learning_document(
     what_changed: str = "",
     what_we_learned: str = "",
     do_differently: str = "",
+    file_link_base: str | None = None,
 ) -> str:
-    """One learning file: frontmatter the reader can rely on, then three sections.
+    """One learning file: frontmatter the reader can rely on, then four sections.
 
     The heading is repeated below the frontmatter deliberately. `retrieve_relevant_learnings`
     scores a file by its own text, and a title that lives only in frontmatter is a
     title the search cannot weigh.
+
+    ``file_link_base`` is what :func:`learning_file_link_base` decided for the sink;
+    the **Files** section links each ``changed_files`` entry under it, and renders
+    the bare path when it is ``None``. The front matter does not read it: the list
+    up there is byte-for-byte what it was before the section existed (#1166).
     """
     front = [
         "---",
@@ -1293,6 +1396,10 @@ def render_learning_document(
         LEARNING_SECTION_HEADINGS[2],
         "",
         do_differently or LEARNING_EMPTY_SECTION,
+        "",
+        LEARNING_FILES_HEADING,
+        "",
+        *_files_section(changed_files, file_link_base),
         "",
     ]
     return "\n".join(front + body)
@@ -1350,6 +1457,7 @@ def learning_sink_plan(
     what_changed: str = "",
     what_we_learned: str = "",
     do_differently: str = "",
+    head_sha: str | None = None,
 ) -> dict[str, Any] | None:
     """What to write for this run, or `None` with the reason folded into the caller.
 
@@ -1388,10 +1496,23 @@ def learning_sink_plan(
     filename = _one_component(
         _expand(str(sink.get("filename") or DEFAULT_LEARNING_SINK_FILENAME), values)
     )
+    # Decided from the sink's *shape*, the way `learning_sink_in_worktree` decides
+    # who commits the file: the same question, and the two answers agree about where
+    # the document sits — except when a placeholder's expansion climbs out of the
+    # checkout, which the link base sees and the template reader does not, and then
+    # the outside form is the safe one.
+    file_link_base = learning_file_link_base(
+        directory=directory,
+        in_repo=learning_sink_in_worktree(config),
+        owner=owner,
+        repo=repo,
+        head_sha=head_sha,
+    )
     return {
         "kind": sink.get("kind", LEARNING_SINK_KINDS[0]),
         "directory": directory,
         "filename": filename,
+        "file_link_base": file_link_base,
         "content": render_learning_document(
             title=title,
             description=description,
@@ -1405,6 +1526,7 @@ def learning_sink_plan(
             what_changed=what_changed,
             what_we_learned=what_we_learned,
             do_differently=do_differently,
+            file_link_base=file_link_base,
         ),
     }
 
@@ -1662,29 +1784,31 @@ def learning_query_text(
 
 
 def _front_matter_lists(content: str) -> dict[str, list[str]]:
-    """The `key:` / `  - value` sequences in a leading `---` block.
+    """Read string sequences from a bounded, complete YAML front matter block.
 
-    :func:`_front_matter` deliberately skips list values — it wants a title and a
-    sentence. Exact matching needs the two lists the writer emits, and nothing
-    here grows into a YAML parser either: a key at column 0 with an empty value
-    opens a list, a `  - ` line extends it, anything else closes it.
+    Use the same safe parser as project configuration for block and flow lists.
+    Only direct string items are consumed; aliases cannot cause recursive walks.
+    Invalid or oversized metadata contributes no exact matches.
     """
     lines = content.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}
-    out: dict[str, list[str]] = {}
-    current: str | None = None
-    for line in lines[1:]:
+    for index, line in enumerate(lines[1:], start=1):
         if line.strip() == "---":
-            return out
-        if line.startswith("  - ") and current is not None:
-            out[current].append(_unquote(line[4:].strip()))
-            continue
-        key, sep, value = line.partition(":")
-        current = key.strip() if sep and not key.startswith(" ") and not value.strip() else None
-        if current is not None:
-            out[current] = []
-    # No closing delimiter: not front matter, whatever it looked like.
+            front = "\n".join(lines[1:index])
+            if len(front) > 65536:
+                return {}
+            try:
+                fields = yaml.load(front)
+            except (yaml.YAMLError, RecursionError):
+                return {}
+            if not isinstance(fields, dict):
+                return {}
+            return {
+                key: [item for item in value if isinstance(item, str)]
+                for key in ("labels", "changed_files")
+                if isinstance(value := fields.get(key), list)
+            }
     return {}
 
 
@@ -1696,32 +1820,59 @@ def _learning_tokens(query_text: str) -> set[str]:
     }
 
 
-#: A metadata line in any of the suffixes the reader opens: one of the contract's own
-#: field names at the start of a line, with its value. Lowercased, because
-#: `_lesson_text` works on the lowered text.
+_LEARNING_METADATA_KEYS = (
+    "schema",
+    "title",
+    "description",
+    "repo",
+    "pr",
+    "issue",
+    "date",
+    "fingerprint",
+    "labels",
+    "changed_files",
+)
 _LEARNING_METADATA_LINE = re.compile(
-    r'^\s*["\']?(?:schema|title|description|repo|pr|issue|date|fingerprint|labels'
-    r'|changed_files)["\']?\s*[:=].*$',
-    re.MULTILINE,
+    r"^(?:" + "|".join(_LEARNING_METADATA_KEYS) + r")\s*[:=].*$",
+    re.IGNORECASE,
 )
 
 
-def _lesson_text(body: str) -> str:
-    """The document's own words, lowercased, with keel's scaffolding removed.
+def _lesson_text(body: str, suffix: str = ".md") -> str:
+    """Score prose without treating metadata-shaped lesson sentences as fields.
 
-    Every document this writer produces carries the same three headings and, for an
-    unfilled section, the same placeholder. Counted as prose they are a match every
-    file shares, so a query word landing in one of them matched the whole directory.
+    Markdown metadata was already removed with its front matter. JSON fields
+    are removed structurally; plain text recognizes a leading schema header,
+    ending at the first non-metadata line. Body sentences stay intact.
     """
+    if suffix == ".json":
+        try:
+            record = json.loads(body)
+        except (ValueError, RecursionError):
+            record = None
+        if isinstance(record, dict):
+            body = "\n".join(
+                value
+                for key, value in record.items()
+                if key.lower() not in _LEARNING_METADATA_KEYS and isinstance(value, str)
+            )
+    elif suffix == ".txt":
+        lines = body.splitlines()
+        if lines and re.fullmatch(r"schema\s*[:=]\s*keel\.learning\.v1", lines[0], re.I):
+            index = 0
+            while index < len(lines) and _LEARNING_METADATA_LINE.fullmatch(lines[index]):
+                index += 1
+            body = "\n".join(lines[index:])
     text = body.lower()
-    for scaffold in (*LEARNING_SECTION_HEADINGS, LEARNING_EMPTY_SECTION):
+    for scaffold in (
+        *LEARNING_SECTION_HEADINGS,
+        LEARNING_EMPTY_SECTION,
+        LEARNING_FILES_HEADING,
+        LEARNING_NO_FILES,
+        "## Changed files",
+    ):
         text = text.replace(scaffold.lower(), " ")
-    # **And the contract's own field names, wherever they appear.** Subtracting the
-    # `---` block covers Markdown; the reader also opens `.json` and `.txt`, which
-    # carry no delimiter, so `_front_matter` hands their whole contents back as body
-    # and `schema: keel.learning.v1` / `repo: keel` were counted as prose again — the
-    # same false positive, in the suffixes the reader promises to open.
-    return _LEARNING_METADATA_LINE.sub(" ", text)
+    return text
 
 
 def _text_score(content_lower: str, filename_lower: str, tokens: set[str]) -> tuple[int, int]:
@@ -1787,21 +1938,22 @@ def dedupe_learning_hits(
     return unique
 
 
-def render_learning_brief_section(
+def _render_learning_brief(
     hits: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     *,
     char_budget: int = LEARNING_BRIEF_CHAR_BUDGET,
-) -> str:
-    """The fixed **Relevant past learnings** block, or `""` when nothing matched.
+) -> tuple[str, list[dict[str, Any]]]:
+    """The fixed **Relevant past learnings** block and the hits that fit in budget.
 
     Empty in, empty out, and the caller renders nothing at all then — which is
     what keeps a project with no learnings byte-identical to the brief it got
     before this existed. Zero cost when unused is a requirement, not a nicety.
     """
     if not hits:
-        return ""
+        return "", []
     lines = [f"### {LEARNING_BRIEF_HEADING}", ""]
     used = sum(len(line) + 1 for line in lines)
+    rendered_hits: list[dict[str, Any]] = []
     for hit in hits:
         title = str(hit.get("title") or hit.get("file") or "Learning").strip()
         summary = " ".join(str(hit.get("summary") or "").split())
@@ -1815,9 +1967,25 @@ def render_learning_brief_section(
             break
         lines.append(entry)
         used += len(entry) + 1
+        rendered_hits.append(hit)
     if len(lines) == 2:
-        return ""
-    return "\n".join(lines) + "\n"
+        return "", []
+    return "\n".join(lines) + "\n", rendered_hits
+
+
+def render_learning_brief_section(
+    hits: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    *,
+    char_budget: int = LEARNING_BRIEF_CHAR_BUDGET,
+) -> str:
+    """The fixed **Relevant past learnings** block, or `""` when nothing matched.
+
+    Empty in, empty out, and the caller renders nothing at all then — which is
+    what keeps a project with no learnings byte-identical to the brief it got
+    before this existed. Zero cost when unused is a requirement, not a nicety.
+    """
+    section, _ = _render_learning_brief(hits, char_budget=char_budget)
+    return section
 
 
 def learning_retrieval_as_dict(
@@ -1825,6 +1993,7 @@ def learning_retrieval_as_dict(
     sources: list[str] | tuple[str, ...] = (),
     hits: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     limit: int = DEFAULT_LEARNING_RETRIEVAL_LIMIT,
+    char_budget: int = LEARNING_BRIEF_CHAR_BUDGET,
 ) -> dict[str, Any]:
     """The retrieval block adapters read and the ledger records.
 
@@ -1832,6 +2001,7 @@ def learning_retrieval_as_dict(
     implement brief and the reviewer brief must carry the *same* section, and two
     renderers agree only until one of them is edited.
     """
+    section, rendered_hits = _render_learning_brief(hits, char_budget=char_budget)
     entries = [
         {
             "file": hit.get("file"),
@@ -1843,7 +2013,7 @@ def learning_retrieval_as_dict(
             "matched_labels": list(hit.get("matched_labels") or []),
             "matched_files": list(hit.get("matched_files") or []),
         }
-        for hit in hits
+        for hit in rendered_hits
     ]
     return {
         "schema_version": LEARNING_RETRIEVAL_SCHEMA_VERSION,
@@ -1853,7 +2023,7 @@ def learning_retrieval_as_dict(
         "limit": limit,
         "hits": entries,
         "fingerprints": [entry["fingerprint"] for entry in entries if entry["fingerprint"]],
-        "section": render_learning_brief_section(hits),
+        "section": section,
     }
 
 
@@ -1904,6 +2074,7 @@ def retrieve_relevant_learnings(
             continue
 
         fields, body = _front_matter(content)
+        lists = _front_matter_lists(content)
         matched_labels, matched_files = _exact_matches(content, want_labels, want_files)
         # **The body, minus keel's own scaffolding.** Front matter is metadata with
         # its own exact matching, and scoring it as prose made every learning this
@@ -1911,7 +2082,11 @@ def retrieve_relevant_learnings(
         # name the project in all of them). The section headings are the same problem
         # one layer down: they are in every document, so a title sharing a word with
         # one matched the whole directory.
-        text_score, distinct = _text_score(_lesson_text(body), file_path.name.lower(), tokens)
+        lesson_text = _lesson_text(body, file_path.suffix)
+        changed_paths = " ".join(lists.get("changed_files", []))
+        if changed_paths:
+            lesson_text = f"{lesson_text} {changed_paths.lower()}"
+        text_score, distinct = _text_score(lesson_text, file_path.name.lower(), tokens)
         declared = len(matched_labels) + len(matched_files)
         score = (
             text_score

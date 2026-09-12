@@ -122,6 +122,7 @@ def build_ship_run_record(
     jury_panel: dict[str, Any] | None = None,
     implement_mode: str | None = None,
     implement_phases: list[dict[str, Any]] | None = None,
+    implement_loop: dict[str, Any] | None = None,
     consent_status: str | None = None,
     consent_scopes: list[str] | tuple[str, ...] | None = None,
     run_controls: dict[str, Any] | None = None,
@@ -203,6 +204,7 @@ def build_ship_run_record(
             jury_panel=jury_panel,
             implement_mode=implement_mode,
             implement_phases=implement_phases,
+            implement_loop=implement_loop,
             consent_status=consent_status,
             consent_scopes=consent_scopes,
         ),
@@ -285,6 +287,7 @@ def _run_context(
     consent_scopes: list[str] | tuple[str, ...] | None,
     implement_mode: str | None = None,
     implement_phases: list[dict[str, Any]] | None = None,
+    implement_loop: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the deterministic consumer-neutral preflight run-context block.
 
@@ -314,6 +317,9 @@ def _run_context(
         # and which commit each half of s4 produced.
         "implement_mode": implement_mode if _nonblank(implement_mode) else None,
         "implement_phases": [dict(phase) for phase in implement_phases or ()],
+        # The s4 iteration loop (#1165): its policy and one record per iteration, or
+        # `None` for a run that neither configured nor recorded one.
+        "implement_loop": dict(implement_loop) if isinstance(implement_loop, dict) else None,
         "consent": {
             "status": consent_status if _nonblank(consent_status) else None,
             "scopes": scopes,

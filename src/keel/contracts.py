@@ -27,6 +27,7 @@ from . import (
     intake,
     ledger,
     lock,
+    loop,
     model,
     orchestrator,
     provenance,
@@ -246,6 +247,7 @@ def build_command_contract(
     review_delegates: tuple[str, ...] = (),
     host_agent: str = agents.HOST_DEFAULT,
     tdd_override: bool = False,
+    loop_override: bool = False,
     effort: str | None = None,
     team_profile: str | None = None,
     jury_availability: Mapping[str, Any] | None = None,
@@ -257,6 +259,11 @@ def build_command_contract(
     the same way ``compound`` is a workflow one — and is what selects the ``tdd-order`` gate
     in the contract's ``gates`` list."""
     implement_mode = tdd.resolve_mode(config.knobs.implement_mode, flag=tdd_override)
+    # The s4 iteration policy rides inside `implement_mode` (#1165): it is not a third
+    # profile but a policy around whichever profile is running, and `wraps` says which.
+    loop_policy = loop.resolve(
+        config.knobs.loop, flag=loop_override, implement_mode=implement_mode.name
+    )
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
     graph = command_graph(command, profile=profile)
     if not graph and (project_command := get_project_command(config, command)):
@@ -277,7 +284,7 @@ def build_command_contract(
         "no_mutations": dry_run,
         "project": project_as_dict(config),
         "workflow_profile": workflow_profile(command, profile=profile),
-        "implement_mode": implement_mode.as_dict(),
+        "implement_mode": {**implement_mode.as_dict(), "loop": loop_policy.as_dict()},
         "graph": graph,
         "backbone_plan": orchestrator.plan_as_dict(plan),
         "gates": [
@@ -870,6 +877,25 @@ def gate_as_dict(spec: gates.GateSpec) -> dict[str, Any]:
     return asdict(spec)
 
 
+def gate_outcome_as_dict(outcome: gates.GateOutcome) -> dict[str, Any]:
+    """One gate outcome as ``keel ship --json`` and ``keel run-gates --json`` publish it.
+
+    The severity and whether the gate ran at all travel with it (#1165): ``keel loop
+    brief`` reads these documents, and without them a failing *soft* gate would hold the
+    loop open and an unrun blocking gate would read as a pass.
+    """
+    return {
+        "gate": outcome.gate,
+        "ok": outcome.ok,
+        "skipped": outcome.skipped,
+        "timed_out": outcome.timed_out,
+        "on_fail": outcome.on_fail,
+        "not_run": outcome.not_run,
+        "error": outcome.error,
+        "findings": [_finding_as_dict(finding) for finding in outcome.findings],
+    }
+
+
 def extension_hooks_as_dict(
     config: cfg.ProjectConfig, loaded: dict[str, list[Extension]]
 ) -> dict[str, list[dict[str, Any]]]:
@@ -989,17 +1015,7 @@ def ship_result_as_dict(
         "run_ledger": run_ledger,
         "closure_comment": closure_comment,
         "artifact_bodies": artifact_bodies,
-        "gate_outcomes": [
-            {
-                "gate": outcome.gate,
-                "ok": outcome.ok,
-                "skipped": outcome.skipped,
-                "timed_out": outcome.timed_out,
-                "error": outcome.error,
-                "findings": [_finding_as_dict(finding) for finding in outcome.findings],
-            }
-            for outcome in outcomes
-        ],
+        "gate_outcomes": [gate_outcome_as_dict(outcome) for outcome in outcomes],
         "verdict": {
             "blocked": verdict.blocked,
             "counts": dict(verdict.counts),

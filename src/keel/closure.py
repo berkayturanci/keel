@@ -43,6 +43,8 @@ _DOC_SUFFIXES_TUPLE = tuple(_DOC_SUFFIXES)
 #: The ``knobs.implement_mode`` value this renderer names. Spelled here rather than
 #: imported so the renderer keeps its "plain dict in, markdown out" contract.
 _TDD_MODE = "tdd"
+#: How a looped s4 run (#1165) names itself on the Implement line.
+LOOP_LABEL = "loop"
 
 
 def contract_as_dict() -> dict[str, Any]:
@@ -78,6 +80,7 @@ def contract_as_dict() -> dict[str, Any]:
             "jury_mode",
             "jury_panel",
             "implement_mode",
+            "implement_loop",
             "consent",
         ],
         "jury_label": JURY_LABEL,
@@ -378,15 +381,24 @@ TDD_LABEL = "TDD"
 
 
 def _implement_mode(block: dict[str, Any]) -> list[str]:
-    """The s4 profile line — emitted only for a ``tdd`` run.
+    """The s4 profile line — emitted only for a ``tdd`` run, a looped run, or both.
 
     Conditional, unlike every other run-context field: ``default`` is what s4 has always
     done, and a line saying so on every closure comment keel has ever posted would be
     noise. A test-first run is the exception worth naming, and it names both phases'
-    commits so a reader can check the order the gate checked.
+    commits so a reader can check the order the gate checked. A looped run (#1165) is
+    the other exception: it names every iteration's commit and what the gates said after
+    it, which is the record a Ralph-style loop never leaves.
     """
-    if block.get("implement_mode") != _TDD_MODE:
+    parts = [part for part in (_tdd_part(block), _loop_part(block)) if part]
+    if not parts:
         return []
+    return [f"- **Implement:** {' · '.join(parts)}"]
+
+
+def _tdd_part(block: dict[str, Any]) -> str | None:
+    if block.get("implement_mode") != _TDD_MODE:
+        return None
     phases = block.get("implement_phases")
     parts = [
         f"{phase.get('phase')} {_short(phase.get('commit'))}{_by(phase.get('implementer'))}"
@@ -394,7 +406,31 @@ def _implement_mode(block: dict[str, Any]) -> list[str]:
         if isinstance(phase, dict)
     ]
     detail = f" ({' → '.join(parts)})" if parts else ""
-    return [f"- **Implement:** {TDD_LABEL}{detail}"]
+    return f"{TDD_LABEL}{detail}"
+
+
+def _loop_part(block: dict[str, Any]) -> str | None:
+    """``loop (k/N iterations: sha red → sha green)`` for a looped run, else nothing."""
+    record = block.get("implement_loop")
+    if not isinstance(record, dict):
+        return None
+    iterations = [entry for entry in (record.get("iterations") or []) if isinstance(entry, dict)]
+    if not iterations and not record.get("enabled"):
+        return None
+    budget = record.get("max_iterations")
+    budget_text = str(budget) if isinstance(budget, int) else "?"
+    if not iterations:
+        return f"{LOOP_LABEL} (0/{budget_text} iterations recorded)"
+    steps = " → ".join(
+        f"{_short(entry.get('commit'))} {'green' if entry.get('gates_ok') else 'red'}"
+        for entry in iterations
+    )
+    if not record.get("enabled"):
+        # A policy that was off bounded nothing, so a count over its nominal budget would
+        # read as a fraction of a budget the run never had.
+        noun = "iteration" if len(iterations) == 1 else "iterations"
+        return f"{LOOP_LABEL} ({len(iterations)} {noun} recorded, policy off: {steps})"
+    return f"{LOOP_LABEL} ({len(iterations)}/{budget_text} iterations: {steps})"
 
 
 def _by(implementer: Any) -> str:

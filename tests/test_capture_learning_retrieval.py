@@ -247,6 +247,110 @@ class ADeclaredPathOutranksARepeatedWord(unittest.TestCase):
         self.assertEqual([hit["file"] for hit in hits], ["declared.md"])
         self.assertEqual(hits[0]["matched_labels"], ["core"])
 
+    def test_flow_lists_match_paths_and_labels_without_prose_overlap(self):
+        self.write(
+            "flow.md",
+            "---\ntitle: Unrelated lesson\nlabels: [core, 'role: backend']\n"
+            "changed_files: [src/keel/ledger.py, 'src/a,b.py']\n---\n",
+        )
+        hits = self.retrieve(
+            changed_files=["src/keel/ledger.py", "src/a,b.py"], labels=["role: backend"]
+        )
+        self.assertEqual([hit["file"] for hit in hits], ["flow.md"])
+        self.assertEqual(hits[0]["matched_files"], ["src/a,b.py", "src/keel/ledger.py"])
+        self.assertEqual(hits[0]["matched_labels"], ["role: backend"])
+
+    def test_invalid_front_matter_is_fail_soft(self):
+        for front in (
+            "labels: [core",
+            "labels: !!python/object:bad {}",
+            "[core]",
+            "",
+            "labels: core",
+            "labels: [true, 42, {}, [core]]",
+            "labels: &recursive [*recursive]",
+            "labels: [" + "x" * 65536 + "]",
+            "labels: core\n  invalid: nesting",
+        ):
+            with self.subTest(front=front[:80]):
+                self.write("invalid.md", "---\n" + front + "\n---\n")
+                self.assertEqual(self.retrieve(labels=["core"]), [])
+
+    def test_unterminated_list_metadata_does_not_match(self):
+        self.write("invalid.md", "---\nlabels: [core]\n")
+        self.assertEqual(self.retrieve(labels=["core"]), [])
+
+    def test_lesson_sentences_named_like_metadata_still_match(self):
+        for key in ("Issue", "title", "Description", "repo", "date"):
+            for suffix in (".md", ".txt"):
+                with self.subTest(key=key, suffix=suffix):
+                    name = "prose" + suffix
+                    self.write(name, f"{key}: ledger duplicate marker blocks merge.\n")
+                    hits = self.retrieve("ledger duplicate marker")
+                    self.assertIn(name, [hit["file"] for hit in hits])
+                    (self.dir / name).unlink()
+
+    def test_generated_body_sentences_named_like_metadata_still_match(self):
+        self.write(
+            "prose.md",
+            learning_document(
+                title="Unrelated lesson", body="Issue: ledger duplicate marker blocks merge."
+            ),
+        )
+        self.assertEqual(
+            [hit["file"] for hit in self.retrieve("ledger duplicate marker")], ["prose.md"]
+        )
+
+    def test_json_prose_is_scored_separately_from_metadata(self):
+        self.write(
+            "record.json",
+            json.dumps(
+                {
+                    "schema": "keel.learning.v1",
+                    "repo": "keel",
+                    "count": 2,
+                    "what_changed": "Issue: ledger duplicate marker blocks merge.",
+                }
+            ),
+        )
+        self.assertEqual(self.retrieve("keel learning schema"), [])
+        self.assertEqual(
+            [hit["file"] for hit in self.retrieve("ledger duplicate marker")], ["record.json"]
+        )
+
+    def test_plain_text_header_stops_before_the_lesson(self):
+        self.write(
+            "record.txt",
+            "schema: keel.learning.v1\nrepo: keel\n\n"
+            "Issue: ledger duplicate marker blocks merge.\n",
+        )
+        self.assertEqual(self.retrieve("keel learning schema"), [])
+        self.assertEqual(
+            [hit["file"] for hit in self.retrieve("ledger duplicate marker")], ["record.txt"]
+        )
+
+    def test_json_without_a_record_retains_its_text_fallback(self):
+        for text in ("ledger duplicate marker", '["ledger duplicate marker"]'):
+            with self.subTest(text=text):
+                self.write("record.json", text)
+                self.assertEqual(
+                    [hit["file"] for hit in self.retrieve("ledger duplicate marker")],
+                    ["record.json"],
+                )
+
+    def test_files_scaffolding_heading_does_not_match_queries_naming_files(self):
+        """Scaffolding headings like '## Files' or '_No files recorded._' are subtracted."""
+        self.write(
+            "empty_files.md",
+            learning_document(
+                title="Unrelated title",
+                description="Unrelated description",
+                changed_files=(),
+                body="Prose that mentions nothing about documents.",
+            ),
+        )
+        self.assertEqual(self.retrieve("files recorded"), [])
+
     def test_the_declaring_file_outranks_the_repeating_one(self):
         self.write(
             "declares.md",
@@ -386,6 +490,47 @@ class TheSectionIsRenderedOnceForBothBriefs(unittest.TestCase):
         self.assertEqual(block["hits"], [])
         self.assertEqual(block["section"], "")
         self.assertEqual(block["fingerprints"], [])
+
+    def test_overflow_omits_dropped_hits_and_fingerprints(self):
+        """Entries dropped at the budget are omitted from hits and fingerprints."""
+        hits = [
+            {**self.HIT, "title": f"lesson {index}", "fingerprint": f"fp-{index}"}
+            for index in range(50)
+        ]
+        block = capture.learning_retrieval_as_dict(sources=["a"], hits=hits, char_budget=400)
+        self.assertLessEqual(len(block["section"]), 400)
+        rendered_titles = [hit["title"] for hit in block["hits"]]
+        self.assertIn("lesson 0", rendered_titles)
+        self.assertNotIn("lesson 49", rendered_titles)
+        self.assertEqual(len(block["hits"]), len(rendered_titles))
+        self.assertEqual(
+            block["fingerprints"], [f"fp-{index}" for index in range(len(block["hits"]))]
+        )
+        self.assertEqual(
+            block["section"], capture.render_learning_brief_section(hits, char_budget=400)
+        )
+
+    def test_first_oversized_entry_produces_empty_block_and_section(self):
+        """When the first entry exceeds the budget, nothing is rendered or recorded."""
+        hit = {**self.HIT, "title": "Oversized lesson", "fingerprint": "fp-oversized"}
+        block = capture.learning_retrieval_as_dict(sources=["a"], hits=[hit], char_budget=40)
+        self.assertEqual(block["hits"], [])
+        self.assertEqual(block["fingerprints"], [])
+        self.assertEqual(block["section"], "")
+        self.assertEqual(capture.render_learning_brief_section([hit], char_budget=40), "")
+
+    def test_first_oversized_entry_at_default_budget(self):
+        """A single hit exceeding LEARNING_BRIEF_CHAR_BUDGET produces an empty block."""
+        huge_summary = "x" * (capture.LEARNING_BRIEF_CHAR_BUDGET + 100)
+        hit = {**self.HIT, "path": huge_summary, "fingerprint": "fp-huge"}
+        block = capture.learning_retrieval_as_dict(sources=["a"], hits=[hit])
+        self.assertEqual(block["hits"], [])
+        self.assertEqual(block["fingerprints"], [])
+        self.assertEqual(block["section"], "")
+
+    def test_record_marker_reason_defaults_to_no_policy(self):
+        record = capture.record_marker(pr_number=1, status="skipped", reason="custom")
+        self.assertEqual(record["marker_reason"], "no-policy")
 
 
 class TheReviewContractCarriesTheSameLessons(unittest.TestCase):
@@ -790,6 +935,42 @@ class ShipRetrievesThroughTheCliPath(unittest.TestCase):
                 ],
                 ["ledger.md"],
             )
+
+    def test_plan_declared_files_retrieve_a_lesson_without_title_overlap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "learnings"
+            target.mkdir()
+            (target / "paths.md").write_text(
+                learning_document(title="Unrelated words", changed_files=("src/keel/ledger.py",)),
+                encoding="utf-8",
+            )
+            config = self.project(root, ["      source: 'learnings'"])
+            code, out, err = run(
+                [
+                    "plan",
+                    config,
+                    "--root",
+                    str(root),
+                    "--command",
+                    "ship",
+                    "--json",
+                    "--issue-title",
+                    "Fresh task",
+                    "--declared-file",
+                    "src/keel/ledger.py",
+                    "--declared-file",
+                    "src/other.py",
+                    "--declared-file",
+                    "src/keel/ledger.py",
+                ]
+            )
+            self.assertEqual(code, 0, err)
+            contract = json.loads(out)["contract"]
+            hits = contract["learnings"]["hits"]
+            self.assertEqual([hit["file"] for hit in hits], ["paths.md"])
+            self.assertEqual(hits[0]["matched_files"], ["src/keel/ledger.py"])
+            self.assertEqual(contract["review_merge_contract"]["reviewers"]["past_learnings"], hits)
 
     def test_a_plan_with_no_learnings_still_carries_an_empty_block(self):
         """A key that is sometimes absent is a key every reader has to guard."""

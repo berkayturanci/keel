@@ -1,6 +1,6 @@
 ---
 description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.
-argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <...> (repeatable, one per reviewer slot)] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--effort <low|medium|high>] [--team <profile>] [--jury|--no-jury|--jury-advisory] [--tdd] [--hotfix] [--dry-run] [--wizard]"
+argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <...> (repeatable, one per reviewer slot)] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--effort <low|medium|high>] [--team <profile>] [--jury|--no-jury|--jury-advisory] [--tdd] [--loop] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -205,6 +205,13 @@ capture.
   contract has said the contract is the policy, and a flag that switched it off would
   make it advisory. Read the resolved profile from `contract.implement_mode` of
   `keel plan`/`keel ship --json` (`mode`, `source`, `phases`, `gate`) — never re-derive it.
+- `--loop` — select the **bounded, gate-verified s4 iteration loop** for this run (the
+  per-project spelling is `knobs.loop`). After each implement iteration the command gates
+  run; green ends the loop, red starts the next iteration with the same brief plus the gate
+  output, up to `max_iterations`; see **Looped s4** below. There is no `--no-loop`, for the
+  reason there is no `--no-tdd`. Read the resolved policy from
+  `contract.implement_mode.loop` (`enabled`, `max_iterations`, `gate_output_max_bytes`,
+  `source`, `wraps`) — never re-derive it.
 - `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>` — the
   **implementer**. Per-run override of any issue role/delegate label. `ollama:` and the
   `*-api:` values require a non-empty model. The `*-api:` values are the **hosted-API
@@ -395,6 +402,12 @@ whose paths this PR touches. When the branch-scoped red-`base_branch` signal is 
 on the fallback transport, treat that rule as no-fire and log it.
 
 ### s4 implement *(agent)*
+Before composing the brief, refresh `keel plan --command ship --json` with the selected
+issue title/labels and repeat `--declared-file <repo-relative-path>` for each file the
+implementation is expected to touch. Keep the run's other plan options unchanged. This
+reads learnings before edits exist; an empty diff is not a substitute for declared scope.
+Use that plan's `learnings.section` for both the implement and reviewer briefs.
+
 **Open every implement brief with `learnings.section`, verbatim, when it is not
 empty.** Core retrieved it from the directories `policy_pack.capture.learning.source`
 names — the sink's own directory unless the project says otherwise — ranked against
@@ -657,6 +670,56 @@ implementer that ran it** — pass `keel ship --phase-implementer tests=<label>`
 really did run on a different provider, rather than letting one `--implementer` stand for
 both. The rendered closure comment says
 **`Implement: TDD (tests <sha> by <implementer> → implementation <sha> by <implementer>)`**.
+
+#### Looped s4 (`knobs.loop` / `--loop`)
+
+The loop is a policy *around* the s4 profile, not a third profile: `contract.implement_mode.loop`
+says whether it is on, its budget, and what it wraps — the single implement pass, or
+**phase B only** under `implement_mode: tdd` (phase A is one commit and never iterates; its
+red gate run is its proof). When `enabled` is true:
+
+1. **Iteration 1 is the ordinary implement pass** above, with the same dispatch table, the
+   same retry and fall-back policy, the same attribution.
+2. **After every iteration, run the gates the loop can make green in the worktree and let
+   core decide.** `keel run-gates --defer-jury --json` executes every planned command gate
+   and reports the plan beside the outcomes; the loop judges the guard- and test-phase
+   ones. Save the report and hand it, with the
+   *base* brief, to `keel loop brief`. Add `--loop` to that call when the run was started
+   with `--loop`, so it resolves the policy the contract published:
+
+   ```bash
+   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
+     > "$SCRATCH/iter-$K.json" || true
+   keel loop brief --project .keel/project.yaml --root . --iteration "$K" \
+     --brief "$BRIEF" --gates "$SCRATCH/iter-$K.json" --title "$ISSUE_TITLE" \
+     --out "$SCRATCH/brief-$((K + 1)).md" --json
+   ```
+
+   `decision.status` is the whole verdict: `done` (every blocking gate the loop judges green
+   — proceed to s5), `continue` (dispatch iteration K+1 with the rendered brief), or
+   `budget-exhausted` (non-zero exit — the issue is **blocked**; do not iterate again and do
+   not ask the implementer whether it is finished). `run-gates`'s own exit code is not the
+   verdict: it exits 1 whenever any planned gate is red — a deferred `pre-merge` gate
+   included — which is why the fence tolerates it; an unreadable report fails at `keel loop
+   brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
+   (`decision.deferred`): they are s6–s10's to run, never the implementer's to turn green
+   here, and never counted as green. **The gate run decides, never the delegate's text:** a
+   result that says it is done with red gates is iteration K failing.
+3. **Same seat, one commit per iteration.** Re-dispatch `assignment.implementer` — the loop
+   never escalates; that is s9's ladder — with the rendered brief as `--prompt-file`. Each
+   iteration ends with one commit (`loop(K/N): <title>`); never amend or squash an earlier
+   iteration's commit, the ledger names each one. Never weaken or delete a test to make a
+   gate pass.
+4. **The brief is fixed; the evidence changes.** The rendered brief is the base brief
+   verbatim plus one appended section, **Gate output from iteration K**, quoted as data by
+   core — do not summarise the failure yourself, and do not let the implementer do it.
+5. **Record it.** Pass one `--loop-iteration K=<sha>:<pass|fail>` per iteration to the s11
+   `keel ship --live --append-ledger` call; the ledger's `run_context.implement_loop` and the
+   closure comment's `Implement: loop (k/N iterations: …)` line are rendered from them.
+
+A `--dry-run` runs iteration 1 only and logs the policy it would have applied. Under
+`implement_mode: tdd` the `tdd-order` gate at s8 is unchanged — it reads the first
+implementation commit, so a looped test-first branch passes it as a single-pass one does.
 
 ### s5 classify
 `keel ship .keel/project.yaml --root .` prints, deterministically: the **risk tier** (from
@@ -1444,4 +1507,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=33aca1b774e366cb7bcc6388083e4c8316575e1fc8e90948d3789d80d9434f64 generated_sha256=33aca1b774e366cb7bcc6388083e4c8316575e1fc8e90948d3789d80d9434f64 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=21c534d5322ca87a31a605022487fc745dd9800d455e9623e20fe83bea847b34 generated_sha256=21c534d5322ca87a31a605022487fc745dd9800d455e9623e20fe83bea847b34 -->

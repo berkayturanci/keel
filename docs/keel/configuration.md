@@ -173,6 +173,7 @@ contracts, but executable project behavior remains in extension files or project
 | `evidence_require_distinct_vendors` | boolean | `false` | requires each required review verdict to carry vendor provenance, and no two to share a vendor. **Opt-in: unset is `false` on every risk tier**; set it to `true` on a project whose reviewer bench really spans vendors |
 | `swarm_review_evidence` | boolean | | Swarm landings enforce the same per-PR review-evidence contract as ship s10 (default `true`); `false` is the explicit, logged opt-out |
 | `implement_mode` | `default` \| `tdd` | | the s4 implement profile: one pass (default), or test-first in two phases with the blocking `tdd-order` gate at s8 |
+| `loop` | object | | the s4 iteration loop: after each implement iteration the command gates run; green ends the loop, red starts the next with the same brief plus the gate output, up to `max_iterations` (1–10, default `3`). The gate run is the judge, never the implementer's text; composes with `implement_mode: tdd` (wraps phase B) |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
 | `jury_timeout_s` | integer ≥ 1 | | wall-clock seconds the `jury` built-in may run before it is killed (default `600`) |
 
@@ -1078,6 +1079,86 @@ A `default` run records neither key's value — `implement_mode` is `null` and
 Backbone step ids are unchanged: `tdd` is an s4 profile the way `compound` is a workflow
 profile. Setting it to `default` (or leaving it out) does not change `config_hash`.
 
+#### `loop`
+
+The **s4 iteration loop**. s4 has always been one implement pass: when the gates come back
+red after it, nothing in the backbone sends the work back to the seat that wrote it — the
+s9 fix loop reads *review findings*, and the s6 retry budget is for a branch that has
+already been pushed — so a red `make test` after a single pass fell to the host, or blocked
+an issue that was two iterations from green. `knobs.loop` keeps the implementer iterating,
+with **the gates as the judge**:
+
+```yaml
+knobs:
+  build_gate_cmd: "make test"
+  implement_mode: tdd          # optional; the loop composes with default and tdd alike
+  loop:
+    enabled: true              # defaults to true when the block is present
+    max_iterations: 3          # 1..10; 1 is the single pass keel has always run
+    gate_output_max_bytes: 16384
+```
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `enabled` | boolean | `true` when the block is present | `false` keeps the block's numbers and switches the loop off; `--loop` switches it back on for one run |
+| `max_iterations` | integer 1–10 | `3` | how many implement iterations s4 may run before a red gate run blocks the issue |
+| `gate_output_max_bytes` | integer ≥ 256 | `16384` | cap on each gate's output quoted into the next iteration's brief, in bytes of UTF-8 of gate text (the quote prefix and the escapes sit outside the count) |
+
+The contract, which `/keel:ship` drives and `keel loop brief` decides:
+
+- **Iteration 1 is the ordinary implement pass.** After each iteration the orchestrator
+  runs `keel run-gates --phase s4 --defer-jury --json` inside the worktree — it executes
+  every planned command gate and reports the plan beside the outcomes — and the loop judges
+  the guard- and test-phase gates of kind `command` or built-in (`build`, `lint`, the
+  presets, any `tester`/`test` Lego of kind `command`). An agentic Lego, the jury and a
+  `pre-merge` gate are **deferred**: listed in the brief, never counted as green, never
+  holding the loop open — the review, test and merge phases decide them, and no iteration
+  convenes a panel (a `pre-merge` *command* gate is still executed by that run, so a slow
+  one costs every iteration). Green ends the loop; red starts iteration k+1.
+- **The completion criterion is the gate run, never the implementer's text.** A delegate
+  that says it is done with red gates is iteration k *failing*, not the loop *ending*. A loop
+  whose budget is spent with the gates still red is `budget-exhausted`: `keel loop brief`
+  exits non-zero and the issue is blocked, the same exit shape `keel fixloop brief` uses,
+  so a spent loop cannot be mistaken for an iteration to run.
+- **The brief is fixed; the evidence changes.** Iteration k+1 receives the same brief as
+  iteration 1 plus one appended section, **Gate output from iteration k**, rendered by core
+  from the gate outcomes — gate id, passed / failed / deferred, the finding text, each
+  gate's output truncated at `gate_output_max_bytes` with a visible marker (a line longer
+  than what is left is clipped, not dropped). Gate output is **quoted data**, never
+  instructions: every line is blockquoted, a leading `#` or `>` is escaped, the comment
+  delimiters are defanged and a line reading as one of the brief's trailer keys becomes
+  inline code, so a test's output cannot contribute a heading, a marker or a rule to the
+  prompt; the issue title is rendered as one backtick-free line for the same reason.
+- **Same seat, one commit per iteration.** The loop re-dispatches `assignment.implementer`
+  and never escalates — escalation is s9's ladder. Each iteration ends with one commit,
+  subject `loop(k/N): <issue title>`, so the ledger and the closure can point at what each
+  iteration changed. s10 squash-merges as always, so the base branch history is unaffected.
+- **Composes with `tdd`.** Under `implement_mode: tdd` the loop wraps **phase B only**:
+  phase A (the failing tests) is one commit and never iterates, because its red gate run is
+  its proof. The `tdd-order` gate reads the *first* implementation commit, so a looped
+  test-first branch passes it unchanged; its *other gates green* input is the judged gates
+  (guard and test), so a deferred `pre-merge` gate cannot turn it red on every iteration.
+  The published `wraps` says which phase the loop is around (`implement` or
+  `implementation`).
+- **Published and recorded.** `keel plan` / `keel ship --json` publish
+  `contract.implement_mode.loop` — `{enabled, max_iterations, gate_output_max_bytes, source,
+  wraps}` — beside the s4 profile. A `--live --append-ledger` run records
+  `run_context.implement_loop` with the policy and one entry per iteration
+  (`--loop-iteration K=SHA:pass|fail`: its commit, whether the gates passed after it, and
+  the implementer), and the closure comment renders
+  `Implement: loop (k/N iterations: <sha> red → <sha> green)` — after the TDD phases on a
+  test-first run. A project with neither the knob nor the flag publishes `enabled: false`,
+  records `implement_loop: null`, and its `config_hash` does not rotate.
+- **There is no `--no-loop`**, for the reason there is no `--no-tdd`: a project that
+  configured the contract has said the contract is the policy.
+
+Why this shape and not another: a host stop hook (the Ralph loop) exists in one host and
+leaves no record, while keel runs inside Claude Code, Codex, Gemini CLI and Antigravity
+through one backbone; s9 is post-PR and post-review with a seat ladder, and folding a
+compile error into it would spend review budget on what `make test` already said; and a
+third `implement_mode` value would make `tdd` and the loop mutually exclusive, when the
+loop against tests the implementer has to satisfy is the combination worth having.
+
 #### `gate_timeout_s`
 
 Wall-clock seconds a **command gate** may run before keel kills it. Defaults to `600`
@@ -1367,10 +1448,50 @@ suppresses *identical* fingerprints, and these differ.
 
 Each file opens with front matter the read path relies on — `schema`, `title`,
 `description`, `repo`, `pr`, `issue`, `date`, `fingerprint`, `labels`, `changed_files` —
-then three fixed sections: **What changed**, **What we learned**, **What to do
-differently next time**. Content passes through
+then four fixed sections: **What changed**, **What we learned**, **What to do
+differently next time**, and **Files**. Content passes through
 [`policy_pack.capture_redaction`](#policy_packcapture_redaction) before it is written,
 which is the existing durable-artifact rule rather than a new one.
+
+**Files** is one Markdown link per `changed_files` entry, so a *link-following* reader — a
+knowledge-graph builder such as graphify, a wiki, an agent that reads an index and follows
+its links — gets the file ↔ lesson edge that a path inside a YAML list cannot give it. The
+link text is the repo-relative path; the destination depends on where the sink is:
+
+| sink | destination | example |
+|---|---|---|
+| inside the checkout (a relative `path` that stays under the root — the default) | relative to the document's own directory, POSIX separators, percent-encoded; the prefix is derived lexically from the normalised directory | `[src/keel/capture.py](../../src/keel/capture.py)` |
+| outside it (an absolute or `~` `path`, or a relative one that climbs out such as `../learnings`), owner + repo + head known | the file on GitHub at the merged head (`keel ship --head-sha`) | `[src/keel/capture.py](https://github.com/<owner>/<repo>/blob/<head-sha>/src/keel/capture.py)` |
+| outside it, any of those unknown | the bare path in a code span (fenced with a longer backtick run when the path carries one) — never a relative link that resolves to nothing | `` `src/keel/capture.py` `` |
+
+An empty `changed_files` renders the heading and `_No files recorded._`, so the document
+always has the same four sections. The front matter is not changed by the section: the
+`changed_files` list above the `---` is what keel's own reader matches on. A side effect
+worth knowing: `retrieve_relevant_learnings` scores a document by its text; the front-matter
+list already matched a query naming a file once, and the link matches it again (in its text,
+or in its destination when the text carries an escape), so such a lesson scores higher than
+the front matter alone gave it. Link text escapes the
+bracket pair, the backslash, the angle brackets, the emphasis and strikethrough delimiters,
+the ampersand and the backtick, so `__init__.py` reads as written rather than as a bold
+`init`.
+
+**One directory, two readers.** The sink is a plain Markdown folder, so the same files serve
+a knowledge-graph builder and a note vault. graphify ingests the directory as documents: it
+draws reference edges between the Markdown documents it can link, and a link whose target
+is a code file counts as text — its semantic pass reads the whole file, front matter
+included, so the path reaches it either way and the link is for the readers that follow
+links. Obsidian opens a folder as a vault, shows the front matter as properties and
+draws the links in its graph view, on three conditions. The vault root must be the
+repository root or a directory above it, so an in-repo sink's relative links stay inside
+the vault. The sink must not sit under a dot-prefixed folder: vanilla Obsidian neither
+shows nor indexes one, so the default `.keel/learning/` is invisible to it — point `path`
+at a visible directory such as `docs/learnings/`, or install a community plugin that
+indexes hidden folders. And *Show all file types* (the setting formerly named *Detect all
+file extensions*, under *Files and links*) must be on, so a `.py` or `.yaml` target is
+indexed and the edge resolves — without it the link still renders, as an unresolved node —
+and such a target is an attachment in the graph view, drawn only while its *Attachments*
+filter is on. keel writes no `.obsidian/` folder and no wikilinks (the #1154 contract), so
+nothing in the vault is keel-specific.
 
 Three behaviours worth knowing:
 
@@ -1441,6 +1562,13 @@ It is **smaller** than the sink's on purpose: `{pr}`, `{date}` and `{slug}` name
 document, and a directory naming a single PR would retrieve that PR's lesson and nothing
 else. A sink path that uses one of them still works as a *sink*; as a default source it
 is skipped rather than read as a folder literally called `{pr}`.
+
+Before implementation, `keel plan --command ship --json` retrieves using the issue
+title, labels and repeatable `--declared-file PATH` arguments. Supply expected
+repo-relative paths even when no edits exist yet. The adapter carries the resulting
+`learnings.section` into both briefs. YAML block and flow lists are accepted in
+front matter; ordinary prose such as `Issue: a duplicate marker blocks the merge`
+remains searchable.
 
 **How a file is ranked.** A file with `keel.learning.v1` front matter is matched
 *exactly* on the `labels` and `changed_files` it declares, and **a declaration outranks

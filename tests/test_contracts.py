@@ -170,6 +170,7 @@ class TestBuildCommandContract(unittest.TestCase):
                 "jury_mode",
                 "jury_panel",
                 "implement_mode",
+                "implement_loop",
                 "consent",
             ],
         )

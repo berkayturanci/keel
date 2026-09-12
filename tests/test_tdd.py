@@ -572,5 +572,25 @@ class TestPhaseRecords(unittest.TestCase):
         )
 
 
+class TestLoopedBranchesStillPass(unittest.TestCase):
+    """``knobs.loop`` (#1165) wraps phase B: several implementation commits after the
+    tests commit are the ordinary shape of a looped test-first branch, and the gate
+    reads the *first* one."""
+
+    def test_a_looped_phase_b_passes_the_order_gate(self):
+        result = tdd.check_order(
+            [
+                _commit("a" * 40, "tests/test_x.py"),
+                _commit("b" * 40, "src/x.py", subject="loop(1/3): x"),
+                _commit("c" * 40, "src/x.py", subject="loop(2/3): x"),
+                _commit("d" * 40, "src/x.py", "tests/test_x.py", subject="loop(3/3): x"),
+            ],
+            test_globs=TESTS,
+            gates_green=True,
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.implementation_commit, "b" * 40)
+
+
 if __name__ == "__main__":
     unittest.main()
