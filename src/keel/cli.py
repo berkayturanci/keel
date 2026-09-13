@@ -1388,9 +1388,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     changed = changed_read or []
     # Same source as `changed`, so the tier is decided from one view of the change:
     # an unreadable diff yields {} and every path keeps the tier it already had.
-    artifacts_patches = classify.split_unified_diff(
-        git.diff(base_ref, "HEAD", cwd=args.root)
-    )
+    artifacts_patches = classify.split_unified_diff(git.diff(base_ref, "HEAD", cwd=args.root))
     tier = (
         classify.UNKNOWN_TIER
         if changed_unreadable
