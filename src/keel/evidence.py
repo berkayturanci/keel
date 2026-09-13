@@ -1814,8 +1814,7 @@ def _fields(body: str) -> dict[str, str]:
         # ends the block — the #932 boundary this parser exists to hold.
         # ⚡ Bolt Optimization: Replace generator expression with C-level frozenset.issuperset
         if (
-            line.startswith("<!--")
-            and line.endswith("-->")
+            line.startswith("<!--") and line.endswith("-->")
         ) or _CLASSIFICATION_MARKERS_SET.issuperset(line.split()):
             continue
         match = _FIELD_RE.match(line)
