@@ -116,12 +116,18 @@
   var search = document.getElementById("docs-search-input");
   var noRes = document.getElementById("docs-no-results");
   if (search) {
+    var srTimer = null;
     search.addEventListener("input", function () {
       var q = search.value.trim().toLowerCase();
       var any = false;
+      var count = 0;
       document.querySelectorAll(".doc-art").forEach(function (a) {
         var hit = !q || a.dataset.text.indexOf(q) > -1;
-        a.style.display = hit ? "" : "none"; if (hit) any = true;
+        a.style.display = hit ? "" : "none";
+        if (hit) {
+          any = true;
+          count++;
+        }
       });
       document.querySelectorAll("#docs-nav a").forEach(function (a) {
         a.classList.toggle("hidden", !!q && a.dataset.text.indexOf(q) === -1);
@@ -131,6 +137,16 @@
         g.style.display = visible ? "" : "none";
       });
       if (noRes) noRes.classList.toggle("show", !any);
+
+      var sr = document.getElementById("sr-live-region");
+      if (srTimer) { clearTimeout(srTimer); srTimer = null; }
+      if (sr && q) {
+        var announcement = !any
+          ? 'No docs match that search.'
+          : 'Showing ' + count + (count === 1 ? ' result' : ' results');
+        sr.textContent = "";
+        srTimer = setTimeout(function () { sr.textContent = announcement; }, 300);
+      }
     });
   }
 
