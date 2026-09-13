@@ -63,6 +63,8 @@ CLASSIFICATION_MARKERS: tuple[str, ...] = (
     DEFERRAL_MARKER,
 )
 
+_CLASSIFICATION_MARKERS_SET = frozenset(CLASSIFICATION_MARKERS)
+
 #: The finding raised for a comment whose header names more than one marker.
 MALFORMED_MARKER_FINDING = "malformed-evidence-comment"
 
@@ -787,7 +789,8 @@ def header_markers(body: str) -> tuple[str, ...]:
     :func:`_malformed_marker_findings` reports.
     """
     tokens = _unwrap_html_comment(_header_line(body)).split()
-    if not tokens or any(token not in CLASSIFICATION_MARKERS for token in tokens):
+    # ⚡ Bolt Optimization: Replace generator expression with C-level frozenset.issuperset
+    if not tokens or not _CLASSIFICATION_MARKERS_SET.issuperset(tokens):
         return ()
     return tuple(marker for marker in CLASSIFICATION_MARKERS if marker in tokens)
 
@@ -1809,9 +1812,11 @@ def _fields(body: str) -> dict[str, str]:
         # A marker-only line is the artifact's own header, not a field: skip it and
         # keep reading. A line that merely *mentions* a marker is prose, and prose
         # ends the block — the #932 boundary this parser exists to hold.
-        if (line.startswith("<!--") and line.endswith("-->")) or all(
-            token in CLASSIFICATION_MARKERS for token in line.split()
-        ):
+        # ⚡ Bolt Optimization: Replace generator expression with C-level frozenset.issuperset
+        if (
+            line.startswith("<!--")
+            and line.endswith("-->")
+        ) or _CLASSIFICATION_MARKERS_SET.issuperset(line.split()):
             continue
         match = _FIELD_RE.match(line)
         if match:
