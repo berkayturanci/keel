@@ -1213,6 +1213,17 @@ def _review_assignment(
     )
 
 
+def _ship_base_ref(base_branch: str, root: str) -> str:
+    """Return the canonical base ref for ship's branch diff.
+
+    A fetched ``origin/<base>`` is authoritative when available.  Falling back
+    to the configured local branch keeps dry-run and offline repositories
+    fail-soft while preserving the historical behaviour there.
+    """
+    remote_ref = f"origin/{base_branch}"
+    return remote_ref if git.rev_parse(remote_ref, cwd=root) else base_branch
+
+
 def _cmd_ship(args: argparse.Namespace) -> int:
     if args.dry_run and args.live:
         print("--dry-run and --live cannot be used together", file=sys.stderr)
@@ -1363,7 +1374,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 1
 
-    changed_read = git.changed_files(config.base_branch, "HEAD", cwd=args.root)
+    # The local base branch may lag behind the remote after a branch merged the
+    # current base.  Use the fetched remote tip as the canonical comparison point
+    # so ledger/closure files describe this branch's net change, not the commits
+    # imported by that merge (#1174).  Keep the local ref as a fail-soft fallback
+    # for offline repositories that have no remote-tracking branch.
+    base_ref = _ship_base_ref(config.base_branch, args.root)
+    changed_read = git.changed_files(base_ref, "HEAD", cwd=args.root)
     # None means git could not be read. Classify fail-closed to the strictest tier
     # rather than letting an unreadable diff look like an empty one — an empty list
     # classifies as TIER-2 and would silently drop a reviewer and the gating jury.
@@ -1372,7 +1389,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # Same source as `changed`, so the tier is decided from one view of the change:
     # an unreadable diff yields {} and every path keeps the tier it already had.
     artifacts_patches = classify.split_unified_diff(
-        git.diff(config.base_branch, "HEAD", cwd=args.root)
+        git.diff(base_ref, "HEAD", cwd=args.root)
     )
     tier = (
         classify.UNKNOWN_TIER
@@ -1406,7 +1423,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     except gates.GateError as exc:  # pragma: no cover - defensive duplicate of the build_plan guard
         print(str(exc), file=sys.stderr)
         return 1
-    diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
+    diff_text = git.diff(base_ref, "HEAD", cwd=args.root)
     outcomes, tdd_result = _run_planned_gates(
         specs,
         _gate_runner(

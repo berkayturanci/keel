@@ -1252,6 +1252,24 @@ class TestShipWizard(unittest.TestCase):
 
 
 class TestShip(unittest.TestCase):
+    def test_ship_prefers_fetched_remote_base_for_changed_files(self):
+        """A stale local base must not make imported merge commits part of the ledger."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.rev_parse", return_value="a" * 40) as rev_parse,
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]) as changed,
+                patch("keel.git.diff", return_value=""),
+            ):
+                rc, out, _ = run(["ship", _write_config("'true'"), "--root", d, "--json"])
+
+        self.assertEqual(rc, 0)
+        rev_parse.assert_called_once_with("origin/main", cwd=d)
+        changed.assert_called_once_with("origin/main", "HEAD", cwd=d)
+        payload = json.loads(out)
+        self.assertEqual(payload["result"]["changed_files"], ["src/keel/cli.py"])
+
     def test_clean_merges(self):
         import tempfile
 
