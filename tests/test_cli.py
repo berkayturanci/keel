@@ -23,6 +23,7 @@ from keel import (
     install,
     juryavail,
     ledger,
+    loop,
     model,
     runtime,
     ship,
@@ -14171,6 +14172,77 @@ class TestLoopCommand(unittest.TestCase):
             "- **Implement:** loop (2/3 iterations: aaaaaaa red → bbbbbbb green)",
             data["result"]["closure_comment"],
         )
+
+    def test_ship_records_an_explicit_budget_and_judges_against_it(self):
+        """`--max-iterations` on ship, so a run records the budget it actually used (#1173).
+
+        `keel loop brief` always took an explicit budget; ship did not, so a run that
+        looped four times under `--max-iterations 4` reached s11 and was refused —
+        "iteration 4 exceeds the budget of 3" — against a policy it had never run under,
+        after the work was done.
+        """
+        root, config = self._config()
+        rc, out, _ = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--loop",
+                "--max-iterations",
+                "4",
+                "--loop-iteration",
+                "4=" + "d" * 40 + ":pass",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        block = json.loads(out)["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertTrue(block["enabled"])
+        self.assertEqual(block["max_iterations"], 4)
+        self.assertEqual(block["source"], loop.SOURCE_BUDGET_FLAG)
+        self.assertEqual([i["iteration"] for i in block["iterations"]], [4])
+
+    def test_without_the_flag_the_over_budget_refusal_is_unchanged(self):
+        root, config = self._config()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    root,
+                    "--loop",
+                    "--loop-iteration",
+                    "4=" + "d" * 40 + ":pass",
+                    "--dry-run",
+                    "--json",
+                ]
+            )
+        self.assertNotEqual(rc, 0)
+
+    def test_a_run_with_the_loop_off_publishes_no_budget(self):
+        # `enabled: false` used to sit beside the resolved default while `iteration_problem`
+        # enforced nothing, so the field read as a bound nobody set (#1173).
+        root, config = self._config()
+        rc, out, _ = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--loop-iteration",
+                "1=" + "a" * 40 + ":pass",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        block = json.loads(out)["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertFalse(block["enabled"])
+        self.assertIsNone(block["max_iterations"])
 
     def _refuses(self, value):
         root, config = self._config()

@@ -388,6 +388,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         review_delegates=tuple(args.review_delegate),
         tdd_override=args.tdd,
         loop_override=getattr(args, "loop", False),
+        loop_budget=getattr(args, "max_iterations", None),
         # The panel-availability probe for the tier this contract is being built at
         # (#1066) — the same measurement `_review_assignment` hands the other six
         # surfaces, so `keel plan` cannot publish a panel the run it plans could not
@@ -1267,7 +1268,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         return 1
     mode = tdd.resolve_mode(config.knobs.implement_mode, flag=args.tdd)
     loop_policy = loop.resolve(
-        config.knobs.loop, flag=getattr(args, "loop", False), implement_mode=mode.name
+        config.knobs.loop,
+        flag=getattr(args, "loop", False),
+        implement_mode=mode.name,
+        # `keel plan` has no such flag, so ask rather than assume (#1173).
+        max_iterations=getattr(args, "max_iterations", None),
     )
     loop_problem = loop.iteration_problem(loop_policy, getattr(args, "loop_iteration", None) or ())
     if loop_problem:
@@ -1316,6 +1321,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         tdd_override=args.tdd,
         loop_override=getattr(args, "loop", False),
+        loop_budget=getattr(args, "max_iterations", None),
         # The preflight contract is built before s5 classifies, so its tier is
         # unresolved and no tier's policy can be the panel yet; this probes only when
         # a `review.default: jury` — or the `--team` profile's own `review` — makes the
@@ -2583,7 +2589,7 @@ def _loop_policy(args: argparse.Namespace) -> tuple[loop.LoopPolicy | None, str,
                 True,
                 args.max_iterations,
                 args.gate_output_max_bytes or loop.DEFAULT_GATE_OUTPUT_MAX_BYTES,
-                "flag:--max-iterations",
+                loop.SOURCE_BUDGET_FLAG,
                 loop.WRAPS_IMPLEMENTATION if args.tdd else loop.WRAPS_IMPLEMENT,
             ),
             "ok",
@@ -9069,6 +9075,18 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         "--loop",
         action="store_true",
         help=_LOOP_FLAG_HELP,
+    )
+    # `keel loop brief` has always taken an explicit budget; ship had no counterpart, so a
+    # run that looped four times under `--max-iterations 4` was refused at s11 — "iteration
+    # 4 exceeds the budget of 3" — against a policy it never used, after the work was done
+    # (#1173). Same bound as `loop brief`'s, so one budget cannot be legal to run and
+    # illegal to record.
+    parser.add_argument(
+        "--max-iterations",
+        type=_bounded_int(loop.MIN_ITERATIONS, loop.MAX_ITERATIONS_LIMIT),
+        default=None,
+        help="explicit loop budget for this run (1..10), recorded as its source; "
+        "without it knobs.loop and --loop are the policy",
     )
     _add_wizard_arguments(parser)
     parser.add_argument("--json", action="store_true", help="emit structured JSON")

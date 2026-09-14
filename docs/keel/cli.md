@@ -1138,11 +1138,17 @@ or `enabled: false`) with no `--loop` is a refusal (`status: off`, exit 1), as a
 command cannot read is (`status: no-config`, exit 1), rather than a loop nobody bounded;
 `--project` / `--root` name the project, and `--max-iterations N` (1..10) supplies an
 explicit budget for a run without a readable config. `--gate-output-max-bytes N` (at least
-256) overrides the cap; both flags hold the bounds the schema holds the knob to. The
-explicit budget is not recordable: `keel ship --loop-iteration` judges each number against
-the project's policy (`knobs.loop`, or `--loop`'s default), so a looped run that will be
-recorded needs the knob or the flag, not `--max-iterations`. `--tdd` says the run is in
+256) overrides the cap; both flags hold the bounds the schema holds the knob to.
+`keel ship` takes the same `--max-iterations N`, so a run bounded by the flag records the
+budget it actually used: it outranks both `knobs.loop` and `--loop`, publishes
+`source: flag:--max-iterations`, and `--loop-iteration` is judged against it. Without the
+flag each number is still judged against the project's policy, so `--loop-iteration 4=…`
+under a default budget of 3 is refused as it always was. `--tdd` says the run is in
 `implement_mode: tdd`, so the published `wraps` reads `implementation`.
+
+A run whose policy is **off** publishes `max_iterations: null` in
+`run_context.implement_loop`: it bounded nothing, and the field used to carry the resolved
+default beside `enabled: false` while no number was being enforced.
 
 ```bash
 keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
