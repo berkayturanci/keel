@@ -7353,6 +7353,407 @@ class TestStepVerifyAndRunControls(unittest.TestCase):
         self.assertIn("unknown backbone step", err_unknown)
 
 
+class _GraphqlBlockedGh:
+    """A `gh` that serves the REST API and refuses GraphQL, as a proxy does (#1175).
+
+    This is the host `keel merge` could not run on: `gh pr view --json` and
+    `gh pr merge` both go over GraphQL, so every one of them failed before the claim,
+    the window re-check, the rollup read or the evidence verification had run — and
+    #1169, #1170 and #1171 were squash-merged by hand for that reason.
+
+    Recording every argv is the point: the assertions below are about *which wire*
+    each question went over, and a stub that answered without remembering could not
+    tell a REST run from a GraphQL one that happened to return the same values.
+    """
+
+    def __init__(
+        self,
+        *,
+        rest: dict[str, str] | None = None,
+        merge_ok: bool = True,
+        landed: str = "behind",
+    ):
+        self.calls: list[list[str]] = []
+        self._rest = rest or {}
+        self._merge_ok = merge_ok
+        #: What `compare/<base>...<sha>` reports. `behind` is the post-merge truth: the
+        #: merge commit is reachable from the base branch. `diverged` is the speculative
+        #: test merge REST serves in `merge_commit_sha` while a PR is still open.
+        self._landed = landed
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        if argv[:2] == ["gh", "pr"] or argv[:3] == ["gh", "api", "graphql"]:
+            return CommandResult(False, 1, "HTTP 403: GraphQL is blocked by this proxy")
+        if argv[:2] != ["gh", "api"]:
+            return CommandResult(False, 1, f"unexpected argv: {argv}")
+        if any("/compare/" in part for part in argv):
+            return _proc(self._landed)
+        if "-X" in argv and "PUT" in argv:
+            return (
+                _proc(json.dumps({"merged": True, "sha": "m1"}))
+                if self._merge_ok
+                else CommandResult(False, 1, "422 Head branch was modified")
+            )
+        for fragment, body in self._rest.items():
+            if any(fragment in part for part in argv):
+                return _proc(body)
+        return _proc("[]")
+
+    def argv_for(self, fragment: str) -> list[str] | None:
+        for argv in self.calls:
+            if any(fragment in part for part in argv):
+                return argv
+        return None
+
+
+class TestVerifyMergeOverRest(unittest.TestCase):
+    """The post-merge drift check on the same host (#1175).
+
+    It never ran there at all: `pr_merge_window` and `pr_files` are `gh pr view --json`,
+    so the report came back `unknown` and exited 2 — "could not look" — for every merge
+    on a proxy-restricted runner.
+    """
+
+    #: Merged at 10:00, branched at 09:00. #550 merged inside that window and touched
+    #: the same file, which is the shape a stale-base squash reverts.
+    _PULL_543 = json.dumps(
+        {
+            "created_at": "2026-06-01T09:00:00Z",
+            "merged_at": "2026-06-01T10:00:00Z",
+            "base": {"ref": "main"},
+            "merge_commit_sha": "deadbeef",
+        }
+    )
+    _CLOSED = json.dumps(
+        [
+            {
+                "number": 550,
+                "merged_at": "2026-06-01T09:30:00Z",
+                "updated_at": "2026-06-01T09:30:00Z",
+            },
+            {
+                "number": 543,
+                "merged_at": "2026-06-01T10:00:00Z",
+                "updated_at": "2026-06-01T10:00:00Z",
+            },
+        ]
+    )
+
+    def _verify(self, gh, *, argv_extra=()):
+        with patch("keel.github.run_argv", gh), patch("keel.github.run_argv_retry", gh):
+            return run(
+                [
+                    "verify-merge",
+                    str(PROJECTS / "keel.yaml"),
+                    "--root",
+                    str(REPO_ROOT),
+                    "--pr",
+                    "543",
+                    "--json",
+                    *argv_extra,
+                ]
+            )
+
+    def test_drift_is_found_over_rest(self):
+        gh = _GraphqlBlockedGh(
+            rest={
+                "/pulls/543/files": "a.py",
+                "/pulls/550/files": "a.py",
+                "/pulls/543": self._PULL_543,
+                "/commits/deadbeef": "a.py",
+                "state=closed": self._CLOSED,
+            }
+        )
+        rc, out, _ = self._verify(gh)
+        payload = json.loads(out)
+        self.assertEqual(rc, 1, payload)
+        self.assertEqual(payload["status"], "drift")
+        self.assertEqual(payload["overtaken"], {"a.py": 550})
+        self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
+
+    def test_a_speculative_test_merge_sha_is_not_verified_as_the_merge(self):
+        # REST fills `merge_commit_sha` with the test-merge SHA while a pull request is
+        # open, and serves it briefly after. Judged as the merge, the drift check reads
+        # `refs/pull/N/merge` instead of the squash that landed.
+        gh = _GraphqlBlockedGh(
+            rest={
+                "/pulls/543/files": "a.py",
+                "/pulls/543": self._PULL_543,
+                "/commits/deadbeef": "a.py",
+                "state=closed": self._CLOSED,
+            },
+            landed="diverged",
+        )
+        rc, out, _ = self._verify(gh)
+        payload = json.loads(out)
+        self.assertEqual(rc, 2, payload)
+        self.assertEqual(payload["status"], "unknown")
+
+    def test_the_absence_of_drift_is_reported_over_rest_too(self):
+        # "Reports drift or its absence" is the acceptance, and `unknown` is neither.
+        gh = _GraphqlBlockedGh(
+            rest={
+                "/pulls/543/files": "a.py",
+                "/pulls/550/files": "b.py",
+                "/pulls/543": self._PULL_543,
+                "/commits/deadbeef": "a.py",
+                "state=closed": self._CLOSED,
+            }
+        )
+        rc, out, _ = self._verify(gh)
+        payload = json.loads(out)
+        self.assertEqual(rc, 0, payload)
+        self.assertEqual(payload["status"], "clean")
+        self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
+
+
+class TestMergeOverRest(unittest.TestCase):
+    """`keel merge` on a host whose proxy serves REST and blocks GraphQL (#1175).
+
+    Only the transport changes. The claim, the window re-check, the CI rollup, the
+    evidence contract, the SHA-pinned gates-pass and `MERGED` as the authoritative
+    outcome are the same objects, asked over a different wire.
+    """
+
+    _PULL = json.dumps({"head": {"sha": "abc"}, "mergeable_state": "clean", "merge_commit_sha": ""})
+    _CHECKS = json.dumps(
+        {"check_runs": [{"name": "ci", "status": "completed", "conclusion": "success"}]}
+    )
+    #: The same pull request once it has merged, for the post-merge drift read.
+    _PULL_MERGED = json.dumps(
+        {
+            "head": {"sha": "abc"},
+            "mergeable_state": "clean",
+            "created_at": "2026-06-01T09:00:00Z",
+            "merged_at": "2026-06-01T10:00:00Z",
+            "base": {"ref": "main"},
+            "merge_commit_sha": "deadbeef",
+        }
+    )
+
+    def _merge(self, gh, *, argv_extra=(), json_out=True):
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.github.run_argv", gh),
+            patch("keel.github.run_argv_retry", gh),
+            patch(
+                "keel.cli._verify_merge_evidence",
+                return_value={"enforced": True, "verification": {"status": "pass", "missing": []}},
+            ),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head", return_value=(True, {"run_id": "RUN-1"})),
+            patch("keel.cli._merge_drift_report", return_value={"status": "clean"}),
+        ):
+            return run([*_merge_args(json_out=json_out), *argv_extra])
+
+    def test_a_blocked_graphql_endpoint_still_completes_the_full_s10_path(self):
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS, "/statuses": "[]"}
+        )
+        rc, out, _ = self._merge(gh)
+        payload = json.loads(out)
+        self.assertEqual(rc, 0, payload)
+        self.assertTrue(payload["merged"])
+        self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
+        # Everything the contract reads was still read: the state machine, the rollup
+        # and the head the gates-pass is pinned to.
+        self.assertEqual(payload["ci"]["state"], "pass")
+        self.assertEqual(payload["gates_sha"]["head_sha"], "abc")
+        # And the GraphQL read was tried first, then the probe settled it — a host that
+        # can reach GraphQL must not pay for this path.
+        self.assertIsNotNone(gh.argv_for("--json"))
+        self.assertIsNotNone(gh.argv_for("query=query{__typename}"))
+
+    def test_the_rest_merge_is_pinned_to_the_head_it_verified(self):
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS, "/statuses": "[]"}
+        )
+        self._merge(gh)
+        argv = gh.argv_for("/merge")
+        self.assertIsNotNone(argv)
+        # REST takes `sha` as its own head pin, so the merge is refused server-side if
+        # the branch moved between the snapshot and the call. `gh pr merge` applies no
+        # such pin by default, which makes this transport the stricter of the two.
+        self.assertIn("sha=abc", argv)
+        self.assertIn("merge_method=squash", argv)
+
+    def test_a_rest_merge_that_fails_is_reported_not_retried_over_graphql(self):
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS, "/statuses": "[]"},
+            merge_ok=False,
+        )
+        rc, out, _ = self._merge(gh)
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(payload["merged"])
+        # One merge attempt. A merge that failed for an unknown reason may or may not
+        # have landed, and re-driving it over a second wire is how one pull request
+        # gets merged twice — which is why the transport is fixed before any write.
+        self.assertEqual(sum(1 for argv in gh.calls if "PUT" in argv), 1)
+
+    def test_transport_rest_forces_the_wire_without_probing(self):
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS, "/statuses": "[]"}
+        )
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(out)["transport"], cli.TRANSPORT_REST)
+        # Nothing was asked over GraphQL at all — not the read, and not the probe.
+        self.assertIsNone(gh.argv_for("--json"))
+        self.assertIsNone(gh.argv_for("query=query{__typename}"))
+
+    def test_a_pull_request_rest_cannot_return_is_a_refusal(self):
+        # An unreadable snapshot refuses the merge; it does not merge on defaults.
+        gh = _GraphqlBlockedGh(rest={"/pulls/123": "[]"})
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("unable to read PR merge snapshot", payload["reason"])
+        self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
+
+    def test_a_pull_request_with_no_head_sha_reads_as_no_checks(self):
+        # No head means nothing to ask the check endpoints about, so the rollup stays
+        # empty — which is `no-checks`, and refuses on a non-docs PR rather than passing.
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": json.dumps({"head": {}, "mergeable_state": "clean"})}
+        )
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["ci"]["state"], "no-checks")
+        # The check endpoints were never asked: there was no commit to ask about.
+        self.assertIsNone(gh.argv_for("/check-runs"))
+
+    def test_the_drift_check_after_the_merge_keeps_the_transport_already_chosen(self):
+        """s10's own drift check must not re-probe for a decision already made.
+
+        `keel merge` runs `verify-merge`'s report itself once the merge lands. Letting it
+        resolve the transport again would ask the endpoint a second time on every merge,
+        and could answer differently from the read the merge was actually performed over.
+        """
+        gh = _GraphqlBlockedGh(
+            rest={
+                "/pulls/123/files": "a.py",
+                "/pulls/123": self._PULL_MERGED,
+                "/check-runs": self._CHECKS,
+                "/statuses": "[]",
+                "/commits/deadbeef": "a.py",
+                "state=closed": "[]",
+            }
+        )
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.github.run_argv", gh),
+            patch("keel.github.run_argv_retry", gh),
+            patch(
+                "keel.cli._verify_merge_evidence",
+                return_value={"enforced": True, "verification": {"status": "pass", "missing": []}},
+            ),
+            patch("keel.cli.ledger.read_records", return_value=[]),
+            patch("keel.cli.ledger.gates_pass_for_head", return_value=(True, {"run_id": "RUN-1"})),
+        ):
+            rc, out, _ = run([*_merge_args(json_out=True), "--transport", "rest"])
+        payload = json.loads(out)
+        self.assertEqual(rc, 0, payload)
+        self.assertEqual(payload["merge_verification"]["transport"], cli.TRANSPORT_REST)
+        # Forced, so the probe never ran at all — before or after the merge.
+        self.assertIsNone(gh.argv_for("query=query{__typename}"))
+
+    def test_the_human_output_names_the_fallback_but_not_the_ordinary_wire(self):
+        # A run that went over GraphQL went the way every run goes; a run that fell back
+        # did so because this host cannot reach an endpoint, and that is worth seeing
+        # without asking for `--json`.
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS, "/statuses": "[]"}
+        )
+        _, out, _ = self._merge(gh, json_out=False)
+        self.assertIn("transport: gh-rest", out)
+        self.assertIn("GraphQL is unreachable", out)
+
+    def test_an_unreadable_rollup_refuses_rather_than_reading_as_empty(self):
+        """ "No check has reported" and "I could not ask" are different answers.
+
+        An empty rollup is `no-checks`, which the docs-only carve-out is allowed to merge
+        through. Collapsing an unreadable one into it would let an unreachable endpoint
+        stand in for a green head on any docs pull request.
+        """
+
+        class _NoChecks(_GraphqlBlockedGh):
+            def __call__(self, argv, **kwargs):
+                if any("/check-runs" in part for part in argv):
+                    self.calls.append(list(argv))
+                    return CommandResult(False, 1, "502 Bad Gateway")
+                return super().__call__(argv, **kwargs)
+
+        gh = _NoChecks(rest={"/pulls/123": self._PULL})
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("unable to read the check rollup", payload["reason"])
+        # And the refusal names the wire it actually failed on.
+        self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
+
+    def test_a_failing_commit_status_blocks_the_merge_over_rest(self):
+        # The non-Actions half of the rollup has to be able to fail a merge, not only to
+        # make an empty one look green.
+        gh = _GraphqlBlockedGh(
+            rest={
+                "/pulls/123": self._PULL,
+                "/check-runs": '{"total_count": 0, "check_runs": []}',
+                "/statuses": '[{"context": "jenkins", "state": "failure"}]',
+            }
+        )
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["ci"]["state"], "fail")
+        self.assertIn("CI is fail", payload["reason"])
+
+    def test_an_unreadable_statuses_half_refuses_too(self):
+        # Both halves, the same rule: a half that could not be read is not an empty half.
+        class _NoStatuses(_GraphqlBlockedGh):
+            def __call__(self, argv, **kwargs):
+                if any("/statuses" in part for part in argv):
+                    self.calls.append(list(argv))
+                    return CommandResult(False, 1, "502 Bad Gateway")
+                return super().__call__(argv, **kwargs)
+
+        gh = _NoStatuses(rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS})
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        self.assertEqual(rc, 1)
+        self.assertIn("unable to read the commit statuses", json.loads(out)["reason"])
+
+    def test_a_forced_rest_run_does_not_claim_graphql_is_unreachable(self):
+        # `--transport rest` never probes, so the human line must not report a fact the
+        # run did not establish — the wire is still named.
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS, "/statuses": "[]"}
+        )
+        _, out, _ = self._merge(gh, argv_extra=("--transport", "rest"), json_out=False)
+        self.assertIn("transport: gh-rest", out)
+        self.assertNotIn("unreachable", out)
+
+    def test_a_refusal_after_the_fallback_names_rest_not_graphql(self):
+        # The run started on GraphQL, the probe moved it to REST, and the REST read then
+        # failed for its own reason. Reporting `gh-graphql` there names a wire the
+        # failing call never touched.
+        gh = _GraphqlBlockedGh(rest={"/pulls/123": "[]"})
+        _, out, _ = self._merge(gh)
+        self.assertEqual(json.loads(out)["transport"], cli.TRANSPORT_REST)
+
+    def test_an_empty_rest_rollup_is_no_checks_not_a_pass(self):
+        # The same rule the GraphQL rollup gets: nothing has reported for this head, so
+        # the docs-only carve-out decides, not "CI is green".
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": self._PULL, "/check-runs": '{"check_runs": []}', "/statuses": "[]"}
+        )
+        rc, out, _ = self._merge(gh)
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["ci"]["state"], "no-checks")
+
+
 class TestCoreMerge(unittest.TestCase):
     def test_claim_and_release_cli(self):
         with tempfile.TemporaryDirectory() as d:
@@ -7861,6 +8262,9 @@ class TestCoreMerge(unittest.TestCase):
             patch("keel.cli.runtime.detect", return_value=fake_report),
             patch("keel.cli.window.is_merge_open", return_value=True),
             patch("keel.cli.github.pr_merge_snapshot", return_value=_proc("gh failed", ok=False)),
+            # The endpoint answers; this `gh` failure is about the pull request, so the
+            # refusal stands rather than being re-asked over REST (#1175).
+            patch("keel.cli.github.graphql_available", return_value=True),
         ):
             rc_snapshot, out_snapshot, _ = run(_merge_args(json_out=True))
         with (
@@ -10073,7 +10477,12 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertIn("clean", out)
 
     def test_an_unmerged_pr_is_unknown_not_clean(self):
-        rc, out, _ = self._run(window=None)
+        # GraphQL is reachable, so the unreadable window is a fact about the pull
+        # request and not about the wire — which is exactly what the probe is for
+        # (#1175). Without it, "no merge commit yet" and "the endpoint is blocked"
+        # look identical from here, and the report would be rebuilt over REST.
+        with patch.object(cli.github, "graphql_available", return_value=True):
+            rc, out, _ = self._run(window=None)
         self.assertEqual(rc, 2, "not looking is not a pass")
         self.assertIn("unknown", out)
         self.assertIn("no merge commit", out)

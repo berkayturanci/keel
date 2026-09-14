@@ -155,6 +155,11 @@ heavier follow-up and is out of scope.
 
 ## Core-owned merge execution
 
+`keel merge` and `keel verify-merge` take `--transport auto|graphql|rest` and record which
+wire answered (`transport: gh-graphql | gh-rest`). A host whose proxy blocks GitHub's
+GraphQL endpoint can still run the sanctioned path: the reads and the merge go over REST,
+and every other term of the contract is unchanged.
+
 Ship-style adapters must route s10 through `keel merge`; raw `gh pr merge` calls bypass
 deterministic enforcement and are a spec violation. The command performs the live merge in
 one fail-closed path:
