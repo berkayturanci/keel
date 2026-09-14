@@ -89,3 +89,9 @@ line is hot — a tight loop over thousands of items, called repeatedly. Do not 
 code that runs a handful of times per command, and especially not in
 `src/keel/evidence.py`, which decides whether a PR may merge: churn there needs to buy
 something. keel#789 proposed exactly that and was closed. See keel#791.
+
+## 2026-08-18 - Avoid micro-optimizations that destroy documentation
+
+**Learning:** Replacing multiple `re.compile` patterns inside an `any()` call with a single combined regex string joined by `|` does provide a marginal performance gain by avoiding Python-level looping. However, on paths that only run a handful of times (e.g. `_is_rate_limited` which runs once per delegate run), the speedup (e.g., 0.08 µs) is completely unobservable. More importantly, doing so can destroy the ability to document complex regex patterns individually (like `re.compile(r"429\b(?!.*\b(?:review|sha|diff)\b)")`), making the code harder to understand and maintain.
+
+**Action:** Avoid combining well-documented tuple elements into a single regex string if the performance gain is unobservable (e.g. not in a highly trafficked hot path) and the change obscures the intent of individual patterns. Speed without correctness and maintainability is useless.

@@ -248,6 +248,9 @@ def build_command_contract(
     host_agent: str = agents.HOST_DEFAULT,
     tdd_override: bool = False,
     loop_override: bool = False,
+    #: An explicit `--max-iterations` budget for this run, which outranks both the
+    #: flag and the knob and publishes its own source (#1173).
+    loop_budget: int | None = None,
     effort: str | None = None,
     team_profile: str | None = None,
     jury_availability: Mapping[str, Any] | None = None,
@@ -262,7 +265,10 @@ def build_command_contract(
     # The s4 iteration policy rides inside `implement_mode` (#1165): it is not a third
     # profile but a policy around whichever profile is running, and `wraps` says which.
     loop_policy = loop.resolve(
-        config.knobs.loop, flag=loop_override, implement_mode=implement_mode.name
+        config.knobs.loop,
+        flag=loop_override,
+        implement_mode=implement_mode.name,
+        max_iterations=loop_budget,
     )
     declared_side_effects = command_side_effects(command, config, requirement, loaded)
     graph = command_graph(command, profile=profile)

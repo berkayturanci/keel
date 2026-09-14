@@ -64,6 +64,10 @@ MIN_GATE_OUTPUT_BYTES = 256
 SOURCE_FLAG = "flag:--loop"
 SOURCE_KNOB = "knobs.loop"
 SOURCE_OFF = "off"
+#: An explicit ``--max-iterations`` budget, which needs no config and turns the loop
+#: on by itself. `keel loop brief` always had it; `keel ship` gained it in #1173, so a
+#: run that looped under an explicit budget can record the budget it actually used.
+SOURCE_BUDGET_FLAG = "flag:--max-iterations"
 
 #: Which s4 phase the loop is around: the single implement pass, or ``tdd`` phase B.
 WRAPS_IMPLEMENT = "implement"
@@ -154,8 +158,9 @@ def resolve(
     *,
     flag: bool = False,
     implement_mode: str = "default",
+    max_iterations: int | None = None,
 ) -> LoopPolicy:
-    """The loop policy for this run: ``--loop`` > ``knobs.loop`` > off.
+    """The loop policy for this run: ``--max-iterations`` > ``--loop`` > ``knobs.loop`` > off.
 
     A ``knobs.loop`` block is a project asking for the loop: ``enabled`` defaults to true
     when the block is present, so ``loop: {max_iterations: 5}`` is not a dormant setting.
@@ -166,9 +171,15 @@ def resolve(
 
     ``implement_mode`` decides what the loop is *around*: ``tdd`` phase B, else the single
     implement pass. Phase A is never iterated.
+
+    ``max_iterations`` is an **explicit budget for this run** and outranks everything: it
+    needs no config, turns the loop on by itself, and publishes
+    :data:`SOURCE_BUDGET_FLAG` so the record says where the number came from. Without it
+    the budget comes from the knob or the default, unchanged. Callers pass the parsed
+    flag; the bound (1..10) is the parser's, as it is for ``keel loop brief``.
     """
     knob = configured if isinstance(configured, Mapping) else None
-    max_iterations = _int(
+    budget = _int(
         knob.get("max_iterations") if knob else None,
         DEFAULT_MAX_ITERATIONS,
         low=MIN_ITERATIONS,
@@ -180,11 +191,13 @@ def resolve(
         low=MIN_GATE_OUTPUT_BYTES,
     )
     wraps = WRAPS_IMPLEMENTATION if implement_mode == "tdd" else WRAPS_IMPLEMENT
+    if max_iterations is not None:
+        return LoopPolicy(True, max_iterations, max_bytes, SOURCE_BUDGET_FLAG, wraps)
     if flag:
-        return LoopPolicy(True, max_iterations, max_bytes, SOURCE_FLAG, wraps)
+        return LoopPolicy(True, budget, max_bytes, SOURCE_FLAG, wraps)
     if knob is not None and knob.get("enabled", True) is not False:
-        return LoopPolicy(True, max_iterations, max_bytes, SOURCE_KNOB, wraps)
-    return LoopPolicy(False, max_iterations, max_bytes, SOURCE_OFF, wraps)
+        return LoopPolicy(True, budget, max_bytes, SOURCE_KNOB, wraps)
+    return LoopPolicy(False, budget, max_bytes, SOURCE_OFF, wraps)
 
 
 @dataclass(frozen=True)
@@ -632,7 +645,13 @@ def iteration_block(
         return None
     return {
         "enabled": policy.enabled,
-        "max_iterations": policy.max_iterations,
+        # An off policy bounded nothing, so it publishes no bound (#1173). It used to
+        # carry the resolved default — or a disabled block's own number — next to
+        # `enabled: false`, and `iteration_problem` skips the budget check entirely
+        # when the policy is off, so `--loop-iteration 99=…` was accepted and recorded
+        # beside `max_iterations: 3`. The field read like a bound while nothing was
+        # bounded; `closure._loop_part` already renders a missing budget as `?`.
+        "max_iterations": policy.max_iterations if policy.enabled else None,
         "wraps": policy.wraps,
         "source": policy.source,
         "iterations": records,

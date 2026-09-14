@@ -23,6 +23,7 @@ from keel import (
     install,
     juryavail,
     ledger,
+    loop,
     model,
     runtime,
     ship,
@@ -516,6 +517,32 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(intake["status"], "ready")
         self.assertTrue(intake["provided"])
         self.assertEqual(intake["ledger_record"]["readiness"], "ready")
+
+    def test_plan_issue_intake_ignores_out_of_scope_section_heading(self):
+        body = (
+            "## Problem\nAgents need issue readiness.\n\n"
+            "## Deliverable\nExpose a structured intake record.\n\n"
+            "## Acceptance criteria\n"
+            "- Dry-run JSON includes readiness.\n\n"
+            "## Out of scope\n- Replacing the entire workflow engine.\n"
+        )
+        rc, out, _ = run(
+            [
+                "plan",
+                str(PROJECTS / "example-android.yaml"),
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ship",
+                "--issue-title",
+                "Add intake",
+                "--issue-body",
+                body,
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["contract"]["issue_intake"]["status"], "ready")
 
     def test_plan_json_can_expose_other_command_graph(self):
         rc, out, _ = run(
@@ -1252,6 +1279,24 @@ class TestShipWizard(unittest.TestCase):
 
 
 class TestShip(unittest.TestCase):
+    def test_ship_prefers_fetched_remote_base_for_changed_files(self):
+        """A stale local base must not make imported merge commits part of the ledger."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.rev_parse", return_value="a" * 40) as rev_parse,
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]) as changed,
+                patch("keel.git.diff", return_value=""),
+            ):
+                rc, out, _ = run(["ship", _write_config("'true'"), "--root", d, "--json"])
+
+        self.assertEqual(rc, 0)
+        rev_parse.assert_called_once_with("origin/main", cwd=d)
+        changed.assert_called_once_with("origin/main", "HEAD", cwd=d)
+        payload = json.loads(out)
+        self.assertEqual(payload["result"]["changed_files"], ["src/keel/cli.py"])
+
     def test_clean_merges(self):
         import tempfile
 
@@ -14127,6 +14172,77 @@ class TestLoopCommand(unittest.TestCase):
             "- **Implement:** loop (2/3 iterations: aaaaaaa red → bbbbbbb green)",
             data["result"]["closure_comment"],
         )
+
+    def test_ship_records_an_explicit_budget_and_judges_against_it(self):
+        """`--max-iterations` on ship, so a run records the budget it actually used (#1173).
+
+        `keel loop brief` always took an explicit budget; ship did not, so a run that
+        looped four times under `--max-iterations 4` reached s11 and was refused —
+        "iteration 4 exceeds the budget of 3" — against a policy it had never run under,
+        after the work was done.
+        """
+        root, config = self._config()
+        rc, out, _ = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--loop",
+                "--max-iterations",
+                "4",
+                "--loop-iteration",
+                "4=" + "d" * 40 + ":pass",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        block = json.loads(out)["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertTrue(block["enabled"])
+        self.assertEqual(block["max_iterations"], 4)
+        self.assertEqual(block["source"], loop.SOURCE_BUDGET_FLAG)
+        self.assertEqual([i["iteration"] for i in block["iterations"]], [4])
+
+    def test_without_the_flag_the_over_budget_refusal_is_unchanged(self):
+        root, config = self._config()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    root,
+                    "--loop",
+                    "--loop-iteration",
+                    "4=" + "d" * 40 + ":pass",
+                    "--dry-run",
+                    "--json",
+                ]
+            )
+        self.assertNotEqual(rc, 0)
+
+    def test_a_run_with_the_loop_off_publishes_no_budget(self):
+        # `enabled: false` used to sit beside the resolved default while `iteration_problem`
+        # enforced nothing, so the field read as a bound nobody set (#1173).
+        root, config = self._config()
+        rc, out, _ = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--loop-iteration",
+                "1=" + "a" * 40 + ":pass",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        block = json.loads(out)["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertFalse(block["enabled"])
+        self.assertIsNone(block["max_iterations"])
 
     def _refuses(self, value):
         root, config = self._config()

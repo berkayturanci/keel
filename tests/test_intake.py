@@ -197,6 +197,55 @@ class TestIssueIntake(unittest.TestCase):
         self.assertEqual(record["questions"], [])
         self.assertFalse(record["can_mutate_code"])
 
+    def test_scope_exclusion_heading_and_bullets_do_not_mark_issue(self):
+        for heading in ("Out of scope", "Non-goals", "Not in scope"):
+            with self.subTest(heading=heading):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=(
+                        "## Problem\nUsers need safer sync.\n\n"
+                        "## Deliverable\nImplement the guard.\n\n"
+                        "## Acceptance criteria\n- Guard blocks unsafe sync.\n\n"
+                        f"## {heading}\n- Mobile UI changes.\n"
+                    ),
+                )
+                self.assertEqual(record["status"], intake.READY)
+
+    def test_explicit_issue_scope_declaration_is_reported_with_sentence(self):
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=(
+                "This issue is out of scope for the current release.\n\n"
+                "## Deliverable\nImplement the guard.\n\n"
+                "## Acceptance criteria\n- Guard blocks unsafe sync.\n"
+            ),
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+        self.assertIn("This issue is out of scope", record["reason"])
+
+    def test_not_planned_title_is_an_explicit_scope_declaration(self):
+        record = intake.assess_issue(
+            title="Not planned: support legacy sync",
+            body=(
+                "## Deliverable\nDocument the decision.\n\n"
+                "## Acceptance criteria\n- Decision is recorded.\n"
+            ),
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+        self.assertIn("Not planned", record["reason"])
+
+    def test_out_of_scope_label_names_the_label_in_reason(self):
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=(
+                "## Deliverable\nImplement the guard.\n\n"
+                "## Acceptance criteria\n- Guard blocks unsafe sync.\n"
+            ),
+            labels=("out-of-scope",),
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+        self.assertIn("out-of-scope", record["reason"])
+
     def test_multi_word_blocker_across_newline(self):
         record = intake.assess_issue(
             title="Add plugin publishing",

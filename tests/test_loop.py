@@ -587,6 +587,41 @@ class TestIterationBlock(unittest.TestCase):
         self.assertFalse(block["enabled"])
         self.assertEqual(len(block["iterations"]), 1)
 
+    def test_an_off_policy_publishes_no_budget(self):
+        """`enabled: false` beside a number read as a bound nobody set (#1173).
+
+        `iteration_problem` skips the budget check entirely when the policy is off, so
+        `--loop-iteration 99=…` was accepted and then recorded next to `max_iterations: 3`
+        — the resolved default. A field that says three while ninety-nine was allowed is
+        worse than no field.
+        """
+        for label, configured in (("no knob", None), ("disabled block", {"enabled": False})):
+            with self.subTest(policy=label):
+                block = loop.iteration_block(loop.resolve(configured), [(1, "a" * 40, True)])
+                self.assertFalse(block["enabled"])
+                self.assertIsNone(block["max_iterations"])
+
+    def test_a_disabled_block_does_not_publish_its_own_number_either(self):
+        # The knob keeps its numbers when switched off, and that is the one an off policy
+        # would most plausibly leak.
+        block = loop.iteration_block(
+            loop.resolve({"enabled": False, "max_iterations": 7}), [(1, "a" * 40, True)]
+        )
+        self.assertIsNone(block["max_iterations"])
+
+    def test_an_explicit_budget_is_recorded_with_its_own_source(self):
+        block = loop.iteration_block(loop.resolve(None, max_iterations=4), [(4, "d" * 40, True)])
+        self.assertTrue(block["enabled"])
+        self.assertEqual(block["max_iterations"], 4)
+        self.assertEqual(block["source"], loop.SOURCE_BUDGET_FLAG)
+
+    def test_an_explicit_budget_outranks_the_knob_and_the_flag(self):
+        # Otherwise a run bounded at 4 is judged against the project's 3 at s11.
+        policy = loop.resolve({"max_iterations": 3}, flag=True, max_iterations=4)
+        self.assertEqual(policy.max_iterations, 4)
+        self.assertEqual(policy.source, loop.SOURCE_BUDGET_FLAG)
+        self.assertIsNone(loop.iteration_problem(policy, [(4, "d" * 7, True)]))
+
 
 class TestIterationProblem(unittest.TestCase):
     def test_a_duplicate_and_an_over_budget_number_are_refused(self):
