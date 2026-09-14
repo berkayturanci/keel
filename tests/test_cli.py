@@ -7635,6 +7635,46 @@ class TestMergeOverRest(unittest.TestCase):
         # And the refusal names the wire it actually failed on.
         self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
 
+    def test_a_failing_commit_status_blocks_the_merge_over_rest(self):
+        # The non-Actions half of the rollup has to be able to fail a merge, not only to
+        # make an empty one look green.
+        gh = _GraphqlBlockedGh(
+            rest={
+                "/pulls/123": self._PULL,
+                "/check-runs": '{"total_count": 0, "check_runs": []}',
+                "/statuses": '[{"context": "jenkins", "state": "failure"}]',
+            }
+        )
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["ci"]["state"], "fail")
+        self.assertIn("CI is fail", payload["reason"])
+
+    def test_an_unreadable_statuses_half_refuses_too(self):
+        # Both halves, the same rule: a half that could not be read is not an empty half.
+        class _NoStatuses(_GraphqlBlockedGh):
+            def __call__(self, argv, **kwargs):
+                if any("/statuses" in part for part in argv):
+                    self.calls.append(list(argv))
+                    return CommandResult(False, 1, "502 Bad Gateway")
+                return super().__call__(argv, **kwargs)
+
+        gh = _NoStatuses(rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS})
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        self.assertEqual(rc, 1)
+        self.assertIn("unable to read the commit statuses", json.loads(out)["reason"])
+
+    def test_a_forced_rest_run_does_not_claim_graphql_is_unreachable(self):
+        # `--transport rest` never probes, so the human line must not report a fact the
+        # run did not establish — the wire is still named.
+        gh = _GraphqlBlockedGh(
+            rest={"/pulls/123": self._PULL, "/check-runs": self._CHECKS, "/statuses": "[]"}
+        )
+        _, out, _ = self._merge(gh, argv_extra=("--transport", "rest"), json_out=False)
+        self.assertIn("transport: gh-rest", out)
+        self.assertNotIn("unreachable", out)
+
     def test_a_refusal_after_the_fallback_names_rest_not_graphql(self):
         # The run started on GraphQL, the probe moved it to REST, and the REST read then
         # failed for its own reason. Reporting `gh-graphql` there names a wire the

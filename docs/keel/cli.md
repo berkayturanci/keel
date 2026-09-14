@@ -232,6 +232,14 @@ re-routes a merge.
 before anything is written. A merge that failed for an unknown reason may or may not have
 landed, and re-driving it over a second wire is how one pull request gets merged twice.
 
+The REST rollup is assembled from two endpoints — `commits/<sha>/check-runs` and
+`commits/<sha>/statuses` — and **both have to be readable**. An empty rollup means no check
+has reported, which the docs-only carve-out is allowed to merge through; a half that could
+not be read means nothing of the kind, so either failing refuses the merge. A commit status
+carries its verdict in `state`, which the rollup reducer does not read, so it is translated
+into the `status`/`conclusion` pair that reducer does read — untranslated, the half that
+reports non-Actions CI could only ever turn `no-checks` into `pass`, never fail a merge.
+
 The REST merge is also the **stricter** of the two: it sends `sha=<the head the gates-pass
 was checked against>`, so the API refuses it if the branch moved since the snapshot.
 `gh pr merge` applies no such pin by default.

@@ -4394,12 +4394,16 @@ def _finish_merge(
         if isinstance(ci_payload, dict):
             print(f"  ci     : {ci_payload.get('state')}")
         transport = payload.get("transport")
-        if transport == TRANSPORT_REST:
+        if transport == TRANSPORT_REST and getattr(args, "transport", "auto") == "auto":
             # Named only when it is the unusual one. A run that went over GraphQL went
             # the way every other run goes, and a line saying so on every merge is noise;
             # a run that fell back did so because this host cannot reach an endpoint, and
             # that is worth seeing without asking for `--json`.
+            # Only `auto` learned that, by asking. A forced `--transport rest` never
+            # probed, so saying so would state a fact the run did not establish.
             print(f"  transport: {transport} (GraphQL is unreachable from this host)")
+        elif transport == TRANSPORT_REST:
+            print(f"  transport: {transport}")
         evidence_payload = payload.get("evidence")
         if isinstance(evidence_payload, dict):
             verification = evidence_payload.get("verification")
@@ -4528,11 +4532,12 @@ def _rest_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
             # endpoint stand in for a green head on any docs PR. The GraphQL path raises
             # here for the same reason — a failed `gh pr view` is not an empty rollup.
             raise ValueError(f"unable to read the check rollup for {head_sha}")
-        rollup = list(
-            github.rest_rollup(
-                checks, github.rest_json(github.rest_commit_statuses(head_sha, cwd=cwd))
-            )
-        )
+        statuses = github.rest_json(github.rest_commit_statuses(head_sha, cwd=cwd))
+        if statuses is None:
+            # The same rule as the check runs above, and for the same reason: a half of
+            # the rollup that could not be read is not a half that is empty.
+            raise ValueError(f"unable to read the commit statuses for {head_sha}")
+        rollup = list(github.rest_rollup(checks, statuses))
     return {
         "head_sha": head_sha,
         "merge_state": state.upper() if isinstance(state, str) and state else "UNKNOWN",

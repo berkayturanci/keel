@@ -779,12 +779,36 @@ def rest_rollup(check_runs: object, statuses: object) -> list[dict]:
                 "completedAt": run.get("completed_at"),
             }
         )
-    rows = statuses if isinstance(statuses, list) else []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        entries.append({"context": row.get("context"), "state": _upper(row.get("state"))})
+    for row in _status_rows(statuses):
+        # **Translated into the fields the reducer reads.** A commit status carries its
+        # verdict in `state`, which `_ci_rollup_state` does not look at — so carried
+        # through as-is, a *failing* Jenkins status counted as a check that had reported
+        # and turned `no-checks` into `pass`. The half that can only ever make CI greener
+        # is the wrong half to add to a merge gate.
+        state = _upper(row.get("state"))
+        pending = state in ("PENDING", "EXPECTED")
+        entries.append(
+            {
+                "context": row.get("context"),
+                "state": state,
+                "status": "PENDING" if pending else "COMPLETED",
+                "conclusion": None if pending else state,
+                "completedAt": row.get("updated_at"),
+                "startedAt": row.get("created_at"),
+            }
+        )
     return entries
+
+
+def _status_rows(payload: object) -> list[dict]:
+    """The rows of a `commits/<sha>/statuses` body, across every page.
+
+    That endpoint *does* answer with an array, so `--paginate` yields a list of pages —
+    which :func:`rest_json` flattens — or a single page's list. Both arrive here as a
+    list of row objects; anything else contributes nothing.
+    """
+    rows = payload if isinstance(payload, list) else []
+    return [row for row in rows if isinstance(row, dict)]
 
 
 def _upper(value: object) -> str | None:

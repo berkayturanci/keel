@@ -197,10 +197,31 @@ class TestRestTransport(unittest.TestCase):
                 "completedAt": None,
             },
         )
-        # A commit status carries what the GraphQL rollup carries for one, which is
-        # also all the reducer reads from it — but it still makes the rollup non-empty,
-        # and that is the difference between `pass` and `no-checks`.
-        self.assertEqual(rollup[1], {"context": "legacy/ci", "state": "SUCCESS"})
+        # A commit status keeps its `state`, and also arrives translated into the two
+        # fields the reducer reads — without which the half that reports non-Actions CI
+        # could only ever turn `no-checks` into `pass`.
+        self.assertEqual(rollup[1]["context"], "legacy/ci")
+        self.assertEqual(rollup[1]["state"], "SUCCESS")
+        self.assertEqual(rollup[1]["conclusion"], "SUCCESS")
+
+    def test_a_failing_commit_status_fails_the_rollup(self):
+        """`state` is where a commit status carries its verdict, and the reducer reads
+        `conclusion`/`status` — so carried through untranslated, a **failing** Jenkins
+        status counted as a check that had reported and scored the head `pass`. A half
+        of a merge gate that can only ever make CI greener is the wrong half to add.
+        """
+        for state, expected in (
+            ("failure", "FAILURE"),
+            ("error", "ERROR"),
+            ("success", "SUCCESS"),
+        ):
+            with self.subTest(state=state):
+                row = github.rest_rollup(None, [{"context": "jenkins", "state": state}])[0]
+                self.assertEqual(row["conclusion"], expected)
+                self.assertEqual(row["status"], "COMPLETED")
+        pending = github.rest_rollup(None, [{"context": "jenkins", "state": "pending"}])[0]
+        self.assertIsNone(pending["conclusion"])
+        self.assertEqual(pending["status"], "PENDING")
 
     def test_a_full_page_that_did_not_reach_past_the_window_is_unreadable(self):
         """The truncation rule, re-derived on REST's only usable sort key.
