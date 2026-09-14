@@ -50,28 +50,30 @@ _SCOPE_EXCLUSION_HEADINGS = frozenset(
         "not in this change",
     }
 )
-_OUT_OF_SCOPE_DECLARATION_RE = re.compile(
-    r"(?:^(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b|"
-    r"\b(?:this|the)\s+issue\s+(?:is|was|remains)\s+"
-    r"(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b)",
+#: A **title** declaring the issue closed. Anchored at the start, which is safe here and
+#: only here: a title is one line with no markdown in front of it.
+_OUT_OF_SCOPE_TITLE_RE = re.compile(
+    r"^(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b",
     re.IGNORECASE,
 )
-#: Markdown a sentence can *start with* that is not part of the sentence: a list
-#: marker, a task box, a block quote, an emphasis run. `_sentences` joins stripped
-#: lines and keeps these, and the declaration pattern's first alternative is anchored
-#: at the start — so `- Out of scope: closing.` slipped through while
-#: `Out of scope: closing.` did not. Found by the round-3 gate seat, which also noted
-#: `1. ` happened to work only because `_sentences` splits on the `.`.
-_LEADING_MARKUP_RE = re.compile(
-    r"^(?:\s*(?:[-*+]|\d+[.)])\s+|\s*>\s*|\s*\[[ xX]?\]\s*|\*{1,3}|_{1,3})+"
+#: A declaration **in the body**, which must name the issue. Unanchored on purpose.
+#:
+#: The anchored form was tried in the body for eight review rounds and failed differently
+#: each time, because "starts the sentence" is not a property markdown preserves: a list
+#: marker, a block quote, a thematic break, an HTML comment or an image above the line, a
+#: heading glued on by sentence-joining, or a wrap that moved the phrase to a line start
+#: each broke it in one direction or the other — a closed issue let through, or an
+#: in-scope one refused. Requiring the issue to be named removes the anchor and with it
+#: the whole class. `Out of scope: mobile UI` and `Out of scope: closing` are the same
+#: string; only "this issue is out of scope" says which one is meant.
+_OUT_OF_SCOPE_DECLARATION_RE = re.compile(
+    # `(?<![A-Za-z0-9])` rather than `\b`: an underscore *is* a word character, so `\b`
+    # refuses `_This issue is out of scope_` — italics written the other way round.
+    r"(?<![A-Za-z0-9])(?:this|the)\s+issue\s+(?:is|was|remains)\s+"
+    r"(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)"
+    r"(?![A-Za-z0-9])",
+    re.IGNORECASE,
 )
-
-
-def _declaration_candidate(text: str) -> str:
-    """One sentence with any leading markdown markers taken off its front."""
-    return _LEADING_MARKUP_RE.sub("", text.strip()).strip()
-
-
 _DOCS_RE = re.compile(r"\b(doc|docs|documentation|readme|changelog)\b", re.IGNORECASE)
 _TESTS_RE = re.compile(r"\b(test|tests|coverage|ci|lint)\b", re.IGNORECASE)
 _BLOCKED_LABELS = frozenset({"blocked", "status:blocked", "needs-dependency"})
@@ -243,29 +245,6 @@ def _bullets(text: str) -> list[str]:
     return items
 
 
-def _structural_lines(text: str) -> list[str]:
-    """Lines that stand on their own: list items, markers removed.
-
-    Needed because `_sentences` joins lines that carry no terminator, so a plain bullet
-    above a declaration — ``- Discussed with the team`` then ``- Out of scope:
-    closing.`` — put the declaration mid-sentence, past the pattern's anchor.
-
-    **List items only.** Splitting on every line re-anchors the pattern at each wrap and
-    refuses prose that merely mentions scope — ``The parser rewrite is\nout of scope for
-    this change.`` came back `out-of-scope`, the inverse of #1188. Block quotes were
-    tried and removed for the same reason: Markdown prefixes *every* continuation line
-    of a quote with ``>``, so a wrapped quote is a wrap wearing a marker. A quoted
-    declaration on one line is still caught, through `_sentences` and the leading-markup
-    strip. Each of these directions was found by a gate seat, one round apart.
-    """
-    lines: list[str] = []
-    for line in text.splitlines():
-        if match := _BULLET_RE.match(line):
-            if item := match.group("text").strip():
-                lines.append(item)
-    return lines
-
-
 def _sentences(text: str) -> list[str]:
     compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
     if not compact:
@@ -358,22 +337,18 @@ def _out_of_scope_reason(
         if label in _OUT_OF_SCOPE_LABELS:
             return f"Issue carries out-of-scope label: {label}."
 
+    if title and (heading := title.strip()):
+        # The title gets the anchored form: one line, and nothing may precede it.
+        if _OUT_OF_SCOPE_TITLE_RE.search(heading) or _OUT_OF_SCOPE_DECLARATION_RE.search(heading):
+            return f"Issue declares itself out of scope: {heading}"
+
     candidates: list[str] = []
-    if title and title.strip():
-        candidates.extend(_sentences(title.strip()))
     if body:
         for chunk in _scannable_chunks(body):
-            # Sentences, plus the lines that stand on their own — see
-            # `_structural_lines` for why that is list items and quotes rather than
-            # every line.
             candidates.extend(_sentences(chunk))
-            candidates.extend(_structural_lines(chunk))
 
     for candidate in candidates:
-        # Stripped of leading markers first: the pattern's first alternative is anchored
-        # at the start of the sentence, and a bullet or a quote marker is not the
-        # sentence. The reason text keeps the sentence as written.
-        if _OUT_OF_SCOPE_DECLARATION_RE.search(_declaration_candidate(candidate)):
+        if _OUT_OF_SCOPE_DECLARATION_RE.search(candidate):
             return f"Issue declares itself out of scope: {candidate.strip()}"
     return None
 

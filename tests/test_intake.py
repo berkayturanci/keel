@@ -244,6 +244,58 @@ class TestIssueIntake(unittest.TestCase):
         self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
         self.assertFalse(record["can_mutate_code"])
 
+    def test_markdown_in_front_of_a_declaration_changes_nothing(self):
+        """The body form names the issue, so nothing that precedes it matters.
+
+        Eight review rounds went into making a start-anchored form survive markdown —
+        list markers, task boxes, block quotes, thematic breaks, HTML comments, images,
+        emphasis runs, a heading glued on by sentence-joining, and a wrap that moved the
+        phrase to a line start. Each fix broke the other direction: a closed issue let
+        through, or an in-scope one refused. "Starts the sentence" is not a property
+        markdown preserves, so the body no longer asks for it.
+        """
+        for prefix in (
+            "",
+            "- ",
+            "* ",
+            "+ ",
+            "> ",
+            "- [x] ",
+            "- [ ] ",
+            "1. ",
+            "2) ",
+            "**",
+            "_",
+            "---\n",
+            "<!-- note -->\n",
+            "![diagram](d.png)\n",
+            "***\n",
+        ):
+            with self.subTest(prefix=prefix):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=(
+                        self.WELL_FORMED
+                        + f"\n## Decision\n{prefix}This issue is out of scope; closing.\n"
+                    ),
+                )
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+                self.assertFalse(record["can_mutate_code"])
+
+    def test_a_bare_scope_phrase_in_the_body_is_not_a_declaration(self):
+        """`Out of scope: X` does not say whether X is the issue or a boundary.
+
+        `Out of scope: mobile UI` and `Out of scope: closing` are the same string, and a
+        `## Out of scope` section is full of the first kind. Only naming the issue
+        distinguishes them, so the body requires that. The title keeps the short form —
+        one line, nothing in front of it (asserted in the title tests).
+        """
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=self.WELL_FORMED + "\n## Decision\nOut of scope: closing.\n",
+        )
+        self.assertEqual(record["status"], intake.READY)
+
     def test_a_declaration_under_any_heading_blocks(self):
         # The allowlist was objective/problem/summary/context, so a maintainer's
         # `## Decision` — the most natural place to record a closure — did not block.
@@ -277,20 +329,6 @@ class TestIssueIntake(unittest.TestCase):
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                 self.assertFalse(record["can_mutate_code"])
 
-    def test_a_heading_does_not_glue_itself_onto_the_sentence_below_it(self):
-        """Round-1 gate finding: the sentence-start anchor stopped matching.
-
-        `_sentences` joins what it is given, so scanning the remaining body as one blob
-        produced `- Guard blocks unsafe sync. ## Decision Out of scope: closing.` and the
-        declaration pattern's first alternative is anchored at the start of a sentence.
-        The chunks are per section, without their heading lines, so the anchor holds.
-        """
-        record = intake.assess_issue(
-            title="Add safe sync",
-            body=self.WELL_FORMED + "\n## Decision\nOut of scope: closing.\n",
-        )
-        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
-
     def test_a_declaration_written_in_the_heading_itself_blocks(self):
         """Round-2 gate finding: dropping the heading line hid the one-line form.
 
@@ -305,6 +343,7 @@ class TestIssueIntake(unittest.TestCase):
             "Decision - this issue is out of scope; closing",
             "Status \u2014 this issue is out of scope; closing",
             "Won't do: this issue is out of scope",
+            "Resolution: the issue is not planned",
         ):
             with self.subTest(heading=heading):
                 record = intake.assess_issue(
@@ -312,26 +351,6 @@ class TestIssueIntake(unittest.TestCase):
                 )
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                 self.assertFalse(record["can_mutate_code"])
-
-    def test_a_list_marker_does_not_hide_a_declaration(self):
-        """Round-3 gate finding: the sentence-start anchor met a bullet first.
-
-        `_sentences` joins stripped lines and keeps their markdown, and the declaration
-        pattern's first alternative is anchored at the start of the sentence. So
-        `- Out of scope: closing.` was READY while `Out of scope: closing.` was not, and
-        the tests could not see it because they only ever used the unanchored
-        `this issue is ...` form as a bullet. `1. ` happened to work, but only because
-        `_sentences` splits on its `.`.
-        """
-        for marker in ("", "- ", "* ", "+ ", "> ", "- [x] ", "- [ ] ", "1. ", "2) ", "**", "_"):
-            for declaration in ("Out of scope: closing.", "Not planned: closing."):
-                with self.subTest(marker=marker, declaration=declaration):
-                    record = intake.assess_issue(
-                        title="Add safe sync",
-                        body=(self.WELL_FORMED + f"\n## Decision\n{marker}{declaration}\n"),
-                    )
-                    self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
-                    self.assertFalse(record["can_mutate_code"])
 
     def test_a_qualified_exclusion_heading_is_still_only_a_boundary(self):
         """`## Out of scope for v1` is the same kind of section as `## Out of scope`.
@@ -360,19 +379,6 @@ class TestIssueIntake(unittest.TestCase):
                     body=self.WELL_FORMED + f"\n## {heading}\n- Mobile UI.\n",
                 )
                 self.assertEqual(record["status"], intake.READY)
-
-    def test_an_unpunctuated_bullet_cannot_swallow_the_line_below_it(self):
-        # `_sentences` joins lines with no terminator, so a plain bullet above a
-        # declaration put the declaration mid-sentence and the anchor missed. Lines are
-        # candidates in their own right now.
-        record = intake.assess_issue(
-            title="Add safe sync",
-            body=(
-                self.WELL_FORMED
-                + "\n## Decision\n- Discussed with the team\n- Out of scope: closing.\n"
-            ),
-        )
-        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
 
     def test_a_wrapped_block_quote_is_still_a_wrap(self):
         """Markdown prefixes every continuation line of a quote with `>`.
@@ -442,13 +448,6 @@ class TestIssueIntake(unittest.TestCase):
                 record = intake.assess_issue(title="Add safe sync", body=body)
                 self.assertEqual(record["status"], intake.READY)
                 self.assertTrue(record["can_mutate_code"])
-
-    def test_a_quoted_declaration_is_a_declaration(self):
-        record = intake.assess_issue(
-            title="Add safe sync",
-            body=self.WELL_FORMED + "\n## Decision\n> Out of scope: closing.\n",
-        )
-        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
 
     def test_a_bare_exclusion_heading_is_still_only_a_boundary(self):
         # The exclusion test runs on the *normalised* heading, so `## Out of scope` is
