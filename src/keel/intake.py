@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -101,10 +100,16 @@ _LEADING_LABEL_RE = re.compile(
 )
 
 
-def _declaration_candidate(text: str) -> str:
-    """One sentence with the markdown and any leading label taken off its front."""
+def _declaration_candidates(text: str) -> tuple[str, str]:
+    """The sentence with markdown removed, and again with a leading label removed.
+
+    Both, and the caller tries the first: the label pattern cannot tell `Decision: …`
+    from the declaration's own punctuation, so stripping unconditionally ate
+    `This issue is out of scope: closing.` down to `closing.` and the closure was lost.
+    Trying the unstripped form first costs one extra match and removes the whole class.
+    """
     stripped = _LEADING_MARKUP_RE.sub("", text.strip())
-    return _LEADING_LABEL_RE.sub("", stripped, count=1).strip()
+    return stripped, _LEADING_LABEL_RE.sub("", stripped, count=1).strip()
 
 
 _DOCS_RE = re.compile(r"\b(doc|docs|documentation|readme|changelog)\b", re.IGNORECASE)
@@ -320,29 +325,15 @@ def _scannable_chunks(body: str) -> list[str]:
     if not matches:
         return [body]
     chunks = [body[: matches[0].start()]]
-    #: Depth of the exclusion section currently being skipped, or 0. A section owns its
-    #: nested headings: `## Out of scope` followed by `### Mobile` is one boundary, and
-    #: skipping only the heading that matched let the sub-section — and its bullets —
-    #: back in, which refused the issue again.
-    #: The document's own section level — the shallowest heading it uses. A heading at
-    #: that level always starts a new section, whatever nests above it. Issue bodies mix
-    #: `#` and `##` loosely, and without this an `# Out of scope` swallowed every `##`
-    #: after it, including the `## Decision` that closed the issue.
-    depths = Counter(len(m.group("hashes")) for m in matches)
-    # The shallowest level used *more than once*, else the shallowest. A level that
-    # appears exactly once is a document title, not a section: an issue body opening with
-    # a single `# Out of scope` over a run of `##` sections would otherwise nest every one
-    # of them inside it, and the `## Decision` that closed the issue was swallowed whole.
-    section_depth = min((d for d, n in depths.items() if n > 1), default=min(depths))
-    skipping_depth = 0
     for index, match in enumerate(matches):
-        depth = len(match.group("hashes"))
-        if skipping_depth:
-            if depth > skipping_depth and depth > section_depth:
-                continue
-            skipping_depth = 0
+        # An exclusion section owns its own body and nothing else. Owning nested headings
+        # was tried and failed in both directions: `# Out of scope` over a run of `##`
+        # sections swallowed the `## Decision` that closed the issue, and every heuristic
+        # for telling a title level from a section level inverted on some real body. What
+        # makes the simple rule safe is the subject test above — a bullet under a boundary
+        # section saying `Out of scope: the mobile client` names no issue and matches
+        # nothing, so the section's *contents* no longer need hiding, only its own prose.
         if _is_scope_exclusion_heading(match.group("title")):
-            skipping_depth = depth
             continue
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
         chunks.append(match.group("title"))
@@ -394,7 +385,9 @@ def _out_of_scope_reason(
     for candidate in candidates:
         # Leading markdown removed first, so the anchor sees the sentence rather than the
         # bullet in front of it.
-        if _OUT_OF_SCOPE_DECLARATION_RE.search(_declaration_candidate(candidate)):
+        if any(
+            _OUT_OF_SCOPE_DECLARATION_RE.search(form) for form in _declaration_candidates(candidate)
+        ):
             return f"Issue declares itself out of scope: {candidate.strip()}"
     return None
 

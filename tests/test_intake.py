@@ -464,24 +464,75 @@ class TestIssueIntake(unittest.TestCase):
         self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
         self.assertFalse(record["can_mutate_code"])
 
-    def test_an_exclusion_section_owns_its_nested_headings(self):
-        """`## Out of scope` followed by `### Mobile` is one boundary, not two sections.
+    def test_an_exclusion_section_hides_its_own_prose_and_nothing_else(self):
+        """The section's body is dropped; a nested heading is read on its own merits.
 
-        Section chunks end at the *next heading of any level*, so skipping only the
-        heading that matched let the sub-section and its bullets back in — and refused
-        the issue again, which is #1168 for the third time.
+        Owning nested headings was tried and failed in both directions: `# Out of scope`
+        over a run of `##` sections swallowed the `## Decision` that closed the issue, and
+        every heuristic for telling a title level from a section level inverted on some
+        real body. The simple rule is safe now because of the subject test — a bullet
+        under a boundary section saying `Out of scope: the mobile client` names no issue
+        and matches nothing, so the contents no longer need hiding, only the prose the
+        section itself carries.
+
+        The cost is stated rather than discovered: a sentence that *names the issue*
+        blocks wherever it sits, a subsection of a boundary section included. Erring
+        toward stopping is the right side for a gate that decides whether code may be
+        mutated.
         """
-        for tail in (
-            "### Mobile\n- Out of scope: the mobile client.\n",
-            "### Mobile\n- This issue is out of scope for mobile.\n",
-            "### Mobile\n#### Later\n- Out of scope: closing.\n",
+        for tail, expected in (
+            ("### Mobile\n- Out of scope: the mobile client.\n", intake.READY),
+            ("### Mobile\n#### Later\n- Out of scope: closing.\n", intake.READY),
+            ("### Mobile\n- This issue is out of scope for mobile.\n", intake.OUT_OF_SCOPE),
         ):
-            with self.subTest(tail=tail[:24]):
+            with self.subTest(tail=tail[:26]):
                 record = intake.assess_issue(
                     title="Add safe sync",
                     body=self.WELL_FORMED + f"\n## Out of scope\n{tail}",
                 )
-                self.assertEqual(record["status"], intake.READY)
+                self.assertEqual(record["status"], expected)
+
+    def test_an_exclusion_heading_does_not_swallow_a_later_section_at_any_level(self):
+        """Both nesting directions, since each broke a different heuristic."""
+        h1 = (
+            "# Problem\nUsers need safer sync.\n\n# Deliverable\nShip the guard.\n\n"
+            "# Acceptance criteria\n- Guard blocks unsafe sync.\n"
+        )
+        for body in (
+            # `#` sections, then `# Out of scope`, then a lone `##` closure.
+            h1 + "\n# Out of scope\n- Mobile UI.\n\n## Decision\n"
+            "This issue is out of scope; closing.\n",
+            # One `#` over a run of `##` sections.
+            "# Out of scope\n- Mobile UI.\n\n## Decision\n"
+            "This issue is out of scope; closing.\n\n" + self.WELL_FORMED,
+        ):
+            with self.subTest(body=body[:30]):
+                record = intake.assess_issue(title="Add safe sync", body=body)
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+                self.assertFalse(record["can_mutate_code"])
+
+    def test_a_declaration_keeps_its_own_punctuation(self):
+        """The label strip must not eat the declaration it is meant to uncover.
+
+        `_LEADING_LABEL_RE` removes a short `Decision:` / `Status —` prefix so the
+        subject can be seen. It cannot tell that prefix from the declaration's own
+        punctuation, so `This issue is out of scope: closing.` was stripped down to
+        `closing.` and the closure was lost. Every body test used a semicolon, which is
+        not a terminator, so none of them saw it. The sentence is tried as written first.
+        """
+        for sentence in (
+            "This issue is out of scope; closing.",
+            "This issue is out of scope: closing.",
+            "This issue is out of scope — we will not ship it.",
+            "This issue is out of scope – deferred.",
+            "This issue is out of scope - closing.",
+        ):
+            with self.subTest(sentence=sentence):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=self.WELL_FORMED + f"\n## Decision\n{sentence}\n",
+                )
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
 
     def test_a_sibling_section_after_an_exclusion_is_read_again(self):
         # The skip ends at the next heading of the same or shallower level; it does not
