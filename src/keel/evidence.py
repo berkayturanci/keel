@@ -63,6 +63,12 @@ CLASSIFICATION_MARKERS: tuple[str, ...] = (
     DEFERRAL_MARKER,
 )
 
+#: Membership view of :data:`CLASSIFICATION_MARKERS`, which is a tuple because its **order**
+#: is the order markers are rendered in. Asking a tuple `x in ...` is a linear scan, and the
+#: two places below only ask whether every token is a known marker — a set answers that
+#: question by its type rather than by walking. The tuple stays where order matters.
+_CLASSIFICATION_MARKERS_SET = frozenset(CLASSIFICATION_MARKERS)
+
 #: The finding raised for a comment whose header names more than one marker.
 MALFORMED_MARKER_FINDING = "malformed-evidence-comment"
 
@@ -787,7 +793,7 @@ def header_markers(body: str) -> tuple[str, ...]:
     :func:`_malformed_marker_findings` reports.
     """
     tokens = _unwrap_html_comment(_header_line(body)).split()
-    if not tokens or any(token not in CLASSIFICATION_MARKERS for token in tokens):
+    if not tokens or not _CLASSIFICATION_MARKERS_SET.issuperset(tokens):
         return ()
     return tuple(marker for marker in CLASSIFICATION_MARKERS if marker in tokens)
 
@@ -1809,9 +1815,9 @@ def _fields(body: str) -> dict[str, str]:
         # A marker-only line is the artifact's own header, not a field: skip it and
         # keep reading. A line that merely *mentions* a marker is prose, and prose
         # ends the block — the #932 boundary this parser exists to hold.
-        if (line.startswith("<!--") and line.endswith("-->")) or all(
-            token in CLASSIFICATION_MARKERS for token in line.split()
-        ):
+        if (
+            line.startswith("<!--") and line.endswith("-->")
+        ) or _CLASSIFICATION_MARKERS_SET.issuperset(line.split()):
             continue
         match = _FIELD_RE.match(line)
         if match:
