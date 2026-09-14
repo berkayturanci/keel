@@ -83,7 +83,7 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 | Capability detection and safe degradation | agent platform packaging and local tool variance | shipped basics; reused by #134 |
 | Fixed-brief iteration with the gates as the judge | Ralph loop (Category 5) | #1165 — shipped as `knobs.loop` / `--loop` |
 | Lessons read back into the next session's briefs | compound-engineering plugin (Category 5) | #1155 — shipped |
-| Learning files a knowledge-graph builder can link | graphify (Category 5) | #1166 shipped (links); #1163 open (landing) |
+| Learning files a knowledge-graph builder can link | graphify (Category 5) | #1166 shipped (links); #1163 shipped (`keel capture-land`) |
 
 ---
 
@@ -360,9 +360,10 @@ name for.
   reference edges run *between docs* — so `[src/keel/capture.py](../../src/keel/capture.py)`
   produces no edge there. The path reaches graphify through its semantic pass, which reads
   the whole file including the front matter, and #1166's links are for the readers that do
-  follow them (Obsidian, an agent walking an index). What the graph needs is #1163 landing
-  the file on the base
-  branch from a worktree run, without which a fresh clone has an empty directory to graph.
+  follow them (Obsidian, an agent walking an index). What the graph needs is the file on the
+  base branch after a worktree run, without which a fresh clone has an empty directory to
+  graph; #1163 ships `keel capture-land` for that — on a base branch that accepts a direct
+  push, which one requiring pull requests does not.
 - **What it does that keel does not**: build a graph — and keel should not; its contract
   with every reader is "a directory of Markdown", nothing more.
 - **Idea to borrow**: the edge itself — a lesson a graph builder can link to the file it is

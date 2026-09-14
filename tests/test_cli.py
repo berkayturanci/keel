@@ -15276,7 +15276,81 @@ class TestCaptureLand(unittest.TestCase):
             payload = json.loads(out)
             self.assertEqual(rc, 1)
             self.assertEqual(payload["status"], "failed")
-            self.assertIn("outside the checkout", payload["detail"])
+            self.assertIn("outside the learning sink", payload["detail"])
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+
+    def test_a_symlink_to_an_in_repo_secret_is_not_published_either(self):
+        """Inside the repository is the wrong boundary for the bytes too.
+
+        An untracked `.env` beside the code is in the repository, so a link to it from
+        inside the sink satisfied a checkout-wide containment test and fast-forwarded the
+        file onto the shared base branch under a lesson's name. The sink is the boundary
+        for where the content comes from, exactly as it is for where the path points.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            (wt / "config").mkdir(parents=True, exist_ok=True)
+            (wt / "config" / "private.env").write_text("TOKEN=hunter2\n", encoding="utf-8")
+            (wt / ".keel" / "learning").mkdir(parents=True, exist_ok=True)
+            (wt / ".keel" / "learning" / "leak.md").symlink_to(wt / "config" / "private.env")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "15",
+                    "--artifact",
+                    ".keel/learning/leak.md",
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertIn("outside the learning sink", payload["detail"])
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+
+    def test_a_sink_that_is_the_repository_root_lands_nothing(self):
+        """A sink of `.` names no directory to confine the landing to.
+
+        Containment against the whole checkout is exactly the boundary that let an
+        untracked `.env` through, so a project that configures the repository root as its
+        sink gets a refusal rather than the wider test back. Reachable, not theoretical:
+        `learning_sink_in_worktree` calls `.` in-repo, so the plan is `planned` and the
+        refusal has to happen where the content is resolved.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            config = wt / "root-sink.yaml"
+            config.write_text(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "policy_pack:\n  name: tmp\n  reports:\n"
+                "    run_ledger: 'state/runs.jsonl'\n"
+                "  capture:\n    enabled: true\n    mode: extension\n"
+                "    learning:\n      enabled: true\n      mode: create-learning\n"
+                "      sink:\n        kind: markdown-dir\n        path: '.'\n",
+                encoding="utf-8",
+            )
+            (wt / "a.md").write_text("# Lesson\n", encoding="utf-8")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    str(config),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "16",
+                    "--artifact",
+                    "a.md",
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertIn("outside the learning sink", payload["detail"])
             self.assertEqual(_origin_files(origin), ["keep.txt"])
 
     def test_a_relative_root_is_resolved_once(self):

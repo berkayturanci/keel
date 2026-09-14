@@ -628,10 +628,14 @@ would have agreed, because it *was* exactly one file. Containment is compared by
 component, so a sibling directory whose name merely begins the same way
 (`.keel/learning-notes/`) is outside.
 
-Containment is also checked on the **resolved** path, not only on its spelling: `git hash-object`
-follows symlinks, and the exactly-one-file check downstream counts paths in the finished
-commit rather than where their bytes came from — so a link inside the sink pointing out of
-the checkout would have published someone else's file to the base branch.
+Containment is also checked on the **resolved** path, not only on its spelling: `git
+hash-object` follows symlinks, and the exactly-one-file check downstream counts paths in the
+finished commit rather than where their bytes came from — so a link inside the sink would
+have published whatever it pointed at to the base branch under a lesson's name. The resolved
+path has to be inside the **sink**, not merely inside the checkout: an untracked `.env`
+beside the code is in the repository, and a checkout-wide test says yes to a link to it. A
+sink configured as the repository root (`path: '.'`) therefore names no directory to confine
+anything to, and the landing refuses rather than falling back to the wider boundary.
 
 ### Identifying the commit on the base branch
 

@@ -1931,23 +1931,33 @@ def _land_learning_tree(root: str, path: str, base_sha: str, blob: str) -> str |
     return git.mktree(capture.upsert_tree_entry(listing, entry), cwd=root)
 
 
-def _contained_real_path(path: Path, root: str) -> Path | None:
-    """``path``'s **real** location when it is inside ``root``'s, else ``None``.
+def _contained_real_path(path: Path, root: str, sink: str | None) -> Path | None:
+    """``path``'s **real** location when it is inside the sink's, else ``None``.
 
     Both ends are resolved, which does two jobs at once.
 
     It follows symlinks on the way in: `git hash-object` follows them too, and the one
     live safety check downstream counts *paths* in the finished commit, never where
-    their bytes came from — so a link named `.keel/learning/x.md` pointing out of the
-    checkout passed every test this command made and published that file to the shared
-    base branch under an innocent name.
+    their bytes came from — so a link named `.keel/learning/x.md` passed every test this
+    command made and published whatever it pointed at to the shared base branch under an
+    innocent name.
 
     And it returns an **absolute** path for git to hash. A relative one is resolved
     against the process directory here and against ``cwd=root`` again inside git, so
     ``--root wt`` from the directory above applied the root twice and hashed nothing.
+
+    Containment is against the **sink**, not the checkout. Inside the repository is the
+    wrong boundary here for the same reason it was wrong for the recorded path: an
+    untracked `.env` beside the code is in the repository, and a link to it from inside
+    the sink satisfied a checkout-wide test. When the sink's own real path cannot be
+    resolved — it is a template component away from existing — nothing can be judged
+    against it, and the landing refuses rather than falling back to the wider boundary.
     """
+    if sink is None:
+        return None
     try:
-        real, base = path.resolve(), Path(root).resolve()
+        real = path.resolve()
+        base = (Path(root) / sink).resolve()
     except OSError:  # pragma: no cover - an unstattable path fails closed as uncontained
         return None
     return real if real.is_relative_to(base) else None
@@ -1978,11 +1988,11 @@ def _land_learning_attempt(args, plan: dict) -> dict:
     # is a symlink out of the checkout passed it while publishing someone else's file to
     # the base branch — `git hash-object` follows the link. Resolving both ends and
     # comparing them is the containment the docstrings already claim.
-    real = _contained_real_path(resolved, root)
+    real = _contained_real_path(resolved, root, plan.get("sink"))
     if real is None:
         return _land_result(
             "failed",
-            f"refusing to hash {path}: it resolves outside the checkout ({resolved})",
+            f"refusing to hash {path}: it resolves outside the learning sink ({resolved})",
             None,
             base_sha,
         )

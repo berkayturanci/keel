@@ -2335,6 +2335,11 @@ def learning_land_plan(
         "status": status,
         "reason": reason,
         "path": normalized,
+        # Published so the I/O layer can resolve the *real* artifact against the sink
+        # rather than against the checkout: a link inside the sink pointing at an
+        # untracked `.env` beside the code is in the repository, and a checkout-wide
+        # containment test says yes to it.
+        "sink": sink_dir,
         "remote": remote,
         "base_branch": resolved_base,
         "ref": f"refs/heads/{resolved_base}" if resolved_base else None,
@@ -2378,22 +2383,29 @@ def _land_sink_root(
         "base_branch": base_branch,
         "pr": str(pr_number) if pr_number is not None else "",
     }
-    expanded = _relative_stays_relative(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
-    if "{" in expanded:
-        known, _, _ = expanded.partition("{")
-        expanded = known.rstrip("/\\")
-        if not expanded:
-            return None
-    return _land_path(expanded)
+    return _land_path(
+        _relative_stays_relative(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
+    )
 
 
 def _under(path: str, directory: str) -> bool:
-    """Is POSIX ``path`` inside ``directory``? Compared by component, not by prefix.
+    """Is POSIX ``path`` inside ``directory``? Compared component by component.
 
-    A plain ``startswith`` says `.keel/learning-notes/x.md` is inside `.keel/learning`,
-    which is a different directory whose name merely begins the same way.
+    Not a prefix test: a plain ``startswith`` says `.keel/learning-notes/x.md` is inside
+    `.keel/learning`, which is a different directory whose name merely begins the same way.
+
+    A component of ``directory`` that still holds a placeholder matches any one component,
+    because the sink's ``path`` is a template and not every placeholder in it is a value
+    the landing has. `{date}/learning` accepts `2026-09-15/learning/a.md` and refuses
+    `config/private.env` — the containment the sink actually describes. Skipping the test
+    for such a project accepted every path in the repository; matching the literal
+    accepted none.
     """
-    return path == directory or path.startswith(f"{directory}/")
+    wanted, have = directory.split("/"), path.split("/")
+    # Strictly deeper: the sink directory is not a file inside itself.
+    if len(have) <= len(wanted):
+        return False
+    return all("{" in want or want == got for want, got in zip(wanted, have, strict=False))
 
 
 def _land_path(artifact: str | None) -> str | None:
