@@ -373,6 +373,34 @@ class TestIssueIntake(unittest.TestCase):
         )
         self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
 
+    def test_a_wrapped_line_does_not_become_a_declaration(self):
+        """The inverse of #1188, and the cost of the previous round's fix.
+
+        Treating every line as a candidate re-anchors the pattern at each wrap, so prose
+        that merely mentions scope is refused the moment a line happens to break before
+        it. Only lines that stand on their own — list items and quotes — are candidates,
+        and a wrap carries no marker.
+        """
+        for body in (
+            "## Problem\nUsers need safer sync. The parser rewrite is\n"
+            "out of scope for this change.\n\n## Deliverable\nShip the guard.\n\n"
+            "## Acceptance criteria\n- Guard blocks unsafe sync.\n",
+            "## Problem\nUsers need safer sync.\n\n## Deliverable\n"
+            "- Rewriting the parser is\n  out of scope for this change.\n\n"
+            "## Acceptance criteria\n- Guard blocks unsafe sync.\n",
+        ):
+            with self.subTest(body=body[:40]):
+                record = intake.assess_issue(title="Add safe sync", body=body)
+                self.assertEqual(record["status"], intake.READY)
+                self.assertTrue(record["can_mutate_code"])
+
+    def test_a_quoted_declaration_is_a_declaration(self):
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=self.WELL_FORMED + "\n## Decision\n> Out of scope: closing.\n",
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+
     def test_a_bare_exclusion_heading_is_still_only_a_boundary(self):
         # The exclusion test runs on the *normalised* heading, so `## Out of scope` is
         # dropped while `## Out of scope: closing.` normalises to `out of scope closing`,

@@ -243,6 +243,35 @@ def _bullets(text: str) -> list[str]:
     return items
 
 
+def _structural_lines(text: str) -> list[str]:
+    """Lines that stand on their own: list items and block quotes, markers removed.
+
+    Needed because `_sentences` joins lines that carry no terminator, so a plain bullet
+    above a declaration — ``- Discussed with the team`` then ``- Out of scope:
+    closing.`` — put the declaration mid-sentence, past the pattern's anchor.
+
+    Deliberately **not** every line. Splitting on every newline re-anchors the pattern
+    at each wrap, and prose that merely mentions scope gets refused the moment a line
+    happens to break before it: ``The parser rewrite is\nout of scope for this change.``
+    came back `out-of-scope` — the inverse of #1188, an in-scope issue refused. A wrap
+    carries no marker, so it is not a statement and is not a candidate. Both directions
+    were found by gate seats, one round apart.
+    """
+    lines: list[str] = []
+    for line in text.splitlines():
+        if match := _BULLET_RE.match(line):
+            item = match.group("text").strip()
+        elif stripped := line.strip():
+            if not stripped.startswith(">"):
+                continue
+            item = stripped.lstrip("> ").strip()
+        else:
+            continue
+        if item:
+            lines.append(item)
+    return lines
+
+
 def _sentences(text: str) -> list[str]:
     compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
     if not compact:
@@ -329,13 +358,11 @@ def _out_of_scope_reason(
         candidates.extend(_sentences(title.strip()))
     if body:
         for chunk in _scannable_chunks(body):
-            # Sentences *and* raw lines. `_sentences` joins lines that carry no
-            # terminator, so `- Discussed with team` followed by `- Out of scope:
-            # closing.` becomes one candidate and the declaration is no longer at its
-            # start. Every line is also a candidate on its own, which is what a bullet
-            # list is: one statement per line, terminator or not.
+            # Sentences, plus the lines that stand on their own — see
+            # `_structural_lines` for why that is list items and quotes rather than
+            # every line.
             candidates.extend(_sentences(chunk))
-            candidates.extend(chunk.splitlines())
+            candidates.extend(_structural_lines(chunk))
 
     for candidate in candidates:
         # Stripped of leading markers first: the pattern's first alternative is anchored
