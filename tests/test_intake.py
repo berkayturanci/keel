@@ -282,6 +282,34 @@ class TestIssueIntake(unittest.TestCase):
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                 self.assertFalse(record["can_mutate_code"])
 
+    def test_the_issue_must_be_the_subject_not_a_mention(self):
+        """A sentence that carves out a part is not a sentence that closes the whole.
+
+        The body pattern was briefly unanchored, on the reasoning that naming the issue
+        was enough. It is not: "A backport of this issue is out of scope" names the issue
+        and refuses it, which is #1168 inverted — `/keel:ship` stops at s1 on an issue
+        that is in scope and only excluded a backport. The subject has to be the issue,
+        so the pattern anchors at the start of the *sentence* — which markdown does not
+        move, unlike the start of a line.
+        """
+        for sentence in (
+            "A backport of this issue is out of scope.",
+            "Backporting this issue is not in scope for 1.22.",
+            "Support for this issue is not planned.",
+            "Any rewrite beyond this issue is out of scope.",
+        ):
+            with self.subTest(sentence=sentence):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=(
+                        f"## Problem\nUsers need safer sync. {sentence}\n\n"
+                        "## Deliverable\nShip the guard.\n\n"
+                        "## Acceptance criteria\n- Guard blocks unsafe sync.\n"
+                    ),
+                )
+                self.assertEqual(record["status"], intake.READY)
+                self.assertTrue(record["can_mutate_code"])
+
     def test_a_bare_scope_phrase_in_the_body_is_not_a_declaration(self):
         """`Out of scope: X` does not say whether X is the issue or a boundary.
 

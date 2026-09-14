@@ -56,24 +56,51 @@ _OUT_OF_SCOPE_TITLE_RE = re.compile(
     r"^(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b",
     re.IGNORECASE,
 )
-#: A declaration **in the body**, which must name the issue. Unanchored on purpose.
+#: A declaration **in the body**: a sentence whose subject is the issue.
 #:
-#: The anchored form was tried in the body for eight review rounds and failed differently
-#: each time, because "starts the sentence" is not a property markdown preserves: a list
-#: marker, a block quote, a thematic break, an HTML comment or an image above the line, a
-#: heading glued on by sentence-joining, or a wrap that moved the phrase to a line start
-#: each broke it in one direction or the other — a closed issue let through, or an
-#: in-scope one refused. Requiring the issue to be named removes the anchor and with it
-#: the whole class. `Out of scope: mobile UI` and `Out of scope: closing` are the same
-#: string; only "this issue is out of scope" says which one is meant.
+#: Anchored at the start of the *sentence* — which is not the same as the start of a
+#: line, and that distinction is the whole lesson of this change. Eight rounds tried to
+#: anchor a short `Out of scope: …` form at a line start and it broke on every piece of
+#: markdown that can precede one. A sentence start is stable, and requiring the issue to
+#: be the **subject** is what separates a closure from a mention: "This issue is out of
+#: scope" closes it, "A backport of this issue is out of scope" carves out a backport.
+#: An unanchored match refused the second, which is #1168 inverted.
 _OUT_OF_SCOPE_DECLARATION_RE = re.compile(
-    # `(?<![A-Za-z0-9])` rather than `\b`: an underscore *is* a word character, so `\b`
-    # refuses `_This issue is out of scope_` — italics written the other way round.
-    r"(?<![A-Za-z0-9])(?:this|the)\s+issue\s+(?:is|was|remains)\s+"
+    r"^(?:this|the)\s+issue\s+(?:is|was|remains)\s+"
     r"(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)"
     r"(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
+#: Markdown that can sit in front of a sentence without being part of it. Stripped before
+#: the anchor is applied, so a bullet or a quote marker does not hide the subject.
+_LEADING_MARKUP_RE = re.compile(
+    r"^(?:"
+    r"\s*(?:[-*+]|\d+[.)])\s+"  # list marker
+    r"|\s*>\s*"  # block quote
+    r"|\s*\[[ xX]?\]\s*"  # task box
+    r"|\s*(?:-{3,}|\*{3,}|_{3,})\s*"  # thematic break
+    r"|\s*<!--.*?-->\s*"  # html comment
+    r"|\s*!\[[^\]]*\]\([^)]*\)\s*"  # image
+    r"|[*_]{1,3}"  # emphasis run
+    r"|\s+"
+    r")+"
+)
+#: A short label opening a heading or a line — ``Decision — …``, ``Status: …``. Removed
+#: before the anchor so the subject that follows is seen, while a sentence that merely
+#: *mentions* the issue further in ("A backport of this issue is out of scope") is not,
+#: because it carries no such separator before the subject. Bounded in length and
+#: forbidden sentence-ending punctuation, so it cannot eat a real clause.
+_LEADING_LABEL_RE = re.compile(
+    r"^[^.!?:\u2014\u2013-]{1,40}\s*[:\u2014\u2013]\s*|^[^.!?]{1,40}\s+-\s+"
+)
+
+
+def _declaration_candidate(text: str) -> str:
+    """One sentence with the markdown and any leading label taken off its front."""
+    stripped = _LEADING_MARKUP_RE.sub("", text.strip())
+    return _LEADING_LABEL_RE.sub("", stripped, count=1).strip()
+
+
 _DOCS_RE = re.compile(r"\b(doc|docs|documentation|readme|changelog)\b", re.IGNORECASE)
 _TESTS_RE = re.compile(r"\b(test|tests|coverage|ci|lint)\b", re.IGNORECASE)
 _BLOCKED_LABELS = frozenset({"blocked", "status:blocked", "needs-dependency"})
@@ -319,10 +346,11 @@ def _out_of_scope_reason(
 
     * **Structurally**, a scope-exclusion section is removed whole. Its heading and its
       bullets describe what the change leaves out; none of it says the issue is closed.
-    * **In what remains**, only a sentence shaped like a *declaration about the issue*
-      counts — ``Out of scope: …`` opening a sentence, or ``this issue is out of
-      scope`` — so ordinary prose saying some detail is out of scope for this change
-      still reads as ordinary prose, wherever it sits.
+    * **In what remains**, a declaration is a sentence whose *subject is the issue* —
+      ``this issue is out of scope``, opening the sentence. Not ``Out of scope: …``,
+      which is the same string as a boundary bullet; not a mention in the middle of a
+      sentence, which carves out a part rather than closing the whole. The short form
+      is the title's, where one line and no markdown make an anchor safe.
 
     Everything left is searched, title and body alike. A maintainer writing
     ``## Decision — this issue is out of scope; closing`` is declaring it closed, and
@@ -348,7 +376,9 @@ def _out_of_scope_reason(
             candidates.extend(_sentences(chunk))
 
     for candidate in candidates:
-        if _OUT_OF_SCOPE_DECLARATION_RE.search(candidate):
+        # Leading markdown removed first, so the anchor sees the sentence rather than the
+        # bullet in front of it.
+        if _OUT_OF_SCOPE_DECLARATION_RE.search(_declaration_candidate(candidate)):
             return f"Issue declares itself out of scope: {candidate.strip()}"
     return None
 
