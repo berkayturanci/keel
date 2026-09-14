@@ -52,6 +52,25 @@ def run(argv):
     return code, out.getvalue(), err.getvalue()
 
 
+def _shell_fences(markdown: str) -> list[str]:
+    """Every ```bash / ```sh fenced block's body in ``markdown``.
+
+    The s11 guard cares about what an operator could copy and run, which is the
+    fenced blocks alone — prose naming a command it is warning against must stay
+    legal, and grepping the whole section cannot tell the two apart.
+    """
+    fences, lines, inside, current = [], markdown.splitlines(), False, []
+    for line in lines:
+        if not inside and line.strip() in ("```bash", "```sh", "```shell"):
+            inside, current = True, []
+        elif inside and line.strip() == "```":
+            fences.append("\n".join(current))
+            inside = False
+        elif inside:
+            current.append(line)
+    return fences
+
+
 def write_config(directory: Path, extra_policy_pack_lines: list[str] | None = None) -> str:
     """A minimal valid project config with a run ledger, plus any policy lines."""
     extra = "\n".join(extra_policy_pack_lines or [])
@@ -292,8 +311,15 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
         checkout holds `base_branch`, so `git switch "$BASE_BRANCH"` there exits
         128 — *already used by worktree*, measured. A recipe built on it looks
         like durability and delivers none, on exactly the topology keel uses for
-        itself. The surfaces say what is true instead: keel writes the file, does
-        not commit it, and an in-repo sink is not durable yet.
+        itself.
+
+        Until #1163 this held by forbidding a runnable recipe outright, because
+        none could run. Now one can: `keel capture-land` builds its commit with
+        plumbing and never checks the base branch out. So the property is no
+        longer "no shell fence" but the thing that fence was standing in for —
+        s11 hands out **that** command, still warns why the obvious one is
+        wrong, and hands out no `git switch` / `git commit` / `git push` of its
+        own for the operator to run against the base branch.
         """
         root = Path(__file__).resolve().parents[1]
         for surface in (
@@ -305,12 +331,17 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                 body = (root / surface).read_text(encoding="utf-8")
                 s11 = body[body.index("### s11 capture") :]
                 self.assertIn("commit_required", body)
+                # The warning stays: the next person to reach for `git switch`
+                # should find out here why it cannot work, not from exit 128.
                 self.assertIn("already used by worktree", s11)
-                # The property is that s11 hands out no **runnable** recipe. The
-                # prose names the command it warns about, so the needle is the
-                # shell fence, not the string inside the warning.
                 capture_section = s11[: s11.index("### s12")]
-                self.assertNotIn("```" + "bash", capture_section)
+                self.assertIn("keel capture-land", capture_section)
+                # No hand-rolled git against the base branch. The needles are the
+                # commands themselves, inside a shell fence — the prose above is
+                # allowed to *name* `git switch` because it is warning about it.
+                for fence in _shell_fences(capture_section):
+                    for forbidden in ("git switch", "git commit", "git push", "git add"):
+                        self.assertNotIn(forbidden, fence)
 
     def test_a_dormant_sink_under_a_disabled_capture_promises_nothing(self):
         """The contract must name the writer that will actually write.

@@ -14919,6 +14919,26 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("keel capture-land — landed", out)
         self.assertIn("commit  :", out)
 
+    def test_text_output_without_a_commit_names_no_commit(self):
+        # The `not-required` line has nothing to point at, and the "commit :" line
+        # must not be printed with an empty value beside it.
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            path = wt / "outside.yaml"
+            lines = list(_LAND_SINK_LINES)
+            lines[-1] = "      sink: { path: /srv/knowledge }"
+            path.write_text(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "policy_pack:\n  name: tmp\n  reports:\n"
+                "    run_ledger: 'state/runs.jsonl'\n" + "\n".join(lines) + "\n",
+                encoding="utf-8",
+            )
+            rc, out, _ = run(["capture-land", str(path), "--root", str(wt), "--pr", "26"])
+        self.assertEqual(rc, 0)
+        self.assertIn("keel capture-land — not-required", out)
+        self.assertNotIn("commit  :", out)
+
     def test_a_missing_config_is_reported(self):
         rc, _, err = run(["capture-land", "no-such-project.yaml", "--root", "."])
         self.assertEqual(rc, 1)

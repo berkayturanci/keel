@@ -134,12 +134,12 @@ policy_pack:
       mode: create-learning
       sink:
         # The default sink writes into `.keel/learning/`, and keel runs its own
-        # ships inside a worktree that s10 then removes — so the file is written
-        # and thrown away until #1163 lands it on the base branch. It is on
-        # deliberately: the writer, the redaction, the dedupe and the fingerprint
-        # are exercised on every keel merge, and #1163 is the step that keeps the
-        # result. It does **not** yet make keel a project that captures its own
-        # runs across sessions; do not read it as that.
+        # ships inside a worktree that s10 then removes — so s11 lands the file on
+        # `origin/main` with `keel capture-land` (#1163) before the worktree goes.
+        # The writer, the redaction, the dedupe and the fingerprint are exercised
+        # on every keel merge, and the landing is what keeps the result: keel now
+        # does capture its own runs across sessions, which is what `.keel/learning/`
+        # being tracked rather than runtime-ignored is for.
         kind: markdown-dir
   labels:
     status: ["status:backlog", "status:in-progress", "status:needs-review", "status:done"]

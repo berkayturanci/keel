@@ -1508,23 +1508,32 @@ Three behaviours worth knowing:
 - **A sink that cannot be written is fail-soft**, like every other capture failure: the
   record becomes `skipped:capability-unavailable` and the merge is untouched.
 
-**keel writes the file; it does not commit it.** With a relative `path` the file
-lands in the working tree, and an uncommitted one is invisible to the next worktree
-(s2 cuts it from `origin/<base_branch>`) and discarded by every CI runner. The
-capture contract says which case you are in: `durable_artifacts.commit_required` is
-true exactly when the path is inside the repository.
+**keel writes the file; `keel capture-land` commits it.** With a relative `path` the
+file lands in the working tree, and an uncommitted one is invisible to the next
+worktree (s2 cuts it from `origin/<base_branch>`) and discarded by every CI runner.
+The capture contract says which case you are in: `durable_artifacts.commit_required`
+is true exactly when the path is inside the repository, and
+`durable_artifacts.land_command` then names the command that lands it.
 
-**An in-repo sink is not durable yet.** Committing the file from the run that wrote
-it is not a one-liner on the topology keel uses — s2, `overnight` and `swarm` all
-run inside a worktree while the primary checkout holds `base_branch`, so
-`git switch <base>` there fails with *already used by worktree*. Until #1163 is
-solved, **point `path` at an absolute or `~` folder** for the closest thing to
-durability: git never sees it, nothing needs committing, and `commit_required` is
-false. **A path outside the checkout is durable on the machine that wrote it, and only
+**An in-repo sink is durable.** s11 runs
+`keel capture-land <project.yaml> --root . --pr <N>` after the ledger append, and the
+lesson is on `origin/<base_branch>` when the run ends. It is deliberately not a
+`git switch`-and-commit recipe: s2, `overnight` and `swarm` all run inside a worktree
+while the primary checkout holds `base_branch`, so `git switch <base>` there fails
+with *already used by worktree*. The command builds its commit with plumbing against
+`origin/<base_branch>` instead and never checks the base branch out, so the same
+recipe works from a worktree, the primary checkout and a CI clone. It pushes one
+commit carrying one file — it is not a merge, and `keel merge` stays the only path a
+pull request takes to the base branch. Concurrent ships each land their own lesson.
+See [`cli.md`](cli.md) for the statuses and exit codes.
+
+**A path outside the checkout needs no landing step, and is durable on the machine
+that wrote it, and only
 there.** The recorded `capture.artifact` is that machine's absolute path, and the run
 ledger *is* committed — so a teammate or a CI runner reading the same record finds no
 file, the dedupe cannot point at it, and the run records `applied` with no artifact.
-Portable artifact references are part of #1163 too.
+An in-repo sink has no such problem: the path in the record is repo-relative and the
+file is on the base branch, which is why it is now the better default of the two.
 
 The default `.keel/learning/` is **not** runtime-ignored. Everything else keel writes
 under `.keel/` is disposable per-run state; learnings are the exception, because a

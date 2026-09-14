@@ -1287,27 +1287,50 @@ the failure mode being fixed here, so surface the report in the closure comment 
 only in the run log.
 
 ### s11 capture
-**keel writes the learning file; it does not commit it.** With
+**keel writes the learning file; `keel capture-land` lands it.** With
 `policy_pack.capture.learning.sink` configured, `keel ship --live --append-ledger`
 writes one Markdown file and records its path as `capture.artifact`.
 `capture.durable_artifacts.commit_required` says whether that path is inside the
 repository — a relative `path` is; an absolute or `~` one is a folder git never sees.
 
-**When it is true, the file is not durable yet and this step does not make it so.**
+**When it is true, land it with `keel capture-land` — never by hand.**
 An untracked file in the working tree is one the next worktree never sees — s2 cuts
-that from `origin/<base_branch>` — and one every CI runner discards. Committing it
-from here is not a one-liner on the topology this command runs in: s2, `overnight`
-and `swarm` all execute inside a worktree while the primary checkout holds
-`base_branch`, so `git switch "$BASE_BRANCH"` there exits 128 with *'<base>' is
-already used by worktree*. Landing it correctly is tracked in #1163; do not
-improvise a push here, and do not report the lesson as durable when it is not.
+that from `origin/<base_branch>` — and one every CI runner discards. Run it straight
+after the ledger append, with the same `--pr`, and it reads the artifact off that
+run's own `ship_run` record:
+
+```bash
+keel capture-land .keel/project.yaml --root "$WORKTREE" --pr <PR> --json
+```
+
+**Do not improvise a push.** The obvious recipe cannot run on the topology this
+command runs in: s2, `overnight` and `swarm` all execute inside a worktree while the
+primary checkout holds `base_branch`, so `git switch "$BASE_BRANCH"` there exits 128
+with *'<base>' is already used by worktree*. `keel capture-land` builds its commit
+with plumbing against `origin/<base_branch>` and never checks the base branch out, so
+it runs the same from a worktree, the primary checkout, or a CI clone.
+
+**It is not a merge and does not touch one.** It pushes a single commit carrying a
+single file; the merge claim, the window and `keel merge` at s10 are untouched, and
+s10 remains the only path a pull request takes to `base_branch`. Two ships finishing
+s11 at once both land theirs — a rejected push means the other got there first, and
+the commit is rebuilt on the branch as it now is rather than forced over it.
+
+Read `status` from the `--json` result, do not infer it from the exit code alone:
+`landed` and `already-landed` are both success (the second is what a resumed or
+retried s11 reports, and it pushes nothing), `not-required` and `no-artifact` mean
+there was nothing to do. Only `failed` is a failure, and it is **fail-soft** like
+every capture step — report it in the closure, never roll back a merge that already
+happened, and never report the lesson as durable when the landing did not succeed.
 
 **A sink outside the checkout needs no git step** — an absolute or `~` `path` is
-written and read back directly, and `commit_required` is false for it. **A path outside the checkout is durable on the machine that wrote it, and only
+written and read back directly, `commit_required` is false for it, and
+`keel capture-land` reports `not-required`. **A path outside the checkout is durable
+on the machine that wrote it, and only
 there.** The recorded `capture.artifact` is that machine's absolute path, and the run
 ledger *is* committed — so a teammate or a CI runner reading the same record finds no
 file, the dedupe cannot point at it, and the run records `applied` with no artifact.
-Portable artifact references are part of #1163 too.
+Portable artifact references are tracked separately in #1163's follow-up.
 
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
