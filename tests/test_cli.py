@@ -1184,6 +1184,75 @@ class TestWindow(unittest.TestCase):
         self.assertIn("invalid keel config", err)
 
 
+class TestOneBaseRef(unittest.TestCase):
+    """Every command diffs against the same base ref (#1184, follow-on of #1174).
+
+    `_gate_runner` runs the **jury** on the diff, so a second spelling of the base ref
+    means the same jury, on the same branch, at the same head, is handed different input
+    depending on which command invoked it. #1174 moved `keel ship` to `origin/<base>` and
+    left `keel run-gates` on the local branch; `_gather_branch_facts` was a third spelling,
+    a bare remote ref with no fallback at all.
+    """
+
+    def test_it_prefers_the_remote_ref_and_falls_back_to_the_local_branch(self):
+        with patch("keel.git.rev_parse", return_value="abc1234"):
+            self.assertEqual(cli._ship_base_ref("main", "."), "origin/main")
+        # An offline or freshly-initialised checkout has no remote-tracking ref; the
+        # configured branch keeps it fail-soft rather than diffing against nothing.
+        with patch("keel.git.rev_parse", return_value=None):
+            self.assertEqual(cli._ship_base_ref("main", "."), "main")
+
+    def test_ship_and_run_gates_ask_for_the_same_ref(self):
+        import tempfile
+
+        seen: dict[str, list] = {"ship": [], "run-gates": []}
+
+        def record(command):
+            def _diff(base, head, **kwargs):
+                seen[command].append((base, head))
+                return ""
+
+            return _diff
+
+        for command in ("ship", "run-gates"):
+            with (
+                tempfile.TemporaryDirectory() as d,
+                patch("keel.git.changed_files", return_value=[]),
+                patch("keel.git.rev_parse", return_value="abc1234"),
+                patch("keel.git.diff", side_effect=record(command)),
+            ):
+                run([command, _write_config("'true'"), "--root", d])
+
+        self.assertTrue(seen["ship"], "ship diffed nothing")
+        self.assertTrue(seen["run-gates"], "run-gates diffed nothing")
+        # The pair, not a hard-coded ref: what matters is that neither can drift from
+        # the other, whichever spelling `_ship_base_ref` settles on.
+        self.assertEqual(
+            {base for base, _ in seen["ship"]}, {base for base, _ in seen["run-gates"]}
+        )
+
+    def test_the_local_branch_is_not_what_either_reaches_for_when_the_remote_exists(self):
+        import tempfile
+
+        bases: list[str] = []
+
+        def _diff(base, head, **kwargs):
+            bases.append(base)
+            return ""
+
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.git.changed_files", return_value=[]),
+            patch("keel.git.rev_parse", return_value="abc1234"),
+            patch("keel.git.diff", side_effect=_diff),
+        ):
+            run(["run-gates", _write_config("'true'"), "--root", d])
+        self.assertTrue(bases)
+        # `main...HEAD` after a base merge carries the commits that merge brought in —
+        # the false-positive class #1174 removed from ship and left here.
+        self.assertTrue(all(base.startswith("origin/") for base in bases), bases)
+
+
 class TestShipWizard(unittest.TestCase):
     """`keel ship --wizard` end to end through the CLI (#1018)."""
 

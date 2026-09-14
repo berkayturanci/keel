@@ -461,7 +461,13 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     if evaluation.missing_optional:
         print(evaluation.render(), file=sys.stderr)
 
-    diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
+    # The same helper `keel ship` uses. `_gate_runner` runs the **jury** on this diff,
+    # so a second spelling meant the same jury on the same branch at the same head got
+    # different input depending on which command invoked it: after a base merge,
+    # `main...HEAD` carries the commits that merge brought in and `origin/main...HEAD`
+    # does not (#1184).
+    base_ref = _ship_base_ref(config.base_branch, args.root)
+    diff_text = git.diff(base_ref, "HEAD", cwd=args.root)
     outcomes, _tdd_result = _run_planned_gates(
         specs,
         _gate_runner(
@@ -1215,11 +1221,21 @@ def _review_assignment(
 
 
 def _ship_base_ref(base_branch: str, root: str) -> str:
-    """Return the canonical base ref for ship's branch diff.
+    """The one base ref every command diffs against.
 
-    A fetched ``origin/<base>`` is authoritative when available.  Falling back
-    to the configured local branch keeps dry-run and offline repositories
-    fail-soft while preserving the historical behaviour there.
+    ``origin/<base>`` when the remote-tracking ref resolves, else the configured local
+    branch, which keeps dry-run and offline repositories fail-soft. Three commands used
+    to spell this three ways — ``keel ship`` through here, ``keel run-gates`` with the
+    local branch, and ``_gather_branch_facts`` with a bare remote ref and no fallback —
+    and `_gate_runner` runs the **jury** on the resulting diff, so the same jury on the
+    same branch at the same head received different input depending on the entry point.
+    After a base merge, ``<base>...HEAD`` carries the commits that merge brought in;
+    ``origin/<base>...HEAD`` carries only the branch's own (#1184, #1174).
+
+    **keel does not fetch.** This prefers whatever the checkout already has, so a
+    worktree that has not fetched in a week prefers a week-old ref over a local branch
+    the operator may keep current. Keeping the ref fresh belongs to whatever drives
+    keel; a fetch here would put a network call inside a diff.
     """
     remote_ref = f"origin/{base_branch}"
     return remote_ref if git.rev_parse(remote_ref, cwd=root) else base_branch
@@ -3780,7 +3796,6 @@ def _gather_branch_facts(args: argparse.Namespace, base_branch: str) -> dict[str
     """
     head_sha = args.head_sha
     head_ref = args.head_ref
-    base_ref = f"origin/{base_branch}"
     if head_sha is None and not args.offline:
         owner_repo = _owner_repo_from_args(args)
         pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
@@ -3793,7 +3808,10 @@ def _gather_branch_facts(args: argparse.Namespace, base_branch: str) -> dict[str
     base_distance = args.base_distance
     if not args.offline:
         if base_tip_sha is None:
-            base_tip_sha = git.rev_parse(base_ref, cwd=args.root)
+            # Resolved here rather than above: `_ship_base_ref` asks git which ref exists,
+            # and a caller that supplied `--base-tip-sha` has already said it wants no live
+            # call at all. Hoisting it turned that short-circuit into one `rev-parse`.
+            base_tip_sha = git.rev_parse(_ship_base_ref(base_branch, args.root), cwd=args.root)
         if merge_base_sha is None and head_sha is not None and base_tip_sha is not None:
             merge_base_sha = git.merge_base(head_sha, base_tip_sha, cwd=args.root)
         if base_distance is None and merge_base_sha is not None and base_tip_sha is not None:
