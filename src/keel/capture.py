@@ -309,6 +309,7 @@ def record_marker(
             "marker": None,
             "not_run": not_run,
             "artifact": clean_artifact,
+            "artifact_scope": artifact_scope(clean_artifact, config),
             "retrieved": clean_retrieved,
             "fail_soft": True,
             "learning": learning_decision(
@@ -340,6 +341,7 @@ def record_marker(
             "marker_reason": clean_marker_reason,
             "marker": None,
             "artifact": clean_artifact,
+            "artifact_scope": artifact_scope(clean_artifact, config),
             "retrieved": clean_retrieved,
             "fail_soft": True,
             "learning": learning,
@@ -352,6 +354,7 @@ def record_marker(
         "marker_reason": marker.reason,
         "marker": marker.as_text(),
         "artifact": clean_artifact,
+        "artifact_scope": artifact_scope(clean_artifact, config),
         "retrieved": clean_retrieved,
         "fail_soft": True,
         "learning": learning,
@@ -1033,6 +1036,39 @@ def learning_sink_policy(config: _HasPolicyPack | None) -> dict[str, Any] | None
     return sink if isinstance(sink, dict) else None
 
 
+#: Where a recorded `capture.artifact` can be read from.
+ARTIFACT_SCOPE_REPOSITORY = "repository"
+ARTIFACT_SCOPE_MACHINE = "machine"
+
+
+def artifact_scope(artifact: str | None, config: _HasPolicyPack | None = None) -> str | None:
+    """`repository` or `machine` for a recorded artifact path, or ``None`` for no artifact.
+
+    An in-repo sink's path is recorded relative to ``--root``, so it means the same thing
+    in every clone. A sink outside the checkout — a shared `~/knowledge` folder — is
+    recorded absolute, and the run ledger is **committed**: that path travels to teammates
+    and CI runners where it names nothing. Saying so in the record is what lets
+    `keel capture-verify` tell "written somewhere this host cannot see" from "never
+    written", which are the same absence and very different facts (#1185).
+
+    The config decides when it is available, because it is the sink's *shape* that
+    settles this — the same question `learning_sink_in_worktree` asks. For a record
+    written before this field existed, the path's own shape is the fallback: an anchored
+    path is machine-scoped, a relative one is not.
+    """
+    if not isinstance(artifact, str) or not artifact.strip():
+        return None
+    if config is not None:
+        return (
+            ARTIFACT_SCOPE_REPOSITORY
+            if learning_sink_in_worktree(config)
+            else ARTIFACT_SCOPE_MACHINE
+        )
+    path = artifact.strip()
+    anchored = path.startswith("~") or workspace.is_root_anchored(path)
+    return ARTIFACT_SCOPE_MACHINE if anchored else ARTIFACT_SCOPE_REPOSITORY
+
+
 def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
     """Does this project's sink write **inside the repository**?
 
@@ -1583,6 +1619,22 @@ def duplicate_learning_artifact(
             continue
         candidate = capture_block.get("artifact")
         if isinstance(candidate, str) and candidate.strip():
+            recorded_scope = capture_block.get("artifact_scope")
+            scope = (
+                recorded_scope.strip()
+                if isinstance(recorded_scope, str) and recorded_scope.strip()
+                else artifact_scope(candidate, config)
+            )
+            # A `machine`-scoped path names a file on the host that wrote it and nothing
+            # anywhere else, so reusing it here would hand back a path this run cannot
+            # read — recorded as `applied` against an artifact that is not there (#1185).
+            # Skipped rather than returned; the run writes its own.
+            #
+            # The record's own field wins when it has one, because it describes the run
+            # that wrote it. Otherwise this project's sink decides: scope is a property of
+            # where the sink points, not of how a path happens to be spelled.
+            if scope == ARTIFACT_SCOPE_MACHINE:
+                continue
             # Keep scanning: the ledger is append-only and the newest record
             # holding this fingerprint is the one whose path is current.
             artifact = candidate.strip()

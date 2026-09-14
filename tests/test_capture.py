@@ -875,5 +875,49 @@ class TestCaptureImportGraph(unittest.TestCase):
         self.assertEqual(hits, [])
 
 
+class TheRecordSaysWhereItsArtifactCanBeRead(unittest.TestCase):
+    """`capture.artifact_scope` (#1185).
+
+    An in-repo sink's path means the same thing in every clone. A sink outside the
+    checkout records an absolute path, and the run ledger is *committed*, so that path
+    travels to teammates and CI runners where it names nothing. Saying which kind it is
+    lets `capture-verify` tell "written somewhere this host cannot see" from "never
+    written" — the same absence, very different facts.
+    """
+
+    def test_the_sinks_shape_decides(self):
+        for path, expected in (
+            (".keel/learning", capture.ARTIFACT_SCOPE_REPOSITORY),
+            ("~/knowledge", capture.ARTIFACT_SCOPE_MACHINE),
+            ("/srv/knowledge", capture.ARTIFACT_SCOPE_MACHINE),
+        ):
+            with self.subTest(path=path):
+                config = _config_with_learning_policy(
+                    {
+                        "enabled": True,
+                        "mode": "extension",
+                        "sink": {"kind": "markdown-dir", "path": path},
+                    }
+                )
+                self.assertEqual(capture.artifact_scope("anything.md", config), expected)
+
+    def test_an_older_record_is_read_from_the_paths_shape(self):
+        # Nothing already in a ledger changes meaning: an anchored path was always an
+        # outside sink, on any platform.
+        for path, expected in (
+            (".keel/learning/x.md", capture.ARTIFACT_SCOPE_REPOSITORY),
+            ("/Users/b/knowledge/x.md", capture.ARTIFACT_SCOPE_MACHINE),
+            ("~/knowledge/x.md", capture.ARTIFACT_SCOPE_MACHINE),
+            ("C:/knowledge/x.md", capture.ARTIFACT_SCOPE_MACHINE),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(capture.artifact_scope(path), expected)
+
+    def test_no_artifact_has_no_scope(self):
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                self.assertIsNone(capture.artifact_scope(value))
+
+
 if __name__ == "__main__":
     unittest.main()

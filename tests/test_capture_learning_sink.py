@@ -546,6 +546,45 @@ class ADuplicatePointsAtTheFileItDuplicates(unittest.TestCase):
             existing_records=records,
         )
 
+    def test_a_machine_scoped_artifact_is_never_borrowed(self):
+        """A path outside the checkout names a file on one host and nowhere else (#1185).
+
+        Reusing it hands this run a path it cannot read, recorded as `applied` against an
+        artifact that is not there — which `capture-verify` then reports as
+        `applied-without-artifact`, the finding reserved for a genuinely missing file.
+        The run writes its own instead.
+        """
+        for records in (
+            self.records("/Users/b/knowledge/one.md"),  # older record, no scope field
+            [
+                {
+                    "run_id": "r0",
+                    "capture": {
+                        "artifact": "/Users/b/knowledge/one.md",
+                        "artifact_scope": capture.ARTIFACT_SCOPE_MACHINE,
+                        "learning": {
+                            "decision": "create-learning",
+                            "fingerprint": self.DUPLICATE["fingerprint"],
+                        },
+                    },
+                }
+            ],
+        ):
+            with self.subTest(records=records[0]["capture"].get("artifact_scope")):
+                self.assertIsNone(
+                    self.artifact(
+                        self.DUPLICATE,
+                        records,
+                        sink={"kind": "markdown-dir", "path": "~/knowledge"},
+                    )
+                )
+
+    def test_a_repository_scoped_artifact_is_still_borrowed(self):
+        self.assertEqual(
+            self.artifact(self.DUPLICATE, self.records(".keel/learning/one.md")),
+            ".keel/learning/one.md",
+        )
+
     def test_only_an_applied_capture_borrows_one(self):
         """`learning_decision` answers `duplicate` before it looks at the status.
 

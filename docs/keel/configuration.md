@@ -1476,6 +1476,17 @@ bracket pair, the backslash, the angle brackets, the emphasis and strikethrough 
 the ampersand and the backtick, so `__init__.py` reads as written rather than as a bold
 `init`.
 
+**A sink outside the checkout is single-machine, by design.** A relative `path` is
+recorded in the ledger relative to `--root`, so it means the same file in every clone. An
+absolute or `~` path is recorded as written — and the run ledger is *committed*, so that
+path travels to teammates and CI runners where it names nothing. keel says so rather than
+pretending otherwise: the capture block records `artifact_scope: repository | machine`
+beside `artifact`, `keel capture-verify` reports a **note** (`applied-elsewhere`, never a
+finding) for a `machine`-scoped artifact instead of the `applied-without-artifact` finding
+reserved for a file that is genuinely missing, and the duplicate-reuse never hands a later
+run a path only one host can read. A record written before that field existed is read from
+the path's own shape, so nothing already in a ledger changes meaning (#1185).
+
 **One directory, two readers.** The sink is a plain Markdown folder, so the same files serve
 a knowledge-graph builder and a note vault. graphify ingests the directory as documents: it
 draws reference edges between the Markdown documents it can link, and a link whose target
