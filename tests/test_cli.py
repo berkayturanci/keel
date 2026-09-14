@@ -14607,8 +14607,6 @@ class TestLoopCommand(unittest.TestCase):
         self.assertIn("gate report must be", err)
 
 
-
-
 _LAND_SINK_LINES = [
     "  capture:",
     "    enabled: true",
@@ -14705,8 +14703,15 @@ class TestCaptureLand(unittest.TestCase):
             artifact = self._write_lesson(wt, "a.md")
             rc, out, _ = run(
                 [
-                    "capture-land", self._config(wt), "--root", str(wt),
-                    "--pr", "7", "--artifact", artifact, "--json",
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "7",
+                    "--artifact",
+                    artifact,
+                    "--json",
                 ]
             )
             payload = json.loads(out)
@@ -14719,8 +14724,16 @@ class TestCaptureLand(unittest.TestCase):
             origin, wt = _land_repo(Path(tmp), seed_learning="# Older lesson\n")
             artifact = self._write_lesson(wt, "b.md")
             rc, _, _ = run(
-                ["capture-land", self._config(wt), "--root", str(wt),
-                 "--pr", "8", "--artifact", artifact]
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "8",
+                    "--artifact",
+                    artifact,
+                ]
             )
             # Everything already on the base branch survives, the sibling lesson included.
             self.assertEqual(rc, 0)
@@ -14768,8 +14781,17 @@ class TestCaptureLand(unittest.TestCase):
 
             with patch.object(git, "push_commit", _race):
                 rc, out, _ = run(
-                    ["capture-land", config, "--root", str(wt), "--pr", "10",
-                     "--artifact", artifact, "--json"]
+                    [
+                        "capture-land",
+                        config,
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "10",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
                 )
             payload = json.loads(out)
             self.assertEqual(rc, 0)
@@ -14791,8 +14813,19 @@ class TestCaptureLand(unittest.TestCase):
             rejected = CommandResult(ok=False, code=1, output="! [rejected] (fetch first)")
             with patch.object(git, "push_commit", lambda *a, **k: rejected):
                 rc, out, _ = run(
-                    ["capture-land", config, "--root", str(wt), "--pr", "11",
-                     "--artifact", artifact, "--attempts", "2", "--json"]
+                    [
+                        "capture-land",
+                        config,
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "11",
+                        "--artifact",
+                        artifact,
+                        "--attempts",
+                        "2",
+                        "--json",
+                    ]
                 )
             payload = json.loads(out)
         self.assertEqual(rc, 1)
@@ -14818,16 +14851,12 @@ class TestCaptureLand(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            rc, out, _ = run(
-                ["capture-land", config, "--root", str(wt), "--pr", "12", "--json"]
-            )
+            rc, out, _ = run(["capture-land", config, "--root", str(wt), "--pr", "12", "--json"])
             payload = json.loads(out)
             self.assertEqual(rc, 0)
             self.assertEqual(payload["status"], "landed")
             self.assertEqual(payload["plan"]["path"], artifact)
-            self.assertEqual(
-                _origin_files(origin), [".keel/learning/from-ledger.md", "keep.txt"]
-            )
+            self.assertEqual(_origin_files(origin), [".keel/learning/from-ledger.md", "keep.txt"])
 
     def test_a_ledger_with_no_record_for_the_pr_reports_no_artifact(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -14856,8 +14885,18 @@ class TestCaptureLand(unittest.TestCase):
             origin, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "e.md")
             rc, out, _ = run(
-                ["capture-land", self._config(wt), "--root", str(wt), "--pr", "15",
-                 "--artifact", artifact, "--dry-run", "--json"]
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "15",
+                    "--artifact",
+                    artifact,
+                    "--dry-run",
+                    "--json",
+                ]
             )
             payload = json.loads(out)
             self.assertEqual(rc, 0)
@@ -14868,8 +14907,17 @@ class TestCaptureLand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, wt = _land_repo(Path(tmp))
             rc, out, _ = run(
-                ["capture-land", self._config(wt), "--root", str(wt), "--pr", "16",
-                 "--artifact", ".keel/learning/absent.md", "--json"]
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "16",
+                    "--artifact",
+                    ".keel/learning/absent.md",
+                    "--json",
+                ]
             )
             payload = json.loads(out)
         self.assertEqual(rc, 1)
@@ -14879,8 +14927,17 @@ class TestCaptureLand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, wt = _land_repo(Path(tmp))
             rc, out, _ = run(
-                ["capture-land", self._config(wt), "--root", str(wt), "--pr", "17",
-                 "--artifact", "../escape.md", "--json"]
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "17",
+                    "--artifact",
+                    "../escape.md",
+                    "--json",
+                ]
             )
             payload = json.loads(out)
         self.assertEqual(rc, 1)
@@ -14900,9 +14957,7 @@ class TestCaptureLand(unittest.TestCase):
                 "    run_ledger: 'state/runs.jsonl'\n" + "\n".join(lines) + "\n",
                 encoding="utf-8",
             )
-            rc, out, _ = run(
-                ["capture-land", str(path), "--root", str(wt), "--pr", "18", "--json"]
-            )
+            rc, out, _ = run(["capture-land", str(path), "--root", str(wt), "--pr", "18", "--json"])
             payload = json.loads(out)
         self.assertEqual(rc, 0)
         self.assertEqual(payload["status"], "not-required")
@@ -14912,8 +14967,16 @@ class TestCaptureLand(unittest.TestCase):
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "f.md")
             rc, out, _ = run(
-                ["capture-land", self._config(wt), "--root", str(wt), "--pr", "19",
-                 "--artifact", artifact]
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "19",
+                    "--artifact",
+                    artifact,
+                ]
             )
         self.assertEqual(rc, 0)
         self.assertIn("keel capture-land — landed", out)
@@ -14955,8 +15018,17 @@ class TestCaptureLand(unittest.TestCase):
             artifact = self._write_lesson(wt, "g.md")
             with patch.object(git, "rev_parse", lambda *a, **k: None):
                 rc, out, _ = run(
-                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "20",
-                     "--artifact", artifact, "--json"]
+                    [
+                        "capture-land",
+                        self._config(wt),
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "20",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
                 )
             payload = json.loads(out)
         self.assertEqual(rc, 1)
@@ -14968,8 +15040,17 @@ class TestCaptureLand(unittest.TestCase):
             artifact = self._write_lesson(wt, "h.md")
             with patch.object(git, "hash_object", lambda *a, **k: None):
                 rc, out, _ = run(
-                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "21",
-                     "--artifact", artifact, "--json"]
+                    [
+                        "capture-land",
+                        self._config(wt),
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "21",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
                 )
             payload = json.loads(out)
         self.assertEqual(rc, 1)
@@ -14981,8 +15062,17 @@ class TestCaptureLand(unittest.TestCase):
             artifact = self._write_lesson(wt, "i.md")
             with patch.object(git, "mktree", lambda *a, **k: None):
                 rc, out, _ = run(
-                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "22",
-                     "--artifact", artifact, "--json"]
+                    [
+                        "capture-land",
+                        self._config(wt),
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "22",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
                 )
             payload = json.loads(out)
         self.assertEqual(rc, 1)
@@ -14994,8 +15084,17 @@ class TestCaptureLand(unittest.TestCase):
             artifact = self._write_lesson(wt, "j.md")
             with patch.object(git, "commit_tree", lambda *a, **k: None):
                 rc, out, _ = run(
-                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "23",
-                     "--artifact", artifact, "--json"]
+                    [
+                        "capture-land",
+                        self._config(wt),
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "23",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
                 )
             payload = json.loads(out)
         self.assertEqual(rc, 1)
@@ -15010,8 +15109,17 @@ class TestCaptureLand(unittest.TestCase):
             with patch.object(git, "diff_names", lambda *a, **k: drifted):
                 with patch.object(git, "push_commit", lambda *a, **k: pushed.append(a)):
                     rc, out, _ = run(
-                        ["capture-land", self._config(wt), "--root", str(wt), "--pr", "24",
-                         "--artifact", artifact, "--json"]
+                        [
+                            "capture-land",
+                            self._config(wt),
+                            "--root",
+                            str(wt),
+                            "--pr",
+                            "24",
+                            "--artifact",
+                            artifact,
+                            "--json",
+                        ]
                     )
             payload = json.loads(out)
             self.assertEqual(rc, 1)
@@ -15026,8 +15134,17 @@ class TestCaptureLand(unittest.TestCase):
             artifact = self._write_lesson(wt, "l.md")
             with patch.object(git, "diff_names", lambda *a, **k: None):
                 rc, out, _ = run(
-                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "25",
-                     "--artifact", artifact, "--json"]
+                    [
+                        "capture-land",
+                        self._config(wt),
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "25",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
                 )
             payload = json.loads(out)
         self.assertEqual(rc, 1)

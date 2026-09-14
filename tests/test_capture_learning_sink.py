@@ -52,6 +52,11 @@ def run(argv):
     return code, out.getvalue(), err.getvalue()
 
 
+def _records(listing: str) -> list[str]:
+    """The NUL-terminated records of a tree listing, without the trailing empty one."""
+    return [record for record in listing.split("\x00") if record]
+
+
 def _shell_fences(markdown: str) -> list[str]:
     """Every ```bash / ```sh fenced block's body in ``markdown``.
 
@@ -2867,12 +2872,12 @@ class TestTreeComposition(unittest.TestCase):
     """
 
     def test_adds_into_an_existing_listing_in_git_order(self):
-        listing = f"100644 blob {'a' * 40}\tb.md\n040000 tree {'c' * 40}\tsub\n"
+        listing = f"100644 blob {'a' * 40}\tb.md\x00040000 tree {'c' * 40}\tsub\x00"
         out = capture.upsert_tree_entry(
             listing, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "d" * 40, "a.md")
         )
         self.assertEqual(
-            out.splitlines(),
+            _records(out),
             [
                 f"100644 blob {'d' * 40}\ta.md",
                 f"100644 blob {'a' * 40}\tb.md",
@@ -2881,50 +2886,76 @@ class TestTreeComposition(unittest.TestCase):
         )
 
     def test_replaces_the_entry_of_the_same_name(self):
-        listing = f"100644 blob {'a' * 40}\ta.md\n"
+        listing = f"100644 blob {'a' * 40}\ta.md\x00"
         out = capture.upsert_tree_entry(
             listing, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "b" * 40, "a.md")
         )
-        self.assertEqual(out, f"100644 blob {'b' * 40}\ta.md\n")
+        self.assertEqual(out, f"100644 blob {'b' * 40}\ta.md\x00")
 
     def test_a_missing_directory_composes_from_nothing(self):
         # The first lesson ever landed, where `.keel/learning` is not on the base branch.
         out = capture.upsert_tree_entry(
             None, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "a" * 40, "a.md")
         )
-        self.assertEqual(out, f"100644 blob {'a' * 40}\ta.md\n")
+        self.assertEqual(out, f"100644 blob {'a' * 40}\ta.md\x00")
 
     def test_git_sorts_a_tree_as_if_its_name_ended_in_a_slash(self):
         # git compares "learning/" against "learning.md", and "." (0x2e) sorts before
         # "/" (0x2f) - so the blob comes first. Composing it any other way hands
         # `mktree` an order it has to fix, and two runs stop agreeing byte for byte.
-        listing = f"040000 tree {'a' * 40}\tlearning\n100644 blob {'b' * 40}\tlearning.md\n"
+        listing = f"040000 tree {'a' * 40}\tlearning\x00100644 blob {'b' * 40}\tlearning.md\x00"
         out = capture.upsert_tree_entry(
             listing, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "c" * 40, "a.md")
         )
         self.assertEqual(
-            [line.split("\t")[1] for line in out.splitlines()],
+            [record.split("\t")[1] for record in _records(out)],
             ["a.md", "learning.md", "learning"],
         )
 
     def test_unparseable_lines_are_dropped_not_guessed_at(self):
-        self.assertEqual(capture.parse_tree_listing("garbage\n\n"), [])
+        self.assertEqual(capture.parse_tree_listing("garbage\x00\x00"), [])
         self.assertEqual(capture.parse_tree_listing(None), [])
 
     def test_parses_every_entry_kind(self):
         listing = (
-            f"100644 blob {'a' * 40}\ta.md\n"
-            f"040000 tree {'b' * 40}\tsub\n"
-            f"160000 commit {'c' * 40}\tmodule\n"
+            f"100644 blob {'a' * 40}\ta.md\x00"
+            f"040000 tree {'b' * 40}\tsub\x00"
+            f"160000 commit {'c' * 40}\tmodule\x00"
         )
         self.assertEqual(
             [(e.kind, e.name) for e in capture.parse_tree_listing(listing)],
             [("blob", "a.md"), ("tree", "sub"), ("commit", "module")],
         )
 
+    def test_the_listing_carries_no_newline_to_translate(self):
+        """The Windows defect this format exists for, pinned as a property.
+
+        Python opens a subprocess's stdin with ``newline=None`` under ``text=True``,
+        so every ``\n`` becomes CRLF there. `git mktree` accepts a CRLF listing
+        without complaint, writes a tree whose entry is named ``<name>\r`` and exits
+        0 with a different SHA — measured, and the reason seven tests went red on
+        every Windows leg while the landing's own safety check correctly refused to
+        push. NUL-terminated output has nothing to translate.
+        """
+        out = capture.upsert_tree_entry(
+            f"040000 tree {'a' * 40}\tsub\x00",
+            capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "b" * 40, "a.md"),
+        )
+        self.assertNotIn("\n", out)
+        self.assertNotIn("\r", out)
+        self.assertTrue(out.endswith("\x00"))
+
+    def test_a_listing_that_arrives_lf_terminated_still_parses(self):
+        # The reader is permissive on purpose; the writer is the exact side.
+        self.assertEqual(
+            [e.name for e in capture.parse_tree_listing(f"100644 blob {'a' * 40}\ta.md\n")],
+            ["a.md"],
+        )
+
     def test_render_round_trips(self):
         entry = capture.TreeEntry(capture.TREE_MODE_TREE, "tree", "a" * 40, "sub")
         self.assertEqual(capture.parse_tree_listing(entry.render()), [entry])
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

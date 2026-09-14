@@ -1846,14 +1846,18 @@ class TreeEntry:
 
 
 def parse_tree_listing(listing: str | None) -> list[TreeEntry]:
-    """Parse ``git ls-tree`` output; unreadable lines are dropped, not guessed at.
+    """Parse ``git ls-tree -z`` output; unreadable records are dropped, not guessed at.
 
     A missing directory is an empty listing rather than an error: landing a lesson
     into a sink directory that does not exist on the base branch yet is the ordinary
     first run, not a failure.
+
+    Records are NUL-separated (see :func:`keel.git.ls_tree`), and a newline is split
+    on as well so a listing that reached this from a LF-terminated source still
+    parses — the reader is permissive, the *writer* is the side that has to be exact.
     """
     entries: list[TreeEntry] = []
-    for line in (listing or "").splitlines():
+    for line in re.split(r"[\0\n]", listing or ""):
         match = _TREE_ENTRY_RE.match(line.rstrip("\n"))
         if match is not None:
             entries.append(
@@ -1877,8 +1881,14 @@ def upsert_tree_entry(listing: str | None, entry: TreeEntry) -> str:
     lesson is grafted onto the base branch's tree, so "the commit differs from its
     parent by exactly this one path" is a property of a string function rather than
     of a live push nobody can re-run.
+
+    **NUL-terminated**, because the result is written to a subprocess's stdin and a
+    text-mode pipe rewrites ``\n`` as CRLF on Windows. ``git mktree`` accepts the
+    corrupted listing without complaint and writes a tree whose entry is named
+    ``<name>\r`` — a different SHA, exit 0, no error (measured). There is no newline
+    in this output to translate.
     """
     kept = [existing for existing in parse_tree_listing(listing) if existing.name != entry.name]
     kept.append(entry)
     kept.sort(key=_tree_sort_key)
-    return "".join(f"{item.render()}\n" for item in kept)
+    return "".join(f"{item.render()}\x00" for item in kept)

@@ -179,18 +179,29 @@ def ls_tree(treeish: str, *, cwd: str | None = None, _run=None) -> str | None:
     and an existing but empty one reads as no entries. The caller treats the first as
     "start a new directory" rather than as an error, which is what makes the very
     first lesson land as cleanly as the hundredth.
+
+    ``-z`` for the same reason :func:`mktree` takes it: entries are NUL-terminated,
+    so a name is returned raw instead of C-quoted, and the round trip back through
+    ``mktree`` cannot re-encode one.
     """
-    result = run_argv(["git", "ls-tree", treeish], cwd=cwd, **_kw(_run))
+    result = run_argv(["git", "ls-tree", "-z", treeish], cwd=cwd, **_kw(_run))
     return result.stdout if result.ok else None
 
 
 def mktree(listing: str, *, cwd: str | None = None, _run=None) -> str | None:
-    """Write a tree object from ``ls-tree``-shaped ``listing``; ``None`` on error.
+    """Write a tree object from NUL-terminated ``ls-tree``-shaped ``listing``.
 
     The listing arrives on **stdin**, never in an argv: it carries object names and
     file names, and an argv is world-readable in ``ps`` for the life of the process.
+
+    **``-z``, because a text-mode pipe rewrites newlines on Windows.** Python opens a
+    subprocess's stdin with ``newline=None`` under ``text=True``, which translates
+    every ``\n`` to ``os.linesep`` — so a LF-terminated listing reaches git as CRLF
+    there, and `mktree` does not complain: it writes a tree whose entry is named
+    ``<name>\r``, exits 0, and hands back a different SHA (measured). NUL-terminated
+    input has no newline to translate, so the same bytes arrive on every platform.
     """
-    result = run_argv(["git", "mktree"], cwd=cwd, stdin_text=listing, **_kw(_run))
+    result = run_argv(["git", "mktree", "-z"], cwd=cwd, stdin_text=listing, **_kw(_run))
     output = result.stdout.strip()
     return output if result.ok and _SHA_RE.match(output) else None
 
@@ -200,14 +211,16 @@ def commit_tree(
 ) -> str | None:
     """Commit ``tree`` with a single ``parent``; return the new commit SHA.
 
-    The message arrives on stdin for the same reason ``mktree``'s listing does, and
-    because ``-m`` would collapse the marker line into the subject on some git
-    versions' idea of paragraph handling.
+    The message goes in the **argv**, not on stdin, for the newline reason in
+    :func:`mktree`: a text-mode pipe turns every ``\n`` into CRLF on Windows, and a
+    commit message is content — it would land on the base branch carrying stray
+    carriage returns and stop being byte-identical across platforms. It is safe
+    there in a way a tree listing is not: this message is a fixed subject plus the
+    artifact path, which is about to be published on the base branch anyway.
     """
     result = run_argv(
-        ["git", "commit-tree", tree, "-p", parent, "-F", "-"],
+        ["git", "commit-tree", tree, "-p", parent, "-m", message],
         cwd=cwd,
-        stdin_text=message,
         **_kw(_run),
     )
     output = result.stdout.strip()
