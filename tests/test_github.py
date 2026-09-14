@@ -15,6 +15,23 @@ def _closed_pr(number: int, merged: str, updated: str | None = None) -> dict:
     return {"number": number, "merged_at": merged, "updated_at": updated or merged}
 
 
+def _window_gh(pages, *, landed="behind"):
+    """A `gh` that serves `pulls/<n>` from ``pages`` and answers the reachability check.
+
+    `rest_pr_merge_window` asks two questions per poll — the pull request, then whether
+    its `merge_commit_sha` is actually on the base branch — so a fixture that only
+    answers the first runs out mid-poll.
+    """
+    bodies = list(pages)
+
+    def run(argv, **kwargs):
+        if any("/compare/" in part for part in argv):
+            return _proc(landed)
+        return bodies.pop(0) if len(bodies) > 1 else bodies[0]
+
+    return MagicMock(side_effect=run)
+
+
 class TestGithubComments(unittest.TestCase):
     def test_post_issue_comment_uses_raw_field(self):
         mock_runner = MagicMock(return_value=_proc('{"id": 123}'))
@@ -276,10 +293,39 @@ class TestRestTransport(unittest.TestCase):
             )
 
         settling, settled = window(""), window("abc")
-        mock = MagicMock(side_effect=[_proc(settling), _proc(settled)])
+        mock = _window_gh([_proc(settling), _proc(settled)])
         window = github.rest_pr_merge_window(7, _run=mock, _sleep=lambda _s: None)
         self.assertEqual(window["merge_commit"], "abc")
-        self.assertEqual(mock.call_count, 2)
+
+    def test_a_speculative_test_merge_sha_is_not_the_landed_commit(self):
+        """REST fills `merge_commit_sha` while the pull request is still open.
+
+        GitHub documents it as the **speculative test-merge** SHA (`refs/pull/<n>/merge`)
+        until the merge lands, when it becomes the commit that actually landed. So
+        "merged, and the field is filled" is true on the first post-merge read even while
+        the cached test SHA is still being served, and the drift check would judge the
+        test merge instead of the squash. GraphQL's `mergeCommit.oid` is null until the
+        real commit exists, which is why the same poll is correct there.
+        """
+        merged = json.dumps(
+            {
+                "created_at": "T0",
+                "merged_at": "T1",
+                "base": {"ref": "main"},
+                "merge_commit_sha": "testsha",
+            }
+        )
+        # The SHA is on no branch: `compare` says the two have diverged.
+        self.assertIsNone(
+            github.rest_pr_merge_window(
+                7, _run=_window_gh([_proc(merged)], landed="diverged"), _sleep=lambda _s: None
+            )
+        )
+        # The same body, once that SHA is reachable from the base branch, is an answer.
+        window = github.rest_pr_merge_window(
+            7, _run=_window_gh([_proc(merged)], landed="behind"), _sleep=lambda _s: None
+        )
+        self.assertEqual(window["merge_commit"], "testsha")
 
     def test_the_rest_merge_names_its_method_and_its_pin(self):
         mock = MagicMock(return_value=_proc('{"merged": true}'))
@@ -332,7 +378,7 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
         self.assertEqual(github.rest_rollup([{"name": "a", "status": "completed"}], None), [])
 
     def test_an_unreadable_window_and_an_unreadable_page_are_none(self):
-        self.assertIsNone(github.rest_pr_merge_window(7, _run=MagicMock(return_value=_proc("[]"))))
+        self.assertIsNone(github.rest_pr_merge_window(7, _run=_window_gh([_proc("[]")])))
         # A pull request that is not merged has no window worth reporting either.
         self.assertIsNone(
             github.rest_pr_merge_window(
@@ -361,9 +407,7 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
                 "merge_commit_sha": None,
             }
         )
-        self.assertIsNone(
-            github.rest_pr_merge_window(7, _run=MagicMock(return_value=_proc(unmerged)))
-        )
+        self.assertIsNone(github.rest_pr_merge_window(7, _run=_window_gh([_proc(unmerged)])))
 
     def test_a_window_that_never_settles_returns_nothing(self):
         settling = json.dumps(
@@ -374,12 +418,15 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
                 "merge_commit_sha": "",
             }
         )
-        mock = MagicMock(return_value=_proc(settling))
+        mock = _window_gh([_proc(settling)])
         # A merge whose commit never appears is not a merge this check can read, so it
         # is `None` and the caller says "no merge commit yet" — but it says so *after*
         # the poll, not instead of it.
         self.assertIsNone(github.rest_pr_merge_window(7, _run=mock, _sleep=lambda _s: None))
-        self.assertEqual(mock.call_count, github.MERGE_COMMIT_POLL_ATTEMPTS)
+        self.assertEqual(
+            sum(1 for c in mock.call_args_list if "/compare/" not in " ".join(c[0][0])),
+            github.MERGE_COMMIT_POLL_ATTEMPTS,
+        )
 
 
 if __name__ == "__main__":

@@ -7336,10 +7336,20 @@ class _GraphqlBlockedGh:
     tell a REST run from a GraphQL one that happened to return the same values.
     """
 
-    def __init__(self, *, rest: dict[str, str] | None = None, merge_ok: bool = True):
+    def __init__(
+        self,
+        *,
+        rest: dict[str, str] | None = None,
+        merge_ok: bool = True,
+        landed: str = "behind",
+    ):
         self.calls: list[list[str]] = []
         self._rest = rest or {}
         self._merge_ok = merge_ok
+        #: What `compare/<base>...<sha>` reports. `behind` is the post-merge truth: the
+        #: merge commit is reachable from the base branch. `diverged` is the speculative
+        #: test merge REST serves in `merge_commit_sha` while a PR is still open.
+        self._landed = landed
 
     def __call__(self, argv, **kwargs):
         self.calls.append(list(argv))
@@ -7347,6 +7357,8 @@ class _GraphqlBlockedGh:
             return CommandResult(False, 1, "HTTP 403: GraphQL is blocked by this proxy")
         if argv[:2] != ["gh", "api"]:
             return CommandResult(False, 1, f"unexpected argv: {argv}")
+        if any("/compare/" in part for part in argv):
+            return _proc(self._landed)
         if "-X" in argv and "PUT" in argv:
             return (
                 _proc(json.dumps({"merged": True, "sha": "m1"}))
@@ -7429,6 +7441,24 @@ class TestVerifyMergeOverRest(unittest.TestCase):
         self.assertEqual(payload["status"], "drift")
         self.assertEqual(payload["overtaken"], {"a.py": 550})
         self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
+
+    def test_a_speculative_test_merge_sha_is_not_verified_as_the_merge(self):
+        # REST fills `merge_commit_sha` with the test-merge SHA while a pull request is
+        # open, and serves it briefly after. Judged as the merge, the drift check reads
+        # `refs/pull/N/merge` instead of the squash that landed.
+        gh = _GraphqlBlockedGh(
+            rest={
+                "/pulls/543/files": "a.py",
+                "/pulls/543": self._PULL_543,
+                "/commits/deadbeef": "a.py",
+                "state=closed": self._CLOSED,
+            },
+            landed="diverged",
+        )
+        rc, out, _ = self._verify(gh)
+        payload = json.loads(out)
+        self.assertEqual(rc, 2, payload)
+        self.assertEqual(payload["status"], "unknown")
 
     def test_the_absence_of_drift_is_reported_over_rest_too(self):
         # "Reports drift or its absence" is the acceptance, and `unknown` is neither.

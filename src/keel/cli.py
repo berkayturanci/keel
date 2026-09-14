@@ -1131,6 +1131,13 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         payload["merge_output"] = merged.output
         if not merged.ok:
             return _finish_merge(args, payload, "gh merge failed", code=1)
+        # **The landed SHA, from the call that landed it.** The merge response names the
+        # commit; reading it back off the pull request is a second question whose answer
+        # can still be the speculative test merge. `_merge_drift_report` already prefers
+        # `--merge-sha`, so this is the same seam an operator uses.
+        landed = github.rest_json(merged) if transport == TRANSPORT_REST else None
+        if isinstance(landed, dict) and isinstance(landed.get("sha"), str):
+            args.merge_sha = landed["sha"]
         _autostamp(
             config,
             args.root,

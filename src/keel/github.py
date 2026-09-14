@@ -868,6 +868,29 @@ def rest_pr_files(
     )
 
 
+def _rest_commit_on_branch(sha: str, base: str, *, cwd: str | None, _run) -> bool:
+    """Is ``sha`` an ancestor of ``base`` — that is, did this commit actually land?
+
+    ``compare/<base>...<sha>`` answers ``identical`` when they are the same commit and
+    ``behind`` when ``sha`` is reachable from ``base``; ``ahead`` and ``diverged`` are
+    the speculative test merge, which exists as an object and is on no branch.
+    """
+    if not sha or not base:
+        return False
+    result = run_argv(
+        [
+            "gh",
+            "api",
+            f"repos/{{owner}}/{{repo}}/compare/{base}...{sha}",
+            "--jq",
+            ".status",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    return result.ok and result.stdout.strip() in ("identical", "behind")
+
+
 def rest_pr_merge_window(
     pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
 ) -> dict | None:
@@ -896,15 +919,31 @@ def rest_pr_merge_window(
             "base": str((payload.get("base") or {}).get("ref") or ""),
             "merge_commit": str(payload.get("merge_commit_sha") or ""),
         }
-        settling = window["merged_at"] and not window["merge_commit"]
-        if not settling or attempt == MERGE_COMMIT_POLL_ATTEMPTS:
-            # **All four, exactly as the GraphQL reader requires.** REST answers an
-            # *unmerged* pull request with `created_at` and `base.ref` and a null
-            # `merged_at`, so "any field present" reported a window for one — and a
-            # caller that supplied `--merge-sha` then went on to judge drift on a merge
-            # that had not happened, where the same call over GraphQL says `unknown`.
-            return window if all(window.values()) else None
-        sleep_fn(MERGE_COMMIT_POLL_DELAY_S)
+        # **Reachability, not presence.** REST's `merge_commit_sha` is not empty while a
+        # pull request is open: GitHub documents it as the *speculative test-merge* SHA
+        # (`refs/pull/<n>/merge`) until the merge lands, when it becomes the commit that
+        # actually landed. So "merged and the field is filled" is true on the first
+        # post-merge read even while the cached test SHA is still being served — and the
+        # drift check would then judge the test merge instead of the squash. GraphQL's
+        # `mergeCommit.oid` is null until the real commit exists, which is why the same
+        # poll is correct there and not here.
+        settling = window["merged_at"] and not _rest_commit_on_branch(
+            window["merge_commit"], window["base"], cwd=cwd, _run=_run
+        )
+        if settling:
+            if attempt < MERGE_COMMIT_POLL_ATTEMPTS:
+                sleep_fn(MERGE_COMMIT_POLL_DELAY_S)
+                continue
+            # Still unsettled when the budget runs out: the SHA on offer is one this
+            # check could not find on the base branch, so it is not an answer. Returning
+            # it anyway is how the drift read would judge the speculative test merge.
+            return None
+        # **All four, exactly as the GraphQL reader requires.** REST answers an
+        # *unmerged* pull request with `created_at` and `base.ref` and a null
+        # `merged_at`, so "any field present" reported a window for one — and a caller
+        # that supplied `--merge-sha` then went on to judge drift on a merge that had
+        # not happened, where the same call over GraphQL says `unknown`.
+        return window if all(window.values()) else None
     return None  # pragma: no cover - the loop always returns on its last attempt
 
 

@@ -240,6 +240,14 @@ carries its verdict in `state`, which the rollup reducer does not read, so it is
 into the `status`/`conclusion` pair that reducer does read — untranslated, the half that
 reports non-Actions CI could only ever turn `no-checks` into `pass`, never fail a merge.
 
+REST's `merge_commit_sha` is **not** GraphQL's `mergeCommit.oid`. GitHub fills it with the
+*speculative test-merge* SHA (`refs/pull/<n>/merge`) while the pull request is open, and
+replaces it with the commit that landed once it merges — so "merged, and the field is
+filled" is true on the first post-merge read even while the cached test SHA is still being
+served, and the drift check would judge the test merge instead of the squash. The REST
+window read therefore waits until that SHA is **reachable from the base branch**, not
+merely present, and `keel merge` prefers the SHA the merge response itself returns.
+
 The REST merge is also the **stricter** of the two: it sends `sha=<the head the gates-pass
 was checked against>`, so the API refuses it if the branch moved since the snapshot.
 `gh pr merge` applies no such pin by default.

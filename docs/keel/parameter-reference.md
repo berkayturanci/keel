@@ -415,6 +415,7 @@ keel merge <project.yaml> --pr N [--root DIR] [--issue N] [--method squash|merge
 
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
+| `--transport` | `auto` \| `graphql` \| `rest` | `auto` | Which wire reads the pull request and performs the merge. `auto` reads over GraphQL and switches to REST only when a probe confirms that endpoint is unreachable; `graphql` never falls back; `rest` never probes. Recorded as `transport` in the payload. |
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Root for git/GitHub operations and the lock store. |
 | `--pr N` | positive int | **required** | Pull request to merge. |
