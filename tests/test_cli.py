@@ -518,6 +518,32 @@ class TestPlan(unittest.TestCase):
         self.assertTrue(intake["provided"])
         self.assertEqual(intake["ledger_record"]["readiness"], "ready")
 
+    def test_plan_issue_intake_ignores_out_of_scope_section_heading(self):
+        body = (
+            "## Problem\nAgents need issue readiness.\n\n"
+            "## Deliverable\nExpose a structured intake record.\n\n"
+            "## Acceptance criteria\n"
+            "- Dry-run JSON includes readiness.\n\n"
+            "## Out of scope\n- Replacing the entire workflow engine.\n"
+        )
+        rc, out, _ = run(
+            [
+                "plan",
+                str(PROJECTS / "example-android.yaml"),
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ship",
+                "--issue-title",
+                "Add intake",
+                "--issue-body",
+                body,
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["contract"]["issue_intake"]["status"], "ready")
+
     def test_plan_json_can_expose_other_command_graph(self):
         rc, out, _ = run(
             [
@@ -1253,6 +1279,24 @@ class TestShipWizard(unittest.TestCase):
 
 
 class TestShip(unittest.TestCase):
+    def test_ship_prefers_fetched_remote_base_for_changed_files(self):
+        """A stale local base must not make imported merge commits part of the ledger."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.rev_parse", return_value="a" * 40) as rev_parse,
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]) as changed,
+                patch("keel.git.diff", return_value=""),
+            ):
+                rc, out, _ = run(["ship", _write_config("'true'"), "--root", d, "--json"])
+
+        self.assertEqual(rc, 0)
+        rev_parse.assert_called_once_with("origin/main", cwd=d)
+        changed.assert_called_once_with("origin/main", "HEAD", cwd=d)
+        payload = json.loads(out)
+        self.assertEqual(payload["result"]["changed_files"], ["src/keel/cli.py"])
+
     def test_clean_merges(self):
         import tempfile
 

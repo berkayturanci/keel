@@ -50,7 +50,7 @@ keel validate projects/*.yaml                 # schema only
 keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
-## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--tier 1|2|3] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--run-id ID] [--issue N] [--pull-request N] [--json]`
+## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--tier 1|2|3] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--declared-file PATH]... [--run-id ID] [--issue N] [--pull-request N] [--json]`
 
 Render the backbone plan for a project: the fixed steps with the project's built-in gates
 and extensions slotted in. This is the dry-run view — what an actual run would execute.
@@ -98,6 +98,11 @@ Consent mode is resolved as `--consent-mode` > `KEEL_CONSENT_MODE` >
 `consent_mode` in `.keel/project.yaml` > built-in `explicit`. `standing` mode accepts
 trusted `KEEL_APPROVE_SCOPE` or `automation.approved_scopes`; `agent` mode delegates the
 approval prompt to the host agent permission system while keeping the structured contract.
+
+For learning retrieval, repeat `--declared-file PATH` with the expected repo-relative
+files before implementation starts. The plan uses these paths together with the issue
+title and labels to populate `contract.learnings` and the reviewer brief. This does
+not require an existing diff or replace the scope recorded by `keel ship`.
 
 When `--issue-title`, `--issue-body`, or `--issue-label` is supplied for a work-owning
 command, the JSON contract includes `issue_intake`. The intake block classifies the issue

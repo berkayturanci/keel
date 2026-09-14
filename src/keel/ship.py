@@ -342,6 +342,7 @@ def resolve_review_contract(
     jury_participating_vendors: int | None = None,
     jury_panel_size: int | None = None,
     assignment: dict[str, Any] | None = None,
+    learnings: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Machine-readable review, jury, test, and merge-gate plan for ship-like flows.
 
@@ -427,6 +428,12 @@ def resolve_review_contract(
             "focuses": ([] if panel == team_policy.JURY_PANEL else list(reviewer_focuses(count))),
             "project_additions": list(review_policy.get("additions", [])),
             "required_sections": list(review_policy.get("required_sections", [])),
+            # The lessons this project already recorded about work of this shape
+            # (#1155), same shape as `project_additions` and for the same reason:
+            # a reviewer who is told what went wrong last time can check the
+            # implementation against it. Empty for every project with no
+            # learnings on disk, which is every project until it has some.
+            "past_learnings": list((learnings or {}).get("hits", [])),
         },
         "posting": {
             "mode": review_comments,
@@ -653,6 +660,11 @@ class ShipAssessment:
     missing_workflows: tuple[str, ...] = ()
     #: The resolved ``knobs.team`` assignment: who implements, gates, reviews, juries.
     assignment: dict[str, Any] | None = None
+    #: What ``policy_pack.capture.learning.source`` retrieved for this task (#1155),
+    #: as :func:`keel.capture.learning_retrieval_as_dict` builds it. ``None`` for
+    #: every caller that measured nothing, which is not the same as a project whose
+    #: directory is empty — that one retrieves and finds no hits.
+    learnings: dict[str, Any] | None = None
 
 
 def assess(
@@ -699,6 +711,10 @@ def assess(
     #: with this one once the real tier is known, so a measurement that stopped here would
     #: publish a ship contract naming a panel the plan had already found unstaffable.
     jury_availability: Mapping[str, Any] | None = None,
+    #: The retrieved past learnings for this task (#1155), measured in `cli` for the
+    #: same reason ``jury_availability`` is: reading a directory is I/O, and this
+    #: function is pure. ``None`` means nothing was retrieved *or attempted*.
+    learnings: Mapping[str, Any] | None = None,
 ) -> ShipAssessment:
     """The whole deterministic ship decision in one place: tier → reviewers, window,
     CI, and the final merge action. Pure — identical inputs give identical output.
@@ -788,6 +804,7 @@ def assess(
         jury_advisory=jury_advisory,
         require_distinct_vendors=require_distinct_vendors,
         assignment=assignment,
+        learnings=learnings,
     )
     return ShipAssessment(
         tier,
@@ -801,4 +818,5 @@ def assess(
         ran,
         missing,
         assignment,
+        None if learnings is None else dict(learnings),
     )
