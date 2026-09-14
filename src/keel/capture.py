@@ -2213,12 +2213,21 @@ LEARNING_LAND_ATTEMPTS = 3
 
 #: Marker on the landing commit, so the commit that carried a lesson onto the base
 #: branch can be found by the pull request it came from without parsing prose.
-LEARNING_LAND_MARKER = "keel-learning"
-
 LEARNING_LAND_SCHEMA_VERSION = "keel.capture-land.v1"
 
+#: The line the landing commit carries, and it is the **schema version**.
+#:
+#: This commit is the one thing keel pushes to a base branch outside a pull request,
+#: so a history reader — `git log`, `keel verify-merge`'s drift read, a person asking
+#: what this commit is — has to be able to tell it from a stray push. Naming it after
+#: the schema rather than inventing a second literal means the marker and the record
+#: cannot drift apart, and the name is greppable against the contract that defines it.
+LEARNING_LAND_MARKER = LEARNING_LAND_SCHEMA_VERSION
 
-def learning_land_message(*, pr_number: int | None, path: str) -> str:
+
+def learning_land_message(
+    *, pr_number: int | None, path: str, issue_number: int | None = None
+) -> str:
     """The landing commit's message — deterministic, so two runs agree byte for byte.
 
     Consumer-neutral on purpose: it carries no vendor trailer. The commit is keel's,
@@ -2231,8 +2240,11 @@ def learning_land_message(*, pr_number: int | None, path: str) -> str:
         if pr_number is not None
         else "chore(learning): record the lesson from this run"
     )
-    marker = f"{LEARNING_LAND_MARKER}: pr={pr_number if pr_number is not None else '-'} path={path}"
-    return f"{subject}\n\n{marker}\n"
+    fields = " ".join(
+        f"{name}={value if value is not None else '-'}"
+        for name, value in (("pr", pr_number), ("issue", issue_number), ("path", path))
+    )
+    return f"{subject}\n\n{LEARNING_LAND_MARKER}: {fields}\n"
 
 
 def learning_land_plan(
@@ -2240,6 +2252,7 @@ def learning_land_plan(
     *,
     artifact: str | None,
     pr_number: int | None = None,
+    issue_number: int | None = None,
     remote: str = "origin",
     base_branch: str | None = None,
     attempts: int = LEARNING_LAND_ATTEMPTS,
@@ -2329,7 +2342,7 @@ def learning_land_plan(
         "ref": f"refs/heads/{resolved_base}" if resolved_base else None,
         "remote_ref": f"{remote}/{resolved_base}" if resolved_base else None,
         "message": (
-            learning_land_message(pr_number=pr_number, path=normalized)
+            learning_land_message(pr_number=pr_number, path=normalized, issue_number=issue_number)
             if status == "planned"
             else None
         ),

@@ -284,6 +284,19 @@ The block records:
   candidates are suppressed by a stable fingerprint over normalized title, labels, and
   changed files. The decision is stored in the structured run ledger and mirrored in the
   closure comment's Capture line.
+- s11 landing command: `keel capture-land <project.yaml> --root . [--pr N] [--issue N]`
+  — pushes one commit carrying exactly the learning artifact to `<remote>/<base_branch>`,
+  built with plumbing and no checkout of the base branch (s2, `overnight` and `swarm` all
+  run inside a worktree while the primary checkout holds it). It is **not** a merge and
+  touches none: `keel merge` at s10 remains the only path a pull request takes to that
+  branch. `--root .`, never the worktree — s10's pre-clean has already removed that and the
+  ledger append writes under the primary checkout. The artifact must sit inside the
+  configured sink, not merely inside the repository. Statuses `landed`, `already-landed`,
+  `not-required`, `no-artifact` and `would-land` exit 0 (capture is fail-soft after a merge
+  that already happened); only `failed` exits 1. The commit's marker line is
+  `keel.capture-land.v1: pr=<N> issue=<N> path=<path>`, so a history reader can tell a
+  capture commit from a stray push. A base branch that requires pull requests refuses the
+  push; that is reported as `failed` with the server's reason and is not retried.
 - session-end verifier command: `keel capture-verify`
 - post-merge recovery command: `keel capture-reconcile`
 - reconcile plan guarantees: idempotent actions only, never reopen implementation, never

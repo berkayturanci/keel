@@ -1322,7 +1322,7 @@ after the ledger append, with the same `--pr`, and it reads the artifact off tha
 run's own `ship_run` record:
 
 ```bash
-keel capture-land .keel/project.yaml --root . --pr <PR> --json
+keel capture-land .keel/project.yaml --root . --pr <PR> --issue <ISSUE> --json
 ```
 
 **`--root .`, not the worktree.** s10's pre-clean has already removed `$WORKTREE` by

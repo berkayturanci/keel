@@ -681,6 +681,25 @@ keel capture-verify .keel/project.yaml --root . --merged-pr 456 --merged-pr 457
 keel capture-verify .keel/project.yaml --root . --from-transport --merged-since 2026-06-01
 ```
 
+## `keel capture-land`
+
+| flag | type | default | meaning |
+| --- | --- | --- | --- |
+| `<project.yaml>` | path | — | project config (positional) |
+| `--root` | path | `.` | repo root the sink path resolves against — the **primary checkout**, not the s2 worktree, which s10's pre-clean has already removed |
+| `--pr` | int | — | pull request the lesson came from; also how the artifact is read from the newest `ship_run` record |
+| `--issue` | int | — | issue the lesson came from; recorded in the commit's marker line |
+| `--artifact` | path | from the ledger | repo-relative path to land; must be inside the configured learning sink |
+| `--remote` | str | `origin` | remote holding the base branch |
+| `--attempts` | int | 3 | rebuild-and-retry budget when a concurrent ship pushes first |
+| `--dry-run` | flag | off | report `would-land` and push nothing |
+| `--json` | flag | off | emit the structured result |
+
+Exit codes: 0 for `landed`, `already-landed`, `not-required`, `no-artifact` and
+`would-land`; 1 for `failed`. Capture runs after the merge has already happened, so a
+landing with nothing to do must never fail the ship. See
+[`cli.md`](cli.md) for the transport, the safety check and the branch-protection limit.
+
 ## `keel capture-reconcile`
 
 Plan idempotent post-merge recovery actions for merged PRs with incomplete capture,

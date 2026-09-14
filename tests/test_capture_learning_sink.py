@@ -2954,7 +2954,9 @@ class TestLearningLandPlan(unittest.TestCase):
         # branch, and keel cannot know whose co-authorship to stamp on it.
         message = capture.learning_land_message(pr_number=7, path=".keel/learning/a.md")
         self.assertNotIn("Co-Authored-By", message)
-        self.assertIn("keel-learning: pr=7 path=.keel/learning/a.md", message)
+        # The marker *is* the schema version, so a history reader can tell this commit
+        # from a stray push and grep straight to the contract that defines it (#1163).
+        self.assertIn("keel.capture-land.v1: pr=7 issue=- path=.keel/learning/a.md", message)
 
     def test_contract_names_the_land_command_only_when_it_is_needed(self):
         with tempfile.TemporaryDirectory() as tmp:

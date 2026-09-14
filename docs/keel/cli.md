@@ -543,7 +543,7 @@ On a live append, a missing `--host-agent` emits a run-context warning by defaul
 fields would degrade. `--transport` is auto-filled from the resolved GitHub transport when
 omitted, so adapters should not echo a stale transport value.
 
-## `keel capture-land <project.yaml> [--root <dir>] [--pr <N>] [--artifact <path>] [--remote <name>] [--attempts <N>] [--dry-run] [--json]`
+## `keel capture-land <project.yaml> [--root <dir>] [--pr <N>] [--issue <N>] [--artifact <path>] [--remote <name>] [--attempts <N>] [--dry-run] [--json]`
 
 Land this run's learning document on `origin/<base_branch>` (#1163).
 
@@ -560,7 +560,7 @@ contract's `durable_artifacts.commit_required` said the file *had* to be committ
 landing touches no pull request, no merge claim, and no merge window.
 
 ```bash
-keel capture-land .keel/project.yaml --root . --pr 456 --json
+keel capture-land .keel/project.yaml --root . --pr 456 --issue 123 --json
 ```
 
 With no `--artifact`, the path is read from the `capture.artifact` field of the newest
@@ -632,6 +632,22 @@ Containment is also checked on the **resolved** path, not only on its spelling: 
 follows symlinks, and the exactly-one-file check downstream counts paths in the finished
 commit rather than where their bytes came from — so a link inside the sink pointing out of
 the checkout would have published someone else's file to the base branch.
+
+### Identifying the commit on the base branch
+
+This is the one commit keel pushes to a base branch outside a pull request, so it says so
+in a line a machine can read:
+
+```
+chore(learning): record the lesson from PR #456
+
+keel.capture-land.v1: pr=456 issue=123 path=.keel/learning/2026-09-14-pr456-....md
+```
+
+The marker **is** the schema version, which keeps it from drifting from the record it
+describes and makes it greppable against the contract that defines it. The subject and the
+message carry no vendor trailer: this commit lands on every consumer's base branch, and a
+core command cannot know whose co-authorship to stamp on one.
 
 ### Statuses and exit codes
 

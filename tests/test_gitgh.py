@@ -87,7 +87,7 @@ class TestGitLandingPlumbing(unittest.TestCase):
 
     def test_commit_tree_puts_the_message_in_the_argv(self):
         rec = _Recorder(out=SHA_A + "\n")
-        message = "chore(learning): record the lesson from PR #7\n\nkeel-learning: pr=7\n"
+        message = "chore(learning): record the lesson from PR #7\n\nkeel.capture-land.v1: pr=7\n"
         self.assertEqual(git.commit_tree(SHA_B, parent=SHA_A, message=message, _run=rec), SHA_A)
         # Not stdin: a text-mode pipe turns every `\n` into CRLF on Windows, and this
         # message is *content* that lands on the base branch - it has to stay

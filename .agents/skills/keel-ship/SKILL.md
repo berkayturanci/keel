@@ -1325,7 +1325,7 @@ after the ledger append, with the same `--pr`, and it reads the artifact off tha
 run's own `ship_run` record:
 
 ```bash
-keel capture-land .keel/project.yaml --root . --pr <PR> --json
+keel capture-land .keel/project.yaml --root . --pr <PR> --issue <ISSUE> --json
 ```
 
 **`--root .`, not the worktree.** s10's pre-clean has already removed `$WORKTREE` by
@@ -1540,4 +1540,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=4692fba06905f378ec46c0b1f007d03b62d3d7aa22e044f8dbc2243b08e2bf15 generated_sha256=f8894db03942a7f209bbc99b12758ddd759bd1fcf80d5e55875d369f23d34773 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=ca5acdc0c71ef5616be022d15053054f29ce0c54eef865d8af90a8c68517b827 generated_sha256=1cbf1e4d233ed628716559a8c7616a201c5c0757529c7e966cc0755825ee6725 -->

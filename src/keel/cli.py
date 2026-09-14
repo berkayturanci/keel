@@ -2075,6 +2075,7 @@ def _cmd_capture_land(args: argparse.Namespace) -> int:
         config,
         artifact=artifact,
         pr_number=args.pr,
+        issue_number=args.issue,
         remote=args.remote,
         attempts=args.attempts,
     )
@@ -7334,6 +7335,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=None,
         help="pull request the lesson came from; also how the artifact is read from the ledger",
+    )
+    p_land.add_argument(
+        "--issue",
+        type=_positive_int,
+        default=None,
+        help="issue the lesson came from; recorded in the commit's marker line",
     )
     p_land.add_argument(
         "--artifact",
