@@ -1956,11 +1956,19 @@ def _contained_real_path(path: Path, root: str, sink: str | None) -> Path | None
     if sink is None:
         return None
     try:
-        real = path.resolve()
-        base = (Path(root) / sink).resolve()
+        real, base = path.resolve(), Path(root).resolve()
     except OSError:  # pragma: no cover - an unstattable path fails closed as uncontained
         return None
-    return real if real.is_relative_to(base) else None
+    if not real.is_relative_to(base):
+        return None
+    # **The same rule the plan applied, on the resolved path.** Resolving the sink to a
+    # directory instead looked equivalent and was not: `.keel/{date}/learning` is a
+    # template, so it names no directory on disk, and every project with a placeholder in
+    # its sink was `planned` by the pure layer and then refused here on every run.
+    # `path_under_sink` matches a placeholder component as a wildcard, which is what makes
+    # the two layers one answer rather than two that agree only sometimes.
+    relative = real.relative_to(base).as_posix()
+    return real if capture.path_under_sink(relative, sink) else None
 
 
 def _land_learning_attempt(args, plan: dict) -> dict:
@@ -1970,7 +1978,20 @@ def _land_learning_attempt(args, plan: dict) -> dict:
     first - the caller retries) or ``failed``.
     """
     root, path, remote = args.root, plan["path"], plan["remote"]
-    git.fetch(remote, plan["base_branch"], cwd=root)
+    # **Checked, because the ref resolves either way.** s11 runs after s10 moved
+    # `<remote>/<base>`, and a failed fetch leaves the remote-tracking ref at the
+    # pre-merge tip — so the commit is built as a *sibling* of the merge, the push is a
+    # non-fast-forward, and that is genuine contention by every test we have. It is
+    # retried, the fetch fails the same way, and the budget is spent on a race with
+    # nobody. A fetch that could not run is the answer, not the symptom it produces.
+    fetched = git.fetch(remote, plan["base_branch"], cwd=root)
+    if not fetched.ok:
+        return _land_result(
+            "failed",
+            f"cannot fetch {remote}/{plan['base_branch']}: {fetched.output.strip()}",
+            None,
+            None,
+        )
     base_sha = git.rev_parse(plan["remote_ref"], cwd=root)
     if base_sha is None:
         return _land_result("failed", f"cannot resolve {plan['remote_ref']}", None, None)

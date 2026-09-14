@@ -15279,6 +15279,100 @@ class TestCaptureLand(unittest.TestCase):
             self.assertIn("outside the learning sink", payload["detail"])
             self.assertEqual(_origin_files(origin), ["keep.txt"])
 
+    def test_a_sink_with_a_placeholder_actually_lands(self):
+        """The plan and the landing have to answer the same question (#1163).
+
+        `_under` matches a placeholder component as a wildcard, so the pure layer planned
+        `.keel/{date}/learning/a.md`. Resolving the sink to a *directory* on disk then
+        refused it, because a template names no directory — every project with a
+        placeholder in its sink was planned and then refused on every run, which no unit
+        test of the planner alone could see.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            config = wt / "dated.yaml"
+            config.write_text(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "policy_pack:\n  name: tmp\n  reports:\n"
+                "    run_ledger: 'state/runs.jsonl'\n"
+                "  capture:\n    enabled: true\n    mode: extension\n"
+                "    learning:\n      enabled: true\n      mode: create-learning\n"
+                "      sink:\n        kind: markdown-dir\n"
+                "        path: '.keel/{date}/learning'\n",
+                encoding="utf-8",
+            )
+            lesson = wt / ".keel" / "2026-09-15" / "learning"
+            lesson.mkdir(parents=True)
+            (lesson / "a.md").write_text("# Lesson\n", encoding="utf-8")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    str(config),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "17",
+                    "--artifact",
+                    ".keel/2026-09-15/learning/a.md",
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0, payload)
+            self.assertEqual(payload["status"], "landed")
+            self.assertEqual(_origin_files(origin), [".keel/2026-09-15/learning/a.md", "keep.txt"])
+            # And the wildcard is still a boundary, not an opening.
+            (wt / "config").mkdir(exist_ok=True)
+            (wt / "config" / "private.env").write_text("TOKEN=x\n", encoding="utf-8")
+            rc_bad, _, _ = run(
+                [
+                    "capture-land",
+                    str(config),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "17",
+                    "--artifact",
+                    "config/private.env",
+                ]
+            )
+            self.assertEqual(rc_bad, 1)
+
+    def test_a_fetch_that_fails_is_not_a_race(self):
+        """s11 runs after s10 moved the base branch, so a stale ref is not contention.
+
+        The remote-tracking ref resolves either way. Unfetched it is the *pre-merge* tip,
+        so the commit is built as a sibling of the merge and the push is a genuine
+        non-fast-forward — retried, against a fetch that fails identically every time,
+        until the budget is spent on a race with nobody.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            config, artifact = self._config(wt), self._write_lesson(wt, "e.md")
+            failed = CommandResult(ok=False, code=128, output="could not read from remote")
+            with patch.object(git, "fetch", lambda *a, **k: failed):
+                rc, out, _ = run(
+                    [
+                        "capture-land",
+                        config,
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "18",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
+                )
+            payload = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertIn("cannot fetch", payload["detail"])
+            # One attempt, and nothing pushed: retrying a broken fetch cannot fix it.
+            self.assertEqual(len(payload["attempts"]), 1)
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+
     def test_a_symlink_to_an_in_repo_secret_is_not_published_either(self):
         """Inside the repository is the wrong boundary for the bytes too.
 

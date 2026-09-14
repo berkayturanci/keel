@@ -2268,7 +2268,7 @@ def learning_land_plan(
     s0–s12 inside a worktree while the primary checkout holds the base branch, so
     every recipe built on ``git switch <base>`` exits 128 with *'<base>' is already
     used by worktree* — the defect #1163 was opened for. Building the commit with
-    ``hash-object`` / ``read-tree`` / ``write-tree`` / ``commit-tree`` against
+    ``hash-object`` / ``ls-tree`` / ``mktree`` / ``commit-tree`` against
     ``<remote>/<base>`` needs no checkout of the base branch at all, so it runs the
     same from a worktree, from the primary checkout, and from a bare CI clone.
 
@@ -2310,7 +2310,7 @@ def learning_land_plan(
         # helpfully. `learning_sink_in_worktree` says the *sink* is in-repo; this says
         # the recorded path is too, and they are answered from different values.
         errors.append(f"capture artifact {artifact!r} is absolute or escapes the repository root")
-    elif sink_dir is not None and not _under(normalized, sink_dir):
+    elif sink_dir is not None and not path_under_sink(normalized, sink_dir):
         status = "failed"
         reason = f"the capture artifact is not inside the learning sink ({sink_dir})"
         # **Inside the repository is not the containment this command needs.** Every
@@ -2388,7 +2388,7 @@ def _land_sink_root(
     )
 
 
-def _under(path: str, directory: str) -> bool:
+def path_under_sink(path: str, directory: str) -> bool:
     """Is POSIX ``path`` inside ``directory``? Compared component by component.
 
     Not a prefix test: a plain ``startswith`` says `.keel/learning-notes/x.md` is inside
