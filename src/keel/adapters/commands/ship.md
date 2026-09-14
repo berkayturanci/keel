@@ -699,9 +699,9 @@ red gate run is its proof). When `enabled` is true:
    — proceed to s5), `continue` (dispatch iteration K+1 with the rendered brief), or
    `budget-exhausted` (non-zero exit — the issue is **blocked**; do not iterate again and do
    not ask the implementer whether it is finished). `run-gates`'s own exit code is not the
-   verdict: it exits 1 whenever any planned gate is red — a deferred `pre-merge` gate
-   included — which is why the fence tolerates it; an unreadable report fails at `keel loop
-   brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
+   verdict, but with `--phases guard,test` it reflects only the gates this run judged: a
+   deferred `pre-merge` gate is `not_run`, not red, so the fence no longer has to tolerate
+   a non-zero exit. An unreadable report fails at `keel loop brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
    (`decision.deferred`): they are s6–s10's to run, never the implementer's to turn green
    here, and never counted as green. **The gate run decides, never the delegate's text:** a
    result that says it is done with red gates is iteration K failing.

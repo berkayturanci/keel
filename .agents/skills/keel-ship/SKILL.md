@@ -702,9 +702,9 @@ red gate run is its proof). When `enabled` is true:
    — proceed to s5), `continue` (dispatch iteration K+1 with the rendered brief), or
    `budget-exhausted` (non-zero exit — the issue is **blocked**; do not iterate again and do
    not ask the implementer whether it is finished). `run-gates`'s own exit code is not the
-   verdict: it exits 1 whenever any planned gate is red — a deferred `pre-merge` gate
-   included — which is why the fence tolerates it; an unreadable report fails at `keel loop
-   brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
+   verdict, but with `--phases guard,test` it reflects only the gates this run judged: a
+   deferred `pre-merge` gate is `not_run`, not red, so the fence no longer has to tolerate
+   a non-zero exit. An unreadable report fails at `keel loop brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
    (`decision.deferred`): they are s6–s10's to run, never the implementer's to turn green
    here, and never counted as green. **The gate run decides, never the delegate's text:** a
    result that says it is done with red gates is iteration K failing.
@@ -1510,4 +1510,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=1b7916dbaa50d99962b8a0d161979c51d935f171eda262e0bf32d71cd4f6c4c9 generated_sha256=7decd3d2997e6fc54357f1a9c91344e343da59f6849363991996520dcda2c693 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.22.0 source_sha256=e1c22ea142a2a7e43e4dc25b12f0b7f3ea69947165660c2f987566a19692b17e generated_sha256=ea97336cfd133b4ca7b22c601f189908385929415756c6e0b3e09a2a17f87a46 -->

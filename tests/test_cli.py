@@ -14810,20 +14810,37 @@ class TestLoopCommand(unittest.TestCase):
         return str(root), str(config)
 
     def test_run_gates_json_scopes_the_loop_to_the_gates_it_can_make_green(self):
-        """The packaged recipe: `keel run-gates --defer-jury --json` -> `keel loop brief`.
+        """The packaged recipe, as the adapter writes it, end to end.
 
-        A failing soft gate, an agentic blocking gate nobody ran, a pre-merge gate that
-        needs the PR and a jury the loop must not convene are all *listed* — and none of
-        them holds the loop open or counts as green. Only the build decides.
+        `keel run-gates --phases guard,test --defer-jury --json` -> `keel loop brief`. A
+        failing soft gate, an agentic blocking gate nobody ran, a pre-merge gate that needs
+        the PR and a jury the loop must not convene are all *listed* — and none of them
+        holds the loop open or counts as green. Only the build decides.
+
+        The invocation carries `--phases` and the exit code is asserted to be **0**,
+        because without both this test passed identically before #1172 and would pass
+        again if the scope were deleted from the runner and the adapter.
         """
         root, config = self._scoped_project("'true'")
         with patch("keel.git.diff", return_value=""):
             rc, out, _ = run(
-                ["run-gates", config, "--root", root, "--phase", "s4", "--defer-jury", "--json"]
+                [
+                    "run-gates",
+                    config,
+                    "--root",
+                    root,
+                    "--phase",
+                    "s4",
+                    "--phases",
+                    "guard,test",
+                    "--defer-jury",
+                    "--json",
+                ]
             )
-        # release-check is red, so the s8-style exit is 1 — the loop reads the document,
-        # not the exit code.
-        self.assertEqual(rc, 1)
+        # The scope means release-check never ran, so the exit reflects only what the loop
+        # judged. Before #1172 this was 1, which is why the fence carried `|| true`.
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(out)["gate_outcomes"][-1] is not None)
         report = json.loads(out)
         self.assertEqual(report["schema_version"], "keel.run-gates.v1")
         self.assertFalse(report["jury_run"])
@@ -14834,6 +14851,9 @@ class TestLoopCommand(unittest.TestCase):
         self.assertEqual(
             {g["id"]: g["phase"] for g in report["gates"]}["release-check"], "pre-merge"
         )
+        # Reported, with its severity, and never executed.
+        self.assertTrue(by_id["release-check"]["not_run"])
+        self.assertEqual(by_id["release-check"]["on_fail"], "block")
         gates_file = self.scratch / "iter-1.json"
         gates_file.write_text(out, encoding="utf-8")
         rc, out, _ = self.brief(
