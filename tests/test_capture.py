@@ -901,6 +901,13 @@ class TheRecordSaysWhereItsArtifactCanBeRead(unittest.TestCase):
                 )
                 self.assertEqual(capture.artifact_scope("anything.md", config), expected)
 
+    def test_a_project_with_no_sink_has_no_scope(self):
+        # `learning_sink_in_worktree` answers False for "no sink" and "capture disabled"
+        # as well as for an outside sink, so the sink has to be looked for separately —
+        # otherwise a path inside the clone was recorded `machine` and noted as unreadable.
+        config = _config_with_capture_policy({"enabled": True, "mode": "extension"})
+        self.assertIsNone(capture.artifact_scope(".keel/learning/x.md", config))
+
     def test_an_older_record_is_read_from_the_paths_shape(self):
         # Nothing already in a ledger changes meaning: an anchored path was always an
         # outside sink, on any platform.

@@ -1042,7 +1042,7 @@ ARTIFACT_SCOPE_MACHINE = "machine"
 
 
 def artifact_scope(artifact: str | None, config: _HasPolicyPack | None = None) -> str | None:
-    """`repository` or `machine` for a recorded artifact path, or ``None`` for no artifact.
+    """Where this project's sink writes: `repository`, `machine`, or ``None`` for neither.
 
     An in-repo sink's path is recorded relative to ``--root``, so it means the same thing
     in every clone. A sink outside the checkout — a shared `~/knowledge` folder — is
@@ -1051,19 +1051,26 @@ def artifact_scope(artifact: str | None, config: _HasPolicyPack | None = None) -
     `keel capture-verify` tell "written somewhere this host cannot see" from "never
     written", which are the same absence and very different facts (#1185).
 
-    The config decides when it is available, because it is the sink's *shape* that
-    settles this — the same question `learning_sink_in_worktree` asks. For a record
-    written before this field existed, the path's own shape is the fallback: an anchored
-    path is machine-scoped, a relative one is not.
+    It describes the **sink**, not the artifact, so it is recorded even when this run
+    wrote nothing: a cross-host duplicate drops the unreadable path it would have reused,
+    and without the scope beside it that record is indistinguishable from a capture that
+    produced no file at all.
+
+    ``None`` when the project has no sink, which is not the same as a sink somewhere else
+    — `learning_sink_in_worktree` answers False for "no sink" and for "capture disabled"
+    as well as for an outside one, so the sink has to be looked for separately. With no
+    config, the path's own shape decides: an anchored path was always an outside sink.
     """
-    if not isinstance(artifact, str) or not artifact.strip():
-        return None
     if config is not None:
+        if learning_sink_policy(config) is None:
+            return None
         return (
             ARTIFACT_SCOPE_REPOSITORY
             if learning_sink_in_worktree(config)
             else ARTIFACT_SCOPE_MACHINE
         )
+    if not isinstance(artifact, str) or not artifact.strip():
+        return None
     path = artifact.strip()
     anchored = path.startswith("~") or workspace.is_root_anchored(path)
     return ARTIFACT_SCOPE_MACHINE if anchored else ARTIFACT_SCOPE_REPOSITORY

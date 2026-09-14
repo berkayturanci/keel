@@ -73,6 +73,23 @@ class TestReconcile(unittest.TestCase):
                 )
                 self.assertEqual(report["summary"]["notes"], 1)
 
+    def test_a_cross_host_duplicate_is_noted_not_faulted(self):
+        """The record that has no artifact *because* the sink is elsewhere (#1185).
+
+        A duplicate run on a host that cannot read the first run's file drops the path it
+        would have reused — correctly — and records `applied` with none. Without the scope
+        beside it that is indistinguishable from a capture that produced no file at all,
+        and the run was faulted for the sink doing exactly what it was configured to do.
+        """
+        record = _record(5, marker=_marker(5, "applied"))
+        record["capture"]["artifact_scope"] = capture.ARTIFACT_SCOPE_MACHINE
+        report = captureverify.reconcile([record], [5])
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["findings"], [])
+        self.assertEqual(
+            [note["type"] for note in report["notes"]], [captureverify.NOTE_APPLIED_ELSEWHERE]
+        )
+
     def test_an_in_repo_artifact_is_neither_faulted_nor_noted(self):
         report = captureverify.reconcile(
             [_record(5, marker=_marker(5, "applied"), artifact=".keel/learning/one.md")], [5]

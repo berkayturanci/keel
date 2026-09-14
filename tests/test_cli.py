@@ -3479,6 +3479,35 @@ class TestShip(unittest.TestCase):
         self.assertIn("reconcile PR #160", out)
         self.assertIn("applied-without-artifact", out)
 
+    def test_capture_verify_human_output_shows_reconcile_notes(self):
+        # The same ledger row as the test above — `applied`, no artifact — but written by
+        # a project whose sink is outside the checkout. That is not a missing capture, so
+        # it must read as a note and still certify (#1185). Without the note loop the
+        # distinction existed only in `--json`, and the human output showed nothing at all.
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as sink:
+            config = _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                    f"        path: {_abs_state_path(sink)!r}",
+                ],
+            )
+            self._ship_applied(config, d, 160)  # no artifact: the sink wrote elsewhere
+            fixture = Path(d) / "merged.json"
+            _write_json_fixture(fixture, [{"number": 160}])
+            rc, out, _ = run(
+                ["capture-verify", config, "--root", d, "--merged-prs-json", str(fixture)]
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("note  reconcile PR #160  applied-elsewhere", out)
+        self.assertNotIn("applied-without-artifact", out)
+        self.assertIn("reconcile: ok", out)
+
     def test_capture_verify_bad_merged_prs_json_errors(self):
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")

@@ -117,7 +117,11 @@ def _reconcile_pr(
 
     artifact = _capture_artifact(record)
     scope = _capture_artifact_scope(record, artifact)
-    if verification.get("status") == "applied" and not artifact:
+    if (
+        verification.get("status") == "applied"
+        and not artifact
+        and scope != capture.ARTIFACT_SCOPE_MACHINE
+    ):
         findings.append(
             _finding(
                 FINDING_APPLIED_WITHOUT_ARTIFACT,
@@ -133,8 +137,8 @@ def _reconcile_pr(
             _note(
                 NOTE_APPLIED_ELSEWHERE,
                 pr_number,
-                f"capture artifact is outside the checkout, so it is readable only on the "
-                f"host that wrote it: {artifact}",
+                "capture artifact is outside the checkout, so it is readable only on the "
+                + (f"host that wrote it: {artifact}" if artifact else "host that wrote it"),
             )
         )
 
