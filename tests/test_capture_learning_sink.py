@@ -351,6 +351,9 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
             "src/keel/adapters/commands/ship.md",
             "commands/ship.md",
             ".claude/commands/keel/ship.md",
+            # The skills surface carries the same s11 fence and was not walked, so a
+            # regenerate that skipped it would have left a stale recipe this guard passed.
+            ".agents/skills/keel-ship/SKILL.md",
         ):
             with self.subTest(surface=surface):
                 body = (root / surface).read_text(encoding="utf-8")

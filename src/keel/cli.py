@@ -1984,8 +1984,9 @@ def _contained_real_path(path: Path, root: str, sink: str) -> Path | None:
     # directory instead looked equivalent and was not: `.keel/{date}/learning` is a
     # template, so it names no directory on disk, and every project with a placeholder in
     # its sink was `planned` by the pure layer and then refused here on every run.
-    # `path_under_sink` matches a placeholder component as a wildcard, which is what makes
-    # the two layers one answer rather than two that agree only sometimes.
+    # `path_under_sink` compares literal components, and the plan has already refused a
+    # sink it could not resolve — so the two layers are one answer rather than two that
+    # agree only sometimes.
     relative = real.relative_to(base).as_posix()
     return real if capture.path_under_sink(relative, sink) else None
 

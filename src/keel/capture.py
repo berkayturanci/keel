@@ -2376,12 +2376,14 @@ def _land_sink_root(
     with the same values, through the same `_relative_stays_relative` that keeps a
     relative template relative when a leading placeholder expands to nothing.
 
-    A placeholder this function cannot resolve — `{date}` in a *directory*, say — leaves
-    the path partly unknown, and the honest containment is then the part that is known:
-    everything up to the last separator before it. `.keel/{date}/learning` confines the
-    landing to `.keel/`, which still refuses `config/private.env` and `src/keel/cli.py`.
-    Refusing outright would break a legitimate project, and comparing against the literal
-    would be a containment test that can never pass.
+    Only the **directory-shaped** placeholders are resolvable here, and this command has
+    all four of them. One that still holds ``{date}``, ``{slug}`` or ``{fingerprint}``
+    afterwards names a place nobody can point at, and the answer is ``None`` — the caller
+    refuses rather than guessing. Two earlier shapes were tried and are recorded because
+    both looked reasonable: confining to the known *prefix* accepts anything under
+    ``.keel/``, and matching an unresolved component as a *wildcard* is not a boundary at
+    all — a sink of ``{date}`` then makes the first component match anything, so
+    ``config/private.env`` is "inside" it.
     """
     # `or {}` rather than a guard: the one caller reaches this only after
     # `learning_sink_in_worktree` said there *is* a sink, and an empty block takes the

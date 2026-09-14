@@ -730,7 +730,7 @@ core command cannot know whose co-authorship to stamp on one.
 | `contended` | — | a single attempt's outcome, never the command's: the branch moved, so the next attempt rebuilds |
 | `failed` | 1 | the lesson was not landed; `detail` carries the last push's own reason |
 
-The four non-`failed` statuses exit 0 on purpose: s11 runs after the merge already
+The five non-`failed` statuses exit 0 on purpose: s11 runs after the merge already
 happened, and a capture that had nothing to do must not fail it. Capture is fail-soft, so
 a `failed` landing is reported and does not roll anything back.
 
