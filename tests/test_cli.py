@@ -15279,14 +15279,14 @@ class TestCaptureLand(unittest.TestCase):
             self.assertIn("outside the learning sink", payload["detail"])
             self.assertEqual(_origin_files(origin), ["keep.txt"])
 
-    def test_a_sink_with_a_placeholder_actually_lands(self):
-        """The plan and the landing have to answer the same question (#1163).
+    def test_a_sink_whose_directory_keeps_a_placeholder_is_refused(self):
+        """`{date}` in a *directory* names a place nobody can point at (#1163).
 
-        `_under` matches a placeholder component as a wildcard, so the pure layer planned
-        `.keel/{date}/learning/a.md`. Resolving the sink to a *directory* on disk then
-        refused it, because a template names no directory — every project with a
-        placeholder in its sink was planned and then refused on every run, which no unit
-        test of the planner alone could see.
+        `{owner}`, `{repo}`, `{base_branch}` and `{pr}` are the directory-shaped
+        placeholders and the landing resolves all four. The per-run ones belong in
+        `filename`. Matching them as a wildcard was tried and is not a boundary: a sink
+        of `{date}` makes the first component match anything, so `config/private.env` is
+        "inside" it. The refusal names what to change instead of landing on a guess.
         """
         with tempfile.TemporaryDirectory() as tmp:
             origin, wt = _land_repo(Path(tmp))
@@ -15319,10 +15319,46 @@ class TestCaptureLand(unittest.TestCase):
                 ]
             )
             payload = json.loads(out)
-            self.assertEqual(rc, 0, payload)
-            self.assertEqual(payload["status"], "landed")
-            self.assertEqual(_origin_files(origin), [".keel/2026-09-15/learning/a.md", "keep.txt"])
-            # And the wildcard is still a boundary, not an opening.
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertIn("cannot be resolved", " ".join(payload["plan"]["errors"]))
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+
+    def test_a_sink_with_a_resolvable_placeholder_lands(self):
+        # `{repo}` is a value this command has, so the sink resolves and the lesson lands.
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            config = wt / "repo-sink.yaml"
+            config.write_text(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "policy_pack:\n  name: tmp\n  reports:\n"
+                "    run_ledger: 'state/runs.jsonl'\n"
+                "  capture:\n    enabled: true\n    mode: extension\n"
+                "    learning:\n      enabled: true\n      mode: create-learning\n"
+                "      sink:\n        kind: markdown-dir\n"
+                "        path: '.keel/{repo}/learning'\n",
+                encoding="utf-8",
+            )
+            lesson = wt / ".keel" / "tmp" / "learning"
+            lesson.mkdir(parents=True)
+            (lesson / "a.md").write_text("# Lesson\n", encoding="utf-8")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    str(config),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "17",
+                    "--artifact",
+                    ".keel/tmp/learning/a.md",
+                    "--json",
+                ]
+            )
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(_origin_files(origin), [".keel/tmp/learning/a.md", "keep.txt"])
+            # And the boundary still holds around it.
             (wt / "config").mkdir(exist_ok=True)
             (wt / "config" / "private.env").write_text("TOKEN=x\n", encoding="utf-8")
             rc_bad, _, _ = run(
@@ -15444,7 +15480,9 @@ class TestCaptureLand(unittest.TestCase):
             )
             payload = json.loads(out)
             self.assertEqual(rc, 1)
-            self.assertIn("outside the learning sink", payload["detail"])
+            # A sink of `.` names the whole checkout, which is the boundary this check
+            # exists to replace — so it is refused at plan time, with a reason.
+            self.assertIn("cannot be resolved", " ".join(payload["plan"]["errors"]))
             self.assertEqual(_origin_files(origin), ["keep.txt"])
 
     def test_a_relative_root_is_resolved_once(self):

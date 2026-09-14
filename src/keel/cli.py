@@ -1931,7 +1931,7 @@ def _land_learning_tree(root: str, path: str, base_sha: str, blob: str) -> str |
     return git.mktree(capture.upsert_tree_entry(listing, entry), cwd=root)
 
 
-def _contained_real_path(path: Path, root: str, sink: str | None) -> Path | None:
+def _contained_real_path(path: Path, root: str, sink: str) -> Path | None:
     """``path``'s **real** location when it is inside the sink's, else ``None``.
 
     Both ends are resolved, which does two jobs at once.
@@ -1953,8 +1953,9 @@ def _contained_real_path(path: Path, root: str, sink: str | None) -> Path | None
     resolved — it is a template component away from existing — nothing can be judged
     against it, and the landing refuses rather than falling back to the wider boundary.
     """
-    if sink is None:
-        return None
+    # No `sink is None` guard: a plan that reached the landing has a sink, because
+    # `learning_land_plan` refuses one it could not resolve — a branch no input can take
+    # is a claim about the data the tests cannot check.
     try:
         real, base = path.resolve(), Path(root).resolve()
     except OSError:  # pragma: no cover - an unstattable path fails closed as uncontained

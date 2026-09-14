@@ -2945,11 +2945,16 @@ class TestLearningLandPlan(unittest.TestCase):
                 "failed",
             )
 
-    def test_a_placeholder_that_cannot_be_resolved_confines_to_what_is_known(self):
-        # `{date}` in a *directory* is not a value this command has. Refusing outright
-        # would break a legitimate project and comparing against the literal could never
-        # pass, so containment falls back to the part of the path that is known —
-        # `.keel/`, which still refuses everything outside it.
+    def test_a_directory_placeholder_this_command_cannot_resolve_is_refused(self):
+        """A wildcard component is not a boundary, it is a hole.
+
+        `{owner}`, `{repo}`, `{base_branch}` and `{pr}` are the directory-shaped
+        placeholders and the landing has all four. `{date}`, `{slug}` and `{fingerprint}`
+        vary per run and belong in `filename`; left in a directory they name a place
+        nobody can point at. Matching them as a wildcard was tried: a sink of `{date}`
+        then makes the *first* component match anything, so `config/private.env` is
+        "inside" it, and `{date}/learning` accepts `config/learning/secrets.md`.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(
                 tmp,
@@ -2965,25 +2970,15 @@ class TestLearningLandPlan(unittest.TestCase):
                     "        path: '.keel/{date}/learning'",
                 ],
             )
-            self.assertEqual(
-                capture.learning_land_plan(
-                    config, artifact=".keel/2026-09-15/learning/a.md", pr_number=7
-                )["status"],
-                "planned",
-            )
-            self.assertEqual(
-                capture.learning_land_plan(config, artifact="src/keel/cli.py", pr_number=7)[
-                    "status"
-                ],
-                "failed",
-            )
+            for artifact in (".keel/2026-09-15/learning/a.md", "config/private.env"):
+                plan = capture.learning_land_plan(config, artifact=artifact, pr_number=7)
+                self.assertEqual(plan["status"], "failed", artifact)
+                self.assertTrue(plan["errors"], artifact)
+                self.assertIn("cannot be resolved", " ".join(plan["errors"]))
 
-    def test_a_leading_unresolvable_placeholder_leaves_no_sink_root(self):
-        # `{date}/learning` has no known part at all, so there is no sink directory to
-        # confine the landing to. The repository-containment tests still apply — an
-        # escaping path is refused as before — but the sink test cannot be applied to a
-        # directory nobody can name yet, and pretending otherwise would refuse every
-        # lesson such a project writes.
+    def test_a_sink_of_just_a_placeholder_confines_nothing_and_is_refused(self):
+        # `{date}` alone makes every first component match, so the sink names the whole
+        # repository. Refusing is the only honest answer, and it names the fix.
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(
                 tmp,
@@ -2996,16 +2991,15 @@ class TestLearningLandPlan(unittest.TestCase):
                     "      mode: create-learning",
                     "      sink:",
                     "        kind: markdown-dir",
-                    "        path: '{date}/learning'",
+                    "        path: '{date}'",
                 ],
             )
-            self.assertEqual(
-                capture.learning_land_plan(config, artifact="2026-09-15/learning/a.md")["status"],
-                "planned",
-            )
-            self.assertEqual(
-                capture.learning_land_plan(config, artifact="../outside.md")["status"], "failed"
-            )
+            for artifact in ("config/private.env", "src/keel/cli.py", "2026-09-15/a.md"):
+                self.assertEqual(
+                    capture.learning_land_plan(config, artifact=artifact)["status"],
+                    "failed",
+                    artifact,
+                )
 
     def test_an_artifact_outside_the_sink_is_refused(self):
         """Inside the repository is not the containment this command needs.

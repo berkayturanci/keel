@@ -2310,7 +2310,18 @@ def learning_land_plan(
         # helpfully. `learning_sink_in_worktree` says the *sink* is in-repo; this says
         # the recorded path is too, and they are answered from different values.
         errors.append(f"capture artifact {artifact!r} is absolute or escapes the repository root")
-    elif sink_dir is not None and not path_under_sink(normalized, sink_dir):
+    elif sink_dir is None:
+        status = "failed"
+        reason = (
+            "the learning sink path does not name a directory this command can resolve, "
+            "so there is nothing to confine the landing to"
+        )
+        # A sink of `.`, or one whose directory still holds `{date}`/`{slug}`/
+        # `{fingerprint}` after `{owner}`/`{repo}`/`{base_branch}`/`{pr}` are filled in.
+        # Both describe a boundary that would accept any path in the repository, which is
+        # the boundary this check exists to replace.
+        errors.append("the learning sink path cannot be resolved to a directory")
+    elif not path_under_sink(normalized, sink_dir):
         status = "failed"
         reason = f"the capture artifact is not inside the learning sink ({sink_dir})"
         # **Inside the repository is not the containment this command needs.** Every
@@ -2383,9 +2394,13 @@ def _land_sink_root(
         "base_branch": base_branch,
         "pr": str(pr_number) if pr_number is not None else "",
     }
-    return _land_path(
-        _relative_stays_relative(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
-    )
+    expanded = _relative_stays_relative(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
+    # **Every placeholder resolved, or no sink root at all.** `{owner}`, `{repo}`,
+    # `{base_branch}` and `{pr}` are the directory-shaped ones and this command has all
+    # four. `{date}`, `{slug}` and `{fingerprint}` vary per run and belong in `filename`;
+    # left in a directory they name a place nobody can point at, and the landing says so
+    # rather than guessing — a wildcard component is not a boundary, it is a hole.
+    return None if "{" in expanded else _land_path(expanded)
 
 
 def path_under_sink(path: str, directory: str) -> bool:
@@ -2394,18 +2409,17 @@ def path_under_sink(path: str, directory: str) -> bool:
     Not a prefix test: a plain ``startswith`` says `.keel/learning-notes/x.md` is inside
     `.keel/learning`, which is a different directory whose name merely begins the same way.
 
-    A component of ``directory`` that still holds a placeholder matches any one component,
-    because the sink's ``path`` is a template and not every placeholder in it is a value
-    the landing has. `{date}/learning` accepts `2026-09-15/learning/a.md` and refuses
-    `config/private.env` — the containment the sink actually describes. Skipping the test
-    for such a project accepted every path in the repository; matching the literal
-    accepted none.
+    Every component of ``directory`` is a literal. A wildcard component was tried and is
+    not a boundary at all — a sink of `{date}` makes the first component match anything,
+    so `config/private.env` is "inside" it, and `{date}/learning` accepts
+    `config/learning/secrets.md`. The landing refuses a sink it cannot resolve instead,
+    so nothing here has to guess.
     """
     wanted, have = directory.split("/"), path.split("/")
     # Strictly deeper: the sink directory is not a file inside itself.
     if len(have) <= len(wanted):
         return False
-    return all("{" in want or want == got for want, got in zip(wanted, have, strict=False))
+    return all(want == got for want, got in zip(wanted, have, strict=False))
 
 
 def _land_path(artifact: str | None) -> str | None:

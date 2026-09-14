@@ -621,6 +621,13 @@ slashes, because those disagree: `\etc\hostname` is drive-relative rather than a
 no flavour of `PurePath` calls it anchored, and the rewrite then turns it into `/etc/hostname`.
 
 The path must also be **inside the configured sink**, not merely inside the repository.
+The sink's `path` is a template, and only the directory-shaped placeholders are resolvable
+here: `{owner}`, `{repo}`, `{base_branch}` and `{pr}`. One that still holds `{date}`,
+`{slug}` or `{fingerprint}` after those are filled in names a place nobody can point at, so
+the landing refuses it rather than guessing — matching such a component as a wildcard was
+tried and is not a boundary at all: a sink of `{date}` makes the first component match
+anything, so `config/private.env` is "inside" it. Per-run placeholders belong in `filename`.
+A sink of `.` is refused for the same reason: it names the whole checkout.
 Every other test here asks whether git could address it, and the answer is yes for
 `config/private.env` as much as for a lesson — so a ledger record naming one would have
 fast-forwarded the shared base branch with it, and the exactly-one-file check downstream
