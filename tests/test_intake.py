@@ -282,6 +282,32 @@ class TestIssueIntake(unittest.TestCase):
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                 self.assertFalse(record["can_mutate_code"])
 
+    def test_a_clause_is_not_a_label(self):
+        """A label is a short name; a clause before a dash is still the sentence.
+
+        The label strip exists so `Decision: this issue is out of scope` is seen. Capped
+        only by length, it also cut `Users need safer sync — this issue is not in scope
+        for Windows.` at the dash and read the remainder as a closure — a carve-out
+        refused, #1168 inverted. The subject test cannot catch it, because the subject is
+        genuinely there; it is just not where the sentence starts, which is what the
+        anchor is for.
+        """
+        for sentence in (
+            "Users need safer sync — this issue is not in scope for Windows.",
+            "Users need safer sync: this issue is not in scope for Windows.",
+            "The guard must ship first - this issue is not planned for 1.22.",
+        ):
+            with self.subTest(sentence=sentence):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=(
+                        f"## Problem\n{sentence}\n\n## Deliverable\nShip the guard.\n\n"
+                        "## Acceptance criteria\n- Guard blocks unsafe sync.\n"
+                    ),
+                )
+                self.assertEqual(record["status"], intake.READY)
+                self.assertTrue(record["can_mutate_code"])
+
     def test_the_issue_must_be_the_subject_not_a_mention(self):
         """A sentence that carves out a part is not a sentence that closes the whole.
 

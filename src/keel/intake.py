@@ -97,12 +97,19 @@ _LEADING_MARKUP_RE = re.compile(
 #: because it carries no such separator before the subject. Bounded in length and
 #: forbidden sentence-ending punctuation, so it cannot eat a real clause.
 _LEADING_LABEL_RE = re.compile(
-    # A hyphen is allowed *inside* the label — `Follow-up:`, `Update 2026-09-14:` —
-    # because the terminator is explicit. Excluding it meant a hyphenated label never
-    # stripped and the closure under it was never seen.
-    r"^[^.!?:\u2014\u2013]{1,40}[:\u2014\u2013]\s*"
-    # The spaced hyphen is its own alternative: ` - ` separates, `-` inside a word does not.
-    r"|^[^.!?]{1,40}\s+-\s+"
+    # A label is a **short name**, not a clause: at most three words, each a word with
+    # optional internal punctuation, then an explicit terminator. `Decision:`,
+    # `Follow-up:`, `Update 2026-09-14:`, `Decision (2026-09-14) —` all qualify.
+    #
+    # The length-capped "anything up to a terminator" form this replaces let the label
+    # strip re-anchor the pattern in the middle of a compound sentence: `Users need safer
+    # sync — this issue is not in scope for Windows.` became `this issue is not in scope
+    # for Windows.` and read as a closure, when it carves out Windows. That is #1168
+    # inverted, and the subject test cannot see it because the subject really is there —
+    # just not at the start of the sentence, which is the whole point of the anchor.
+    r"^\w[\w.()/'’-]*(?:\s+[\w.()/'’-]+){0,2}\s*[:\u2014\u2013]\s*"
+    # A spaced hyphen separates the same way; `-` inside a word does not.
+    r"|^\w[\w.()/'’]*(?:\s+[\w.()/'’]+){0,2}\s+-\s+"
 )
 
 
