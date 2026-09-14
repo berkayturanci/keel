@@ -340,7 +340,8 @@ class TestIssueIntake(unittest.TestCase):
         issues that qualified their heading — #1168 coming back through the heading text,
         which this change reads as prose. `## Out of scope: closing.` is in this list
         deliberately: it has the shape of a qualified boundary heading and no way to tell
-        it from `## Out of scope: mobile UI`, so it reads as the boundary. A close that
+        it from `## Out of scope: mobile UI`, so it is dropped as a boundary rather than
+        read as a declaration. A close that
         needs to be seen goes in the section body, or under a heading that is not an
         exclusion — both of which block (asserted above).
         """
@@ -369,6 +370,54 @@ class TestIssueIntake(unittest.TestCase):
             body=(
                 self.WELL_FORMED
                 + "\n## Decision\n- Discussed with the team\n- Out of scope: closing.\n"
+            ),
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+
+    def test_a_wrapped_block_quote_is_still_a_wrap(self):
+        """Markdown prefixes every continuation line of a quote with `>`.
+
+        Treating each `>` line as its own statement made a wrapped quote a wrap wearing a
+        marker, so prose inside a quote was refused — the same inverse defect as a bare
+        wrap, one round later. A one-line quoted declaration is still caught, through the
+        sentence path and the leading-markup strip (asserted below).
+        """
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=(
+                self.WELL_FORMED
+                + "\n## Notes\n> The parser rewrite is\n> out of scope for this change.\n"
+            ),
+        )
+        self.assertEqual(record["status"], intake.READY)
+
+    def test_an_exclusion_section_owns_its_nested_headings(self):
+        """`## Out of scope` followed by `### Mobile` is one boundary, not two sections.
+
+        Section chunks end at the *next heading of any level*, so skipping only the
+        heading that matched let the sub-section and its bullets back in — and refused
+        the issue again, which is #1168 for the third time.
+        """
+        for tail in (
+            "### Mobile\n- Out of scope: the mobile client.\n",
+            "### Mobile\n- This issue is out of scope for mobile.\n",
+            "### Mobile\n#### Later\n- Out of scope: closing.\n",
+        ):
+            with self.subTest(tail=tail[:24]):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=self.WELL_FORMED + f"\n## Out of scope\n{tail}",
+                )
+                self.assertEqual(record["status"], intake.READY)
+
+    def test_a_sibling_section_after_an_exclusion_is_read_again(self):
+        # The skip ends at the next heading of the same or shallower level; it does not
+        # swallow the rest of the document.
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=(
+                self.WELL_FORMED + "\n## Out of scope\n- Mobile UI.\n\n## Decision\n"
+                "This issue is out of scope; closing.\n"
             ),
         )
         self.assertEqual(record["status"], intake.OUT_OF_SCOPE)

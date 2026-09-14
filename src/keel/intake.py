@@ -12,7 +12,7 @@ BLOCKED = "blocked"
 OUT_OF_SCOPE = "out-of-scope"
 READINESS_STATUSES = (READY, NEEDS_INPUT, BLOCKED, OUT_OF_SCOPE)
 
-_SECTION_RE = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*$", re.MULTILINE)
+_SECTION_RE = re.compile(r"^(?P<hashes>#{1,6})\s+(?P<title>.+?)\s*$", re.MULTILINE)
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?P<text>.+?)\s*$")
 _BLOCKED_RE = re.compile(
     r"\b(blocked by|depends on|dependency|waiting on|needs dependency|blocked until)\b",
@@ -244,31 +244,25 @@ def _bullets(text: str) -> list[str]:
 
 
 def _structural_lines(text: str) -> list[str]:
-    """Lines that stand on their own: list items and block quotes, markers removed.
+    """Lines that stand on their own: list items, markers removed.
 
     Needed because `_sentences` joins lines that carry no terminator, so a plain bullet
     above a declaration — ``- Discussed with the team`` then ``- Out of scope:
     closing.`` — put the declaration mid-sentence, past the pattern's anchor.
 
-    Deliberately **not** every line. Splitting on every newline re-anchors the pattern
-    at each wrap, and prose that merely mentions scope gets refused the moment a line
-    happens to break before it: ``The parser rewrite is\nout of scope for this change.``
-    came back `out-of-scope` — the inverse of #1188, an in-scope issue refused. A wrap
-    carries no marker, so it is not a statement and is not a candidate. Both directions
-    were found by gate seats, one round apart.
+    **List items only.** Splitting on every line re-anchors the pattern at each wrap and
+    refuses prose that merely mentions scope — ``The parser rewrite is\nout of scope for
+    this change.`` came back `out-of-scope`, the inverse of #1188. Block quotes were
+    tried and removed for the same reason: Markdown prefixes *every* continuation line
+    of a quote with ``>``, so a wrapped quote is a wrap wearing a marker. A quoted
+    declaration on one line is still caught, through `_sentences` and the leading-markup
+    strip. Each of these directions was found by a gate seat, one round apart.
     """
     lines: list[str] = []
     for line in text.splitlines():
         if match := _BULLET_RE.match(line):
-            item = match.group("text").strip()
-        elif stripped := line.strip():
-            if not stripped.startswith(">"):
-                continue
-            item = stripped.lstrip("> ").strip()
-        else:
-            continue
-        if item:
-            lines.append(item)
+            if item := match.group("text").strip():
+                lines.append(item)
     return lines
 
 
@@ -314,10 +308,21 @@ def _scannable_chunks(body: str) -> list[str]:
     if not matches:
         return [body]
     chunks = [body[: matches[0].start()]]
+    #: Depth of the exclusion section currently being skipped, or 0. A section owns its
+    #: nested headings: `## Out of scope` followed by `### Mobile` is one boundary, and
+    #: skipping only the heading that matched let the sub-section — and its bullets —
+    #: back in, which refused the issue again.
+    skipping_depth = 0
     for index, match in enumerate(matches):
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        depth = len(match.group("hashes"))
+        if skipping_depth:
+            if depth > skipping_depth:
+                continue
+            skipping_depth = 0
         if _is_scope_exclusion_heading(match.group("title")):
+            skipping_depth = depth
             continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
         chunks.append(match.group("title"))
         chunks.append(body[match.end() : end])
     return [chunk for chunk in chunks if chunk.strip()]
