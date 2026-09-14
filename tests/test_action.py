@@ -157,6 +157,20 @@ class TheArgvTheRunBlockBuildsIsAccepted(unittest.TestCase):
         guarded = {arm.strip() for arm in guard.group("arms").split("|")}
         self.assertEqual(guarded, required)
 
+    def test_the_run_block_disables_errexit(self):
+        """`fail-on-block: false` is a promise `-e` would break.
+
+        GitHub runs a composite `shell: bash` step as
+        `bash --noprofile --norc -e -o pipefail`, so the step dies the moment keel exits
+        non-zero — before the outputs are written, the summary is appended, or the
+        `fail-on-block` branch is reached. The `action-smoke` job caught it: `keel
+        validate` answered "unknown property" against the released keel and the step
+        failed, rather than reporting an informational run.
+        """
+        body = self._run_step()
+        # Built from parts so this cannot be satisfied by its own text.
+        self.assertIn("set " + "+e", body)
+
     def test_the_default_run_does_not_force_live_flags(self):
         # The consent gate is keel's, not this action's, to satisfy: a default that
         # forces `--live` fails on it every time.

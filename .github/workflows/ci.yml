@@ -216,5 +216,11 @@ jobs:
           test -n "$EXIT_CODE" || { echo "::error::exit-code output is empty"; exit 1; }
           test -n "$OUTPUT_FILE" || { echo "::error::output-file output is empty"; exit 1; }
           test -f "$OUTPUT_FILE" || { echo "::error::output-file names no file"; exit 1; }
-          test "$EXIT_CODE" = "0" || { echo "::error::validate exited $EXIT_CODE"; exit 1; }
+          # keel's own exit code is deliberately **not** asserted to be 0. The action
+          # installs the released keel-workflow from PyPI, and this repository's config
+          # routinely uses knobs newer than the last release — `keel validate` answering
+          # "unknown property" there is the version gap, not a broken action. What this
+          # job proves is that the file runs, reports, and honours `fail-on-block: false`
+          # by reaching this step at all.
           echo "action ran: exit=$EXIT_CODE output=$OUTPUT_FILE"
+          head -5 "$OUTPUT_FILE"

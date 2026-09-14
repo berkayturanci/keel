@@ -122,7 +122,12 @@ runs:
         KEEL_ARGS: ${{ inputs.args }}
         FAIL_ON_BLOCK: ${{ inputs.fail-on-block }}
       run: |
-        set -uo pipefail
+        # `+e` on purpose, and it is load-bearing. GitHub runs a composite `shell: bash`
+        # step as `bash --noprofile --norc -e -o pipefail`, so the step dies the moment
+        # keel exits non-zero — before the lines below can write the outputs, the summary,
+        # or honour `fail-on-block: false`. That flag promises an informational run; `-e`
+        # silently broke the promise. Caught by the `action-smoke` job this change adds.
+        set +e -u -o pipefail
         if [ ! -f "$KEEL_CONFIG" ]; then
           echo "::error::config not found at $KEEL_CONFIG — set the 'config' input."
           exit 1
@@ -169,7 +174,7 @@ runs:
         KEEL_COMMAND: ${{ inputs.command }}
         OUT: ${{ steps.run.outputs.file }}
       run: |
-        set -uo pipefail
+        set +e -u -o pipefail
         if [ -z "$GH_TOKEN" ]; then
           echo "::warning::comment requested but github-token is empty; skipping."
           exit 0
