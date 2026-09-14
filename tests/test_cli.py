@@ -6791,6 +6791,37 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
         base.update(kw)
         return Namespace(**base)
 
+    def test_an_unresolvable_remote_base_skips_rather_than_using_the_local_branch(self):
+        """verify-branch asks about `origin/<base>` or declines (#1184 round 2).
+
+        `_ship_base_ref` falls back to the local branch so a *diff* always has something
+        to diff against. That fallback is wrong here: the ancestry verdict would be
+        answered against a ref that may be days behind, while the summary still prints
+        `origin/<base>` — a pass reported for an origin nobody observed.
+        `docs/keel/cli.md` and `branchscope._check_ancestry` both promise the skip.
+        """
+        asked: list[str] = []
+
+        def _rev_parse(ref, **kwargs):
+            asked.append(ref)
+            # The shape that matters: the remote ref is gone, the local branch is not.
+            return None if ref.startswith("origin/") else "local1234"
+
+        with (
+            patch("keel.git.rev_parse", side_effect=_rev_parse),
+            patch("keel.git.merge_base", return_value=None),
+            patch("keel.git.rev_count", return_value=None),
+            patch("keel.cli._gh_json", return_value={"head": {"sha": "h", "ref": "r"}}),
+        ):
+            # Worktree facts supplied so only the ancestry seam is exercised here.
+            facts = cli._gather_branch_facts(
+                self._args(worktree_path="/repo", repo_root="/repo", linked_worktree=False),
+                "develop",
+            )
+
+        self.assertIsNone(facts["base_tip_sha"], "a missing origin ref must skip, not substitute")
+        self.assertEqual(asked, ["origin/develop"], "the local branch must not be asked for")
+
     def test_supplied_facts_short_circuit_live_calls(self):
         # Ancestry facts pre-supplied + no head_ref → every `is None` guard takes
         # its False side and the worktree lookup is skipped, so no git/gh call runs.

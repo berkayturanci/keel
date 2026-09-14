@@ -1220,8 +1220,18 @@ def _review_assignment(
     )
 
 
+def _remote_base_ref(base_branch: str) -> str:
+    """The remote-tracking name for the base branch — the one spelling of it.
+
+    Separate from :func:`_ship_base_ref` because the *name* is shared and the
+    *fallback* is not. A diff wants something to diff against; a verdict would
+    rather decline than judge against the wrong ref.
+    """
+    return f"origin/{base_branch}"
+
+
 def _ship_base_ref(base_branch: str, root: str) -> str:
-    """The one base ref every command diffs against.
+    """The base ref a command **diffs** against.
 
     ``origin/<base>`` when the remote-tracking ref resolves, else the configured local
     branch, which keeps dry-run and offline repositories fail-soft. Three commands used
@@ -1237,7 +1247,7 @@ def _ship_base_ref(base_branch: str, root: str) -> str:
     the operator may keep current. Keeping the ref fresh belongs to whatever drives
     keel; a fetch here would put a network call inside a diff.
     """
-    remote_ref = f"origin/{base_branch}"
+    remote_ref = _remote_base_ref(base_branch)
     return remote_ref if git.rev_parse(remote_ref, cwd=root) else base_branch
 
 
@@ -3770,7 +3780,7 @@ def _cmd_verify_branch(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"keel verify-branch — {report['status']}  PR #{args.pr}")
-        print(f"  base          : origin/{base_branch}")
+        print(f"  base          : {_remote_base_ref(base_branch)}")
         print(f"  verdict       : {report['verdict']}")
         ancestry = report["ancestry"]
         if ancestry["base_distance"] is not None:
@@ -3808,10 +3818,15 @@ def _gather_branch_facts(args: argparse.Namespace, base_branch: str) -> dict[str
     base_distance = args.base_distance
     if not args.offline:
         if base_tip_sha is None:
-            # Resolved here rather than above: `_ship_base_ref` asks git which ref exists,
-            # and a caller that supplied `--base-tip-sha` has already said it wants no live
-            # call at all. Hoisting it turned that short-circuit into one `rev-parse`.
-            base_tip_sha = git.rev_parse(_ship_base_ref(base_branch, args.root), cwd=args.root)
+            # **The remote ref or nothing**, never `_ship_base_ref`: the name is shared,
+            # the fallback is not. `docs/keel/cli.md` and `branchscope._check_ancestry`
+            # both promise that a fact which cannot be resolved becomes `None` and the
+            # check is skipped as advisory. Falling back to the local branch would answer
+            # the ancestry question against a ref that may be days behind while the summary
+            # still printed `origin/<base>` — a pass reported for an origin nobody observed.
+            # Resolved here, not hoisted: a caller supplying `--base-tip-sha` wants no live
+            # call, and hoisting turned that documented short-circuit into one `rev-parse`.
+            base_tip_sha = git.rev_parse(_remote_base_ref(base_branch), cwd=args.root)
         if merge_base_sha is None and head_sha is not None and base_tip_sha is not None:
             merge_base_sha = git.merge_base(head_sha, base_tip_sha, cwd=args.root)
         if base_distance is None and merge_base_sha is not None and base_tip_sha is not None:
