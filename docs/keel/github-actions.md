@@ -153,8 +153,8 @@ is not something the action talks its way past:
 |---|---|---|
 | `command` | `ship` | `ship`, `run-gates`, `evidence-verify`, `verify-merge`, `swarm-plan`, `swarm-run`, `swarm-land`, `swarm-status`, `validate`, `plan` |
 | `config` | `.keel/project.yaml` | path to the project config |
-| `pr` | — | pull request number; **required** for `evidence-verify` and `verify-merge` |
-| `issue` | — | issue number recorded on the run |
+| `pr` | — | pull request number. Sent to `ship`, `evidence-verify` and `verify-merge` — the commands that assess one; **required** by the last two |
+| `issue` | — | issue number recorded on the run. Sent to `ship`, `run-gates` and `plan` only: on the swarm commands the same flag *selects* which issues to plan, so pass those through `args` |
 | `args` | — | extra arguments appended verbatim |
 | `keel-version` | `latest` | `keel-workflow` version from PyPI — pin it |
 | `python-version` | `3.12` | Python used to run keel |

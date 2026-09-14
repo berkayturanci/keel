@@ -29,11 +29,16 @@ inputs:
     required: false
     default: ".keel/project.yaml"
   pr:
-    description: "Pull request number, for commands that assess a PR."
+    description: >-
+      Pull request number. Forwarded to ship, evidence-verify and verify-merge — the
+      commands that assess one; required by the last two.
     required: false
     default: ""
   issue:
-    description: "Issue number, recorded on the run."
+    description: >-
+      Issue number recorded on the run. Forwarded to ship, run-gates and plan only —
+      on the swarm commands the same flag selects which issues to plan, so pass those
+      through `args` instead.
     required: false
     default: ""
   args:
@@ -145,8 +150,23 @@ runs:
             ;;
         esac
         ARGS=("$KEEL_CONFIG" --root .)
-        [ -n "$KEEL_PR" ] && ARGS+=(--pr "$KEEL_PR")
-        [ -n "$KEEL_ISSUE" ] && ARGS+=(--issue "$KEEL_ISSUE")
+        # Forwarded per command, not to all of them. `--pr` exists on three subcommands
+        # and `--issue` on a different set, so appending both unconditionally made
+        # `command: validate` with a `pr` input exit 2 on a flag the caller never wrote —
+        # and `command: plan` worse, because argparse abbreviation bound `--pr` to
+        # `--profile` and died with `invalid choice: '7'`.
+        case "$KEEL_COMMAND" in
+          ship|evidence-verify|verify-merge)
+            [ -n "$KEEL_PR" ] && ARGS+=(--pr "$KEEL_PR") ;;
+        esac
+        # `issue` is documented as "recorded on the run", and it only *is* that for these.
+        # On `swarm-plan`/`swarm-run`/`swarm-land` the same flag **selects the work**, so
+        # forwarding it there silently adds an issue to the plan — a wrong answer rather
+        # than an error. Those take their issues through `args`.
+        case "$KEEL_COMMAND" in
+          ship|run-gates|plan)
+            [ -n "$KEEL_ISSUE" ] && ARGS+=(--issue "$KEEL_ISSUE") ;;
+        esac
         # Word-split on purpose: `args` is a free-form flag string.
         # shellcheck disable=SC2206
         [ -n "$KEEL_ARGS" ] && ARGS+=($KEEL_ARGS)

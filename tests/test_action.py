@@ -157,6 +157,57 @@ class TheArgvTheRunBlockBuildsIsAccepted(unittest.TestCase):
         guarded = {arm.strip() for arm in guard.group("arms").split("|")}
         self.assertEqual(guarded, required)
 
+    def _forwarded(self, flag: str) -> set[str]:
+        """Commands the run block appends ``flag`` to, read from its `case` arms."""
+        body = self._run_step()
+        pattern = rf"case \"\$KEEL_COMMAND\" in\s*\n\s*([^)]+)\)\s*\n[^;]*{re.escape(flag)} "
+        arms = re.findall(pattern, body)
+        self.assertTrue(arms, f"no guard forwards {flag}")
+        return {name.strip() for name in arms[0].split("|")}
+
+    def _accepts(self, command: str, flag: str) -> bool:
+        parser = build_parser()
+        with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stderr(sink):
+            try:
+                parser.parse_args([command, self.config, "--root", ".", flag, "7"])
+            except SystemExit:
+                return False
+        return True
+
+    def test_pr_is_forwarded_only_where_the_parser_takes_it(self):
+        """Appending `--pr` to every command made most of them exit 2 (#1153).
+
+        `--pr` exists on three subcommands. `command: validate` with a `pr` input died on
+        a flag the caller never wrote, and `command: plan` died more confusingly still —
+        argparse abbreviation bound `--pr` to `--profile` and reported
+        `invalid choice: '7'`. With `fail-on-block: false` that stderr became the action's
+        output and, with `comment: true`, was posted to the pull request.
+        """
+        forwarded = self._forwarded("--pr")
+        for command in self.documented:
+            with self.subTest(command=command):
+                self.assertEqual(
+                    command in forwarded,
+                    self._accepts(command, "--pr"),
+                    f"{command}: the action and the parser disagree about --pr",
+                )
+
+    def test_issue_is_forwarded_only_where_it_records_rather_than_selects(self):
+        """`issue` is documented as recorded on the run, and that is not universal.
+
+        On `swarm-plan` / `swarm-run` / `swarm-land` the same flag **selects the work**:
+        forwarding it there adds an issue to the plan, which is a wrong answer rather than
+        an error. Those take their issues through `args`.
+        """
+        forwarded = self._forwarded("--issue")
+        self.assertEqual(forwarded, {"ship", "run-gates", "plan"})
+        for command in forwarded:
+            with self.subTest(command=command):
+                self.assertTrue(self._accepts(command, "--issue"))
+        for command in ("swarm-plan", "swarm-run", "swarm-land"):
+            with self.subTest(command=command):
+                self.assertNotIn(command, forwarded)
+
     def test_the_run_block_disables_errexit(self):
         """`fail-on-block: false` is a promise `-e` would break.
 
