@@ -1542,6 +1542,7 @@ keel run-gates <project.yaml> [--root DIR] [--tdd] [--defer-jury] [--json]
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Root for commands and extensions. |
 | `--tdd` | flag | off | Add the `tdd-order` gate to this run, as `knobs.implement_mode: tdd` would. |
+| `--phases guard,test` | list | every phase | Execute only these backbone phases (`guard`, `test`, `pre-merge`). A gate outside the scope is reported `not_run` with its `on_fail` and its command is never run, exactly as `--defer-jury` reports the jury — so the exit code reflects only what this run judged. An unknown phase is refused (exit 2) rather than silently scoping the run to nothing. |
 | `--defer-jury` | flag | off | Report the `jury` built-in `not_run` instead of convening a panel — the s4 loop's per-iteration gate run. |
 | `--json` | flag | off | Emit the `keel.run-gates.v1` report — the planned `gates` beside the `gate_outcomes` (with `on_fail` and `not_run`), `jury_run`, `blocked` — that `keel loop brief --gates` reads; the exit code is unchanged. |
 

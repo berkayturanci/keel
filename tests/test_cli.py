@@ -1253,6 +1253,79 @@ class TestOneBaseRef(unittest.TestCase):
         self.assertTrue(all(base.startswith("origin/") for base in bases), bases)
 
 
+class TestRunGatePhaseScope(unittest.TestCase):
+    """`keel run-gates --phases` (#1172).
+
+    The s4 loop judges the guard and test phases and defers the rest — but the runner
+    still *executed* a `pre-merge` Lego on every iteration, and its red result was what
+    made `run-gates` exit non-zero on an otherwise green one. The recipe tolerated that
+    with `|| true`, which also swallowed a genuine failure.
+    """
+
+    @staticmethod
+    def _specs(mark):
+        from keel.gates import GateSpec
+
+        return (
+            GateSpec("build", "command", "test", "block", run="true"),
+            GateSpec(
+                "release-check",
+                "command",
+                "pre-merge",
+                "block",
+                run=f"sh -c 'echo ran >> {mark}; exit 1'",
+            ),
+        )
+
+    def test_a_gate_outside_the_scope_is_reported_not_run_and_never_executed(self):
+        with tempfile.TemporaryDirectory() as d:
+            mark = str(Path(d) / "ran")
+            from keel import gates
+
+            specs = self._specs(mark)
+            outcomes = gates.run_gates(
+                specs,
+                cli._gate_runner(d, "", run_jury=False, phases=frozenset({"guard", "test"})),
+            )
+            by_id = {o.gate: o for o in outcomes}
+            self.assertTrue(by_id["build"].ok)
+            self.assertFalse(by_id["build"].not_run)
+            # Reported, with its severity, exactly as `--defer-jury` reports the jury.
+            self.assertTrue(by_id["release-check"].not_run)
+            self.assertTrue(by_id["release-check"].ok)
+            self.assertEqual(by_id["release-check"].on_fail, "block")
+            self.assertFalse(Path(mark).exists(), "the pre-merge command was executed")
+
+    def test_without_a_scope_every_planned_phase_still_runs(self):
+        # s8 is unscoped, and this change does not touch it.
+        with tempfile.TemporaryDirectory() as d:
+            mark = str(Path(d) / "ran")
+            from keel import gates
+
+            outcomes = gates.run_gates(self._specs(mark), cli._gate_runner(d, "", run_jury=False))
+            release = {o.gate: o for o in outcomes}["release-check"]
+            self.assertFalse(release.not_run)
+            self.assertFalse(release.ok)
+            self.assertTrue(Path(mark).exists())
+
+    def test_an_unknown_phase_is_refused_rather_than_scoping_to_nothing(self):
+        # A typo that matched nothing would report every gate not_run and exit 0 — a green
+        # answer from a run that checked nothing.
+        for value in ("guard,typo", "", "  ", "premerge"):
+            with self.subTest(value=value):
+                self.assertIs(cli._run_gate_phases(value), cli._PHASE_SCOPE_INVALID)
+        self.assertIsNone(cli._run_gate_phases(None))
+        self.assertEqual(cli._run_gate_phases("guard, test"), frozenset({"guard", "test"}))
+
+    def test_the_cli_exits_two_on_an_unknown_phase(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(
+                ["run-gates", _write_config("'true'"), "--root", d, "--phases", "guard,typo"]
+            )
+        self.assertEqual(rc, 2)
+        self.assertIn("--phases", err)
+
+
 class TestShipWizard(unittest.TestCase):
     """`keel ship --wizard` end to end through the CLI (#1018)."""
 

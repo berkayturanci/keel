@@ -1151,8 +1151,8 @@ A run whose policy is **off** publishes `max_iterations: null` in
 default beside `enabled: false` while no number was being enforced.
 
 ```bash
-keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
-  > "$SCRATCH/iter-1.json" || true   # exits 1 on any red gate, a deferred one included
+keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 \
+  --phases guard,test --defer-jury --json > "$SCRATCH/iter-1.json"
 keel loop brief --project .keel/project.yaml --root . --iteration 1 \
   --brief "$SCRATCH/brief.md" --gates "$SCRATCH/iter-1.json" \
   --title "$ISSUE_TITLE" --out "$SCRATCH/brief-2.md" --json
@@ -1582,8 +1582,10 @@ used as-is.
 `--json` emits the machine report the [s4 loop](configuration.md#loop) reads — `keel.run-gates.v1`:
 the planned `gates` (id, kind, phase, severity) beside the `gate_outcomes` (each with `ok`,
 `on_fail`, `not_run`, findings), `jury_run`, and `blocked`; the exit code is unchanged, and
-the human listing is not printed — and it is the s8 verdict, a red `pre-merge` gate the loop
-defers included, so the loop recipe tolerates it and reads the report instead. `--defer-jury`
+the human listing is not printed. `--phases guard,test` scopes the run to what the loop
+judges: a gate at another phase is reported `not_run` with its `on_fail` and its command is
+never executed, so the exit code reflects only the judged gates and the loop recipe no longer
+has to tolerate one. Without it every planned phase runs, which is s8. `--defer-jury`
 reports the `jury` built-in `not_run` instead
 of convening a panel, exactly as the command runner reports an agentic gate: the loop's
 per-iteration gate run must not spend a cross-vendor panel on every iteration, and a seat

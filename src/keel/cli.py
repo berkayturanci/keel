@@ -116,6 +116,26 @@ def _gate_status(outcome) -> str:
     return "TIMEOUT" if outcome.timed_out else "FAIL"
 
 
+#: Sentinel for a `--phases` value naming a phase keel has no gates for. Distinct from
+#: `None`, which means "no scope: run every planned phase".
+_PHASE_SCOPE_INVALID = frozenset({"\x00invalid"})
+
+
+def _run_gate_phases(value: str | None) -> frozenset[str] | None:
+    """Parse ``--phases``: ``None`` for no scope, a set, or :data:`_PHASE_SCOPE_INVALID`.
+
+    Refused rather than silently narrowed, because a typo that scoped the run to nothing
+    would report every gate ``not_run`` and exit 0 — a green answer from a run that
+    checked nothing, which is the shape `--require-armed` exists to refuse elsewhere.
+    """
+    if value is None:
+        return None
+    names = frozenset(part.strip() for part in value.split(",") if part.strip())
+    if not names or not names <= frozenset(gates.BACKBONE_PHASES):
+        return _PHASE_SCOPE_INVALID
+    return names
+
+
 def _gate_runner(
     root: str,
     diff_text: str,
@@ -123,8 +143,16 @@ def _gate_runner(
     jury_mode: str = "gating",
     timeout: int = DEFAULT_GATE_TIMEOUT_S,
     run_jury: bool = True,
+    phases: frozenset[str] | None = None,
 ):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
+
+    ``phases`` scopes the run the way ``run_jury`` scopes the panel: a spec whose phase
+    is outside the set is reported ``not_run`` and its command is never executed. The s4
+    loop judges only the guard and test phases (:data:`keel.loop.JUDGED_PHASES`) and
+    defers the rest, but without this the runner still *paid* for a ``pre-merge`` Lego on
+    every iteration and its red result was what made ``run-gates`` exit non-zero on an
+    otherwise green one (#1172). ``None`` runs every planned phase, which is s8.
 
     ``timeout`` is the project's ``knobs.gate_timeout_s``; it covers any command spec
     that reached the runner without a resolved per-gate limit. The jury builtin reads
@@ -137,6 +165,10 @@ def _gate_runner(
     commands = command_gate_runner(root, timeout=timeout)
 
     def run(spec: GateSpec):
+        # Same shape the jury takes below, and the same reason: a gate this run is not
+        # judging must be reported, never executed, and never recorded as a pass.
+        if phases is not None and spec.phase not in phases:
+            return True, [], False, True
         if spec.kind == "builtin" and spec.id == "jury":
             if not run_jury:
                 return True, [], False, True
@@ -466,6 +498,15 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     # different input depending on which command invoked it: after a base merge,
     # `main...HEAD` carries the commits that merge brought in and `origin/main...HEAD`
     # does not (#1184).
+    phases = _run_gate_phases(args.phases)
+    if phases is _PHASE_SCOPE_INVALID:
+        print(
+            f"--phases: unknown phase in {args.phases!r}; "
+            f"choose from {', '.join(gates.BACKBONE_PHASES)}",
+            file=sys.stderr,
+        )
+        return 2
+
     base_ref = _ship_base_ref(config.base_branch, args.root)
     diff_text = git.diff(base_ref, "HEAD", cwd=args.root)
     outcomes, _tdd_result = _run_planned_gates(
@@ -476,6 +517,7 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
             jury_mode="gating",
             timeout=config.knobs.gate_timeout_s,
             run_jury=not args.defer_jury,
+            phases=phases,
         ),
         config=config,
         root=args.root,
@@ -6817,6 +6859,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--tdd",
         action="store_true",
         help="add the tdd-order gate to this run, as implement_mode: tdd would",
+    )
+    p_run.add_argument(
+        "--phases",
+        default=None,
+        help="comma-separated backbone phases to execute (guard, test, pre-merge); a gate "
+        "outside the scope is reported not_run, exactly as --defer-jury reports the jury. "
+        "The s4 loop passes `--phases guard,test`, which is what it judges (#1172)",
     )
     p_run.add_argument(
         "--defer-jury",

@@ -681,15 +681,15 @@ red gate run is its proof). When `enabled` is true:
 1. **Iteration 1 is the ordinary implement pass** above, with the same dispatch table, the
    same retry and fall-back policy, the same attribution.
 2. **After every iteration, run the gates the loop can make green in the worktree and let
-   core decide.** `keel run-gates --defer-jury --json` executes every planned command gate
-   and reports the plan beside the outcomes; the loop judges the guard- and test-phase
-   ones. Save the report and hand it, with the
+   core decide.** `keel run-gates --phases guard,test --defer-jury --json` executes only
+   what the loop judges and reports the plan beside the outcomes; a `pre-merge` gate is
+   reported `not_run`, never executed. Save the report and hand it, with the
    *base* brief, to `keel loop brief`. Add `--loop` to that call when the run was started
    with `--loop`, so it resolves the policy the contract published:
 
    ```bash
-   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
-     > "$SCRATCH/iter-$K.json" || true
+   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 \
+     --phases guard,test --defer-jury --json > "$SCRATCH/iter-$K.json"
    keel loop brief --project .keel/project.yaml --root . --iteration "$K" \
      --brief "$BRIEF" --gates "$SCRATCH/iter-$K.json" --title "$ISSUE_TITLE" \
      --out "$SCRATCH/brief-$((K + 1)).md" --json
@@ -1507,4 +1507,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=21c534d5322ca87a31a605022487fc745dd9800d455e9623e20fe83bea847b34 generated_sha256=21c534d5322ca87a31a605022487fc745dd9800d455e9623e20fe83bea847b34 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=1b7916dbaa50d99962b8a0d161979c51d935f171eda262e0bf32d71cd4f6c4c9 generated_sha256=1b7916dbaa50d99962b8a0d161979c51d935f171eda262e0bf32d71cd4f6c4c9 -->
