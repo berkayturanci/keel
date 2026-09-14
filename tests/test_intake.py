@@ -258,6 +258,47 @@ class TestIssueIntake(unittest.TestCase):
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                 self.assertFalse(record["can_mutate_code"])
 
+    def test_a_close_reason_heading_is_not_a_boundary_heading(self):
+        """Round-1 gate finding: dropping these silenced the statement intake reads.
+
+        `Not planned` / `Will not do` name a *status for the issue*, not a boundary of
+        the change, so their sections must be read, not dropped. With them in the
+        exclusion set, an issue saying "This issue is out of scope; closing." under
+        `## Not planned` came back READY with `can_mutate_code: true`.
+        """
+        for heading in ("Not planned", "Will not do", "Decision", "Status", "Resolution"):
+            with self.subTest(heading=heading):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=(
+                        self.WELL_FORMED + f"\n## {heading}\nThis issue is out of scope; closing.\n"
+                    ),
+                )
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+                self.assertFalse(record["can_mutate_code"])
+
+    def test_a_heading_does_not_glue_itself_onto_the_sentence_below_it(self):
+        """Round-1 gate finding: the sentence-start anchor stopped matching.
+
+        `_sentences` joins what it is given, so scanning the remaining body as one blob
+        produced `- Guard blocks unsafe sync. ## Decision Out of scope: closing.` and the
+        declaration pattern's first alternative is anchored at the start of a sentence.
+        The chunks are per section, without their heading lines, so the anchor holds.
+        """
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=self.WELL_FORMED + "\n## Decision\nOut of scope: closing.\n",
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+
+    def test_every_exclusion_heading_survives_normalization(self):
+        # `Won't do` normalises to `won t do` — an apostrophe is not alphanumeric — so a
+        # set entry spelled `wont do` could never match anything. Each entry must be a
+        # value `_normalize_heading` can actually produce.
+        for heading in intake._SCOPE_EXCLUSION_HEADINGS:
+            with self.subTest(heading=heading):
+                self.assertEqual(intake._normalize_heading(heading), heading)
+
     def test_ordinary_prose_about_a_detail_is_not_a_declaration(self):
         # The half #1168 removed must stay removed: only a sentence declaring *the issue*
         # counts, so saying a detail is out of scope for this change reads as prose.

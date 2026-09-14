@@ -29,10 +29,18 @@ _AMBIGUOUS_RE = re.compile(
     re.IGNORECASE,
 )
 _OUT_OF_SCOPE_LABELS = frozenset({"out-of-scope", "wontfix", "not-planned"})
-#: Headings whose whole section is a boundary statement about the change, never a
-#: status for the issue (#1168). Normalised by :func:`_normalize_heading`, so
-#: ``## Non-goals`` and ``## non goals`` are the same heading. ``not in this change``
-#: is this repository's own spelling, used by every issue written since #1182.
+#: Headings whose whole section is a boundary statement **about the change** (#1168).
+#: Normalised by :func:`_normalize_heading`, so ``## Non-goals`` and ``## non goals``
+#: are the same heading; ``not in this change`` is this repository's own spelling,
+#: used by every issue written since #1182.
+#:
+#: Deliberately **not** here: ``Not planned``, ``Will not do``, ``Decision``,
+#: ``Status``, ``Resolution``. Those are close-reason headings — a section saying the
+#: issue will not be done — and dropping them would silence the very statement intake
+#: exists to read. The round-1 gate seats caught exactly that: with them in the set,
+#: `## Not planned` / `This issue is out of scope; closing.` came back `ready` with
+#: `can_mutate_code: true`. The test is what the section says about, not how
+#: negative it sounds.
 _SCOPE_EXCLUSION_HEADINGS = frozenset(
     {
         "out of scope",
@@ -40,9 +48,6 @@ _SCOPE_EXCLUSION_HEADINGS = frozenset(
         "non goal",
         "not in scope",
         "not in this change",
-        "not planned",
-        "will not do",
-        "wont do",
     }
 )
 _OUT_OF_SCOPE_DECLARATION_RE = re.compile(
@@ -231,26 +236,28 @@ def _sentences(text: str) -> list[str]:
     return parts or [compact]
 
 
-def _without_scope_sections(body: str) -> str:
-    """``body`` with every scope-exclusion section — heading and content — removed.
+def _scannable_chunks(body: str) -> list[str]:
+    """``body`` split into the pieces a declaration may hide in, boundaries removed.
 
     This is the structural half of #1168. A ``## Out of scope`` section says what *this
     change* does not cover; it is a boundary, not a status, and matching a declaration
-    inside it refused the issue that wrote it. Dropping the whole section is what makes
-    the rest of the body safe to read in full, which is the half #1188 restores: the
-    first cut kept the broad search out by narrowing *where* it looked — the title, the
-    first sentence of the preface, and four section names — so a declaration in the
-    second sentence, or under ``## Decision``, reached `can_mutate_code: true`.
+    inside it refused the issue that wrote it. Its whole section is dropped.
+
+    The rest comes back **per section** rather than as one blob, and without the heading
+    lines. `_sentences` joins what it is given, so a single blob glues one section's last
+    line onto the next section's first — ``- works ## Decision Out of scope: closing.`` —
+    and the declaration pattern's first alternative is anchored at the start of a
+    sentence, so the declaration stopped matching. Both round-1 gate seats found that.
     """
     matches = list(_SECTION_RE.finditer(body))
     if not matches:
-        return body
-    kept: list[str] = [body[: matches[0].start()]]
+        return [body]
+    chunks = [body[: matches[0].start()]]
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
         if _normalize_heading(match.group("title")) not in _SCOPE_EXCLUSION_HEADINGS:
-            kept.append(body[match.start() : end])
-    return "\n".join(kept)
+            chunks.append(body[match.end() : end])
+    return [chunk for chunk in chunks if chunk.strip()]
 
 
 def _out_of_scope_reason(
@@ -288,7 +295,8 @@ def _out_of_scope_reason(
     if title and title.strip():
         candidates.extend(_sentences(title.strip()))
     if body:
-        candidates.extend(_sentences(_without_scope_sections(body)))
+        for chunk in _scannable_chunks(body):
+            candidates.extend(_sentences(chunk))
 
     for candidate in candidates:
         if _OUT_OF_SCOPE_DECLARATION_RE.search(candidate.strip()):
