@@ -314,9 +314,11 @@ class TestIssueIntake(unittest.TestCase):
         """Title, opening sentence, heading text — three positions, one property.
 
         The short form is anchored, and an anchor only means something where markdown
-        cannot move the start. A title is such a position; so is the body's opening
-        sentence and a heading's own text. Restricting it to the title alone let
-        `Not planned for this release.` open an issue body and still read `ready`.
+        cannot move the start. A title is such a position, and so is the body's opening
+        sentence: restricting it to the title alone let `Not planned for this release.`
+        open an issue body and still read `ready`.
+
+        A heading has the position and not the meaning — see the test below.
         """
         record = intake.assess_issue(title="Out of scope: fix the matcher", body=self.WELL_FORMED)
         self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
@@ -324,13 +326,34 @@ class TestIssueIntake(unittest.TestCase):
         for body in (
             "Not planned for this release.\n\n" + self.WELL_FORMED,
             "Not planned.\n\n" + self.WELL_FORMED,
-            self.WELL_FORMED + "\n## Not planned\nNot planned for this release.\n",
-            self.WELL_FORMED + "\n## Wontfix: legacy sync\n",
         ):
             with self.subTest(body=body[:28]):
                 record = intake.assess_issue(title="Add safe sync", body=body)
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                 self.assertFalse(record["can_mutate_code"])
+
+    def test_a_heading_is_a_position_not_a_verdict(self):
+        """`## Not planned` over a list of features is a boundary, not a closure.
+
+        A heading has the same shape as an opener — one line, nothing in front — so the
+        short form was briefly applied to it. That refused an issue whose `## Not planned`
+        section listed features, while the identical bullets under `## Non-goals` passed:
+        position, not meaning. A heading that really closes the issue says so, and the
+        named form catches that wherever it sits.
+        """
+        for heading in ("Not planned", "Wontfix: legacy sync", "Not in scope"):
+            with self.subTest(heading=heading):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=self.WELL_FORMED + f"\n## {heading}\n- Mobile UI\n- Dark mode\n",
+                )
+                self.assertEqual(record["status"], intake.READY)
+
+        named = intake.assess_issue(
+            title="Add safe sync",
+            body=self.WELL_FORMED + "\n## Not planned\nThis issue is out of scope; closing.\n",
+        )
+        self.assertEqual(named["status"], intake.OUT_OF_SCOPE)
 
     def test_a_bare_scope_phrase_in_the_body_is_not_a_declaration(self):
         """`Out of scope: X` does not say whether X is the issue or a boundary.

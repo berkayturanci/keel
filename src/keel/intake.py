@@ -50,11 +50,14 @@ _SCOPE_EXCLUSION_HEADINGS = frozenset(
         "not in this change",
     }
 )
-#: The short form, anchored at the start. Safe only where nothing can precede the text:
-#: a **title**, the body's **opening sentence**, and a **heading's own text**. Each is one
-#: line with no markdown in front of it, so "starts the sentence" means what it says.
-#: Everywhere else in a body it does not, and the eight rounds of review on #1188 found a
-#: different piece of markdown breaking it each time.
+#: The short form, anchored at the start, for the two positions where it is both safe and
+#: unambiguous: the **title** and the body's **opening sentence**. Each is one line with
+#: nothing in front of it, so "starts the sentence" means what it says, and each is a
+#: place an author writes *about the issue* rather than about the change.
+#:
+#: Not a heading's text, which has the position but not the meaning: `## Not planned` over
+#: a list of features is a boundary section. Not anywhere else in a body, where markdown
+#: moves the start — a dozen review rounds each found a different piece of it doing so.
 _OUT_OF_SCOPE_OPENER_RE = re.compile(
     r"^(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b",
     re.IGNORECASE,
@@ -369,9 +372,13 @@ def _scannable_chunks(body: str) -> list[tuple[bool, str]]:
         if _is_scope_exclusion_heading(match.group("title")):
             continue
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-        # A heading's own text is an opener: one line, nothing in front of it. Its body
-        # is not.
-        chunks.append((True, match.group("title")))
+        # A heading's text is **not** an opener. It has the position — one line, nothing
+        # in front — but not the meaning: `## Not planned` over a bullet list of features
+        # is a boundary section, and reading its title as a closure refused the issue
+        # while the identical bullets under `## Non-goals` passed. A heading that really
+        # closes the issue says so — `## Decision — this issue is out of scope` — and the
+        # named form catches that wherever it sits.
+        chunks.append((False, match.group("title")))
         chunks.append((False, body[match.end() : end]))
     return [(is_opener, chunk) for is_opener, chunk in chunks if chunk.strip()]
 
