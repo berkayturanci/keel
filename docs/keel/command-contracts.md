@@ -952,9 +952,11 @@ Adapters should pass the selected issue title, body, and labels into `keel plan`
 - `needs-input` — missing or ambiguous scope; adapters must ask the generated questions
   and must not mutate code for that issue.
 - `blocked` — a dependency or waiting condition is present; adapters must not mutate code.
-- `out-of-scope` — an out-of-scope label; a title opening with `Out of scope`,
-  `Not planned`, `Wontfix` or `Not in scope`; or a sentence anywhere in the body naming
-  the issue itself — `this issue is out of scope`. The body requires the issue to be
+- `out-of-scope` — an out-of-scope label; a **title** opening with `Out of scope`,
+  `Not planned`, `Wontfix` or `Not in scope`; or a sentence anywhere in the body
+  naming the issue itself — `this issue is out of scope`. The short form is the
+  title's alone: in a body it cannot be told from a boundary (`Out of scope for v1:
+  the Android client.`) or a carve-out (`Not in scope for Windows.`). The body requires the issue to be
   named, because `Out of scope: mobile UI` and `Out of scope: closing` are the same
   string and only one of them is a verdict. A section whose heading *starts with*
   `Out of scope`, `Non-goals`, `Not in scope` or `Not in this change` has its own prose

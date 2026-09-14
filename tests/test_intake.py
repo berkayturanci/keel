@@ -336,27 +336,73 @@ class TestIssueIntake(unittest.TestCase):
                 self.assertEqual(record["status"], intake.READY)
                 self.assertTrue(record["can_mutate_code"])
 
-    def test_the_short_form_works_where_nothing_precedes_it(self):
-        """Title, opening sentence, heading text — three positions, one property.
+    def test_a_label_is_stripped_in_a_heading_and_nowhere_else(self):
+        """`Decision —` in a heading is a record label; in prose it is a preposition.
 
-        The short form is anchored, and an anchor only means something where markdown
-        cannot move the start. A title is such a position, and so is the body's opening
-        sentence: restricting it to the title alone let `Not planned for this release.`
-        open an issue body and still read `ready`.
-
-        A heading has the position and not the meaning — see the test below.
+        The strip exists so `## Decision — this issue is out of scope; closing` reads as
+        the closure it is. Applied to prose it turned carve-outs into closures:
+        `For Windows: this issue is not in scope.` and `On Android — this issue is not
+        planned.` each left a clean subject-form match behind, which the subject test
+        cannot see through — the subject really is there, just not where the sentence
+        starts.
         """
-        record = intake.assess_issue(title="Out of scope: fix the matcher", body=self.WELL_FORMED)
-        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
-
-        for body in (
-            "Not planned for this release.\n\n" + self.WELL_FORMED,
-            "Not planned.\n\n" + self.WELL_FORMED,
+        for heading in (
+            "Decision \u2014 this issue is out of scope; closing",
+            "Follow-up: this issue is out of scope",
+            "Update 2026-09-14: this issue is not planned",
+            "Won't do: this issue is out of scope",
         ):
-            with self.subTest(body=body[:28]):
-                record = intake.assess_issue(title="Add safe sync", body=body)
+            with self.subTest(heading=heading):
+                record = intake.assess_issue(
+                    title="Add safe sync", body=self.WELL_FORMED + f"\n## {heading}\n"
+                )
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
-                self.assertFalse(record["can_mutate_code"])
+
+        for sentence in (
+            "For Windows: this issue is not in scope.",
+            "On Android \u2014 this issue is not planned.",
+            "For Linux: this issue is not planned.",
+            "iOS 18: this issue is not in scope.",
+        ):
+            with self.subTest(sentence=sentence):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=(
+                        f"## Problem\n{sentence}\n\n## Deliverable\nShip the guard.\n\n"
+                        "## Acceptance criteria\n- Guard blocks unsafe sync.\n"
+                    ),
+                )
+                self.assertEqual(record["status"], intake.READY)
+                self.assertTrue(record["can_mutate_code"])
+
+    def test_the_short_form_belongs_to_the_title_alone(self):
+        """A title names the issue's whole subject; a body sentence qualifies.
+
+        `Out of scope for v1: the Android client.` opening an issue is a boundary,
+        `Not in scope for Windows.` is a carve-out, and neither closes anything — but each
+        matches the short form. Fifteen review rounds tried to separate those by position
+        and each rule inverted on some real sentence, so the body asks only the question
+        that has an answer: is the issue the subject.
+
+        The cost, stated rather than discovered: an issue whose body opens
+        `Not planned for this release.` and says nothing else is `ready`. Writing it in
+        the title, or naming the issue, still blocks.
+        """
+        for title in ("Out of scope: fix the matcher", "Not planned: support legacy sync"):
+            with self.subTest(title=title):
+                record = intake.assess_issue(title=title, body=self.WELL_FORMED)
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+
+        for opening in (
+            "Out of scope for v1: the Android client. This issue adds the iOS client.",
+            "Not in scope for Windows.",
+            "Not planned for the mobile client.",
+        ):
+            with self.subTest(opening=opening):
+                record = intake.assess_issue(
+                    title="Add safe sync", body=f"{opening}\n\n" + self.WELL_FORMED
+                )
+                self.assertEqual(record["status"], intake.READY)
 
     def test_a_heading_is_a_position_not_a_verdict(self):
         """`## Not planned` over a list of features is a boundary, not a closure.
@@ -496,25 +542,6 @@ class TestIssueIntake(unittest.TestCase):
         )
         self.assertEqual(record["status"], intake.READY)
 
-    def test_a_hyphenated_label_still_strips(self):
-        """`Follow-up:` and `Update 2026-09-14:` are labels too.
-
-        The label pattern excluded `-` from its first alternative, so a hyphenated label
-        or an ISO date never stripped and the sentence-start anchor never saw the
-        subject. `Decision:` and `Status —` — the two the docstring used — happened to
-        work, which is why nothing failed.
-        """
-        for label in ("Follow-up:", "Update 2026-09-14:", "Decision (2026-09-14) —", "Re-open:"):
-            with self.subTest(label=label):
-                record = intake.assess_issue(
-                    title="Add safe sync",
-                    body=(
-                        self.WELL_FORMED
-                        + f"\n## Decision\n{label} this issue is out of scope; closing.\n"
-                    ),
-                )
-                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
-
     def test_a_single_top_heading_is_a_title_not_a_section(self):
         """`# Out of scope` over a run of `##` sections must not swallow them.
 
@@ -598,21 +625,6 @@ class TestIssueIntake(unittest.TestCase):
                 record = intake.assess_issue(
                     title="Add safe sync",
                     body=self.WELL_FORMED + f"\n## Decision\n{body_tail}",
-                )
-                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
-
-    def test_emphasis_around_a_label_does_not_hide_the_subject(self):
-        # `**Decision:**` leaves a closing `**` between the label and the subject, which
-        # the first markdown strip cannot see because it is not a prefix.
-        for line in (
-            "**Decision:** This issue is out of scope; closing.",
-            "_Decision:_ This issue is out of scope; closing.",
-            "- **Note:** This issue is out of scope.",
-        ):
-            with self.subTest(line=line):
-                record = intake.assess_issue(
-                    title="Add safe sync",
-                    body=self.WELL_FORMED + f"\n## Decision\n{line}\n",
                 )
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
 

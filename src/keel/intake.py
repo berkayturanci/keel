@@ -50,14 +50,14 @@ _SCOPE_EXCLUSION_HEADINGS = frozenset(
         "not in this change",
     }
 )
-#: The short form, anchored at the start, for the two positions where it is both safe and
-#: unambiguous: the **title** and the body's **opening sentence**. Each is one line with
-#: nothing in front of it, so "starts the sentence" means what it says, and each is a
-#: place an author writes *about the issue* rather than about the change.
+#: The short form, anchored at the start, for the **title** and nowhere else.
 #:
-#: Not a heading's text, which has the position but not the meaning: `## Not planned` over
-#: a list of features is a boundary section. Not anywhere else in a body, where markdown
-#: moves the start — a dozen review rounds each found a different piece of it doing so.
+#: A title is one line, with nothing in front of it and nothing after it to qualify — it
+#: names the issue's whole subject. A body sentence is not: `Out of scope for v1: the
+#: Android client.` opening an issue is a boundary, `Not in scope for Windows.` is a
+#: carve-out, and neither closes anything. Fifteen review rounds went into trying to tell
+#: those from a closure by position, and each rule inverted on some real sentence. The
+#: body asks the one question that has an answer: is the issue the subject.
 _OUT_OF_SCOPE_OPENER_RE = re.compile(
     r"^(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b",
     re.IGNORECASE,
@@ -113,7 +113,7 @@ _LEADING_LABEL_RE = re.compile(
 )
 
 
-def _declaration_candidates(text: str) -> tuple[str, ...]:
+def _declaration_candidates(text: str, *, allow_label: bool = False) -> tuple[str, ...]:
     """Every prefix-stripped form of one sentence the declaration may be anchored in.
 
     The sentence **as written** comes first, because the label pattern cannot tell a
@@ -127,6 +127,8 @@ def _declaration_candidates(text: str) -> tuple[str, ...]:
     stripped = _LEADING_MARKUP_RE.sub("", forms[0])
     if stripped != forms[0]:
         forms.append(stripped)
+    if not allow_label:
+        return tuple(forms)
     delabelled = _LEADING_LABEL_RE.sub("", stripped, count=1).strip()
     if delabelled != stripped:
         forms.append(_LEADING_MARKUP_RE.sub("", delabelled).strip())
@@ -366,8 +368,8 @@ def _scannable_chunks(body: str) -> list[tuple[bool, str]]:
     """
     matches = list(_SECTION_RE.finditer(body))
     if not matches:
-        return [(True, body)]
-    chunks: list[tuple[bool, str]] = [(True, body[: matches[0].start()])]
+        return [(False, body)]
+    chunks: list[tuple[bool, str]] = [(False, body[: matches[0].start()])]
     for index, match in enumerate(matches):
         # An exclusion section owns its own body and nothing else. Owning nested headings
         # was tried and failed in both directions: `# Out of scope` over a run of `##`
@@ -379,15 +381,13 @@ def _scannable_chunks(body: str) -> list[tuple[bool, str]]:
         if _is_scope_exclusion_heading(match.group("title")):
             continue
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-        # A heading's text is **not** an opener. It has the position — one line, nothing
-        # in front — but not the meaning: `## Not planned` over a bullet list of features
-        # is a boundary section, and reading its title as a closure refused the issue
-        # while the identical bullets under `## Non-goals` passed. A heading that really
-        # closes the issue says so — `## Decision — this issue is out of scope` — and the
-        # named form catches that wherever it sits.
-        chunks.append((False, match.group("title")))
+        # Flagged as a heading: its text may carry a record label (`Decision —`) in front
+        # of the declaration. It does **not** get the short form — `## Not planned` over a
+        # list of features is a boundary section, and reading its title as a closure
+        # refused the issue while the identical bullets under `## Non-goals` passed.
+        chunks.append((True, match.group("title")))
         chunks.append((False, body[match.end() : end]))
-    return [(is_opener, chunk) for is_opener, chunk in chunks if chunk.strip()]
+    return [(is_heading, chunk) for is_heading, chunk in chunks if chunk.strip()]
 
 
 def _out_of_scope_reason(
@@ -421,29 +421,27 @@ def _out_of_scope_reason(
         if label in _OUT_OF_SCOPE_LABELS:
             return f"Issue carries out-of-scope label: {label}."
 
-    #: Positions where the short form is unambiguous, because nothing precedes the text.
-    openers: list[str] = []
-    if title and title.strip():
-        openers.append(title.strip())
+    # The title takes the short form: it names the issue's whole subject, with nothing
+    # before it and nothing after it to qualify.
+    if title and (heading := title.strip()):
+        if _OUT_OF_SCOPE_OPENER_RE.search(heading) or _OUT_OF_SCOPE_DECLARATION_RE.search(heading):
+            return f"Issue declares itself out of scope: {heading}"
 
-    candidates: list[str] = []
+    #: `(text, may a leading label be stripped)`. A heading's `Decision —` prefix is a
+    #: record label; the same shape inside prose is a prepositional phrase (`For Windows:
+    #: this issue is not in scope.`), and stripping it turned a carve-out into a closure.
+    candidates: list[tuple[str, bool]] = []
     if body:
-        for is_opener, chunk in _scannable_chunks(body):
-            sentences = _sentences(chunk)
-            if is_opener and sentences:
-                openers.append(sentences[0])
-            candidates.extend(sentences)
-            candidates.extend(_bullet_lines(chunk))
+        for is_heading, chunk in _scannable_chunks(body):
+            candidates.extend((sentence, is_heading) for sentence in _sentences(chunk))
+            candidates.extend((line, False) for line in _bullet_lines(chunk))
 
-    for opener in openers:
-        if _OUT_OF_SCOPE_OPENER_RE.search(opener) or _OUT_OF_SCOPE_DECLARATION_RE.search(opener):
-            return f"Issue declares itself out of scope: {opener}"
-
-    for candidate in candidates:
+    for candidate, allow_label in candidates:
         # Leading markdown removed first, so the anchor sees the sentence rather than the
         # bullet in front of it.
         if any(
-            _OUT_OF_SCOPE_DECLARATION_RE.search(form) for form in _declaration_candidates(candidate)
+            _OUT_OF_SCOPE_DECLARATION_RE.search(form)
+            for form in _declaration_candidates(candidate, allow_label=allow_label)
         ):
             return f"Issue declares itself out of scope: {candidate.strip()}"
     return None
