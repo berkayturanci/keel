@@ -117,11 +117,12 @@ def _reconcile_pr(
 
     artifact = _capture_artifact(record)
     scope = _capture_artifact_scope(record, artifact)
-    if (
-        verification.get("status") == "applied"
-        and not artifact
-        and scope != capture.ARTIFACT_SCOPE_MACHINE
-    ):
+    # Both branches are about an **applied** row, and the note has to say so as
+    # plainly as the finding does: it asserts that a host wrote a file. Attached on
+    # the scope alone it appeared beside `invalid-marker`, and on a `deferred` row —
+    # claiming a write for a run that captured nothing.
+    applied = verification.get("status") == "applied"
+    if applied and not artifact and scope != capture.ARTIFACT_SCOPE_MACHINE:
         findings.append(
             _finding(
                 FINDING_APPLIED_WITHOUT_ARTIFACT,
@@ -129,7 +130,7 @@ def _reconcile_pr(
                 "capture status is applied but no capture artifact was recorded",
             )
         )
-    elif scope == capture.ARTIFACT_SCOPE_MACHINE:
+    elif applied and scope == capture.ARTIFACT_SCOPE_MACHINE:
         # Decided from the record, not from the filesystem: this module is pure, and
         # "can this host read it" is the wrong question anyway — the path is host-specific
         # wherever it is read, including on the machine that wrote it a month later.

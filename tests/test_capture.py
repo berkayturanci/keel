@@ -901,6 +901,24 @@ class TheRecordSaysWhereItsArtifactCanBeRead(unittest.TestCase):
                 )
                 self.assertEqual(capture.artifact_scope("anything.md", config), expected)
 
+    def test_a_dormant_sink_still_has_the_shape_it_has(self):
+        # The scope describes the sink's *path*, and a switched-off capture does not
+        # move it: `.keel/learning` is repo-relative whether or not anything writes
+        # there. Answered through `learning_sink_in_worktree` — which is gated on the
+        # hook, because *who commits the file* does depend on it — a dormant in-repo
+        # sink recorded `machine`, which reads as "written on a host you cannot see"
+        # for a path every clone has.
+        config = _config_with_capture_policy(
+            {
+                "enabled": False,
+                "mode": "extension",
+                "learning": {"sink": {"path": ".keel/learning"}},
+            }
+        )
+        self.assertEqual(capture.artifact_scope("x.md", config), capture.ARTIFACT_SCOPE_REPOSITORY)
+        # …and the question that *is* hook-gated keeps its answer.
+        self.assertFalse(capture.learning_sink_in_worktree(config))
+
     def test_a_project_with_no_sink_has_no_scope(self):
         # `learning_sink_in_worktree` answers False for "no sink" and "capture disabled"
         # as well as for an outside sink, so the sink has to be looked for separately —

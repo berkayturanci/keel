@@ -1062,12 +1062,11 @@ def artifact_scope(artifact: str | None, config: _HasPolicyPack | None = None) -
     config, the path's own shape decides: an anchored path was always an outside sink.
     """
     if config is not None:
-        if learning_sink_policy(config) is None:
+        sink = learning_sink_policy(config)
+        if sink is None:
             return None
         return (
-            ARTIFACT_SCOPE_REPOSITORY
-            if learning_sink_in_worktree(config)
-            else ARTIFACT_SCOPE_MACHINE
+            ARTIFACT_SCOPE_REPOSITORY if _sink_writes_in_worktree(sink) else ARTIFACT_SCOPE_MACHINE
         )
     if not isinstance(artifact, str) or not artifact.strip():
         return None
@@ -1088,8 +1087,19 @@ def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
     # Gated on the hook too: a dormant `sink:` under a disabled capture writes
     # nothing, so nothing needs committing. Fourth reader of the same question.
     sink = learning_sink_policy(config) if capture_hook_enabled(config) else None
-    if sink is None:
-        return False
+    return sink is not None and _sink_writes_in_worktree(sink)
+
+
+def _sink_writes_in_worktree(sink: dict[str, Any]) -> bool:
+    """Does this sink block's **path** name somewhere inside the checkout?
+
+    Split out from :func:`learning_sink_in_worktree` because the two callers ask
+    different questions of the same block. *Who commits the file* is gated on the
+    capture hook — a dormant sink writes nothing, so nothing needs committing — but
+    *what shape the path has* is not. Answering the second through the first made a
+    dormant in-repo sink record `artifact_scope: machine`, which reads as "written on
+    another host" for a repo-relative path every clone can see.
+    """
     path = str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH)
     if path.startswith("~"):
         return False

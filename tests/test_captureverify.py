@@ -90,6 +90,18 @@ class TestReconcile(unittest.TestCase):
             [note["type"] for note in report["notes"]], [captureverify.NOTE_APPLIED_ELSEWHERE]
         )
 
+    def test_a_row_that_is_not_applied_gets_no_note(self):
+        """The note asserts a host wrote a file, so only an `applied` row can carry it.
+
+        Attached on the recorded scope alone it appeared beside `invalid-marker` and on a
+        `deferred` row — telling the operator a lesson was written somewhere they cannot
+        see, for a run that wrote nothing at all.
+        """
+        record = _record(6, marker=_marker(6, "deferred"))
+        record["capture"]["artifact_scope"] = capture.ARTIFACT_SCOPE_MACHINE
+        report = captureverify.reconcile([record], [6])
+        self.assertEqual(report["notes"], [])
+
     def test_an_in_repo_artifact_is_neither_faulted_nor_noted(self):
         report = captureverify.reconcile(
             [_record(5, marker=_marker(5, "applied"), artifact=".keel/learning/one.md")], [5]
