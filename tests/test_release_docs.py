@@ -803,5 +803,39 @@ class TestContributingDocumentsTheGuards(unittest.TestCase):
         self.assertIn("scripts/release_surfaces.py", text)
 
 
+class TheComparisonDoesNotCallShippedWorkAProposal(unittest.TestCase):
+    """A roadmap row outlives what it points at (#1186).
+
+    `docs/keel/comparison.md` described #1165, #1166 and #1155 as proposals for seven
+    hours, then all three shipped and the page went on saying keel could not do what it
+    had just started doing — contradicting `README.md` and `docs/keel/configuration.md`
+    on the same commit. The existing guard greps a hardcoded list of legacy phrases, so
+    it could not see a *new* claim go stale.
+
+    This compares the page against the changelog instead: an issue the changelog records
+    as delivered must not be cited on the comparison page in the future tense.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    #: Words that make an issue reference a promise rather than a record.
+    FUTURE = ("proposes", "proposal", "would close", "will close", "is the plan")
+
+    def test_no_delivered_issue_is_described_as_a_proposal(self):
+        comparison = (self.ROOT / "docs" / "keel" / "comparison.md").read_text(encoding="utf-8")
+        changelog = (self.ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        delivered = set(re.findall(r"\(#(\d+)\)", changelog))
+        self.assertTrue(delivered, "no delivered issue numbers found in the changelog")
+
+        offenders = []
+        for line in comparison.splitlines():
+            lowered = line.lower()
+            if not any(word in lowered for word in self.FUTURE):
+                continue
+            for number in re.findall(r"#(\d+)", line):
+                if number in delivered:
+                    offenders.append((number, line.strip()[:90]))
+        self.assertEqual([], offenders, "shipped work is still described as a proposal")
+
+
 if __name__ == "__main__":
     unittest.main()
