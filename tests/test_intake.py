@@ -425,6 +425,45 @@ class TestIssueIntake(unittest.TestCase):
         )
         self.assertEqual(record["status"], intake.READY)
 
+    def test_a_hyphenated_label_still_strips(self):
+        """`Follow-up:` and `Update 2026-09-14:` are labels too.
+
+        The label pattern excluded `-` from its first alternative, so a hyphenated label
+        or an ISO date never stripped and the sentence-start anchor never saw the
+        subject. `Decision:` and `Status —` — the two the docstring used — happened to
+        work, which is why nothing failed.
+        """
+        for label in ("Follow-up:", "Update 2026-09-14:", "Decision (2026-09-14) —", "Re-open:"):
+            with self.subTest(label=label):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=(
+                        self.WELL_FORMED
+                        + f"\n## Decision\n{label} this issue is out of scope; closing.\n"
+                    ),
+                )
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+
+    def test_a_single_top_heading_is_a_title_not_a_section(self):
+        """`# Out of scope` over a run of `##` sections must not swallow them.
+
+        The skip runs until a heading of the same or shallower depth, which is right
+        while levels are consistent. Issue bodies mix them: one `#` over several `##`
+        makes every `##` structurally nested, so an `# Out of scope` owned the whole
+        document — including the `## Decision` that closed the issue. A level used once
+        is a title; the level used repeatedly is the section level, and a heading there
+        always starts a new section.
+        """
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=(
+                "# Out of scope\n- Mobile UI.\n\n"
+                "## Decision\nThis issue is out of scope; closing.\n\n" + self.WELL_FORMED
+            ),
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+        self.assertFalse(record["can_mutate_code"])
+
     def test_an_exclusion_section_owns_its_nested_headings(self):
         """`## Out of scope` followed by `### Mobile` is one boundary, not two sections.
 
