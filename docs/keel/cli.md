@@ -206,7 +206,9 @@ The same questions are available over REST, and `keel merge` asks them there whe
 to. Nothing about the contract changes: the claim, the window, the rollup semantics, the
 evidence gate, the SHA-pinned gates-pass and `MERGED` as the authoritative outcome are the
 same objects on either wire. The transport is recorded as `transport: gh-graphql` or
-`gh-rest` in the payload and in the merge ledger record.
+`gh-rest` in the merge payload, beside `lock`, `window`, `ci` and `evidence`, and named in
+human output only when it is the unusual one. (`keel merge` writes no ledger record of its
+own — `keel ship --append-ledger` is what appends to the run ledger.)
 
 ```bash
 keel merge .keel/project.yaml --root . --pr 456 --transport rest

@@ -399,7 +399,7 @@ evidence verification → merge. Always a live, consent-gated command.
 `--transport` chooses the wire (#1175): `auto` (default) reads over GraphQL and falls back
 to REST only when a probe confirms that endpoint is unreachable, `graphql` never falls
 back, `rest` never probes. The transport used is recorded as `transport: gh-graphql |
-gh-rest` in the payload and in the merge ledger record. Only the wire changes — the claim,
+gh-rest` in the merge payload, beside `lock`, `window`, `ci` and `evidence`. Only the wire changes — the claim,
 the window, the rollup, the evidence gate and the SHA-pinned gates-pass are identical on
 both, and the REST merge additionally pins `sha` to the head it verified.
 

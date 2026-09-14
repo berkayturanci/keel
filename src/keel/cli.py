@@ -1048,8 +1048,8 @@ def _cmd_merge(args: argparse.Namespace) -> int:
 
         try:
             transport, snapshot = _merge_snapshot_over_best_transport(args)
-        except ValueError as exc:
-            payload["transport"] = _forced_transport(args)
+        except _SnapshotFailed as exc:
+            payload["transport"] = exc.transport
             return _finish_merge(args, payload, str(exc), code=1)
         payload["transport"] = transport
         payload["ci"] = snapshot["ci"]
@@ -4459,15 +4459,32 @@ def _falls_back_to_rest(args: argparse.Namespace) -> bool:
     )
 
 
+class _SnapshotFailed(Exception):
+    """A snapshot read that failed, carrying the transport it failed **on**.
+
+    The refusal is recorded with a transport, and the one the run started on is not
+    always the one it ended on: a blocked endpoint moves the run to REST, and a REST
+    read that then fails for its own reason was reported as `gh-graphql` — naming a
+    wire the failing call never touched.
+    """
+
+    def __init__(self, transport: str, reason: str):
+        super().__init__(reason)
+        self.transport = transport
+
+
 def _merge_snapshot_over_best_transport(args: argparse.Namespace) -> tuple[str, dict[str, object]]:
     """``(transport, snapshot)`` — GraphQL first, REST when the endpoint is blocked."""
     transport = _forced_transport(args)
     try:
         return transport, _merge_snapshot(args.pr, cwd=args.root, transport=transport)
-    except ValueError:
+    except ValueError as exc:
         if transport == TRANSPORT_REST or not _falls_back_to_rest(args):
-            raise
-    return TRANSPORT_REST, _merge_snapshot(args.pr, cwd=args.root, transport=TRANSPORT_REST)
+            raise _SnapshotFailed(transport, str(exc)) from exc
+    try:
+        return TRANSPORT_REST, _merge_snapshot(args.pr, cwd=args.root, transport=TRANSPORT_REST)
+    except ValueError as exc:
+        raise _SnapshotFailed(TRANSPORT_REST, str(exc)) from exc
 
 
 def _pr_timing(args: argparse.Namespace, transport: str | None) -> tuple[str, dict | None]:
@@ -4503,10 +4520,17 @@ def _rest_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
     state = pull.get("mergeable_state")
     rollup: list[object] = []
     if isinstance(head_sha, str) and head_sha:
+        checks = github.rest_json(github.rest_check_runs(head_sha, cwd=cwd))
+        if checks is None:
+            # **Fail closed.** An empty rollup means "no check has reported", which the
+            # docs-only carve-out is allowed to merge through; a rollup that could not be
+            # read means nothing of the kind. Collapsing the two would let an unreachable
+            # endpoint stand in for a green head on any docs PR. The GraphQL path raises
+            # here for the same reason — a failed `gh pr view` is not an empty rollup.
+            raise ValueError(f"unable to read the check rollup for {head_sha}")
         rollup = list(
             github.rest_rollup(
-                github.rest_json(github.rest_check_runs(head_sha, cwd=cwd)),
-                github.rest_json(github.rest_commit_statuses(head_sha, cwd=cwd)),
+                checks, github.rest_json(github.rest_commit_statuses(head_sha, cwd=cwd))
             )
         )
     return {

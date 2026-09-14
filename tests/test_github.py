@@ -148,6 +148,30 @@ class TestRestTransport(unittest.TestCase):
         rows = github.rest_json(github.run_argv(["true"], _run=MagicMock(return_value=_proc(body))))
         self.assertEqual(rows, [{"name": "a"}, {"name": "b"}])
 
+    def test_a_paginated_check_runs_body_is_unwrapped_page_by_page(self):
+        """`check-runs` answers with an **object**, and `--paginate` repeats it.
+
+        ``{"total_count": N, "check_runs": [...]}`` per page, concatenated — so a head
+        with more than a hundred checks arrives as ``{…}{…}`` and `rest_json` correctly
+        reports *two page objects*. Read as a list of check runs, those became two
+        entries with no name, no status and no conclusion: neither a failure nor pending,
+        so the reducer counted them as checks that had reported and returned **pass**.
+        A merge gate saw an all-green rollup for a head whose real checks it never read.
+        """
+
+        def page(name: str, conclusion: str) -> str:
+            run = {"name": name, "status": "completed", "conclusion": conclusion}
+            return json.dumps({"total_count": 1, "check_runs": [run]})
+
+        body = page("a", "success") + page("b", "failure")
+        rollup = github.rest_rollup(
+            github.rest_json(github.run_argv(["true"], _run=MagicMock(return_value=_proc(body)))),
+            None,
+        )
+        self.assertEqual(
+            [(e["name"], e["conclusion"]) for e in rollup], [("a", "SUCCESS"), ("b", "FAILURE")]
+        )
+
     def test_the_rollup_translation_is_case_and_nothing_more(self):
         rollup = github.rest_rollup(
             {
@@ -282,6 +306,9 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
         self.assertEqual(github.rest_rollup("nonsense", None), [])
         self.assertEqual(github.rest_rollup({"check_runs": "nope"}, None), [])
         self.assertEqual(github.rest_rollup(["nope", None], ["nope"]), [])
+        # A bare list of run objects is not a shape this endpoint returns, and reading
+        # one would be guessing at a payload GitHub has not documented.
+        self.assertEqual(github.rest_rollup([{"name": "a", "status": "completed"}], None), [])
 
     def test_an_unreadable_window_and_an_unreadable_page_are_none(self):
         self.assertIsNone(github.rest_pr_merge_window(7, _run=MagicMock(return_value=_proc("[]"))))
@@ -297,7 +324,27 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
             )
         )
 
-    def test_a_window_that_never_settles_returns_what_it_last_saw(self):
+    def test_an_unmerged_pull_request_has_no_window(self):
+        """All four fields, exactly as the GraphQL reader requires.
+
+        REST answers an unmerged pull request with `created_at` and `base.ref` and a null
+        `merged_at`, so "any field present" reported a window for one — and a caller that
+        supplied `--merge-sha` then judged drift on a merge that had not happened, where
+        the same call over GraphQL answers `unknown`.
+        """
+        unmerged = json.dumps(
+            {
+                "created_at": "T0",
+                "merged_at": None,
+                "base": {"ref": "main"},
+                "merge_commit_sha": None,
+            }
+        )
+        self.assertIsNone(
+            github.rest_pr_merge_window(7, _run=MagicMock(return_value=_proc(unmerged)))
+        )
+
+    def test_a_window_that_never_settles_returns_nothing(self):
         settling = json.dumps(
             {
                 "created_at": "T0",
@@ -307,10 +354,10 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
             }
         )
         mock = MagicMock(return_value=_proc(settling))
-        window = github.rest_pr_merge_window(7, _run=mock, _sleep=lambda _s: None)
-        # The caller treats an empty `merge_commit` as "no merge commit yet" and says so,
-        # which is the honest answer — but it is reached after the poll, not instead of it.
-        self.assertEqual(window["merge_commit"], "")
+        # A merge whose commit never appears is not a merge this check can read, so it
+        # is `None` and the caller says "no merge commit yet" — but it says so *after*
+        # the poll, not instead of it.
+        self.assertIsNone(github.rest_pr_merge_window(7, _run=mock, _sleep=lambda _s: None))
         self.assertEqual(mock.call_count, github.MERGE_COMMIT_POLL_ATTEMPTS)
 
 

@@ -7612,6 +7612,37 @@ class TestMergeOverRest(unittest.TestCase):
         self.assertIn("transport: gh-rest", out)
         self.assertIn("GraphQL is unreachable", out)
 
+    def test_an_unreadable_rollup_refuses_rather_than_reading_as_empty(self):
+        """ "No check has reported" and "I could not ask" are different answers.
+
+        An empty rollup is `no-checks`, which the docs-only carve-out is allowed to merge
+        through. Collapsing an unreadable one into it would let an unreachable endpoint
+        stand in for a green head on any docs pull request.
+        """
+
+        class _NoChecks(_GraphqlBlockedGh):
+            def __call__(self, argv, **kwargs):
+                if any("/check-runs" in part for part in argv):
+                    self.calls.append(list(argv))
+                    return CommandResult(False, 1, "502 Bad Gateway")
+                return super().__call__(argv, **kwargs)
+
+        gh = _NoChecks(rest={"/pulls/123": self._PULL})
+        rc, out, _ = self._merge(gh, argv_extra=("--transport", "rest"))
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("unable to read the check rollup", payload["reason"])
+        # And the refusal names the wire it actually failed on.
+        self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
+
+    def test_a_refusal_after_the_fallback_names_rest_not_graphql(self):
+        # The run started on GraphQL, the probe moved it to REST, and the REST read then
+        # failed for its own reason. Reporting `gh-graphql` there names a wire the
+        # failing call never touched.
+        gh = _GraphqlBlockedGh(rest={"/pulls/123": "[]"})
+        _, out, _ = self._merge(gh)
+        self.assertEqual(json.loads(out)["transport"], cli.TRANSPORT_REST)
+
     def test_an_empty_rest_rollup_is_no_checks_not_a_pass(self):
         # The same rule the GraphQL rollup gets: nothing has reported for this head, so
         # the docs-only carve-out decides, not "CI is green".

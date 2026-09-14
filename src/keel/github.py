@@ -722,6 +722,34 @@ def rest_json(result: CommandResult) -> object | None:
     return pages[0] if len(pages) == 1 else pages
 
 
+def _check_run_rows(payload: object) -> list[dict]:
+    """The check runs inside a `commits/<sha>/check-runs` body, across every page.
+
+    That endpoint answers with an **object** — ``{"total_count": N, "check_runs": [...]}``
+    — not with a bare array, and `gh api --paginate` concatenates one such object per
+    page. So a head with more than a hundred checks arrives as ``{…}{…}``, which
+    :func:`rest_json` correctly reports as *a list of two page objects*.
+
+    Read as a list of check runs, those two objects became two entries with no ``name``,
+    no ``status`` and no ``conclusion`` — neither a failure nor pending, so the reducer
+    counted them as checks that had reported and returned **pass**. A merge gate handed
+    an all-green rollup for a head whose hundred-odd real checks were never looked at.
+
+    Only the documented shape contributes. A payload that is neither the object nor
+    pages of it yields nothing, and the caller treats an empty rollup as *no checks have
+    reported*, which refuses a non-docs merge rather than passing it.
+    """
+    pages = payload if isinstance(payload, list) else [payload]
+    rows: list[dict] = []
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        runs = page.get("check_runs")
+        if isinstance(runs, list):
+            rows.extend(run for run in runs if isinstance(run, dict))
+    return rows
+
+
 def rest_rollup(check_runs: object, statuses: object) -> list[dict]:
     """The two REST payloads in the shape ``statusCheckRollup`` has.
 
@@ -739,13 +767,9 @@ def rest_rollup(check_runs: object, statuses: object) -> list[dict]:
     rollup non-empty, which is the difference between ``pass`` and ``no-checks``.
     """
     entries: list[dict] = []
-    runs = check_runs if isinstance(check_runs, list) else []
-    payload = check_runs if isinstance(check_runs, dict) else None
-    if payload is not None and isinstance(payload.get("check_runs"), list):
-        runs = payload["check_runs"]
-    for run in runs:
-        if not isinstance(run, dict):
-            continue
+    # `_check_run_rows` has already dropped every non-object, so nothing is re-checked
+    # here: a guard no input can trip is a claim about the data the tests cannot make.
+    for run in _check_run_rows(check_runs):
         entries.append(
             {
                 "name": run.get("name"),
@@ -850,7 +874,12 @@ def rest_pr_merge_window(
         }
         settling = window["merged_at"] and not window["merge_commit"]
         if not settling or attempt == MERGE_COMMIT_POLL_ATTEMPTS:
-            return window if any(window.values()) else None
+            # **All four, exactly as the GraphQL reader requires.** REST answers an
+            # *unmerged* pull request with `created_at` and `base.ref` and a null
+            # `merged_at`, so "any field present" reported a window for one — and a
+            # caller that supplied `--merge-sha` then went on to judge drift on a merge
+            # that had not happened, where the same call over GraphQL says `unknown`.
+            return window if all(window.values()) else None
         sleep_fn(MERGE_COMMIT_POLL_DELAY_S)
     return None  # pragma: no cover - the loop always returns on its last attempt
 
