@@ -1322,8 +1322,15 @@ after the ledger append, with the same `--pr`, and it reads the artifact off tha
 run's own `ship_run` record:
 
 ```bash
-keel capture-land .keel/project.yaml --root "$WORKTREE" --pr <PR> --json
+keel capture-land .keel/project.yaml --root . --pr <PR> --json
 ```
+
+**`--root .`, not the worktree.** s10's pre-clean has already removed `$WORKTREE` by
+the time s11 runs, and the ledger append above writes under the primary checkout — so
+the sink and the `ship_run` record are both there. Pointed at the deleted worktree the
+command finds no ledger, reads an empty history, reports `no-artifact` and exits 0:
+a green s11 that lands nothing and discards the lesson, which is the regression this
+step exists to prevent.
 
 **Do not improvise a push.** The obvious recipe cannot run on the topology this
 command runs in: s2, `overnight` and `swarm` all execute inside a worktree while the
@@ -1352,7 +1359,7 @@ on the machine that wrote it, and only
 there.** The recorded `capture.artifact` is that machine's absolute path, and the run
 ledger *is* committed — so a teammate or a CI runner reading the same record finds no
 file, the dedupe cannot point at it, and the run records `applied` with no artifact.
-Portable artifact references are tracked separately in #1163's follow-up.
+Portable artifact references are tracked separately in #1185.
 
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
@@ -1530,4 +1537,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=4ecfdaa9002d5eae668a4008417a5c33cfa654a7c3abec9d7c20de24e8a8ae92 generated_sha256=4ecfdaa9002d5eae668a4008417a5c33cfa654a7c3abec9d7c20de24e8a8ae92 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=4692fba06905f378ec46c0b1f007d03b62d3d7aa22e044f8dbc2243b08e2bf15 generated_sha256=4692fba06905f378ec46c0b1f007d03b62d3d7aa22e044f8dbc2243b08e2bf15 -->

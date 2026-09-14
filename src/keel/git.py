@@ -237,10 +237,19 @@ def diff_names(a: str, b: str, *, cwd: str | None = None, _run=None) -> list[str
     observe — the landing's own "this commit changes exactly one file" check — can
     tell an unreadable diff from an empty one.
     """
-    result = run_argv(["git", "diff", "--name-only", a, b], cwd=cwd, **_kw(_run))
+    # `-z` with `core.quotePath=false`, for the same reason `ls_tree`/`mktree` use it.
+    # Under the default `quotePath=true` git renders a non-ASCII name as a C-quoted
+    # escape — `".keel/learning/caf\\303\\251.md"` — which can never equal the raw path
+    # the landing planned, so the one live safety check refused every such artifact
+    # permanently and blamed the commit for changing a file nobody asked for.
+    result = run_argv(
+        ["git", "-c", "core.quotePath=false", "diff", "--name-only", "-z", a, b],
+        cwd=cwd,
+        **_kw(_run),
+    )
     if not result.ok:
         return None
-    return [line for line in result.stdout.splitlines() if line.strip()]
+    return [name for name in result.stdout.split("\0") if name.strip()]
 
 
 def push_commit(

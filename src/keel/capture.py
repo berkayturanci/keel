@@ -2142,6 +2142,8 @@ LEARNING_LAND_STATUSES = (
     "already-landed",
     "not-required",
     "no-artifact",
+    "would-land",
+    "contended",
     "failed",
 )
 
@@ -2273,12 +2275,50 @@ def _land_path(artifact: str | None) -> str | None:
     if artifact is None:
         return None
     raw = str(artifact).strip()
-    if not raw or workspace.is_root_anchored(raw):
+    if not raw or raw.startswith("~"):
         return None
     normalized = posixpath.normpath(raw.replace("\\", "/"))
+    # **Both forms are tested, and the rewrite is why.** `is_root_anchored` asks each
+    # flavour of path whether it is absolute, and `PureWindowsPath("\\etc\\hostname")`
+    # says no — a rooted path with no drive letter is *drive-relative*, not absolute.
+    # The backslash rewrite then turned that same string into `/etc/hostname`, which
+    # `os.path.join(root, …)` resolves by discarding root entirely: `git hash-object -w`
+    # stored a file from outside the checkout in the object database, and the tree
+    # composition split it into an entry with an empty name. Asking the question after
+    # the rewrite as well as before is what closes it.
+    if workspace.is_root_anchored(raw) or workspace.is_root_anchored(normalized):
+        return None
     if normalized in (".", "") or normalized.split("/")[0] == "..":
         return None
     return normalized
+
+
+#: git's own words for "the ref moved under you" — the only rejection worth retrying.
+#: Printed by the client when its remote-tracking ref is behind, and by the server in
+#: the reason it returns; both reach us through the same combined output.
+PUSH_CONTENTION_MARKERS = ("fetch first", "non-fast-forward", "non-fast forward")
+
+
+def push_rejection_is_contention(output: str | None) -> bool:
+    """Did this push fail because the ref **moved**, or because it is **refused**?
+
+    The retry exists for one case: another ship landed its lesson between this run's
+    read of ``<remote>/<base>`` and its push. Rebuilding on the branch as it now is
+    will then succeed, which is why that case retries.
+
+    Every other rejection will refuse again, and a protected base branch is the
+    ordinary one — ``! [remote rejected] … (protected branch hook declined)``, or a
+    ``pre-receive`` hook's own sentence. Treating it as contention burned three pushes
+    on something that cannot succeed and then reported that the branch *"moved under
+    every one of 3 attempt(s)"* — naming a cause that did not happen and hiding the
+    server's actual reason, which is the one thing the operator needs.
+
+    Judged from git's text because the exit code is 1 either way. An unrecognised
+    failure is **not** contention: this pushes to the shared base branch, so an
+    unexplained refusal stops after one attempt rather than being retried on a guess.
+    """
+    text = (output or "").lower()
+    return any(marker in text for marker in PUSH_CONTENTION_MARKERS)
 
 
 #: One ``git ls-tree`` / ``git mktree`` line: ``<mode> SP <type> SP <sha> TAB <name>``.

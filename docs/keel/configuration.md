@@ -1516,7 +1516,7 @@ The capture contract says which case you are in: `durable_artifacts.commit_requi
 is true exactly when the path is inside the repository, and
 `durable_artifacts.land_command` then names the command that lands it.
 
-**An in-repo sink is durable.** s11 runs
+**An in-repo sink is durable on a base branch that accepts a direct push.** s11 runs
 `keel capture-land <project.yaml> --root . --pr <N>` after the ledger append, and the
 lesson is on `origin/<base_branch>` when the run ends. It is deliberately not a
 `git switch`-and-commit recipe: s2, `overnight` and `swarm` all run inside a worktree
@@ -1527,6 +1527,24 @@ recipe works from a worktree, the primary checkout and a CI clone. It pushes one
 commit carrying one file — it is not a merge, and `keel merge` stays the only path a
 pull request takes to the base branch. Concurrent ships each land their own lesson.
 See [`cli.md`](cli.md) for the statuses and exit codes.
+
+**A base branch that requires pull requests refuses this push, and keel's own does.**
+The commit `capture-land` builds is a direct push to `base_branch`, so every protection
+rule that governs one applies: a branch with `required_pull_request_reviews` rejects it
+outright — *"Changes must be made through a pull request"* — and one with required status
+checks rejects it for having none, since a commit built with `commit-tree` has never been
+through CI. Read off this repository's own `main` on 2026-09-14: `required_pull_request_reviews`
+present, `enforce_admins: true`, 13 required contexts. So keel does **not** land its own
+lessons; it writes them, `capture-land` reports `failed` with the server's reason, and s11
+carries that into the closure rather than failing the ship. The rejection is permanent, not
+contention, so it is not retried — a refusal and a branch that moved under you are told
+apart by git's own words (`fetch first` / `non-fast-forward`), and only the second is worth
+another attempt.
+
+Projects in that position have two honest options, and neither is a keel setting: allow the
+capture commit through the protection (a push allowance for the account that ships), or
+configure a sink **outside** the checkout, where no push is involved at all — at the price
+the next paragraph names.
 
 **A path outside the checkout needs no landing step, and is durable on the machine
 that wrote it, and only

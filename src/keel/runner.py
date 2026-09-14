@@ -95,6 +95,17 @@ def run_command(
             cwd=cwd,
             capture_output=True,
             text=True,
+            # **UTF-8, not the platform default.** `text=True` alone decodes with
+            # `locale.getencoding()`, which on Windows is the ANSI code page: cp1252
+            # leaves 0x81/8D/8F/90/9D undefined, so `git ls-tree -z` on a repository
+            # holding a Cyrillic filename (`Ё` is D0 81) raised UnicodeDecodeError out
+            # of the subprocess call — past `run_argv`'s own `TimeoutExpired`/`OSError`
+            # guards, turning every fail-soft reader into a traceback. `surrogateescape`
+            # also round-trips undecodable bytes back out unchanged, which the landing
+            # needs: the names it reads from `ls-tree` are written straight back to
+            # `mktree`.
+            encoding="utf-8",
+            errors="surrogateescape",
             timeout=timeout,
             stdin=subprocess.DEVNULL,
         )  # nosec B604
@@ -127,6 +138,17 @@ def run_argv(
             cwd=cwd,
             capture_output=True,
             text=True,
+            # **UTF-8, not the platform default.** `text=True` alone decodes with
+            # `locale.getencoding()`, which on Windows is the ANSI code page: cp1252
+            # leaves 0x81/8D/8F/90/9D undefined, so `git ls-tree -z` on a repository
+            # holding a Cyrillic filename (`Ё` is D0 81) raised UnicodeDecodeError out
+            # of the subprocess call — past `run_argv`'s own `TimeoutExpired`/`OSError`
+            # guards, turning every fail-soft reader into a traceback. `surrogateescape`
+            # also round-trips undecodable bytes back out unchanged, which the landing
+            # needs: the names it reads from `ls-tree` are written straight back to
+            # `mktree`.
+            encoding="utf-8",
+            errors="surrogateescape",
             timeout=timeout,
             input=stdin_text,
             # Written out rather than assembled into a **kwargs dict: #879's sweep in

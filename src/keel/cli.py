@@ -1931,6 +1931,28 @@ def _land_learning_tree(root: str, path: str, base_sha: str, blob: str) -> str |
     return git.mktree(capture.upsert_tree_entry(listing, entry), cwd=root)
 
 
+def _contained_real_path(path: Path, root: str) -> Path | None:
+    """``path``'s **real** location when it is inside ``root``'s, else ``None``.
+
+    Both ends are resolved, which does two jobs at once.
+
+    It follows symlinks on the way in: `git hash-object` follows them too, and the one
+    live safety check downstream counts *paths* in the finished commit, never where
+    their bytes came from — so a link named `.keel/learning/x.md` pointing out of the
+    checkout passed every test this command made and published that file to the shared
+    base branch under an innocent name.
+
+    And it returns an **absolute** path for git to hash. A relative one is resolved
+    against the process directory here and against ``cwd=root`` again inside git, so
+    ``--root wt`` from the directory above applied the root twice and hashed nothing.
+    """
+    try:
+        real, base = path.resolve(), Path(root).resolve()
+    except OSError:  # pragma: no cover - an unstattable path fails closed as uncontained
+        return None
+    return real if real.is_relative_to(base) else None
+
+
 def _land_learning_attempt(args, plan: dict) -> dict:
     """One build-and-push attempt. Returns ``{"status", "detail", "commit", "base"}``.
 
@@ -1942,12 +1964,31 @@ def _land_learning_attempt(args, plan: dict) -> dict:
     base_sha = git.rev_parse(plan["remote_ref"], cwd=root)
     if base_sha is None:
         return _land_result("failed", f"cannot resolve {plan['remote_ref']}", None, None)
-    source = os.path.join(root, path)
-    if not os.path.isfile(source):
-        return _land_result("failed", f"no such capture artifact: {source}", None, base_sha)
-    blob = git.hash_object(source, cwd=root)
+    # `_recorded_artifact`, not `os.path.join(root, path)`: the join resolved against
+    # the *process* directory for `isfile` and then again against `root` inside git,
+    # so a relative root that is not `.` was applied twice. The repo fixed this exact
+    # bug once already, sixty lines away, and the comment there says so.
+    resolved = _recorded_artifact(path, root)
+    if resolved is None:
+        return _land_result(
+            "failed", f"no such capture artifact: {_resolve_under_root(path, root)}", None, base_sha
+        )
+    # **Where the content came from, not only where the path points.** The safety check
+    # below counts *paths* in the finished commit, so a path inside the sink whose file
+    # is a symlink out of the checkout passed it while publishing someone else's file to
+    # the base branch — `git hash-object` follows the link. Resolving both ends and
+    # comparing them is the containment the docstrings already claim.
+    real = _contained_real_path(resolved, root)
+    if real is None:
+        return _land_result(
+            "failed",
+            f"refusing to hash {path}: it resolves outside the checkout ({resolved})",
+            None,
+            base_sha,
+        )
+    blob = git.hash_object(str(real), cwd=root)
     if blob is None:
-        return _land_result("failed", f"cannot hash {source}", None, base_sha)
+        return _land_result("failed", f"cannot hash {real}", None, base_sha)
     # **Asked before building, so a re-run is a no-op rather than an empty commit.**
     # The s11 recipe is allowed to run twice (a resumed run, a retried session), and a
     # landing that pushed a parentless-looking no-change commit each time would add a
@@ -1977,7 +2018,10 @@ def _land_learning_attempt(args, plan: dict) -> dict:
     pushed = git.push_commit(remote, commit, plan["ref"], cwd=root)
     if pushed.ok:
         return _land_result("landed", f"{path} landed on {plan['remote_ref']}", commit, base_sha)
-    return _land_result("contended", pushed.output.strip(), commit, base_sha)
+    detail = pushed.output.strip()
+    if capture.push_rejection_is_contention(detail):
+        return _land_result("contended", detail, commit, base_sha)
+    return _land_result("failed", detail, commit, base_sha)
 
 
 #: Landing outcomes that must not fail an s11 whose merge already happened.
@@ -2046,12 +2090,17 @@ def _cmd_capture_land(args: argparse.Namespace) -> int:
                 if outcome["status"] != "contended":
                     break
             else:
+                # The last attempt's own detail is kept. Substituting a generic sentence
+                # here is what let three refusals be reported as a branch that "moved",
+                # printing a cause that had not happened over the server's actual reason.
+                last = attempts[-1]
                 outcome = _land_result(
                     "failed",
                     f"{plan['remote_ref']} moved under every one of "
-                    f"{plan['attempts']} attempt(s); the lesson was not landed",
-                    None,
-                    None,
+                    f"{plan['attempts']} attempt(s); the lesson was not landed. "
+                    f"Last push said: {last['detail']}",
+                    last["commit"],
+                    last["base"],
                 )
 
     payload = {

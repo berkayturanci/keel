@@ -543,7 +543,7 @@ On a live append, a missing `--host-agent` emits a run-context warning by defaul
 fields would degrade. `--transport` is auto-filled from the resolved GitHub transport when
 omitted, so adapters should not echo a stale transport value.
 
-## `keel capture-land <project.yaml> [--pr <N>] [--artifact <path>] [--remote <name>] [--attempts <N>] [--dry-run] [--json]`
+## `keel capture-land <project.yaml> [--root <dir>] [--pr <N>] [--artifact <path>] [--remote <name>] [--attempts <N>] [--dry-run] [--json]`
 
 Land this run's learning document on `origin/<base_branch>` (#1163).
 
@@ -590,6 +590,23 @@ command re-reads the base branch, rebuilds its commit on top of what it now carr
 pushes again — up to `--attempts` (default 3) times. Forcing would discard the other
 ship's lesson, and on a base branch whatever arrived with it.
 
+**Only a ref that moved is retried.** git exits 1 for every rejection, so the two are told
+apart by what it says: `fetch first` and `non-fast-forward` mean the branch moved and
+rebuilding will work, and anything else — a protected branch, a declining `pre-receive`
+hook, a permission error — is a refusal that will refuse again. Retrying those burned three
+pushes on something that could not succeed and then reported the branch as having *"moved
+under every one of 3 attempt(s)"*, naming a cause that had not happened and hiding the
+server's own reason. An unrecognised failure counts as a refusal, not as contention: this
+pushes to a shared branch, so it stops and reports rather than guessing.
+
+### Branch protection
+
+A base branch that requires pull requests refuses this push, and so does one with required
+status checks — the commit is built with `commit-tree` and has never been through CI. The
+command reports `failed` with the server's reason and does not retry. This repository's own
+`main` is in exactly that position, so keel writes its lessons and does not land them; see
+[`configuration.md`](configuration.md) for what a project in that position can do instead.
+
 ### Safety
 
 The landing commit is composed from the base branch's own tree objects, and the command
@@ -597,8 +614,16 @@ verifies that the finished commit differs from its parent by **exactly** the art
 before pushing. A commit that touches anything else, or a diff that cannot be read at all,
 is refused rather than pushed.
 
-An artifact path that is absolute or climbs out of the checkout (`../x`, `/etc/x`, `C:\x`)
-is refused, not normalised — this command's whole job is to push to a shared branch.
+An artifact path that is absolute or climbs out of the checkout (`../x`, `/etc/x`, `C:\x`,
+`~/x`) is refused, not normalised — this command's whole job is to push to a shared branch.
+The refusal is tested on the path as written **and** on the path after backslashes become
+slashes, because those disagree: `\etc\hostname` is drive-relative rather than absolute, so
+no flavour of `PurePath` calls it anchored, and the rewrite then turns it into `/etc/hostname`.
+
+Containment is checked on the **resolved** path, not only on its spelling: `git hash-object`
+follows symlinks, and the exactly-one-file check downstream counts paths in the finished
+commit rather than where their bytes came from — so a link inside the sink pointing out of
+the checkout would have published someone else's file to the base branch.
 
 ### Statuses and exit codes
 
@@ -609,7 +634,8 @@ is refused, not normalised — this command's whole job is to push to a shared b
 | `not-required` | 0 | the sink is outside the checkout, so git never sees it |
 | `no-artifact` | 0 | this run captured nothing to land |
 | `would-land` | 0 | `--dry-run` |
-| `failed` | 1 | the lesson was not landed; `detail` says why |
+| `contended` | — | a single attempt's outcome, never the command's: the branch moved, so the next attempt rebuilds |
+| `failed` | 1 | the lesson was not landed; `detail` carries the last push's own reason |
 
 The four non-`failed` statuses exit 0 on purpose: s11 runs after the merge already
 happened, and a capture that had nothing to do must not fail it. Capture is fail-soft, so

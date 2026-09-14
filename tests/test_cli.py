@@ -15032,8 +15032,8 @@ class TestCaptureLand(unittest.TestCase):
             switched = subprocess.run(
                 ["git", "switch", "main"], cwd=wt, capture_output=True, text=True
             )
+            # The exit code carries the property; git's wording is not keel's to pin.
             self.assertNotEqual(switched.returncode, 0)
-            self.assertIn("already used by worktree", switched.stderr)
 
             artifact = self._write_lesson(wt, "a.md")
             rc, out, _ = run(
@@ -15167,6 +15167,123 @@ class TestCaptureLand(unittest.TestCase):
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(len(payload["attempts"]), 2)
         self.assertIn("moved under every one of", payload["detail"])
+        # The last attempt's own words survive the loop. Replacing them with the
+        # generic sentence alone is what let a permanent refusal be reported as a
+        # branch that moved, with the server's reason nowhere in the output.
+        self.assertIn("fetch first", payload["detail"])
+
+    def test_a_remote_that_refuses_is_not_retried(self):
+        """A protected base branch is a refusal, not contention — against a real hook.
+
+        `pre-receive` declining is what a protected branch *is* from the client's side,
+        and git exits 1 for it exactly as it does for a ref that moved. Classified as
+        contention, three pushes were burned on something that could not succeed and the
+        command then reported the branch as having moved under every attempt — a cause
+        that had not happened, printed over the server's own reason.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            hook = origin / "hooks" / "pre-receive"
+            hook.write_text(
+                "#!/bin/sh\necho 'protected branch main: direct pushes are not permitted' >&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            hook.chmod(0o755)
+            config, artifact = self._config(wt), self._write_lesson(wt, "refused.md")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    config,
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "12",
+                    "--artifact",
+                    artifact,
+                    "--attempts",
+                    "3",
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed")
+            # One attempt, not three: retrying a refusal cannot make it succeed.
+            self.assertEqual(len(payload["attempts"]), 1)
+            self.assertEqual(payload["attempts"][0]["status"], "failed")
+            # And the operator is told what the server actually said.
+            self.assertIn("direct pushes are not permitted", payload["detail"])
+            self.assertNotIn("moved under every one of", payload["detail"])
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+
+    def test_a_symlink_out_of_the_checkout_is_not_published(self):
+        """Containment is about the bytes, not only about the spelling of the path.
+
+        `git hash-object` follows symlinks, and the one live safety check counts *paths*
+        in the finished commit — so `.keel/learning/x.md` pointing at a file outside the
+        checkout satisfied every test this command made and put that file's contents on
+        the shared base branch under an innocent name.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            secret = Path(tmp) / "outside.txt"
+            secret.write_text("a private thing\n", encoding="utf-8")
+            (wt / ".keel" / "learning").mkdir(parents=True, exist_ok=True)
+            (wt / ".keel" / "learning" / "link.md").symlink_to(secret)
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "13",
+                    "--artifact",
+                    ".keel/learning/link.md",
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertIn("outside the checkout", payload["detail"])
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+
+    def test_a_relative_root_is_resolved_once(self):
+        """`--root` was applied twice for a relative root that is not `.`.
+
+        `os.path.join(root, path)` was resolved against the *process* directory for the
+        existence check and then against `root` again inside git, so the command worked
+        for `.` and for an absolute path and for nothing in between. The repo had already
+        fixed this exact bug sixty lines away, in `_recorded_artifact`.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "rel.md")
+            config = self._config(wt)
+            cwd = os.getcwd()
+            os.chdir(wt.parent)  # so a relative `--root` is not the process directory
+            try:
+                rc, out, _ = run(
+                    [
+                        "capture-land",
+                        config,
+                        "--root",
+                        wt.name,
+                        "--pr",
+                        "14",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
+                )
+            finally:
+                os.chdir(cwd)
+            payload = json.loads(out)
+            self.assertEqual(rc, 0, payload)
+            self.assertEqual(payload["status"], "landed")
+            self.assertEqual(_origin_files(origin), [".keel/learning/rel.md", "keep.txt"])
 
     def test_the_artifact_is_read_from_the_ledger_when_not_given(self):
         with tempfile.TemporaryDirectory() as tmp:

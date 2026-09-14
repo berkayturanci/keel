@@ -29,6 +29,7 @@ import io
 import json
 import os
 import posixpath
+import re
 import shutil
 import tempfile
 import unittest
@@ -57,22 +58,41 @@ def _records(listing: str) -> list[str]:
     return [record for record in listing.split("\x00") if record]
 
 
+#: Opens a runnable block: three *or more* backticks, a shell-ish tag, anything after.
+#:
+#: Every part of that is a shape an exact-string opener let through, and the
+#: assertion this replaced — a plain ``assertNotIn("```bash", …)`` over the whole
+#: section — had caught all three. ` ```bash title=x ` carries an attribute,
+#: ` ````bash ` uses four backticks to nest a fence inside itself, and ` ```console `
+#: is the tag a transcript uses; a recipe was pasted into the last of those, the
+#: surfaces regenerated the normal way, and this guard passed.
+_FENCE_OPEN = re.compile(r"\A`{3,}\s*(?:bash|sh|shell|console|zsh)\b")
+_FENCE_CLOSE = re.compile(r"\A`{3,}\s*\Z")
+
+
 def _shell_fences(markdown: str) -> list[str]:
-    """Every ```bash / ```sh fenced block's body in ``markdown``.
+    """Every runnable fenced block's body in ``markdown``.
 
     The s11 guard cares about what an operator could copy and run, which is the
     fenced blocks alone — prose naming a command it is warning against must stay
     legal, and grepping the whole section cannot tell the two apart.
+
+    An **unterminated** block yields its body too. A fence that never closes still
+    renders as a code block to the end of the section, and reading it as "no fence
+    here" is how a guard against pasted recipes comes to inspect nothing at all.
     """
-    fences, lines, inside, current = [], markdown.splitlines(), False, []
-    for line in lines:
-        if not inside and line.strip() in ("```bash", "```sh", "```shell"):
+    fences, inside, current = [], False, []
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not inside and _FENCE_OPEN.match(stripped):
             inside, current = True, []
-        elif inside and line.strip() == "```":
+        elif inside and _FENCE_CLOSE.match(stripped):
             fences.append("\n".join(current))
             inside = False
         elif inside:
             current.append(line)
+    if inside:
+        fences.append("\n".join(current))
     return fences
 
 
@@ -344,7 +364,11 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                 # No hand-rolled git against the base branch. The needles are the
                 # commands themselves, inside a shell fence — the prose above is
                 # allowed to *name* `git switch` because it is warning about it.
-                for fence in _shell_fences(capture_section):
+                fences = _shell_fences(capture_section)
+                # A guard that inspected zero fences would pass on a section whose
+                # opener it failed to recognise — the failure mode being fixed here.
+                self.assertTrue(fences, f"{surface}: s11 hands out no runnable block")
+                for fence in fences:
                     for forbidden in ("git switch", "git commit", "git push", "git add"):
                         self.assertNotIn(forbidden, fence)
 
@@ -2818,7 +2842,22 @@ class TestLearningLandPlan(unittest.TestCase):
         # must never be resolved helpfully.
         with tempfile.TemporaryDirectory() as tmp:
             config = self._config(tmp, self._SINK)
-            for bad in ("../outside.md", "/etc/passwd", "C:\\x.md", "\\\\srv\\x.md", "."):
+            # `\\etc\\hostname` and `~/x.md` are the two that got through. The first is
+            # *drive-relative*, so no flavour of `PurePath` calls it absolute — and the
+            # backslash rewrite then turned it into `/etc/hostname`, which
+            # `os.path.join(root, …)` resolves by discarding root: `git hash-object -w`
+            # stored a file from outside the checkout, and the tree split produced an
+            # entry with an empty name that `mktree` accepted into a corrupt object.
+            for bad in (
+                "../outside.md",
+                "/etc/passwd",
+                "C:\\x.md",
+                "\\\\srv\\x.md",
+                "\\etc\\hostname",
+                "~/x.md",
+                "~",
+                ".",
+            ):
                 plan = capture.learning_land_plan(config, artifact=bad)
                 self.assertEqual(plan["status"], "failed", bad)
                 self.assertTrue(plan["errors"], bad)

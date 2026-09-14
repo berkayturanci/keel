@@ -116,19 +116,41 @@ class TestGitLandingPlumbing(unittest.TestCase):
         self.assertFalse(git.push_commit("origin", SHA_A, "refs/heads/main", _run=rec).ok)
 
     def test_diff_names_is_two_dot(self):
-        rec = _Recorder(out=".keel/learning/a.md\n")
+        rec = _Recorder(out=".keel/learning/a.md\x00")
         self.assertEqual(git.diff_names(SHA_A, SHA_B, _run=rec), [".keel/learning/a.md"])
         # Two-dot, not `a...b`: the landing compares a commit against the parent it
         # was just built on, which is a plain tree difference, not a merge-base one.
-        self.assertEqual(rec.calls[0], ["git", "diff", "--name-only", SHA_A, SHA_B])
+        self.assertEqual(
+            rec.calls[0],
+            ["git", "-c", "core.quotePath=false", "diff", "--name-only", "-z", SHA_A, SHA_B],
+        )
+
+    def test_diff_names_does_not_c_quote_a_non_ascii_path(self):
+        """The safety check compares these names against the path it planned.
+
+        Under git's default `core.quotePath=true` a non-ASCII name comes back as a
+        C-quoted escape — `".keel/learning/caf\\303\\251.md"` — which can never equal
+        the raw path, so the landing refused that artifact *permanently* and blamed the
+        commit for changing a file nobody had asked for. Reachable through a configured
+        `sink.filename`, not through the default ASCII slug.
+        """
+        rec = _Recorder(out=".keel/learning/caf\u00e9.md\x00")
+        self.assertEqual(git.diff_names(SHA_A, SHA_B, _run=rec), [".keel/learning/caf\u00e9.md"])
+        self.assertIn("core.quotePath=false", rec.calls[0])
+        # `-z` goes with it: without NUL records the same name would arrive split on
+        # whatever the escape contained.
+        self.assertIn("-z", rec.calls[0])
 
     def test_diff_names_unreadable_is_none_not_empty(self):
         # The landing fails closed on this: `[]` would read as "this commit changes
         # nothing", and the safety check would compare it against the one path.
         self.assertIsNone(git.diff_names(SHA_A, SHA_B, _run=_Recorder(code=128)))
 
-    def test_diff_names_skips_blank_lines(self):
-        rec = _Recorder(out="a.md\n\n  \nb.md\n")
+    def test_diff_names_skips_empty_records(self):
+        # `-z` terminates every record, so a well-formed stream ends with an empty one.
+        # Dropping it is not cosmetic: an empty string here would be compared against
+        # the planned path and refuse the push.
+        rec = _Recorder(out="a.md\x00b.md\x00")
         self.assertEqual(git.diff_names(SHA_A, SHA_B, _run=rec), ["a.md", "b.md"])
 
 
