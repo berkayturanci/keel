@@ -140,7 +140,7 @@
 
       var sr = document.getElementById("sr-live-region");
       if (srTimer) { clearTimeout(srTimer); srTimer = null; }
-      if (sr && q) {
+      if (sr) {
         var announcement = !any
           ? 'No docs match that search.'
           : 'Showing ' + count + (count === 1 ? ' result' : ' results');
