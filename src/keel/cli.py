@@ -1978,6 +1978,11 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
                 print(
                     f"  FAIL  reconcile PR #{finding['pr']}  {finding['type']}  {finding['reason']}"
                 )
+            # Notes are not failures, and a note nobody sees is not a report: without
+            # this loop `applied-elsewhere` existed only in `--json`, which is not the
+            # command operators read.
+            for note in reconcile_report.get("notes", ()):
+                print(f"  note  reconcile PR #{note['pr']}  {note['type']}  {note['message']}")
             if reconcile_report["ok"]:
                 print("  reconcile: ok")
     return 0 if payload["certified"] else 1
@@ -9607,6 +9612,12 @@ def _duplicate_learning_artifact(
     knowledge folder this checkout cannot see, and an `artifact` that resolves to
     nothing is a worse answer than no artifact at all: `capture-verify` would
     report a clean session while the proof it names does not exist.
+
+    This is where the `machine` scope is *acted on*, and deliberately not in
+    `capture.duplicate_learning_artifact` (#1185). Dropping such a path in the pure
+    layer looks right and is not: on the host that wrote the file it is readable, and
+    refusing it there records `applied` with no artifact — the finding this reuse
+    exists to prevent, raised on the one machine where the artifact is real.
     """
     recorded = capture.duplicate_learning_artifact(
         config=config,

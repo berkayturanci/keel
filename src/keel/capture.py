@@ -1619,22 +1619,11 @@ def duplicate_learning_artifact(
             continue
         candidate = capture_block.get("artifact")
         if isinstance(candidate, str) and candidate.strip():
-            recorded_scope = capture_block.get("artifact_scope")
-            scope = (
-                recorded_scope.strip()
-                if isinstance(recorded_scope, str) and recorded_scope.strip()
-                else artifact_scope(candidate, config)
-            )
-            # A `machine`-scoped path names a file on the host that wrote it and nothing
-            # anywhere else, so reusing it here would hand back a path this run cannot
-            # read — recorded as `applied` against an artifact that is not there (#1185).
-            # Skipped rather than returned; the run writes its own.
-            #
-            # The record's own field wins when it has one, because it describes the run
-            # that wrote it. Otherwise this project's sink decides: scope is a property of
-            # where the sink points, not of how a path happens to be spelled.
-            if scope == ARTIFACT_SCOPE_MACHINE:
-                continue
+            # Scope is recorded, not acted on here. Whether a `machine`-scoped path can be
+            # read is a filesystem question, and this module is pure — the CLI wrapper
+            # already asks it (`_duplicate_learning_artifact`), which is what keeps the
+            # same-host case working: the file really is there, and dropping the path here
+            # would record `applied` with no artifact on the very machine that wrote it.
             # Keep scanning: the ledger is append-only and the newest record
             # holding this fingerprint is the one whose path is current.
             artifact = candidate.strip()
