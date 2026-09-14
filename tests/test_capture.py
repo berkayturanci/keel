@@ -875,5 +875,74 @@ class TestCaptureImportGraph(unittest.TestCase):
         self.assertEqual(hits, [])
 
 
+class TheRecordSaysWhereItsArtifactCanBeRead(unittest.TestCase):
+    """`capture.artifact_scope` (#1185).
+
+    An in-repo sink's path means the same thing in every clone. A sink outside the
+    checkout records an absolute path, and the run ledger is *committed*, so that path
+    travels to teammates and CI runners where it names nothing. Saying which kind it is
+    lets `capture-verify` tell "written somewhere this host cannot see" from "never
+    written" — the same absence, very different facts.
+    """
+
+    def test_the_sinks_shape_decides(self):
+        for path, expected in (
+            (".keel/learning", capture.ARTIFACT_SCOPE_REPOSITORY),
+            ("~/knowledge", capture.ARTIFACT_SCOPE_MACHINE),
+            ("/srv/knowledge", capture.ARTIFACT_SCOPE_MACHINE),
+        ):
+            with self.subTest(path=path):
+                config = _config_with_learning_policy(
+                    {
+                        "enabled": True,
+                        "mode": "extension",
+                        "sink": {"kind": "markdown-dir", "path": path},
+                    }
+                )
+                self.assertEqual(capture.artifact_scope("anything.md", config), expected)
+
+    def test_a_dormant_sink_still_has_the_shape_it_has(self):
+        # The scope describes the sink's *path*, and a switched-off capture does not
+        # move it: `.keel/learning` is repo-relative whether or not anything writes
+        # there. Answered through `learning_sink_in_worktree` — which is gated on the
+        # hook, because *who commits the file* does depend on it — a dormant in-repo
+        # sink recorded `machine`, which reads as "written on a host you cannot see"
+        # for a path every clone has.
+        config = _config_with_capture_policy(
+            {
+                "enabled": False,
+                "mode": "extension",
+                "learning": {"sink": {"path": ".keel/learning"}},
+            }
+        )
+        self.assertEqual(capture.artifact_scope("x.md", config), capture.ARTIFACT_SCOPE_REPOSITORY)
+        # …and the question that *is* hook-gated keeps its answer.
+        self.assertFalse(capture.learning_sink_in_worktree(config))
+
+    def test_a_project_with_no_sink_has_no_scope(self):
+        # `learning_sink_in_worktree` answers False for "no sink" and "capture disabled"
+        # as well as for an outside sink, so the sink has to be looked for separately —
+        # otherwise a path inside the clone was recorded `machine` and noted as unreadable.
+        config = _config_with_capture_policy({"enabled": True, "mode": "extension"})
+        self.assertIsNone(capture.artifact_scope(".keel/learning/x.md", config))
+
+    def test_an_older_record_is_read_from_the_paths_shape(self):
+        # Nothing already in a ledger changes meaning: an anchored path was always an
+        # outside sink, on any platform.
+        for path, expected in (
+            (".keel/learning/x.md", capture.ARTIFACT_SCOPE_REPOSITORY),
+            ("/Users/b/knowledge/x.md", capture.ARTIFACT_SCOPE_MACHINE),
+            ("~/knowledge/x.md", capture.ARTIFACT_SCOPE_MACHINE),
+            ("C:/knowledge/x.md", capture.ARTIFACT_SCOPE_MACHINE),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(capture.artifact_scope(path), expected)
+
+    def test_no_artifact_has_no_scope(self):
+        for value in (None, "", "   "):
+            with self.subTest(value=value):
+                self.assertIsNone(capture.artifact_scope(value))
+
+
 if __name__ == "__main__":
     unittest.main()

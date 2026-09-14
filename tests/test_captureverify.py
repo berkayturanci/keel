@@ -2,7 +2,7 @@
 
 import unittest
 
-from keel import captureverify
+from keel import capture, captureverify
 
 
 def _record(pr, *, marker=None, artifact=None, reviewers=None):
@@ -50,6 +50,73 @@ class TestReconcile(unittest.TestCase):
         self.assertEqual(finding["type"], captureverify.FINDING_MISSING_MARKER)
         self.assertEqual(finding["pr"], 9)
         self.assertIn("no capture marker", finding["reason"])
+
+    def test_an_outside_sink_is_noted_not_faulted(self):
+        """`applied-elsewhere` is a note: the absence is the sink's design (#1185).
+
+        A sink outside the checkout records an absolute path, and the run ledger is
+        committed — so that path travels to teammates and CI runners where it names
+        nothing. Reporting it as `applied-without-artifact` accused a run that did exactly
+        what it was configured to do, using the finding reserved for a file that is
+        genuinely missing.
+        """
+        for artifact in ("/Users/b/knowledge/one.md", "~/knowledge/one.md"):
+            with self.subTest(artifact=artifact):
+                report = captureverify.reconcile(
+                    [_record(5, marker=_marker(5, "applied"), artifact=artifact)], [5]
+                )
+                self.assertTrue(report["ok"], "a note must not fail the run")
+                self.assertEqual(report["findings"], [])
+                self.assertEqual(
+                    [note["type"] for note in report["notes"]],
+                    [captureverify.NOTE_APPLIED_ELSEWHERE],
+                )
+                self.assertEqual(report["summary"]["notes"], 1)
+
+    def test_a_cross_host_duplicate_is_noted_not_faulted(self):
+        """The record that has no artifact *because* the sink is elsewhere (#1185).
+
+        A duplicate run on a host that cannot read the first run's file drops the path it
+        would have reused — correctly — and records `applied` with none. Without the scope
+        beside it that is indistinguishable from a capture that produced no file at all,
+        and the run was faulted for the sink doing exactly what it was configured to do.
+        """
+        record = _record(5, marker=_marker(5, "applied"))
+        record["capture"]["artifact_scope"] = capture.ARTIFACT_SCOPE_MACHINE
+        report = captureverify.reconcile([record], [5])
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["findings"], [])
+        self.assertEqual(
+            [note["type"] for note in report["notes"]], [captureverify.NOTE_APPLIED_ELSEWHERE]
+        )
+
+    def test_a_row_that_is_not_applied_gets_no_note(self):
+        """The note asserts a host wrote a file, so only an `applied` row can carry it.
+
+        Attached on the recorded scope alone it appeared beside `invalid-marker` and on a
+        `deferred` row — telling the operator a lesson was written somewhere they cannot
+        see, for a run that wrote nothing at all.
+        """
+        record = _record(6, marker=_marker(6, "deferred"))
+        record["capture"]["artifact_scope"] = capture.ARTIFACT_SCOPE_MACHINE
+        report = captureverify.reconcile([record], [6])
+        self.assertEqual(report["notes"], [])
+
+    def test_an_in_repo_artifact_is_neither_faulted_nor_noted(self):
+        report = captureverify.reconcile(
+            [_record(5, marker=_marker(5, "applied"), artifact=".keel/learning/one.md")], [5]
+        )
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["findings"], [])
+        self.assertEqual(report["notes"], [])
+
+    def test_a_recorded_scope_outranks_the_paths_shape(self):
+        # A record written by a project whose sink was in-repo keeps its meaning even if
+        # the path looks anchored; the field describes the run that wrote it.
+        record = _record(5, marker=_marker(5, "applied"), artifact="/srv/checkout/x.md")
+        record["capture"]["artifact_scope"] = capture.ARTIFACT_SCOPE_REPOSITORY
+        report = captureverify.reconcile([record], [5])
+        self.assertEqual(report["notes"], [])
 
     def test_applied_without_artifact_is_a_finding(self):
         records = [_record(5, marker=_marker(5, "applied"))]

@@ -311,6 +311,12 @@ review-verdict count). The transport query and per-PR verdict fetch are fail-sof
 use `--merged-prs-json` and `--verdict-count PR=N` fixtures. Any finding exits non-zero in
 addition to the base marker semantics.
 
+Beside the findings the reconcile reports **notes**, which never fail the command. There is
+one: `applied-elsewhere`, for an `applied` record whose `capture.artifact_scope` is `machine`.
+That project's sink writes outside the checkout, so the absence of an artifact reference is
+the sink's design rather than a lost file — `applied-without-artifact` is withheld for it and
+the note is listed instead, in the human output as well as in `--json`.
+
 `keel capture-reconcile <project.yaml> --root <repo> --merged-pr <N>` reads the same
 ledger and returns a dry-run-safe recovery plan for merged PRs whose capture bookkeeping is
 incomplete. It may plan idempotent actions such as emitting the missing marker, rerunning a

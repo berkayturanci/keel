@@ -33,6 +33,11 @@ FINDING_MISSING_MARKER = "missing-marker"
 FINDING_INVALID_MARKER = "invalid-marker"
 FINDING_APPLIED_WITHOUT_ARTIFACT = "applied-without-artifact"
 FINDING_REVIEWER_COUNT_MISMATCH = "reviewer-count-mismatch"
+#: A **note**, never a finding: the capture was applied to a sink outside the checkout,
+#: so the path in the committed ledger is host-specific and names nothing anywhere else.
+#: That is the sink's design, not a gap — reporting it as `applied-without-artifact`
+#: accused a run that did exactly what it was configured to do (#1185).
+NOTE_APPLIED_ELSEWHERE = "applied-elsewhere"
 
 
 def reconcile(
@@ -55,6 +60,7 @@ def reconcile(
     counts = verdict_counts or {}
     results = [_reconcile_pr(records, pr, counts) for pr in merged_prs]
     findings = [finding for result in results for finding in result["findings"]]
+    notes = [note for result in results for note in result.get("notes", ())]
     by_type = {
         FINDING_MISSING_MARKER: 0,
         FINDING_INVALID_MARKER: 0,
@@ -69,9 +75,11 @@ def reconcile(
         "merged_prs": list(merged_prs),
         "results": results,
         "findings": findings,
+        "notes": notes,
         "summary": {
             "checked": len(results),
             "findings": len(findings),
+            "notes": len(notes),
             **by_type,
         },
     }
@@ -85,6 +93,7 @@ def _reconcile_pr(
     verification = capture._verify_pr(records, pr_number)
     record = ledger.latest_ship_run_for_pr(records, pr_number)
     findings: list[dict[str, Any]] = []
+    notes: list[dict[str, Any]] = []
 
     if not verification["ok"]:
         if verification["status"] == "missing":
@@ -107,12 +116,30 @@ def _reconcile_pr(
             )
 
     artifact = _capture_artifact(record)
-    if verification.get("status") == "applied" and not artifact:
+    scope = _capture_artifact_scope(record, artifact)
+    # Both branches are about an **applied** row, and the note has to say so as
+    # plainly as the finding does: it asserts that a host wrote a file. Attached on
+    # the scope alone it appeared beside `invalid-marker`, and on a `deferred` row —
+    # claiming a write for a run that captured nothing.
+    applied = verification.get("status") == "applied"
+    if applied and not artifact and scope != capture.ARTIFACT_SCOPE_MACHINE:
         findings.append(
             _finding(
                 FINDING_APPLIED_WITHOUT_ARTIFACT,
                 pr_number,
                 "capture status is applied but no capture artifact was recorded",
+            )
+        )
+    elif applied and scope == capture.ARTIFACT_SCOPE_MACHINE:
+        # Decided from the record, not from the filesystem: this module is pure, and
+        # "can this host read it" is the wrong question anyway — the path is host-specific
+        # wherever it is read, including on the machine that wrote it a month later.
+        notes.append(
+            _note(
+                NOTE_APPLIED_ELSEWHERE,
+                pr_number,
+                "capture artifact is outside the checkout, so it is readable only on the "
+                + (f"host that wrote it: {artifact}" if artifact else "host that wrote it"),
             )
         )
 
@@ -139,6 +166,7 @@ def _reconcile_pr(
         "recorded_reviewers": recorded_reviewers,
         "posted_verdicts": verdicts,
         "findings": findings,
+        "notes": notes,
     }
 
 
@@ -146,6 +174,27 @@ def _finding(finding_type: str, pr_number: int, reason: str, **extra: Any) -> di
     finding = {"type": finding_type, "pr": pr_number, "reason": reason}
     finding.update(extra)
     return finding
+
+
+def _note(note_type: str, pr_number: int, message: str) -> dict[str, Any]:
+    """A note has a finding's shape and none of its authority: it never fails a run."""
+    return {"type": note_type, "pr": pr_number, "message": message}
+
+
+def _capture_artifact_scope(record: dict[str, Any] | None, artifact: str | None) -> str | None:
+    """The recorded scope, or the one the path's shape implies for an older record.
+
+    Records written before `artifact_scope` existed carry only the path, and an anchored
+    path was always an outside sink — so nothing already in a ledger changes meaning.
+    """
+    if not isinstance(record, dict):
+        return None
+    block = record.get("capture")
+    if isinstance(block, dict):
+        recorded = block.get("artifact_scope")
+        if isinstance(recorded, str) and recorded.strip():
+            return recorded.strip()
+    return capture.artifact_scope(artifact)
 
 
 def _capture_artifact(record: dict[str, Any] | None) -> str | None:

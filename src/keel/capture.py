@@ -321,6 +321,7 @@ def record_marker(
             "marker": None,
             "not_run": not_run,
             "artifact": clean_artifact,
+            "artifact_scope": artifact_scope(clean_artifact, config),
             "retrieved": clean_retrieved,
             "fail_soft": True,
             "learning": learning_decision(
@@ -352,6 +353,7 @@ def record_marker(
             "marker_reason": clean_marker_reason,
             "marker": None,
             "artifact": clean_artifact,
+            "artifact_scope": artifact_scope(clean_artifact, config),
             "retrieved": clean_retrieved,
             "fail_soft": True,
             "learning": learning,
@@ -364,6 +366,7 @@ def record_marker(
         "marker_reason": marker.reason,
         "marker": marker.as_text(),
         "artifact": clean_artifact,
+        "artifact_scope": artifact_scope(clean_artifact, config),
         "retrieved": clean_retrieved,
         "fail_soft": True,
         "learning": learning,
@@ -1045,6 +1048,45 @@ def learning_sink_policy(config: _HasPolicyPack | None) -> dict[str, Any] | None
     return sink if isinstance(sink, dict) else None
 
 
+#: Where a recorded `capture.artifact` can be read from.
+ARTIFACT_SCOPE_REPOSITORY = "repository"
+ARTIFACT_SCOPE_MACHINE = "machine"
+
+
+def artifact_scope(artifact: str | None, config: _HasPolicyPack | None = None) -> str | None:
+    """Where this project's sink writes: `repository`, `machine`, or ``None`` for neither.
+
+    An in-repo sink's path is recorded relative to ``--root``, so it means the same thing
+    in every clone. A sink outside the checkout — a shared `~/knowledge` folder — is
+    recorded absolute, and the run ledger is **committed**: that path travels to teammates
+    and CI runners where it names nothing. Saying so in the record is what lets
+    `keel capture-verify` tell "written somewhere this host cannot see" from "never
+    written", which are the same absence and very different facts (#1185).
+
+    It describes the **sink**, not the artifact, so it is recorded even when this run
+    wrote nothing: a cross-host duplicate drops the unreadable path it would have reused,
+    and without the scope beside it that record is indistinguishable from a capture that
+    produced no file at all.
+
+    ``None`` when the project has no sink, which is not the same as a sink somewhere else
+    — `learning_sink_in_worktree` answers False for "no sink" and for "capture disabled"
+    as well as for an outside one, so the sink has to be looked for separately. With no
+    config, the path's own shape decides: an anchored path was always an outside sink.
+    """
+    if config is not None:
+        sink = learning_sink_policy(config)
+        if sink is None:
+            return None
+        return (
+            ARTIFACT_SCOPE_REPOSITORY if _sink_writes_in_worktree(sink) else ARTIFACT_SCOPE_MACHINE
+        )
+    if not isinstance(artifact, str) or not artifact.strip():
+        return None
+    path = artifact.strip()
+    anchored = path.startswith("~") or workspace.is_root_anchored(path)
+    return ARTIFACT_SCOPE_MACHINE if anchored else ARTIFACT_SCOPE_REPOSITORY
+
+
 def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
     """Does this project's sink write **inside the repository**?
 
@@ -1057,8 +1099,19 @@ def learning_sink_in_worktree(config: _HasPolicyPack | None) -> bool:
     # Gated on the hook too: a dormant `sink:` under a disabled capture writes
     # nothing, so nothing needs committing. Fourth reader of the same question.
     sink = learning_sink_policy(config) if capture_hook_enabled(config) else None
-    if sink is None:
-        return False
+    return sink is not None and _sink_writes_in_worktree(sink)
+
+
+def _sink_writes_in_worktree(sink: dict[str, Any]) -> bool:
+    """Does this sink block's **path** name somewhere inside the checkout?
+
+    Split out from :func:`learning_sink_in_worktree` because the two callers ask
+    different questions of the same block. *Who commits the file* is gated on the
+    capture hook — a dormant sink writes nothing, so nothing needs committing — but
+    *what shape the path has* is not. Answering the second through the first made a
+    dormant in-repo sink record `artifact_scope: machine`, which reads as "written on
+    another host" for a repo-relative path every clone can see.
+    """
     path = str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH)
     if path.startswith("~"):
         return False
@@ -1595,6 +1648,11 @@ def duplicate_learning_artifact(
             continue
         candidate = capture_block.get("artifact")
         if isinstance(candidate, str) and candidate.strip():
+            # Scope is recorded, not acted on here. Whether a `machine`-scoped path can be
+            # read is a filesystem question, and this module is pure — the CLI wrapper
+            # already asks it (`_duplicate_learning_artifact`), which is what keeps the
+            # same-host case working: the file really is there, and dropping the path here
+            # would record `applied` with no artifact on the very machine that wrote it.
             # Keep scanning: the ledger is append-only and the newest record
             # holding this fingerprint is the one whose path is current.
             artifact = candidate.strip()

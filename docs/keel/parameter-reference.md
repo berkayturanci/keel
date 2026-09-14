@@ -668,7 +668,9 @@ When the merged set is derived from the transport (or any reconcile input is sup
 three additive cross-checks also run and a finding makes the exit code 1: `missing-marker`,
 `applied-without-artifact` (an `applied` capture with no `--capture-artifact` reference in the
 ledger), and `reviewer-count-mismatch` (ledger reviewer count > evidence-side verdict count).
-The transport query and per-PR verdict fetch are fail-soft. Passing only `--merged-pr` keeps
+An `applied` record carrying `capture.artifact_scope: machine` is withheld from the first of
+those and reported as the `applied-elsewhere` **note** instead, which never changes the exit
+code. The transport query and per-PR verdict fetch are fail-soft. Passing only `--merged-pr` keeps
 the legacy offline behavior (marker checks only).
 
 ### Examples

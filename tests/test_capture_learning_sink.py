@@ -606,6 +606,30 @@ class ADuplicatePointsAtTheFileItDuplicates(unittest.TestCase):
             existing_records=records,
         )
 
+    def test_the_pure_layer_records_the_scope_and_acts_on_none_of_it(self):
+        """Whether a path can be read is the caller's question, not this one (#1185).
+
+        Dropping a `machine`-scoped path here looks right and is not: on the host that
+        wrote the file it is readable, and refusing it there records `applied` with no
+        artifact — the finding this reuse exists to prevent, raised on the one machine
+        where the artifact is real. `cli._duplicate_learning_artifact` already drops a
+        path that does not resolve, which is the layer that can tell.
+        """
+        self.assertEqual(
+            self.artifact(
+                self.DUPLICATE,
+                self.records("/Users/b/knowledge/one.md"),
+                sink={"kind": "markdown-dir", "path": "~/knowledge"},
+            ),
+            "/Users/b/knowledge/one.md",
+        )
+
+    def test_a_repository_scoped_artifact_is_still_borrowed(self):
+        self.assertEqual(
+            self.artifact(self.DUPLICATE, self.records(".keel/learning/one.md")),
+            ".keel/learning/one.md",
+        )
+
     def test_only_an_applied_capture_borrows_one(self):
         """`learning_decision` answers `duplicate` before it looks at the status.
 
