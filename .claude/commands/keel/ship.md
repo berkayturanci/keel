@@ -1317,11 +1317,18 @@ repository — a relative `path` is; an absolute or `~` one is a folder git neve
 
 **When it is true, land it with `keel capture-land` — never by hand.**
 An untracked file in the working tree is one the next worktree never sees — s2 cuts
-that from `origin/<base_branch>` — and one every CI runner discards. Run it straight
-after the ledger append, with the same `--pr`, and it reads the artifact off that
-run's own `ship_run` record:
+that from `origin/<base_branch>` — and one every CI runner discards.
+
+**Both commands, in this order, as one step.** The landing reads the artifact off the
+`ship_run` record the append writes, so run alone it finds no record, reports
+`no-artifact` and exits 0 — a green s11 that lands nothing, which is the regression this
+step exists to prevent. The append below is the same one s0's *Run ledger* section
+specifies; pass it the flags that section lists for this run.
 
 ```bash
+keel ship .keel/project.yaml --root . --live --append-ledger --run-id "$RUN_ID" \
+  --issue <ISSUE> --pull-request <PR> --head-sha "$HEAD_SHA" \
+  --capture-status applied --capture-artifact <path> --json
 keel capture-land .keel/project.yaml --root . --pr <PR> --issue <ISSUE> --json
 ```
 
@@ -1398,7 +1405,8 @@ session if any merged PR is missing a valid marker. The closure comment's captur
 mandatory and never empty, but it is a human audit mirror, not the parser source.
 
 Also append the structured `ship_run` record to `contract.run_ledger.path` via
-`keel ship --live --append-ledger` or the equivalent core ledger writer. The ledger append
+`keel ship --live --append-ledger` or the equivalent core ledger writer — the same append
+the landing block above runs, not a second one. The ledger append
 is the machine-readable source for `/keel:morning`, `/keel:wrap`, overnight summaries, and
 capture verification; the closure comments are human/audit mirrors, not the parser source.
 Capture artifacts MUST pass through the core redaction policy first: default secret rules plus
@@ -1537,4 +1545,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=ca5acdc0c71ef5616be022d15053054f29ce0c54eef865d8af90a8c68517b827 generated_sha256=ca5acdc0c71ef5616be022d15053054f29ce0c54eef865d8af90a8c68517b827 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=076cab37949936ae1ae9d8373a45cb12a523eba738a68511d9688ea6903dd8aa generated_sha256=076cab37949936ae1ae9d8373a45cb12a523eba738a68511d9688ea6903dd8aa -->

@@ -368,6 +368,21 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                 # A guard that inspected zero fences would pass on a section whose
                 # opener it failed to recognise — the failure mode being fixed here.
                 self.assertTrue(fences, f"{surface}: s11 hands out no runnable block")
+                # **The landing's input is in the block with it.** `capture-land` reads
+                # the artifact off the `ship_run` record the append writes, so a fence
+                # carrying only the landing lands nothing when run as written: no
+                # record, `no-artifact`, exit 0 — the green s11 this section names as
+                # the regression it exists to prevent. Asserted on one fence rather
+                # than on the section, because prose elsewhere is not a recipe.
+                runnable = [f for f in fences if "keel capture-land" in f]
+                self.assertTrue(runnable, f"{surface}: no fence runs capture-land")
+                for fence in runnable:
+                    self.assertIn("--append-ledger", fence)
+                    self.assertLess(
+                        fence.index("--append-ledger"),
+                        fence.index("keel capture-land"),
+                        f"{surface}: the ledger append must come before the landing",
+                    )
                 for fence in fences:
                     for forbidden in ("git switch", "git commit", "git push", "git add"):
                         self.assertNotIn(forbidden, fence)
@@ -2885,6 +2900,112 @@ class TestLearningLandPlan(unittest.TestCase):
                 plan = capture.learning_land_plan(config, artifact=bad)
                 self.assertEqual(plan["status"], "failed", bad)
                 self.assertTrue(plan["errors"], bad)
+
+    def test_a_sink_path_template_is_expanded_before_containment_is_judged(self):
+        """`path` is a template, and the writer writes the **expanded** form (#1163).
+
+        Compared against the literal `.keel/{repo}/learning`, every lesson such a project
+        ever writes is refused as "not under the configured learning sink" and the command
+        exits 1 — the containment test turned into one that can never pass.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(
+                tmp,
+                [
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                    "        path: '.keel/{repo}/learning'",
+                ],
+            )
+            self.assertEqual(
+                capture.learning_land_plan(config, artifact=".keel/tmp/learning/a.md", pr_number=7)[
+                    "status"
+                ],
+                "planned",
+            )
+            self.assertEqual(
+                capture.learning_land_plan(config, artifact="config/private.env", pr_number=7)[
+                    "status"
+                ],
+                "failed",
+            )
+            # The case that distinguishes "expanded" from "gave up at the placeholder":
+            # `.keel/other/learning/` is inside `.keel/` but is not this project's sink,
+            # so leaving `{repo}` unresolved would wave it through.
+            self.assertEqual(
+                capture.learning_land_plan(
+                    config, artifact=".keel/other/learning/a.md", pr_number=7
+                )["status"],
+                "failed",
+            )
+
+    def test_a_placeholder_that_cannot_be_resolved_confines_to_what_is_known(self):
+        # `{date}` in a *directory* is not a value this command has. Refusing outright
+        # would break a legitimate project and comparing against the literal could never
+        # pass, so containment falls back to the part of the path that is known —
+        # `.keel/`, which still refuses everything outside it.
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(
+                tmp,
+                [
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                    "        path: '.keel/{date}/learning'",
+                ],
+            )
+            self.assertEqual(
+                capture.learning_land_plan(
+                    config, artifact=".keel/2026-09-15/learning/a.md", pr_number=7
+                )["status"],
+                "planned",
+            )
+            self.assertEqual(
+                capture.learning_land_plan(config, artifact="src/keel/cli.py", pr_number=7)[
+                    "status"
+                ],
+                "failed",
+            )
+
+    def test_a_leading_unresolvable_placeholder_leaves_no_sink_root(self):
+        # `{date}/learning` has no known part at all, so there is no sink directory to
+        # confine the landing to. The repository-containment tests still apply — an
+        # escaping path is refused as before — but the sink test cannot be applied to a
+        # directory nobody can name yet, and pretending otherwise would refuse every
+        # lesson such a project writes.
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(
+                tmp,
+                [
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                    "        path: '{date}/learning'",
+                ],
+            )
+            self.assertEqual(
+                capture.learning_land_plan(config, artifact="2026-09-15/learning/a.md")["status"],
+                "planned",
+            )
+            self.assertEqual(
+                capture.learning_land_plan(config, artifact="../outside.md")["status"], "failed"
+            )
 
     def test_an_artifact_outside_the_sink_is_refused(self):
         """Inside the repository is not the containment this command needs.

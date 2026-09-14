@@ -2296,9 +2296,7 @@ def learning_land_plan(
             "errors": [],
         }
     normalized = _land_path(artifact)
-    sink_dir = _land_path(
-        str(learning_sink_policy(config).get("path") or DEFAULT_LEARNING_SINK_PATH)
-    )
+    sink_dir = _land_sink_root(config, pr_number=pr_number, base_branch=resolved_base)
     errors: list[str] = []
     if artifact is None or not str(artifact).strip():
         status = "no-artifact"
@@ -2349,6 +2347,44 @@ def learning_land_plan(
         "attempts": attempts,
         "errors": errors,
     }
+
+
+def _land_sink_root(
+    config: _HasPolicyPack | None, *, pr_number: int | None, base_branch: str
+) -> str | None:
+    """The directory the landing is allowed to write inside, as a repo-relative path.
+
+    The sink's ``path`` is a **template**, and `learning_sink_plan` writes the expanded
+    form — so comparing a recorded artifact against the literal `.keel/{repo}/learning`
+    refuses every lesson a project with placeholders ever writes. It is expanded here
+    with the same values, through the same `_relative_stays_relative` that keeps a
+    relative template relative when a leading placeholder expands to nothing.
+
+    A placeholder this function cannot resolve — `{date}` in a *directory*, say — leaves
+    the path partly unknown, and the honest containment is then the part that is known:
+    everything up to the last separator before it. `.keel/{date}/learning` confines the
+    landing to `.keel/`, which still refuses `config/private.env` and `src/keel/cli.py`.
+    Refusing outright would break a legitimate project, and comparing against the literal
+    would be a containment test that can never pass.
+    """
+    # `or {}` rather than a guard: the one caller reaches this only after
+    # `learning_sink_in_worktree` said there *is* a sink, and an empty block takes the
+    # documented default anyway — a branch no input can take is a claim the tests
+    # cannot check.
+    sink = learning_sink_policy(config) or {}
+    values = {
+        "owner": str(getattr(config, "owner", "") or ""),
+        "repo": str(getattr(config, "repo", "") or ""),
+        "base_branch": base_branch,
+        "pr": str(pr_number) if pr_number is not None else "",
+    }
+    expanded = _relative_stays_relative(str(sink.get("path") or DEFAULT_LEARNING_SINK_PATH), values)
+    if "{" in expanded:
+        known, _, _ = expanded.partition("{")
+        expanded = known.rstrip("/\\")
+        if not expanded:
+            return None
+    return _land_path(expanded)
 
 
 def _under(path: str, directory: str) -> bool:
