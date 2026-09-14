@@ -957,8 +957,10 @@ Adapters should pass the selected issue title, body, and labels into `keel plan`
   the issue itself — `this issue is out of scope`. The body requires the issue to be
   named, because `Out of scope: mobile UI` and `Out of scope: closing` are the same
   string and only one of them is a verdict. A section whose heading *starts with*
-  `Out of scope`, `Non-goals`, `Not in scope` or `Not in this change` is dropped whole,
-  with its nested headings, because it bounds the change; everything else is read,
+  `Out of scope`, `Non-goals`, `Not in scope` or `Not in this change` has its own prose
+  dropped, because it bounds the change; a nested heading under it is read on its own
+  merits, which is safe because a bullet there naming no issue matches nothing. Everything
+  else is read,
   heading text included, so `## Decision — this issue is out of scope` is a verdict. A
   close-reason heading (`## Not planned`, `## Status`, `## Decision`) is **not** an
   exclusion. Adapters must not mutate code.

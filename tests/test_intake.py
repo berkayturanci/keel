@@ -511,6 +511,40 @@ class TestIssueIntake(unittest.TestCase):
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                 self.assertFalse(record["can_mutate_code"])
 
+    def test_an_unpunctuated_bullet_cannot_swallow_the_line_below_it(self):
+        """`_sentences` joins lines with no terminator; a list item is its own statement.
+
+        A plain bullet above a declaration put the declaration mid-sentence, past the
+        anchor. List items are candidates in their own right — and only list items: every
+        line, and block quotes, were each tried and each refused prose the moment a wrap
+        put the phrase at a line start.
+        """
+        for body_tail in (
+            "- Discussed with the team\n- This issue is out of scope; closing.\n",
+            "1) Reviewed with the team\n2) This issue is out of scope.\n",
+        ):
+            with self.subTest(tail=body_tail[:24]):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=self.WELL_FORMED + f"\n## Decision\n{body_tail}",
+                )
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+
+    def test_emphasis_around_a_label_does_not_hide_the_subject(self):
+        # `**Decision:**` leaves a closing `**` between the label and the subject, which
+        # the first markdown strip cannot see because it is not a prefix.
+        for line in (
+            "**Decision:** This issue is out of scope; closing.",
+            "_Decision:_ This issue is out of scope; closing.",
+            "- **Note:** This issue is out of scope.",
+        ):
+            with self.subTest(line=line):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=self.WELL_FORMED + f"\n## Decision\n{line}\n",
+                )
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+
     def test_a_declaration_keeps_its_own_punctuation(self):
         """The label strip must not eat the declaration it is meant to uncover.
 

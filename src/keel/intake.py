@@ -100,16 +100,24 @@ _LEADING_LABEL_RE = re.compile(
 )
 
 
-def _declaration_candidates(text: str) -> tuple[str, str]:
-    """The sentence with markdown removed, and again with a leading label removed.
+def _declaration_candidates(text: str) -> tuple[str, ...]:
+    """Every prefix-stripped form of one sentence the declaration may be anchored in.
 
-    Both, and the caller tries the first: the label pattern cannot tell `Decision: …`
-    from the declaration's own punctuation, so stripping unconditionally ate
-    `This issue is out of scope: closing.` down to `closing.` and the closure was lost.
-    Trying the unstripped form first costs one extra match and removes the whole class.
+    The sentence **as written** comes first, because the label pattern cannot tell a
+    `Decision:` prefix from the declaration's own `out of scope: closing.` — stripping
+    unconditionally ate the closure down to `closing.`. Then markdown removed; then a
+    label removed and markdown removed *again*, because `**Decision:** This issue is…`
+    leaves a closing `**` between the label and the subject that the first pass cannot
+    see. Each round of this review found one of these.
     """
-    stripped = _LEADING_MARKUP_RE.sub("", text.strip())
-    return stripped, _LEADING_LABEL_RE.sub("", stripped, count=1).strip()
+    forms = [text.strip()]
+    stripped = _LEADING_MARKUP_RE.sub("", forms[0])
+    if stripped != forms[0]:
+        forms.append(stripped)
+    delabelled = _LEADING_LABEL_RE.sub("", stripped, count=1).strip()
+    if delabelled != stripped:
+        forms.append(_LEADING_MARKUP_RE.sub("", delabelled).strip())
+    return tuple(forms)
 
 
 _DOCS_RE = re.compile(r"\b(doc|docs|documentation|readme|changelog)\b", re.IGNORECASE)
@@ -283,6 +291,28 @@ def _bullets(text: str) -> list[str]:
     return items
 
 
+def _bullet_lines(text: str) -> list[str]:
+    """List items, markers removed — each a statement in its own right.
+
+    `_sentences` joins lines carrying no terminator, so a plain bullet above a
+    declaration (`- Discussed with the team` then `- This issue is out of scope.`) puts
+    the declaration mid-sentence, past the anchor. A list item is a statement whether or
+    not it ends in a full stop.
+
+    List items **only**. Every line was tried and refused prose the moment a wrap put the
+    phrase at a line start; block quotes were tried and refused it too, because Markdown
+    prefixes each continuation line of a quote with `>`. Neither shape carries a list
+    marker. The subject test is what makes this safe now — a bullet has to name the issue
+    to match anything at all.
+    """
+    return [item for line in text.splitlines() if (item := _bullet_text(line))]
+
+
+def _bullet_text(line: str) -> str:
+    match = _BULLET_RE.match(line)
+    return match.group("text").strip() if match else ""
+
+
 def _sentences(text: str) -> list[str]:
     compact = " ".join(line.strip() for line in text.splitlines() if line.strip())
     if not compact:
@@ -381,6 +411,7 @@ def _out_of_scope_reason(
     if body:
         for chunk in _scannable_chunks(body):
             candidates.extend(_sentences(chunk))
+            candidates.extend(_bullet_lines(chunk))
 
     for candidate in candidates:
         # Leading markdown removed first, so the anchor sees the sentence rather than the
