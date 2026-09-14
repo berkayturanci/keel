@@ -310,6 +310,28 @@ class TestIssueIntake(unittest.TestCase):
                 self.assertEqual(record["status"], intake.READY)
                 self.assertTrue(record["can_mutate_code"])
 
+    def test_the_short_form_works_where_nothing_precedes_it(self):
+        """Title, opening sentence, heading text — three positions, one property.
+
+        The short form is anchored, and an anchor only means something where markdown
+        cannot move the start. A title is such a position; so is the body's opening
+        sentence and a heading's own text. Restricting it to the title alone let
+        `Not planned for this release.` open an issue body and still read `ready`.
+        """
+        record = intake.assess_issue(title="Out of scope: fix the matcher", body=self.WELL_FORMED)
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+
+        for body in (
+            "Not planned for this release.\n\n" + self.WELL_FORMED,
+            "Not planned.\n\n" + self.WELL_FORMED,
+            self.WELL_FORMED + "\n## Not planned\nNot planned for this release.\n",
+            self.WELL_FORMED + "\n## Wontfix: legacy sync\n",
+        ):
+            with self.subTest(body=body[:28]):
+                record = intake.assess_issue(title="Add safe sync", body=body)
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+                self.assertFalse(record["can_mutate_code"])
+
     def test_a_bare_scope_phrase_in_the_body_is_not_a_declaration(self):
         """`Out of scope: X` does not say whether X is the issue or a boundary.
 

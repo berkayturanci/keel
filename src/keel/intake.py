@@ -50,9 +50,12 @@ _SCOPE_EXCLUSION_HEADINGS = frozenset(
         "not in this change",
     }
 )
-#: A **title** declaring the issue closed. Anchored at the start, which is safe here and
-#: only here: a title is one line with no markdown in front of it.
-_OUT_OF_SCOPE_TITLE_RE = re.compile(
+#: The short form, anchored at the start. Safe only where nothing can precede the text:
+#: a **title**, the body's **opening sentence**, and a **heading's own text**. Each is one
+#: line with no markdown in front of it, so "starts the sentence" means what it says.
+#: Everywhere else in a body it does not, and the eight rounds of review on #1188 found a
+#: different piece of markdown breaking it each time.
+_OUT_OF_SCOPE_OPENER_RE = re.compile(
     r"^(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b",
     re.IGNORECASE,
 )
@@ -341,7 +344,7 @@ def _is_scope_exclusion_heading(title: str) -> bool:
     )
 
 
-def _scannable_chunks(body: str) -> list[str]:
+def _scannable_chunks(body: str) -> list[tuple[bool, str]]:
     """``body`` split into the pieces a declaration may hide in, boundaries removed.
 
     A scope-exclusion section goes whole — heading and content. What remains comes back
@@ -353,8 +356,8 @@ def _scannable_chunks(body: str) -> list[str]:
     """
     matches = list(_SECTION_RE.finditer(body))
     if not matches:
-        return [body]
-    chunks = [body[: matches[0].start()]]
+        return [(True, body)]
+    chunks: list[tuple[bool, str]] = [(True, body[: matches[0].start()])]
     for index, match in enumerate(matches):
         # An exclusion section owns its own body and nothing else. Owning nested headings
         # was tried and failed in both directions: `# Out of scope` over a run of `##`
@@ -366,9 +369,11 @@ def _scannable_chunks(body: str) -> list[str]:
         if _is_scope_exclusion_heading(match.group("title")):
             continue
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-        chunks.append(match.group("title"))
-        chunks.append(body[match.end() : end])
-    return [chunk for chunk in chunks if chunk.strip()]
+        # A heading's own text is an opener: one line, nothing in front of it. Its body
+        # is not.
+        chunks.append((True, match.group("title")))
+        chunks.append((False, body[match.end() : end]))
+    return [(is_opener, chunk) for is_opener, chunk in chunks if chunk.strip()]
 
 
 def _out_of_scope_reason(
@@ -402,16 +407,23 @@ def _out_of_scope_reason(
         if label in _OUT_OF_SCOPE_LABELS:
             return f"Issue carries out-of-scope label: {label}."
 
-    if title and (heading := title.strip()):
-        # The title gets the anchored form: one line, and nothing may precede it.
-        if _OUT_OF_SCOPE_TITLE_RE.search(heading) or _OUT_OF_SCOPE_DECLARATION_RE.search(heading):
-            return f"Issue declares itself out of scope: {heading}"
+    #: Positions where the short form is unambiguous, because nothing precedes the text.
+    openers: list[str] = []
+    if title and title.strip():
+        openers.append(title.strip())
 
     candidates: list[str] = []
     if body:
-        for chunk in _scannable_chunks(body):
-            candidates.extend(_sentences(chunk))
+        for is_opener, chunk in _scannable_chunks(body):
+            sentences = _sentences(chunk)
+            if is_opener and sentences:
+                openers.append(sentences[0])
+            candidates.extend(sentences)
             candidates.extend(_bullet_lines(chunk))
+
+    for opener in openers:
+        if _OUT_OF_SCOPE_OPENER_RE.search(opener) or _OUT_OF_SCOPE_DECLARATION_RE.search(opener):
+            return f"Issue declares itself out of scope: {opener}"
 
     for candidate in candidates:
         # Leading markdown removed first, so the anchor sees the sentence rather than the
