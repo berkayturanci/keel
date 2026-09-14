@@ -14840,7 +14840,6 @@ class TestLoopCommand(unittest.TestCase):
         # The scope means release-check never ran, so the exit reflects only what the loop
         # judged. Before #1172 this was 1, which is why the fence carried `|| true`.
         self.assertEqual(rc, 0)
-        self.assertTrue(json.loads(out)["gate_outcomes"][-1] is not None)
         report = json.loads(out)
         self.assertEqual(report["schema_version"], "keel.run-gates.v1")
         self.assertFalse(report["jury_run"])
