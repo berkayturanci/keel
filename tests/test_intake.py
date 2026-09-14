@@ -314,6 +314,26 @@ class TestIssueIntake(unittest.TestCase):
                 self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                 self.assertFalse(record["can_mutate_code"])
 
+    def test_a_list_marker_does_not_hide_a_declaration(self):
+        """Round-3 gate finding: the sentence-start anchor met a bullet first.
+
+        `_sentences` joins stripped lines and keeps their markdown, and the declaration
+        pattern's first alternative is anchored at the start of the sentence. So
+        `- Out of scope: closing.` was READY while `Out of scope: closing.` was not, and
+        the tests could not see it because they only ever used the unanchored
+        `this issue is ...` form as a bullet. `1. ` happened to work, but only because
+        `_sentences` splits on its `.`.
+        """
+        for marker in ("", "- ", "* ", "+ ", "> ", "- [x] ", "- [ ] ", "1. ", "2) ", "**", "_"):
+            for declaration in ("Out of scope: closing.", "Not planned: closing."):
+                with self.subTest(marker=marker, declaration=declaration):
+                    record = intake.assess_issue(
+                        title="Add safe sync",
+                        body=(self.WELL_FORMED + f"\n## Decision\n{marker}{declaration}\n"),
+                    )
+                    self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+                    self.assertFalse(record["can_mutate_code"])
+
     def test_a_bare_exclusion_heading_is_still_only_a_boundary(self):
         # The exclusion test runs on the *normalised* heading, so `## Out of scope` is
         # dropped while `## Out of scope: closing.` normalises to `out of scope closing`,

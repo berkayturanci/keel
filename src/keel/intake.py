@@ -56,6 +56,22 @@ _OUT_OF_SCOPE_DECLARATION_RE = re.compile(
     r"(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b)",
     re.IGNORECASE,
 )
+#: Markdown a sentence can *start with* that is not part of the sentence: a list
+#: marker, a task box, a block quote, an emphasis run. `_sentences` joins stripped
+#: lines and keeps these, and the declaration pattern's first alternative is anchored
+#: at the start — so `- Out of scope: closing.` slipped through while
+#: `Out of scope: closing.` did not. Found by the round-3 gate seat, which also noted
+#: `1. ` happened to work only because `_sentences` splits on the `.`.
+_LEADING_MARKUP_RE = re.compile(
+    r"^(?:\s*(?:[-*+]|\d+[.)])\s+|\s*>\s*|\s*\[[ xX]?\]\s*|\*{1,3}|_{1,3})+"
+)
+
+
+def _declaration_candidate(text: str) -> str:
+    """One sentence with any leading markdown markers taken off its front."""
+    return _LEADING_MARKUP_RE.sub("", text.strip()).strip()
+
+
 _DOCS_RE = re.compile(r"\b(doc|docs|documentation|readme|changelog)\b", re.IGNORECASE)
 _TESTS_RE = re.compile(r"\b(test|tests|coverage|ci|lint)\b", re.IGNORECASE)
 _BLOCKED_LABELS = frozenset({"blocked", "status:blocked", "needs-dependency"})
@@ -311,7 +327,10 @@ def _out_of_scope_reason(
             candidates.extend(_sentences(chunk))
 
     for candidate in candidates:
-        if _OUT_OF_SCOPE_DECLARATION_RE.search(candidate.strip()):
+        # Stripped of leading markers first: the pattern's first alternative is anchored
+        # at the start of the sentence, and a bullet or a quote marker is not the
+        # sentence. The reason text keeps the sentence as written.
+        if _OUT_OF_SCOPE_DECLARATION_RE.search(_declaration_candidate(candidate)):
             return f"Issue declares itself out of scope: {candidate.strip()}"
     return None
 
