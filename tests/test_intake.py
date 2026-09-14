@@ -304,7 +304,6 @@ class TestIssueIntake(unittest.TestCase):
             "Decision \u2014 this issue is out of scope; closing",
             "Decision - this issue is out of scope; closing",
             "Status \u2014 this issue is out of scope; closing",
-            "Out of scope: closing.",
             "Won't do: this issue is out of scope",
         ):
             with self.subTest(heading=heading):
@@ -333,6 +332,46 @@ class TestIssueIntake(unittest.TestCase):
                     )
                     self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
                     self.assertFalse(record["can_mutate_code"])
+
+    def test_a_qualified_exclusion_heading_is_still_only_a_boundary(self):
+        """`## Out of scope for v1` is the same kind of section as `## Out of scope`.
+
+        The exclusion test is *starts with*, not equals. An equality test refused the
+        issues that qualified their heading — #1168 coming back through the heading text,
+        which this change reads as prose. `## Out of scope: closing.` is in this list
+        deliberately: it has the shape of a qualified boundary heading and no way to tell
+        it from `## Out of scope: mobile UI`, so it reads as the boundary. A close that
+        needs to be seen goes in the section body, or under a heading that is not an
+        exclusion — both of which block (asserted above).
+        """
+        for heading in (
+            "Out of scope",
+            "Out of scope for v1",
+            "Out of scope: mobile UI",
+            "Out of scope for this change",
+            "Out of scope: closing.",
+            "Non-goals for now",
+            "Not in scope for this release",
+        ):
+            with self.subTest(heading=heading):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=self.WELL_FORMED + f"\n## {heading}\n- Mobile UI.\n",
+                )
+                self.assertEqual(record["status"], intake.READY)
+
+    def test_an_unpunctuated_bullet_cannot_swallow_the_line_below_it(self):
+        # `_sentences` joins lines with no terminator, so a plain bullet above a
+        # declaration put the declaration mid-sentence and the anchor missed. Lines are
+        # candidates in their own right now.
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=(
+                self.WELL_FORMED
+                + "\n## Decision\n- Discussed with the team\n- Out of scope: closing.\n"
+            ),
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
 
     def test_a_bare_exclusion_heading_is_still_only_a_boundary(self):
         # The exclusion test runs on the *normalised* heading, so `## Out of scope` is

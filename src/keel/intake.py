@@ -129,7 +129,6 @@ def assess_issue(
     out_of_scope_reason = _out_of_scope_reason(
         title=context.title,
         body=context.body,
-        sections=sections,
         labels=normalized_labels,
     )
     if out_of_scope_reason:
@@ -252,18 +251,35 @@ def _sentences(text: str) -> list[str]:
     return parts or [compact]
 
 
+def _is_scope_exclusion_heading(title: str) -> bool:
+    """Does this heading open a section that bounds the **change**?
+
+    The test is *starts with*, not equals. ``## Out of scope for v1``,
+    ``## Out of scope: mobile UI`` and ``## Non-goals for now`` are the same kind of
+    section as ``## Out of scope``, and an equality test refused the issues that wrote
+    them — #1168 coming back through the heading, which is now read as prose. A section
+    titled "Out of scope…" is a boundary whatever qualifies it.
+
+    A close-reason heading (``Not planned``, ``Decision``, ``Status``) is deliberately
+    not in the set: it names a status for the issue, and dropping it would silence the
+    statement intake exists to read.
+    """
+    normalised = _normalize_heading(title)
+    return any(
+        normalised == heading or normalised.startswith(heading + " ")
+        for heading in _SCOPE_EXCLUSION_HEADINGS
+    )
+
+
 def _scannable_chunks(body: str) -> list[str]:
     """``body`` split into the pieces a declaration may hide in, boundaries removed.
 
-    This is the structural half of #1168. A ``## Out of scope`` section says what *this
-    change* does not cover; it is a boundary, not a status, and matching a declaration
-    inside it refused the issue that wrote it. Its whole section is dropped.
-
-    The rest comes back **per section** rather than as one blob, and without the heading
-    lines. `_sentences` joins what it is given, so a single blob glues one section's last
-    line onto the next section's first — ``- works ## Decision Out of scope: closing.`` —
-    and the declaration pattern's first alternative is anchored at the start of a
-    sentence, so the declaration stopped matching. Both round-1 gate seats found that.
+    A scope-exclusion section goes whole — heading and content. What remains comes back
+    per section, with the heading's own text as a chunk **separate from** its body:
+    inline, it glues onto the sentence below (`- works ## Decision Out of scope:
+    closing.`) and the declaration pattern is anchored at a sentence start; dropped, a
+    declaration written *in* a heading becomes invisible. Each gate round found one of
+    those halves.
     """
     matches = list(_SECTION_RE.finditer(body))
     if not matches:
@@ -271,18 +287,8 @@ def _scannable_chunks(body: str) -> list[str]:
     chunks = [body[: matches[0].start()]]
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-        if _normalize_heading(match.group("title")) in _SCOPE_EXCLUSION_HEADINGS:
+        if _is_scope_exclusion_heading(match.group("title")):
             continue
-        # The heading's own text is a chunk, **separate from** its body. Both halves
-        # matter and the round-1 and round-2 gate seats found one each: leaving the
-        # heading inline glued it onto the sentence below (`- works ## Decision Out of
-        # scope: closing.`, breaking the sentence-start anchor), and dropping it made a
-        # declaration *written in the heading* invisible — `## Decision — this issue is
-        # out of scope; closing` with nothing beneath it, which is the very example this
-        # change's own docstring and changelog entry use. Note the exclusion test is on
-        # the normalised heading, so `## Out of scope` is a boundary and dropped while
-        # `## Out of scope: closing.` normalises to `out of scope closing`, is kept, and
-        # is read here as the declaration it is.
         chunks.append(match.group("title"))
         chunks.append(body[match.end() : end])
     return [chunk for chunk in chunks if chunk.strip()]
@@ -292,7 +298,6 @@ def _out_of_scope_reason(
     *,
     title: str | None,
     body: str | None,
-    sections: dict[str, str],
     labels: tuple[str, ...],
 ) -> str | None:
     """Return the concrete scope declaration, ignoring structural exclusions.
@@ -324,7 +329,13 @@ def _out_of_scope_reason(
         candidates.extend(_sentences(title.strip()))
     if body:
         for chunk in _scannable_chunks(body):
+            # Sentences *and* raw lines. `_sentences` joins lines that carry no
+            # terminator, so `- Discussed with team` followed by `- Out of scope:
+            # closing.` becomes one candidate and the declaration is no longer at its
+            # start. Every line is also a candidate on its own, which is what a bullet
+            # list is: one statement per line, terminator or not.
             candidates.extend(_sentences(chunk))
+            candidates.extend(chunk.splitlines())
 
     for candidate in candidates:
         # Stripped of leading markers first: the pattern's first alternative is anchored
