@@ -952,8 +952,10 @@ Adapters should pass the selected issue title, body, and labels into `keel plan`
 - `needs-input` — missing or ambiguous scope; adapters must ask the generated questions
   and must not mutate code for that issue.
 - `blocked` — a dependency or waiting condition is present; adapters must not mutate code.
-- `out-of-scope` — the issue is marked not planned or outside scope; adapters must not
-  mutate code.
+- `out-of-scope` — an out-of-scope label or an explicit sentence in the issue's title,
+  opening paragraph, or objective declares the issue not planned; structural headings
+  such as `## Out of scope` and the bullets beneath them are exclusions, not verdicts.
+  Adapters must not mutate code.
 
 The block records `objective`, `deliverable`, `acceptance_criteria`, `risk_tier_inputs`,
 `required_docs_tests`, `missing_info`, `blockers`, `questions`, and a compact

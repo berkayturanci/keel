@@ -517,6 +517,32 @@ class TestPlan(unittest.TestCase):
         self.assertTrue(intake["provided"])
         self.assertEqual(intake["ledger_record"]["readiness"], "ready")
 
+    def test_plan_issue_intake_ignores_out_of_scope_section_heading(self):
+        body = (
+            "## Problem\nAgents need issue readiness.\n\n"
+            "## Deliverable\nExpose a structured intake record.\n\n"
+            "## Acceptance criteria\n"
+            "- Dry-run JSON includes readiness.\n\n"
+            "## Out of scope\n- Replacing the entire workflow engine.\n"
+        )
+        rc, out, _ = run(
+            [
+                "plan",
+                str(PROJECTS / "example-android.yaml"),
+                "--root",
+                str(REPO_ROOT),
+                "--command",
+                "ship",
+                "--issue-title",
+                "Add intake",
+                "--issue-body",
+                body,
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["contract"]["issue_intake"]["status"], "ready")
+
     def test_plan_json_can_expose_other_command_graph(self):
         rc, out, _ = run(
             [

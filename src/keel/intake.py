@@ -29,8 +29,10 @@ _AMBIGUOUS_RE = re.compile(
     re.IGNORECASE,
 )
 _OUT_OF_SCOPE_LABELS = frozenset({"out-of-scope", "wontfix", "not-planned"})
-_OUT_OF_SCOPE_RE = re.compile(
-    r"\b(out[- ]of[- ]scope|not planned|wontfix|won't fix|non-goal|not in scope)\b",
+_OUT_OF_SCOPE_DECLARATION_RE = re.compile(
+    r"(?:^(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b|"
+    r"\b(?:this|the)\s+issue\s+(?:is|was|remains)\s+"
+    r"(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b)",
     re.IGNORECASE,
 )
 _DOCS_RE = re.compile(r"\b(doc|docs|documentation|readme|changelog)\b", re.IGNORECASE)
@@ -87,9 +89,15 @@ def assess_issue(
 
     status = READY
     reason = "Issue has an objective, deliverable, and acceptance criteria."
-    if _is_out_of_scope(combined, normalized_labels):
+    out_of_scope_reason = _out_of_scope_reason(
+        title=context.title,
+        body=context.body,
+        sections=sections,
+        labels=normalized_labels,
+    )
+    if out_of_scope_reason:
         status = OUT_OF_SCOPE
-        reason = "Issue is marked out of scope or not planned."
+        reason = out_of_scope_reason
         questions = []
     elif _is_blocked(combined, normalized_labels):
         status = BLOCKED
@@ -207,8 +215,39 @@ def _sentences(text: str) -> list[str]:
     return parts or [compact]
 
 
-def _is_out_of_scope(combined: str, labels: tuple[str, ...]) -> bool:
-    return not _OUT_OF_SCOPE_LABELS.isdisjoint(labels) or bool(_OUT_OF_SCOPE_RE.search(combined))
+def _out_of_scope_reason(
+    *,
+    title: str | None,
+    body: str | None,
+    sections: dict[str, str],
+    labels: tuple[str, ...],
+) -> str | None:
+    """Return the concrete scope declaration, ignoring structural exclusions.
+
+    Headings and the bullets below an ``Out of scope``/``Non-goals`` section
+    describe the issue's boundaries; they do not declare the issue itself out
+    of scope.  Only an explicit label or a sentence in the title, opening
+    paragraph, or objective-like section can block intake.
+    """
+    for label in labels:
+        if label in _OUT_OF_SCOPE_LABELS:
+            return f"Issue carries out-of-scope label: {label}."
+
+    candidates: list[str] = []
+    if title and title.strip():
+        candidates.extend(_sentences(title.strip())[:1])
+    if body:
+        first_heading = _SECTION_RE.search(body)
+        preface = body[: first_heading.start()] if first_heading else body
+        candidates.extend(_sentences(preface)[:1])
+    for key in ("objective", "problem", "summary", "context"):
+        if value := _first_sentence_or_bullet(sections.get(key, "")):
+            candidates.append(value)
+
+    for candidate in candidates:
+        if _OUT_OF_SCOPE_DECLARATION_RE.search(candidate.strip()):
+            return f"Issue declares itself out of scope: {candidate.strip()}"
+    return None
 
 
 def _is_blocked(combined: str, labels: tuple[str, ...]) -> bool:
