@@ -585,15 +585,25 @@ When the merged set is derived (or any reconcile input is supplied) three additi
 
 - **missing-marker** — a merged PR with no valid capture marker in the ledger.
 - **applied-without-artifact** — an `applied` capture lacking a durable artifact reference
-  (recorded via `keel ship --capture-artifact <path|hash>`). `deferred`/`skipped` need none.
+  (recorded via `keel ship --capture-artifact <path|hash>`). `deferred`/`skipped` need none,
+  and neither does a record whose `capture.artifact_scope` is `machine` — see the note below.
 - **reviewer-count-mismatch** — the ledger's `actors.reviewers` count exceeds the evidence-side
   review-verdict count for that PR. Per-PR verdict counts come from the transport when deriving
   live, or from `--verdict-count PR=N` fixtures offline; a PR with no known count is advisory.
 
+The reconcile also reports **notes**, which are listed beside the findings in both the human
+and `--json` output and never fail the command:
+
+- **applied-elsewhere** — an `applied` record whose `capture.artifact_scope` is `machine`,
+  meaning this project's sink writes outside the checkout. Such a run legitimately has no
+  artifact to name here: a later duplicate drops the absolute path it cannot read rather
+  than recording one that resolves to nothing. Reported as a note so the absence is
+  *visible* without being counted as the missing-file finding it is not.
+
 Offline fixtures for deterministic runs: `--merged-prs-json <file>` (a JSON array of
 `{"number": N}`) substitutes for the transport query, and `--verdict-count PR=N` supplies
 evidence-side counts. Any reconcile finding makes the command exit non-zero in addition to the
-base marker semantics.
+base marker semantics; a note never does.
 
 ## `keel capture-reconcile <project.yaml> --merged-pr <N> [--json]`
 
