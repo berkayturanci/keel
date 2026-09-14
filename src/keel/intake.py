@@ -85,7 +85,9 @@ _LEADING_MARKUP_RE = re.compile(
     r"|\s*>\s*"  # block quote
     r"|\s*\[[ xX]?\]\s*"  # task box
     r"|\s*(?:-{3,}|\*{3,}|_{3,})\s*"  # thematic break
-    r"|\s*<!--.*?-->\s*"  # html comment
+    # `[\s\S]` rather than `.`: an HTML comment may span lines, and `.` does not cross
+    # one, so a multi-line comment in front of a sentence was left where it stood.
+    r"|\s*<!--[\s\S]*?-->\s*"  # html comment
     r"|\s*!\[[^\]]*\]\([^)]*\)\s*"  # image
     r"|[*_]{1,3}"  # emphasis run
     r"|\s+"
