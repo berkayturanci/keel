@@ -208,6 +208,7 @@ def _run_planned_gates(
     *,
     config: cfg.ProjectConfig,
     root: str,
+    phases: frozenset[str] | None = None,
 ) -> tuple[list[GateOutcome], tdd.OrderResult | None]:
     """Run the planned gates, evaluating the deferred ``tdd-order`` gate last.
 
@@ -225,6 +226,12 @@ def _run_planned_gates(
     # (#1165): a pre-merge gate needs the pull request and says nothing about the tests
     # the branch was written against, and it would otherwise turn the order gate red on
     # every loop iteration of a project that carries one.
+    # `tdd-order` is evaluated here rather than through the runner, so the runner's phase
+    # scope does not reach it. Apply the same test: a scope that excludes its phase must
+    # report it `not_run`, like any other gate outside the run (#1172).
+    if phases is not None and later[0].phase not in phases:
+        outcomes.append(gates.run_gates((later[0],), lambda _spec: (True, [], False, True))[0])
+        return outcomes, None
     phase_of = {spec.id: spec.phase for spec in now}
     judged = [o for o in outcomes if phase_of.get(o.gate) in loop.JUDGED_PHASES]
     green = not fnd.summarize(gates.collect_findings(judged)).blocked
@@ -521,6 +528,7 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
         ),
         config=config,
         root=args.root,
+        phases=phases,
     )
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     # Stamp *after* the verdict exists, and carry it. Stamping on reach alone recorded

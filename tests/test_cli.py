@@ -1308,6 +1308,33 @@ class TestRunGatePhaseScope(unittest.TestCase):
             self.assertFalse(release.ok)
             self.assertTrue(Path(mark).exists())
 
+    def test_the_tdd_order_gate_honours_the_scope_too(self):
+        """It is evaluated outside the runner, so the scope has to reach it separately.
+
+        `split_deferred` pulls `tdd-order` out and `_run_planned_gates` evaluates it
+        directly, which meant a scope excluding its phase still ran it — the one gate
+        `--phases` did not cover.
+        """
+        from keel import config as project_config
+        from keel.gates import GateSpec
+
+        with tempfile.TemporaryDirectory() as d:
+            config = project_config.load_config(_write_config("'true'"))
+            specs = (
+                GateSpec("build", "command", "test", "block", run="true"),
+                GateSpec("tdd-order", "builtin", "test", "block"),
+            )
+            outcomes, result = cli._run_planned_gates(
+                specs,
+                cli._gate_runner(d, "", run_jury=False, phases=frozenset({"guard"})),
+                config=config,
+                root=d,
+                phases=frozenset({"guard"}),
+            )
+            order = {o.gate: o for o in outcomes}["tdd-order"]
+            self.assertTrue(order.not_run)
+            self.assertIsNone(result)
+
     def test_an_unknown_phase_is_refused_rather_than_scoping_to_nothing(self):
         # A typo that matched nothing would report every gate not_run and exit 0 — a green
         # answer from a run that checked nothing.

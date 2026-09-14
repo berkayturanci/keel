@@ -1113,7 +1113,7 @@ function of the iteration number, the outcomes and the policy:
 
 The loop judges the gates `keel ship` runs on the tree before a pull request exists — the
 guard and test phases, of kind `command` or built-in — and that is what the packaged recipe
-runs: `keel run-gates --phase s4 --defer-jury --json`, whose report carries the plan beside
+runs: `keel run-gates --phase s4 --phases guard,test --defer-jury --json`, whose report carries the plan beside
 the outcomes. A soft gate (`on_fail: suggest` / `warn`) that failed does not hold the loop
 open: it never held a merge either. An agentic gate the command runner did not execute
 (`not_run`), the jury under `--defer-jury`, and a `pre-merge` gate are **deferred**: listed in
