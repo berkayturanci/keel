@@ -168,7 +168,7 @@ Override the defaults under `policy_pack.blocker_rules` (each rule needs an `id`
 `kind` of `label` (with `labels`) or `title-regex` (with `pattern`)); see
 [configuration.md](configuration.md).
 
-## `keel merge <project.yaml> --pr N [--root DIR] [--method squash|merge|rebase] [--dry-run] [--effort low|medium|high] [--team PROFILE]`
+## `keel merge <project.yaml> --pr N [--root DIR] [--method squash|merge|rebase] [--transport auto|graphql|rest] [--dry-run] [--effort low|medium|high] [--team PROFILE]`
 
 Perform the sanctioned core-owned PR merge path. `keel merge` acquires the merge resource
 claim, re-checks the merge window inside that claim, reads the live PR check rollup with
@@ -193,6 +193,46 @@ the overtaking pull request is named in full, since the merge is already irrever
 the operator has to act on it now. Before #934 this check was documented as running after
 s10 and was called from nowhere; a stale-base squash reverted #811 on main and nothing
 noticed for six days.
+
+### Transport: GraphQL, or REST when the endpoint is blocked
+
+`gh pr view --json` and `gh pr merge` both go over GitHub's **GraphQL** endpoint. On a host
+whose egress proxy allows the REST API and blocks GraphQL, every one of them fails before
+the claim, the window re-check, the rollup read and the evidence verification have run at
+all — so the operator is pushed off the only sanctioned merge path and squashes by hand,
+which is how #1169, #1170 and #1171 were merged.
+
+The same questions are available over REST, and `keel merge` asks them there when it has
+to. Nothing about the contract changes: the claim, the window, the rollup semantics, the
+evidence gate, the SHA-pinned gates-pass and `MERGED` as the authoritative outcome are the
+same objects on either wire. The transport is recorded as `transport: gh-graphql` or
+`gh-rest` in the payload and in the merge ledger record.
+
+```bash
+keel merge .keel/project.yaml --root . --pr 456 --transport rest
+```
+
+| `--transport` | behaviour |
+| --- | --- |
+| `auto` (default) | GraphQL first. If a read fails, `gh api graphql` is asked whether the endpoint is reachable at all; only a blocked endpoint switches the run to REST |
+| `graphql` | GraphQL only — a failed read is a failure, never re-asked elsewhere |
+| `rest` | REST only; the probe never runs |
+
+**The probe runs after a failed read, not before every run.** A host that can reach GraphQL
+must cost exactly what it cost before this existed, and asking first would add an API call
+to every merge everywhere to answer a question nearly all of them answer the same way. The
+probe is still what decides, because a failed `gh pr view --json` says nothing on its own —
+no such pull request, no auth, a rate limit and a blocked endpoint all exit non-zero, and
+telling them apart by matching on `gh`'s wording is the kind of guess that silently
+re-routes a merge.
+
+**The merge is never the call that discovers it.** The transport is settled by the reads,
+before anything is written. A merge that failed for an unknown reason may or may not have
+landed, and re-driving it over a second wire is how one pull request gets merged twice.
+
+The REST merge is also the **stricter** of the two: it sends `sha=<the head the gates-pass
+was checked against>`, so the API refuses it if the branch moved since the snapshot.
+`gh pr merge` applies no such pin by default.
 
 Raw adapter `gh pr merge` calls are a spec violation for ship-style flows: adapters should
 delegate s10 to this command so lock, window, CI, evidence, and gates-SHA checks are
@@ -1190,10 +1230,15 @@ keel checkpoint .keel/project.yaml --root . --write \
 The writer replaces the previous checkpoint. It is for the active resume point, not for
 append-only shipped-run history; use `keel ledger` for history.
 
-## `keel verify-merge <project.yaml> [--root DIR] --pr N [--merge-sha SHA] [--json]`
+## `keel verify-merge <project.yaml> [--root DIR] --pr N [--merge-sha SHA] [--transport auto|graphql|rest] [--json]`
 
 Confirm a merged PR applied what was reviewed — and that nothing else rode along.
 Read-only: it queries GitHub and mutates nothing.
+
+It takes the same `--transport` as [`keel merge`](#keel-merge-projectyaml---pr-n---root-dir---method-squashmergerebase---transport-autographqlrest---dry-run---effort-lowmediumhigh---team-profile)
+and reports which wire answered as `transport` in the report. Before #1175 the two reads it
+depends on were `gh pr view --json`, so on a proxy-restricted runner the drift check came
+back `unknown` and exited 2 — "could not look" — for every merge.
 
 A merge succeeding is not the same as a merge applying the reviewed diff. An
 `update-branch` merge commit followed by a squash-merge silently reverted unrelated

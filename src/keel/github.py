@@ -622,3 +622,287 @@ def create_label(
 
 def _kw(_run):
     return {"_run": _run} if _run is not None else {}
+
+
+# --- REST transport (#1175) -------------------------------------------------
+#
+# `gh pr view --json` and `gh pr merge` both go over GitHub's **GraphQL** endpoint.
+# On a host whose egress proxy allows the REST API and blocks GraphQL — the remote
+# environment #1169/#1170/#1171 were shipped from — every one of them fails before
+# `keel merge` reaches its claim, its window re-check, its CI rollup or its evidence
+# verification, and the operator is pushed off the only sanctioned merge path onto a
+# hand-driven squash. These are the same reads and the same write, asked over REST.
+#
+# `gh api` expands `{owner}` and `{repo}` from the checkout's own remote, so none of
+# this needs the project config — which matters for `keel verify-merge`, whose whole
+# contract is that it reads GitHub and nothing else.
+
+#: A query that costs nothing and proves only that the endpoint answers at all.
+_GRAPHQL_PROBE = ["gh", "api", "graphql", "-f", "query=query{__typename}"]
+
+
+def graphql_available(*, cwd: str | None = None, _run=None) -> bool:
+    """Can this host reach GitHub's GraphQL endpoint?
+
+    Probed once per run and reused, because the answer is a property of the *host*
+    (its proxy) rather than of any pull request. A blocked endpoint fails the probe
+    the same way it fails a real query — a non-zero exit, usually carrying a proxy's
+    403 or 405 — so the probe needs no special-casing of the reason.
+
+    Deliberately **not** a fallback after a failed call. Reads could retry safely;
+    `gh pr merge` cannot. A merge that failed for an unknown reason may or may not
+    have landed, and re-driving it over a second transport is how a pull request gets
+    merged twice. The transport is chosen before anything is attempted.
+    """
+    return run_argv(_GRAPHQL_PROBE, cwd=cwd, **_kw(_run)).ok
+
+
+def rest_pull(pr: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
+    """The pull request as REST returns it (``head.sha``, ``mergeable_state``, …)."""
+    return run_argv(["gh", "api", f"repos/{{owner}}/{{repo}}/pulls/{pr}"], cwd=cwd, **_kw(_run))
+
+
+def rest_check_runs(sha: str, *, cwd: str | None = None, _run=None) -> CommandResult:
+    """Check runs for one commit — the Actions half of a status-check rollup."""
+    return run_argv(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+
+
+def rest_commit_statuses(sha: str, *, cwd: str | None = None, _run=None) -> CommandResult:
+    """Commit statuses for one commit — the other half, for non-Actions CI."""
+    return run_argv(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            f"repos/{{owner}}/{{repo}}/commits/{sha}/statuses?per_page=100",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+
+
+def rest_json(result: CommandResult) -> object | None:
+    """Parse a `gh api` body, tolerating `--paginate`'s concatenated pages."""
+    if not result.ok:
+        return None
+    text = (result.stdout or "").strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # `gh api --paginate` concatenates one JSON document per page rather than merging
+    # them, so a two-page read is `[…][…]` and is not a document at all. Decoding them
+    # one at a time is what the flag actually returns, and a reader that only tried
+    # `json.loads` saw the second page as a syntax error and reported "no checks".
+    decoder, index, pages = json.JSONDecoder(), 0, []
+    while index < len(text):
+        try:
+            page, index = decoder.raw_decode(text, index)
+        except json.JSONDecodeError:
+            return None
+        pages.append(page)
+        while index < len(text) and text[index] in " \t\r\n":
+            index += 1
+    # `pages` cannot be empty here: `text` is non-empty and stripped, so the loop ran at
+    # least once and either appended a page or returned. A guard for it would be a branch
+    # no input can take, which is a claim about the code that the tests cannot check.
+    if all(isinstance(page, list) for page in pages):
+        return [item for page in pages for item in page]
+    return pages[0] if len(pages) == 1 else pages
+
+
+def rest_rollup(check_runs: object, statuses: object) -> list[dict]:
+    """The two REST payloads in the shape ``statusCheckRollup`` has.
+
+    Pure, and a translation rather than a judgement: the rollup reducer reads
+    ``name``/``context``, ``status``, ``conclusion`` and the two timestamps, and
+    GraphQL spells those in SCREAMING_CASE where REST spells them in lower. Keeping
+    the translation here means the reducer, the dedupe and the recency ordering are
+    one implementation asked the same question over either transport, instead of two
+    that agree until they do not.
+
+    Commit statuses are carried through with only their ``context`` and ``state``,
+    which is exactly what the GraphQL rollup returns for a ``StatusContext`` — and
+    exactly as much as the reducer reads from one. Including them matters even so:
+    an entry with neither a ``conclusion`` nor a pending ``status`` still makes the
+    rollup non-empty, which is the difference between ``pass`` and ``no-checks``.
+    """
+    entries: list[dict] = []
+    runs = check_runs if isinstance(check_runs, list) else []
+    payload = check_runs if isinstance(check_runs, dict) else None
+    if payload is not None and isinstance(payload.get("check_runs"), list):
+        runs = payload["check_runs"]
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        entries.append(
+            {
+                "name": run.get("name"),
+                "status": _upper(run.get("status")),
+                "conclusion": _upper(run.get("conclusion")),
+                "startedAt": run.get("started_at"),
+                "completedAt": run.get("completed_at"),
+            }
+        )
+    rows = statuses if isinstance(statuses, list) else []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        entries.append({"context": row.get("context"), "state": _upper(row.get("state"))})
+    return entries
+
+
+def _upper(value: object) -> str | None:
+    """``value`` upper-cased when it is a string; ``None`` otherwise.
+
+    REST says ``in_progress`` and ``success`` where GraphQL says ``IN_PROGRESS`` and
+    ``SUCCESS``; the two differ in case alone, so upper-casing *is* the translation.
+    """
+    return value.upper() if isinstance(value, str) else None
+
+
+def rest_merge_pr(
+    pr: int | str,
+    *,
+    method: str = "squash",
+    head_sha: str | None = None,
+    cwd: str | None = None,
+    _run=None,
+) -> CommandResult:
+    """Merge the pull request over REST, pinned to ``head_sha`` when one is known.
+
+    ``sha`` is REST's own head-pin: the merge is refused if the pull request has moved
+    since it was read. `gh pr merge` has no equivalent it applies by default, so this
+    transport is *stricter* than the one it stands in for — deliberately, because a
+    merge is the one operation here that cannot be taken back.
+    """
+    argv = [
+        "gh",
+        "api",
+        "-X",
+        "PUT",
+        f"repos/{{owner}}/{{repo}}/pulls/{pr}/merge",
+        "-f",
+        f"merge_method={method}",
+    ]
+    if head_sha:
+        argv += ["-f", f"sha={head_sha}"]
+    return run_argv(argv, cwd=cwd, **_kw(_run))
+
+
+def rest_pr_files(
+    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
+) -> list[str] | None:
+    """Paths the pull request changed, over REST. ``None`` when unreadable."""
+    return _lines(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            f"repos/{{owner}}/{{repo}}/pulls/{pr}/files?per_page=100",
+            "--jq",
+            ".[].filename",
+        ],
+        cwd=cwd,
+        _run=_run,
+        _sleep=_sleep,
+    )
+
+
+def rest_pr_merge_window(
+    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
+) -> dict | None:
+    """``branched_at`` / ``merged_at`` / ``base`` / ``merge_commit`` over REST.
+
+    The same four fields :func:`pr_merge_window` returns, and the same settling poll:
+    a pull request reports ``merged_at`` before ``merge_commit_sha`` is populated, and
+    reading it in that instant is how the drift check comes back "no merge commit yet"
+    for a merge that had just happened.
+    """
+    sleep_fn = _sleep or time.sleep
+    for attempt in range(1, MERGE_COMMIT_POLL_ATTEMPTS + 1):
+        payload = rest_json(
+            run_argv_retry(
+                ["gh", "api", f"repos/{{owner}}/{{repo}}/pulls/{pr}"],
+                cwd=cwd,
+                _run=_run,
+                _sleep=_sleep,
+            )
+        )
+        if not isinstance(payload, dict):
+            return None
+        window = {
+            "branched_at": str(payload.get("created_at") or ""),
+            "merged_at": str(payload.get("merged_at") or ""),
+            "base": str((payload.get("base") or {}).get("ref") or ""),
+            "merge_commit": str(payload.get("merge_commit_sha") or ""),
+        }
+        settling = window["merged_at"] and not window["merge_commit"]
+        if not settling or attempt == MERGE_COMMIT_POLL_ATTEMPTS:
+            return window if any(window.values()) else None
+        sleep_fn(MERGE_COMMIT_POLL_DELAY_S)
+    return None  # pragma: no cover - the loop always returns on its last attempt
+
+
+def rest_prs_merged_between(
+    base: str,
+    since: str,
+    until: str,
+    *,
+    cwd: str | None = None,
+    _run=None,
+    _sleep=None,
+    limit: int = MERGED_PAGE_LIMIT,
+) -> list[int] | None:
+    """:func:`prs_merged_between` over REST, with the same truncation honesty.
+
+    REST cannot sort by merge time — ``sort`` takes ``created``, ``updated``,
+    ``popularity`` and ``long-running``, and nothing else — so the page is ordered by
+    ``updated`` descending and the truncation rule is re-derived on that key rather
+    than transplanted. It still holds, and for a reason worth writing down: merging a
+    pull request *updates* it, so ``merged_at <= updated_at`` for every row. If the
+    oldest row this page reached was updated before ``since``, every row it did not
+    reach was updated earlier still, so it was merged earlier still, so it is outside
+    the window and the window was seen whole. If it was not, the page may have stopped
+    short of the answer — and a partial read must not render as "nothing overtook this
+    merge" (#933, #937).
+
+    ``state=closed`` is the narrowest REST offers; a closed-unmerged row has no
+    ``merged_at``, is filtered out, and costs only a slot in the page.
+    """
+    rows = rest_json(
+        run_argv_retry(
+            [
+                "gh",
+                "api",
+                f"repos/{{owner}}/{{repo}}/pulls"
+                f"?base={base}&state=closed&sort=updated&direction=desc&per_page={limit}",
+            ],
+            cwd=cwd,
+            _run=_run,
+            _sleep=_sleep,
+        )
+    )
+    if not isinstance(rows, list):
+        return None
+    updated = [str(row.get("updated_at") or "") for row in rows if isinstance(row, dict)]
+    if len(rows) >= limit and updated and min(updated) >= since:
+        return None
+    return [
+        int(row["number"])
+        for row in rows
+        if isinstance(row, dict)
+        and isinstance(row.get("number"), int)
+        and since < str(row.get("merged_at") or "") < until
+    ]

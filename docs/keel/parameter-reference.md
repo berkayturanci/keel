@@ -394,11 +394,18 @@ keel release merge --owner "ship-pr-123" --root .
 ## `keel merge`
 
 The fail-closed, core-owned PR merge (backbone s10): lock → window re-check → CI rollup →
-evidence verification → `gh pr merge`. Always a live, consent-gated command.
+evidence verification → merge. Always a live, consent-gated command.
+
+`--transport` chooses the wire (#1175): `auto` (default) reads over GraphQL and falls back
+to REST only when a probe confirms that endpoint is unreachable, `graphql` never falls
+back, `rest` never probes. The transport used is recorded as `transport: gh-graphql |
+gh-rest` in the payload and in the merge ledger record. Only the wire changes — the claim,
+the window, the rollup, the evidence gate and the SHA-pinned gates-pass are identical on
+both, and the REST merge additionally pins `sha` to the head it verified.
 
 ```
 keel merge <project.yaml> --pr N [--root DIR] [--issue N] [--method squash|merge|rebase]
-           [--owner ID] [--hotfix] [--dry-run]
+           [--owner ID] [--hotfix] [--dry-run] [--transport auto|graphql|rest]
            [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE]
            [--risk-tier T] [--trust-signal S] [--retry-count N] [--conflicting-sources]
            [--changed-lines N] [--escalation-side-effect EFFECT]

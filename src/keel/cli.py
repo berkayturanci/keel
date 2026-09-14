@@ -1047,9 +1047,11 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             payload["window"] = {"bypassed": True, "reason": "hotfix"}
 
         try:
-            snapshot = _merge_snapshot(args.pr, cwd=args.root)
+            transport, snapshot = _merge_snapshot_over_best_transport(args)
         except ValueError as exc:
+            payload["transport"] = _forced_transport(args)
             return _finish_merge(args, payload, str(exc), code=1)
+        payload["transport"] = transport
         payload["ci"] = snapshot["ci"]
         if snapshot["merge_state"] not in {"CLEAN", "HAS_HOOKS", "UNKNOWN"}:
             return _finish_merge(
@@ -1115,7 +1117,16 @@ def _cmd_merge(args: argparse.Namespace) -> int:
 
         if args.dry_run:
             return _finish_merge(args, payload, "dry-run: merge not performed", code=0)
-        merged = github.merge_pr(args.pr, method=args.method, cwd=args.root)
+        merged = (
+            github.rest_merge_pr(
+                args.pr,
+                method=args.method,
+                head_sha=head_sha if isinstance(head_sha, str) else None,
+                cwd=args.root,
+            )
+            if transport == TRANSPORT_REST
+            else github.merge_pr(args.pr, method=args.method, cwd=args.root)
+        )
         payload["merged"] = merged.ok
         payload["merge_output"] = merged.output
         if not merged.ok:
@@ -1135,7 +1146,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         # #934 — which is how a stale-base squash reverted #811 on main and stayed
         # there for six days. It runs here rather than in a later job because the
         # answer is most actionable in the same breath as the merge.
-        verification = _merge_drift_report(args)
+        verification = _merge_drift_report(args, transport=transport)
         payload["merge_verification"] = verification
         if mergeverify.is_drift(verification):
             # Distinct from 1. The merge *succeeded* — reporting failure would read
@@ -3581,7 +3592,9 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
     return 1
 
 
-def _overtaking_prs(args: argparse.Namespace, timing: dict) -> tuple[dict, bool]:
+def _overtaking_prs(
+    args: argparse.Namespace, timing: dict, *, rest: bool = False
+) -> tuple[dict, bool]:
     """Paths changed by a PR merged after ``args.pr`` branched, and whether that
     list is complete (#561).
 
@@ -3601,9 +3614,8 @@ def _overtaking_prs(args: argparse.Namespace, timing: dict) -> tuple[dict, bool]
     that — which is the same rule ``judge_pins`` applies to unreachable repositories
     in ``tests/test_action_pins.py``.
     """
-    others = github.prs_merged_between(
-        timing["base"], timing["branched_at"], timing["merged_at"], cwd=args.root
-    )
+    reader = github.rest_prs_merged_between if rest else github.prs_merged_between
+    others = reader(timing["base"], timing["branched_at"], timing["merged_at"], cwd=args.root)
     if others is None:
         return {}, False
     overtaken: dict = {}
@@ -3611,7 +3623,11 @@ def _overtaking_prs(args: argparse.Namespace, timing: dict) -> tuple[dict, bool]
     for number in others:
         if number == args.pr:
             continue
-        files = github.pr_files(number, cwd=args.root)
+        files = (
+            github.rest_pr_files(number, cwd=args.root)
+            if rest
+            else github.pr_files(number, cwd=args.root)
+        )
         if files is None:
             complete = False
             continue
@@ -3620,7 +3636,14 @@ def _overtaking_prs(args: argparse.Namespace, timing: dict) -> tuple[dict, bool]
     return overtaken, complete
 
 
-def _merge_drift_report(args: argparse.Namespace) -> dict:
+#: The two transports `keel merge` and `keel verify-merge` can read GitHub through.
+TRANSPORT_GRAPHQL = "gh-graphql"
+TRANSPORT_REST = "gh-rest"
+#: What `--transport` accepts. `auto` probes once per run; the other two force.
+_TRANSPORT_CHOICES = ("auto", "graphql", "rest")
+
+
+def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = None) -> dict:
     """Build the merge-drift report for ``args.pr``; pure judgement over GitHub reads.
 
     Extracted so the check has two callers instead of one: the ``verify-merge``
@@ -3633,7 +3656,8 @@ def _merge_drift_report(args: argparse.Namespace) -> dict:
     the report, so a caller running this *after* an irreversible merge still gets
     an answer it can print rather than a traceback over a landed commit.
     """
-    timing = github.pr_merge_window(args.pr, cwd=args.root)
+    transport, timing = _pr_timing(args, transport)
+    rest = transport == TRANSPORT_REST
     merge_sha = getattr(args, "merge_sha", None) or (timing or {}).get("merge_commit")
     if not merge_sha or not timing:
         report = mergeverify.verify_merge(None)
@@ -3645,9 +3669,15 @@ def _merge_drift_report(args: argparse.Namespace) -> dict:
         # A missing input silently downgrades a real check into a weaker one that
         # still prints `clean`: the drift signal needs the overtaking set, and the
         # out-of-scope signal needs the PR's own file list (#933).
+        # `commit_files` is already REST (`gh api …/commits/<sha>`), so it is the one
+        # read that needed nothing done to it.
         landed = github.commit_files(merge_sha, cwd=args.root)
-        overtaken, overtaken_complete = _overtaking_prs(args, timing)
-        intended = github.pr_files(args.pr, cwd=args.root)
+        overtaken, overtaken_complete = _overtaking_prs(args, timing, rest=rest)
+        intended = (
+            github.rest_pr_files(args.pr, cwd=args.root)
+            if rest
+            else github.pr_files(args.pr, cwd=args.root)
+        )
         # Each input answers a specific question, so an unreadable one leaves that
         # question open rather than the whole report meaningless. Saying "no
         # conclusion about drift is possible" when only the PR's own file list was
@@ -3694,6 +3724,9 @@ def _merge_drift_report(args: argparse.Namespace) -> dict:
                 )
     report["pull_request"] = args.pr
     report["merge_commit"] = merge_sha
+    # Recorded beside the verdict, not only in the merge payload: the drift check runs
+    # on its own too, and which wire answered it is part of reading the answer.
+    report["transport"] = transport
     return report
 
 
@@ -4360,6 +4393,13 @@ def _finish_merge(
         ci_payload = payload.get("ci")
         if isinstance(ci_payload, dict):
             print(f"  ci     : {ci_payload.get('state')}")
+        transport = payload.get("transport")
+        if transport == TRANSPORT_REST:
+            # Named only when it is the unusual one. A run that went over GraphQL went
+            # the way every other run goes, and a line saying so on every merge is noise;
+            # a run that fell back did so because this host cannot reach an endpoint, and
+            # that is worth seeing without asking for `--json`.
+            print(f"  transport: {transport} (GraphQL is unreachable from this host)")
         evidence_payload = payload.get("evidence")
         if isinstance(evidence_payload, dict):
             verification = evidence_payload.get("verification")
@@ -4390,7 +4430,95 @@ def _finish_merge(
     return code
 
 
-def _merge_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
+def _forced_transport(args: argparse.Namespace) -> str:
+    """The transport to try first, from `--transport`. `auto` starts on GraphQL."""
+    return TRANSPORT_REST if getattr(args, "transport", "auto") == "rest" else TRANSPORT_GRAPHQL
+
+
+def _falls_back_to_rest(args: argparse.Namespace) -> bool:
+    """Did a GraphQL read fail **because the endpoint is unreachable**? (#1175)
+
+    Asked only after a read has already failed, and only under `--transport auto`.
+    Probing first would put an extra API call on every merge on every host to answer a
+    question nearly all of them answer the same way, and a host that can reach GraphQL
+    must cost exactly what it cost before this existed.
+
+    The probe is what makes the answer definite. A failed `gh pr view --json` says
+    nothing on its own — no such pull request, no auth, a rate limit and a blocked
+    endpoint all exit non-zero — and deciding between them by matching on `gh`'s
+    wording is the kind of guess that silently re-routes a merge. `gh api graphql` with
+    a trivial query asks the endpoint directly.
+
+    The answer is a fact about the **host**, so it is asked once and then governs the
+    merge as well as the reads. The merge is never the call that discovers it: by the
+    time anything is written the transport is already fixed, so no pull request can be
+    merged twice by being retried over a second wire.
+    """
+    return getattr(args, "transport", "auto") == "auto" and not github.graphql_available(
+        cwd=args.root
+    )
+
+
+def _merge_snapshot_over_best_transport(args: argparse.Namespace) -> tuple[str, dict[str, object]]:
+    """``(transport, snapshot)`` — GraphQL first, REST when the endpoint is blocked."""
+    transport = _forced_transport(args)
+    try:
+        return transport, _merge_snapshot(args.pr, cwd=args.root, transport=transport)
+    except ValueError:
+        if transport == TRANSPORT_REST or not _falls_back_to_rest(args):
+            raise
+    return TRANSPORT_REST, _merge_snapshot(args.pr, cwd=args.root, transport=TRANSPORT_REST)
+
+
+def _pr_timing(args: argparse.Namespace, transport: str | None) -> tuple[str, dict | None]:
+    """The merge-window read, and the transport that produced it.
+
+    ``verify-merge`` has no exception to catch — every failed read becomes ``unknown``
+    inside the report on purpose — so an unreadable window is what stands in for "the
+    read failed" here. It is also what a genuinely unmerged pull request looks like,
+    which is why the probe and not the symptom decides.
+    """
+    if transport is None:
+        transport = _forced_transport(args)
+    reader = github.rest_pr_merge_window if transport == TRANSPORT_REST else github.pr_merge_window
+    timing = reader(args.pr, cwd=args.root)
+    if timing is None and transport == TRANSPORT_GRAPHQL and _falls_back_to_rest(args):
+        return TRANSPORT_REST, github.rest_pr_merge_window(args.pr, cwd=args.root)
+    return transport, timing
+
+
+def _rest_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
+    """:func:`_merge_snapshot`'s three fields, read over REST.
+
+    `mergeable_state` is REST's lower-case spelling of the same state machine
+    `mergeStateStatus` reports, so upper-casing it *is* the translation — the caller
+    compares against `CLEAN` / `HAS_HOOKS` / `UNKNOWN` and must keep comparing against
+    exactly those. REST has no rollup field, so the rollup is assembled from the two
+    endpoints that hold its halves and translated into the shape the reducer reads.
+    """
+    pull = github.rest_json(github.rest_pull(pr, cwd=cwd))
+    if not isinstance(pull, dict):
+        raise ValueError(f"unable to read PR merge snapshot: gh api pulls/{pr} returned no object")
+    head_sha = ((pull.get("head") or {}) if isinstance(pull.get("head"), dict) else {}).get("sha")
+    state = pull.get("mergeable_state")
+    rollup: list[object] = []
+    if isinstance(head_sha, str) and head_sha:
+        rollup = list(
+            github.rest_rollup(
+                github.rest_json(github.rest_check_runs(head_sha, cwd=cwd)),
+                github.rest_json(github.rest_commit_statuses(head_sha, cwd=cwd)),
+            )
+        )
+    return {
+        "head_sha": head_sha,
+        "merge_state": state.upper() if isinstance(state, str) and state else "UNKNOWN",
+        "ci": _ci_rollup_state(rollup),
+    }
+
+
+def _merge_snapshot(pr: int, *, cwd: str, transport: str = TRANSPORT_GRAPHQL) -> dict[str, object]:
+    if transport == TRANSPORT_REST:
+        return _rest_snapshot(pr, cwd=cwd)
     result = github.pr_merge_snapshot(pr, cwd=cwd)
     if not result.ok:
         raise ValueError(f"unable to read PR merge snapshot: {result.output.strip()}")
@@ -6975,6 +7103,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_merge.add_argument("--dry-run", action="store_true", help="verify only; do not merge")
     p_merge.add_argument(
+        "--transport",
+        choices=_TRANSPORT_CHOICES,
+        default="auto",
+        help="how to reach GitHub: auto probes GraphQL once, rest forces the REST API",
+    )
+    p_merge.add_argument(
         "--approve-scope",
         action="append",
         default=[],
@@ -7753,6 +7887,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_vm.add_argument(
         "--merge-sha", default=None, help="merge commit SHA; read from the PR when omitted"
+    )
+    p_vm.add_argument(
+        "--transport",
+        choices=_TRANSPORT_CHOICES,
+        default="auto",
+        help="how to reach GitHub: auto probes GraphQL once, rest forces the REST API",
     )
     p_vm.add_argument("--json", action="store_true", help="emit structured JSON")
     p_vm.set_defaults(func=_cmd_verify_merge)

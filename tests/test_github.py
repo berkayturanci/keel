@@ -1,3 +1,4 @@
+import json
 import subprocess
 import unittest
 from unittest.mock import MagicMock
@@ -7,6 +8,11 @@ from keel import github
 
 def _proc(out: str = "", code: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=["gh"], returncode=code, stdout=out, stderr="")
+
+
+#: One row of REST's closed-pull-request page, in the two fields the window reads.
+def _closed_pr(number: int, merged: str, updated: str | None = None) -> dict:
+    return {"number": number, "merged_at": merged, "updated_at": updated or merged}
 
 
 class TestGithubComments(unittest.TestCase):
@@ -118,6 +124,194 @@ class TestGithubComments(unittest.TestCase):
         self.assertEqual(
             github.label_create_argv("role:core"), ["gh", "label", "create", "role:core"]
         )
+
+
+class TestRestTransport(unittest.TestCase):
+    """The REST readers (#1175) — argv shape, and the two answers that are not obvious."""
+
+    def test_the_probe_asks_the_endpoint_and_nothing_else(self):
+        mock = MagicMock(return_value=_proc('{"data":{"__typename":"Query"}}'))
+        self.assertTrue(github.graphql_available(_run=mock))
+        self.assertEqual(
+            mock.call_args[0][0], ["gh", "api", "graphql", "-f", "query=query{__typename}"]
+        )
+        self.assertFalse(github.graphql_available(_run=MagicMock(return_value=_proc("403", 1))))
+
+    def test_paginated_pages_are_concatenated_documents_not_one(self):
+        """`gh api --paginate` emits one JSON document per page, back to back.
+
+        A two-page read is `[…][…]`, which `json.loads` rejects outright — so a reader
+        that only tried it saw the second page as a syntax error and reported *no
+        checks*, which the merge gate reads as "CI has not run".
+        """
+        body = '[{"name": "a"}]\n[{"name": "b"}]'
+        rows = github.rest_json(github.run_argv(["true"], _run=MagicMock(return_value=_proc(body))))
+        self.assertEqual(rows, [{"name": "a"}, {"name": "b"}])
+
+    def test_the_rollup_translation_is_case_and_nothing_more(self):
+        rollup = github.rest_rollup(
+            {
+                "check_runs": [
+                    {
+                        "name": "ci",
+                        "status": "in_progress",
+                        "conclusion": None,
+                        "started_at": "T1",
+                        "completed_at": None,
+                    }
+                ]
+            },
+            [{"context": "legacy/ci", "state": "success"}],
+        )
+        self.assertEqual(
+            rollup[0],
+            {
+                "name": "ci",
+                "status": "IN_PROGRESS",
+                "conclusion": None,
+                "startedAt": "T1",
+                "completedAt": None,
+            },
+        )
+        # A commit status carries what the GraphQL rollup carries for one, which is
+        # also all the reducer reads from it — but it still makes the rollup non-empty,
+        # and that is the difference between `pass` and `no-checks`.
+        self.assertEqual(rollup[1], {"context": "legacy/ci", "state": "SUCCESS"})
+
+    def test_a_full_page_that_did_not_reach_past_the_window_is_unreadable(self):
+        """The truncation rule, re-derived on REST's only usable sort key.
+
+        REST cannot sort by merge time, so the page comes back ordered by `updated`
+        descending. The rule still holds because merging a pull request *updates* it:
+        `merged_at <= updated_at` always, so if the oldest row this page reached was
+        updated before `since`, every row it did not reach was merged earlier still and
+        the window was seen whole. When it was not, the read saw only part of the answer
+        — and a partial read must never render as "nothing overtook this merge".
+        """
+        rows = json.dumps([_closed_pr(1, "2026-06-02T00:00:00Z")])
+        self.assertIsNone(
+            github.rest_prs_merged_between(
+                "main",
+                "2026-06-01T00:00:00Z",
+                "2026-06-03T00:00:00Z",
+                _run=MagicMock(return_value=_proc(rows)),
+                limit=1,
+            )
+        )
+        # The same page, read back far enough to have cleared the window, is an answer.
+        older = json.dumps(
+            [_closed_pr(1, "2026-06-02T00:00:00Z"), _closed_pr(2, "2026-05-01T00:00:00Z")]
+        )
+        self.assertEqual(
+            github.rest_prs_merged_between(
+                "main",
+                "2026-06-01T00:00:00Z",
+                "2026-06-03T00:00:00Z",
+                _run=MagicMock(return_value=_proc(older)),
+                limit=5,
+            ),
+            [1],
+        )
+
+    def test_the_merge_window_read_waits_for_the_commit_sha_to_settle(self):
+        """Merged, but `merge_commit_sha` not yet populated — the same poll GraphQL gets.
+
+        Reading in that instant is how the drift check reports "no merge commit yet" for
+        a merge that had just happened.
+        """
+
+        def window(sha: str) -> str:
+            return json.dumps(
+                {
+                    "created_at": "T0",
+                    "merged_at": "T1",
+                    "base": {"ref": "main"},
+                    "merge_commit_sha": sha,
+                }
+            )
+
+        settling, settled = window(""), window("abc")
+        mock = MagicMock(side_effect=[_proc(settling), _proc(settled)])
+        window = github.rest_pr_merge_window(7, _run=mock, _sleep=lambda _s: None)
+        self.assertEqual(window["merge_commit"], "abc")
+        self.assertEqual(mock.call_count, 2)
+
+    def test_the_rest_merge_names_its_method_and_its_pin(self):
+        mock = MagicMock(return_value=_proc('{"merged": true}'))
+        github.rest_merge_pr(7, method="squash", head_sha="abc", _run=mock)
+        argv = mock.call_args[0][0]
+        self.assertEqual(argv[:5], ["gh", "api", "-X", "PUT", "repos/{owner}/{repo}/pulls/7/merge"])
+        self.assertIn("merge_method=squash", argv)
+        self.assertIn("sha=abc", argv)
+        # No head to pin means no pin sent, rather than an empty one the API rejects.
+        mock.reset_mock()
+        github.rest_merge_pr(7, method="squash", head_sha=None, _run=mock)
+        self.assertFalse([a for a in mock.call_args[0][0] if a.startswith("sha=")])
+
+
+class TestRestTransportDegradesHonestly(unittest.TestCase):
+    """Every unreadable shape becomes ``None``, never a confident wrong answer.
+
+    These readers sit under a merge gate and a post-merge drift check, so the cost of
+    guessing is a green light: an empty rollup reads as "CI has not run", an empty
+    overtaking set reads as "nothing overtook this merge".
+    """
+
+    def _json(self, out: str = "", code: int = 0):
+        return github.rest_json(
+            github.run_argv(["true"], _run=MagicMock(return_value=_proc(out, code)))
+        )
+
+    def test_a_failed_call_an_empty_body_and_a_broken_second_page_are_all_none(self):
+        self.assertIsNone(self._json("[]", 1))
+        self.assertIsNone(self._json("   "))
+        # A first page that parses and a second that does not: the read is partial, and
+        # a partial page of check runs is not a shorter list of check runs.
+        self.assertIsNone(self._json('[{"name": "a"}] {"broken"'))
+
+    def test_a_single_object_page_is_returned_as_the_object(self):
+        self.assertEqual(self._json('{"head": {"sha": "abc"}}'), {"head": {"sha": "abc"}})
+        # Two object pages are neither one object nor a list of rows, so both are kept
+        # rather than silently reporting the first as the whole answer.
+        self.assertEqual(self._json('{"a": 1}{"b": 2}'), [{"a": 1}, {"b": 2}])
+
+    def test_the_rollup_ignores_shapes_it_does_not_recognise(self):
+        # A payload that is neither the documented object nor a list contributes
+        # nothing, and a stray non-object row inside one is skipped rather than
+        # crashing the merge gate on a shape GitHub has not documented.
+        self.assertEqual(github.rest_rollup("nonsense", None), [])
+        self.assertEqual(github.rest_rollup({"check_runs": "nope"}, None), [])
+        self.assertEqual(github.rest_rollup(["nope", None], ["nope"]), [])
+
+    def test_an_unreadable_window_and_an_unreadable_page_are_none(self):
+        self.assertIsNone(github.rest_pr_merge_window(7, _run=MagicMock(return_value=_proc("[]"))))
+        # A pull request that is not merged has no window worth reporting either.
+        self.assertIsNone(
+            github.rest_pr_merge_window(
+                7, _run=MagicMock(return_value=_proc('{"created_at": "", "merged_at": ""}'))
+            )
+        )
+        self.assertIsNone(
+            github.rest_prs_merged_between(
+                "main", "A", "B", _run=MagicMock(return_value=_proc('{"not": "a list"}'))
+            )
+        )
+
+    def test_a_window_that_never_settles_returns_what_it_last_saw(self):
+        settling = json.dumps(
+            {
+                "created_at": "T0",
+                "merged_at": "T1",
+                "base": {"ref": "main"},
+                "merge_commit_sha": "",
+            }
+        )
+        mock = MagicMock(return_value=_proc(settling))
+        window = github.rest_pr_merge_window(7, _run=mock, _sleep=lambda _s: None)
+        # The caller treats an empty `merge_commit` as "no merge commit yet" and says so,
+        # which is the honest answer — but it is reached after the poll, not instead of it.
+        self.assertEqual(window["merge_commit"], "")
+        self.assertEqual(mock.call_count, github.MERGE_COMMIT_POLL_ATTEMPTS)
 
 
 if __name__ == "__main__":
