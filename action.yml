@@ -1,145 +1,204 @@
 name: "Keel Autonomous Delivery Action"
-description: "Project-neutral, multi-agent workflow core and autonomous issue shipping backbone"
+description: "Run keel — gates, ship assessment, evidence verification, or a swarm plan — on a GitHub runner."
 author: "Berkay Turancı"
 branding:
   icon: "anchor"
   color: "blue"
 
+# This is the file GitHub publishes as the Marketplace listing
+# (consumers write `berkayturanci/keel@vX.Y.Z`), so `name` is load-bearing and does not
+# change. The interface below is the one that was measured to work: every
+# `command` names a real subcommand, the argv is built as an array rather than a
+# string, and both declared outputs are actually written (#1153).
+#
+# The default run is a **dry assessment**. The version of this file that forced
+# `--live --jury` stopped on keel's own consent gate — *"Missing approvals:
+# filesystem, git, github"* — so the Marketplace action failed on its own
+# defaults. Mutating runs name their scopes through `args`; the gate is not
+# something this action talks its way past.
+
 inputs:
   command:
-    description: "Keel command to run (ship, swarm, run-gates, validate, plan)"
+    description: >-
+      keel subcommand to run: ship, run-gates, evidence-verify, verify-merge,
+      swarm-plan, swarm-run, swarm-land, swarm-status, validate, plan.
     required: false
     default: "ship"
-  config-path:
-    description: "Path to .keel/project.yaml config file"
+  config:
+    description: "Path to the project config."
     required: false
     default: ".keel/project.yaml"
+  pr:
+    description: >-
+      Pull request number. Forwarded to ship, evidence-verify and verify-merge — the
+      commands that assess one; required by the last two.
+    required: false
+    default: ""
   issue:
-    description: "Issue number to ship (e.g. 123)"
+    description: >-
+      Issue number recorded on the run. Forwarded to ship, run-gates and plan only —
+      on the swarm commands the same flag selects which issues to plan, so pass those
+      through `args` instead.
     required: false
     default: ""
-  issues:
-    description: "Space-separated issue numbers for swarm execution (e.g. '101 102 103')"
+  args:
+    description: >-
+      Extra arguments appended verbatim (e.g. --json --live). Mutating runs need
+      their consent scopes named here — `keel ship` without them stops on its own
+      consent gate, which is the gate working, not a failure of this action.
     required: false
     default: ""
-  delegate:
-    description: "Implementer delegate override (e.g. google-api:gemini-2.5-pro, openai-api:gpt-5)"
+  keel-version:
+    description: >-
+      Version of keel-workflow to install from PyPI. Pin this. "latest" installs
+      the newest release, which makes the run non-reproducible.
     required: false
-    default: ""
-  reviewers:
-    description: "Number of parallel reviewers (1, 2, 3)"
+    default: "latest"
+  python-version:
+    description: "Python used to run keel."
     required: false
-    default: ""
-  jury:
-    description: "Enable AI Jury multi-agent consensus panel (true/false)"
+    default: "3.12"
+  comment:
+    description: "Post the output as a PR comment. Needs pull-requests: write."
     required: false
-    default: "true"
-  live:
-    description: "Run live mutations (git, pr, comment, merge)"
-    required: false
-    default: "true"
-  hotfix:
-    description: "Bypass merge window gate for critical hotfixes"
+    default: "false"
+  fail-on-block:
+    description: >-
+      Fail the step when keel exits non-zero (a blocked decision). Default false
+      keeps the run informational, matching keel's own workflow.
     required: false
     default: "false"
   github-token:
-    description: "GitHub Token for PR creation, labeling, and merging (secrets.GITHUB_TOKEN or PAT)"
+    description: "Token for gh. Usually secrets.GITHUB_TOKEN."
     required: false
     default: ""
-  gemini-api-key:
-    description: "Google Gemini API key for delegate operations"
-    required: false
-    default: ""
-  openai-api-key:
-    description: "OpenAI API key for delegate operations"
-    required: false
-    default: ""
-  anthropic-api-key:
-    description: "Anthropic API key for delegate operations"
-    required: false
-    default: ""
-  version:
-    description: "Version of keel-workflow to install (default: latest from PyPI)"
-    required: false
-    default: "latest"
 
 outputs:
-  status:
-    description: "Execution status result"
-    value: ${{ steps.run-keel.outputs.status }}
-  decision:
-    description: "Ship decision (merge, defer, block)"
-    value: ${{ steps.run-keel.outputs.decision }}
+  exit-code:
+    description: "keel's exit code. 0 = clear, non-zero = blocked or errored."
+    value: ${{ steps.run.outputs.code }}
+  output-file:
+    description: "Path to the captured stdout."
+    value: ${{ steps.run.outputs.file }}
 
 runs:
   using: "composite"
   steps:
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
-        python-version: "3.12"
+        python-version: ${{ inputs.python-version }}
 
-    - name: Install Keel
-      shell: bash
-      run: |
-        if [ "${{ inputs.version }}" = "latest" ]; then
-          python -m pip install --upgrade pip keel-workflow
-        else
-          python -m pip install --upgrade pip "keel-workflow==${{ inputs.version }}"
-        fi
-
-    - name: Configure Git Identity
-      shell: bash
-      run: |
-        git config --global user.name "keel[bot]"
-        git config --global user.email "keel-bot@users.noreply.github.com"
-
-    - name: Run Keel Command
-      id: run-keel
+    - name: Install keel
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token || env.GITHUB_TOKEN }}
-        GITHUB_TOKEN: ${{ inputs.github-token || env.GITHUB_TOKEN }}
-        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
-        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
-        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        KEEL_VERSION: ${{ inputs.keel-version }}
       run: |
-        CMD="${{ inputs.command }}"
-        CONFIG="${{ inputs.config-path }}"
-        ARGS=""
-        if [ "${{ inputs.live }}" = "true" ]; then
-          ARGS="$ARGS --live"
-        fi
-        if [ "${{ inputs.hotfix }}" = "true" ]; then
-          ARGS="$ARGS --hotfix"
-        fi
-        if [ -n "${{ inputs.delegate }}" ]; then
-          ARGS="$ARGS --delegate ${{ inputs.delegate }}"
-        fi
-        if [ -n "${{ inputs.reviewers }}" ]; then
-          ARGS="$ARGS --reviewers ${{ inputs.reviewers }}"
-        fi
-        if [ "${{ inputs.jury }}" = "true" ]; then
-          ARGS="$ARGS --jury"
-        fi
-
-        if [ "$CMD" = "ship" ]; then
-          if [ -n "${{ inputs.issue }}" ]; then
-            ARGS="$ARGS --issue ${{ inputs.issue }}"
-          fi
-          python -m keel ship "$CONFIG" --root . $ARGS
-        elif [ "$CMD" = "swarm" ]; then
-          if [ -n "${{ inputs.issues }}" ]; then
-            python -m keel swarm "$CONFIG" --root . --issues ${{ inputs.issues }} $ARGS
-          else
-            python -m keel swarm "$CONFIG" --root . $ARGS
-          fi
-        elif [ "$CMD" = "run-gates" ]; then
-          python -m keel run-gates "$CONFIG" --root .
-        elif [ "$CMD" = "validate" ]; then
-          python -m keel validate "$CONFIG" --root .
-        elif [ "$CMD" = "plan" ]; then
-          python -m keel plan "$CONFIG" --root .
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        if [ "$KEEL_VERSION" = "latest" ]; then
+          echo "::warning::keel-version is 'latest'; pin a version for reproducible runs."
+          pip install keel-workflow
         else
-          python -m keel "$CMD" "$CONFIG" --root . $ARGS
+          pip install "keel-workflow==${KEEL_VERSION}"
         fi
+        keel version
+
+    - name: Make the base branch available
+      shell: bash
+      env:
+        BASE: ${{ github.base_ref || github.event.repository.default_branch || 'main' }}
+      run: |
+        # keel diffs against the base branch; a shallow checkout has no such ref.
+        if [ "$(git rev-parse --is-shallow-repository 2>/dev/null || echo false)" = "true" ]; then
+          echo "::warning::shallow checkout — use actions/checkout with fetch-depth: 0."
+        fi
+        git fetch --no-tags origin "$BASE:$BASE" 2>/dev/null || true
+
+    - name: Run keel
+      id: run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        KEEL_COMMAND: ${{ inputs.command }}
+        KEEL_CONFIG: ${{ inputs.config }}
+        KEEL_PR: ${{ inputs.pr }}
+        KEEL_ISSUE: ${{ inputs.issue }}
+        KEEL_ARGS: ${{ inputs.args }}
+        FAIL_ON_BLOCK: ${{ inputs.fail-on-block }}
+      run: |
+        # `+e` on purpose, and it is load-bearing. GitHub runs a composite `shell: bash`
+        # step as `bash --noprofile --norc -e -o pipefail`, so the step dies the moment
+        # keel exits non-zero — before the lines below can write the outputs, the summary,
+        # or honour `fail-on-block: false`. That flag promises an informational run; `-e`
+        # silently broke the promise. Caught by the `action-smoke` job this change adds.
+        set +e -u -o pipefail
+        if [ ! -f "$KEEL_CONFIG" ]; then
+          echo "::error::config not found at $KEEL_CONFIG — set the 'config' input."
+          exit 1
+        fi
+        # These assess a specific pull request and their parsers make --pr required,
+        # so without the input argparse exits 2 with a message about an argument the
+        # caller never saw. Name the missing *input* instead. Kept in step with the
+        # parser by tests/test_action.py, which derives the same set from it.
+        case "$KEEL_COMMAND" in
+          evidence-verify|verify-merge)
+            if [ -z "$KEEL_PR" ]; then
+              echo "::error::command '$KEEL_COMMAND' assesses a pull request — set the 'pr' input."
+              exit 1
+            fi
+            ;;
+        esac
+        ARGS=("$KEEL_CONFIG" --root .)
+        # Forwarded per command, not to all of them. `--pr` exists on three subcommands
+        # and `--issue` on a different set, so appending both unconditionally made
+        # `command: validate` with a `pr` input exit 2 on a flag the caller never wrote —
+        # and `command: plan` worse, because argparse abbreviation bound `--pr` to
+        # `--profile` and died with `invalid choice: '7'`.
+        case "$KEEL_COMMAND" in
+          ship|evidence-verify|verify-merge)
+            [ -n "$KEEL_PR" ] && ARGS+=(--pr "$KEEL_PR") ;;
+        esac
+        # `issue` is documented as "recorded on the run", and it only *is* that for these.
+        # On `swarm-plan`/`swarm-run`/`swarm-land` the same flag **selects the work**, so
+        # forwarding it there silently adds an issue to the plan — a wrong answer rather
+        # than an error. Those take their issues through `args`.
+        case "$KEEL_COMMAND" in
+          ship|run-gates|plan)
+            [ -n "$KEEL_ISSUE" ] && ARGS+=(--issue "$KEEL_ISSUE") ;;
+        esac
+        # Word-split on purpose: `args` is a free-form flag string.
+        # shellcheck disable=SC2206
+        [ -n "$KEEL_ARGS" ] && ARGS+=($KEEL_ARGS)
+
+        OUT="$RUNNER_TEMP/keel-output.txt"
+        keel "$KEEL_COMMAND" "${ARGS[@]}" 2>&1 | tee "$OUT"
+        CODE=${PIPESTATUS[0]}
+
+        echo "code=$CODE" >> "$GITHUB_OUTPUT"
+        echo "file=$OUT" >> "$GITHUB_OUTPUT"
+        { echo "### ⚓ keel $KEEL_COMMAND"; echo '```'; cat "$OUT"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$FAIL_ON_BLOCK" = "true" ] && [ "$CODE" -ne 0 ]; then
+          echo "::error::keel $KEEL_COMMAND exited $CODE"
+          exit "$CODE"
+        fi
+        exit 0
+
+    - name: Comment on the pull request
+      if: ${{ inputs.comment == 'true' && inputs.pr != '' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        KEEL_PR: ${{ inputs.pr }}
+        KEEL_COMMAND: ${{ inputs.command }}
+        OUT: ${{ steps.run.outputs.file }}
+      run: |
+        set +e -u -o pipefail
+        if [ -z "$GH_TOKEN" ]; then
+          echo "::warning::comment requested but github-token is empty; skipping."
+          exit 0
+        fi
+        { echo "### ⚓ keel $KEEL_COMMAND"; echo '```'; cat "$OUT"; echo '```'; } > body.md
+        gh pr comment "$KEEL_PR" --body-file body.md || \
+          echo "::warning::could not post the comment (needs pull-requests: write)."

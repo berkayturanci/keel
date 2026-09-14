@@ -1543,11 +1543,28 @@ class TestTeamKnob(unittest.TestCase):
                 self.assertTrue(any(expected in e for e in errors), errors)
 
     def test_an_absent_team_does_not_rotate_config_hash(self):
-        baseline = cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID)))
+        """An added optional field must not move the hash for a project that never
+        used it — the same rule `delegate_profiles` follows.
 
-        # An added optional field must not change the hash for a project that never
-        # used it — the same rule `delegate_profiles` follows.
-        self.assertEqual(baseline, cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID))))
+        The body used to hash `VALID` twice and assert the two agreed, which is a
+        property of `config_hash` being a function and says nothing about `team`.
+        What carries the guarantee is that an absent `team` is a *different thing*
+        from one declared empty: `TeamPolicy` records that as `configured`, and a
+        version that dropped the distinction would hash both the same. So that is
+        what is asserted.
+        """
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        self.assertFalse(base.knobs.team.configured)
+
+        declared_empty = copy.deepcopy(VALID)
+        declared_empty["knobs"]["team"] = {}
+        parsed = cfg.parse_config(declared_empty)
+        self.assertTrue(parsed.knobs.team.configured)
+        self.assertNotEqual(
+            cfg.config_hash(base),
+            cfg.config_hash(parsed),
+            "a project that never wrote `team:` must not hash like one that wrote it empty",
+        )
 
     def test_config_hash_changes_when_and_only_when_team_changes(self):
         base = cfg.config_hash(cfg.parse_config(copy.deepcopy(VALID)))
@@ -1655,8 +1672,33 @@ class TestLoopKnob(unittest.TestCase):
     """``knobs.loop`` (#1165): parsed as written, refused when malformed, hash-neutral unset."""
 
     def test_unset_is_none_and_does_not_rotate_config_hash(self):
+        """Both halves of the name, because only one of them was ever checked.
+
+        The guarantee is that adding this knob left `config_hash` alone for every
+        project that never set it — stated in the #1165 changelog entry, in
+        `docs/keel/configuration.md`, and in #1165's own acceptance. It rests on
+        one guard in `config.py`, which omits the key entirely when the knob is
+        unset rather than hashing an empty mapping.
+
+        Asserting only that *setting* the knob rotates the hash cannot see that
+        guard: a version that always hashes `{"loop": {}}` rotates on a set knob
+        too, and passed the whole suite. What separates the two is the **empty
+        declaration** — `loop: {}` is a declaration keel keeps (see the test
+        below), so it must hash differently from never having written the key.
+        Fold the guard away and those two collide, which is the assertion that
+        was missing.
+        """
         base = cfg.parse_config(copy.deepcopy(VALID))
         self.assertIsNone(base.knobs.loop)
+
+        declared_empty = copy.deepcopy(VALID)
+        declared_empty["knobs"]["loop"] = {}
+        self.assertNotEqual(
+            cfg.config_hash(base),
+            cfg.config_hash(cfg.parse_config(declared_empty)),
+            "an unset knob must not hash like one declared empty",
+        )
+
         data = copy.deepcopy(VALID)
         data["knobs"]["loop"] = {"max_iterations": 2}
         parsed = cfg.parse_config(data)

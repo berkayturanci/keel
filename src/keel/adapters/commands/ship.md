@@ -681,15 +681,15 @@ red gate run is its proof). When `enabled` is true:
 1. **Iteration 1 is the ordinary implement pass** above, with the same dispatch table, the
    same retry and fall-back policy, the same attribution.
 2. **After every iteration, run the gates the loop can make green in the worktree and let
-   core decide.** `keel run-gates --defer-jury --json` executes every planned command gate
-   and reports the plan beside the outcomes; the loop judges the guard- and test-phase
-   ones. Save the report and hand it, with the
+   core decide.** `keel run-gates --phases guard,test --defer-jury --json` executes only
+   what the loop judges and reports the plan beside the outcomes; a `pre-merge` gate is
+   reported `not_run`, never executed. Save the report and hand it, with the
    *base* brief, to `keel loop brief`. Add `--loop` to that call when the run was started
    with `--loop`, so it resolves the policy the contract published:
 
    ```bash
-   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
-     > "$SCRATCH/iter-$K.json" || true
+   keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 \
+     --phases guard,test --defer-jury --json > "$SCRATCH/iter-$K.json"
    keel loop brief --project .keel/project.yaml --root . --iteration "$K" \
      --brief "$BRIEF" --gates "$SCRATCH/iter-$K.json" --title "$ISSUE_TITLE" \
      --out "$SCRATCH/brief-$((K + 1)).md" --json
@@ -699,9 +699,9 @@ red gate run is its proof). When `enabled` is true:
    — proceed to s5), `continue` (dispatch iteration K+1 with the rendered brief), or
    `budget-exhausted` (non-zero exit — the issue is **blocked**; do not iterate again and do
    not ask the implementer whether it is finished). `run-gates`'s own exit code is not the
-   verdict: it exits 1 whenever any planned gate is red — a deferred `pre-merge` gate
-   included — which is why the fence tolerates it; an unreadable report fails at `keel loop
-   brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
+   verdict, but with `--phases guard,test` it reflects only the gates this run judged: a
+   deferred `pre-merge` gate is `not_run`, not red, so the fence no longer has to tolerate
+   a non-zero exit. An unreadable report fails at `keel loop brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**
    (`decision.deferred`): they are s6–s10's to run, never the implementer's to turn green
    here, and never counted as green. **The gate run decides, never the delegate's text:** a
    result that says it is done with red gates is iteration K failing.

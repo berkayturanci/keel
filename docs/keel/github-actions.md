@@ -106,66 +106,92 @@ reports which arming rule fired (or which waiver applied) in its human and `--js
 so a skipped gate is always attributable to an explicit operator decision rather than a
 forgotten label.
 
-## Official 1-Click GitHub Action (`berkayturanci/keel-action`)
+## Official GitHub Action (`berkayturanci/keel`)
 
-Instead of writing manual pip install steps, use the official composite action:
+The action lives at keel's own root, and that is the file GitHub publishes as the
+[Marketplace listing](https://github.com/marketplace/actions/keel-autonomous-delivery-action).
+Pin it to a release tag:
 
 ```yaml
-name: Keel Autonomous Delivery
+name: Keel assessment
 on:
-  issues:
-    types: [labeled]
+  pull_request:
 
 jobs:
-  ship:
-    if: github.event.label.name == 'keel:ship'
+  assess:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      issues: write
+      contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # keel diffs against the base branch; a shallow checkout has no such ref.
           fetch-depth: 0
-      - uses: berkayturanci/keel-action@v1
+      - uses: berkayturanci/keel@v1.22.0
         with:
           command: ship
-          issue: ${{ github.event.issue.number }}
-          delegate: "anthropic-api:claude-opus-5"
+          config: .keel/project.yaml
+          pr: ${{ github.event.pull_request.number }}
+          keel-version: "1.22.0"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
 ```
 
-### Nightly Swarm Delivery Workflow
+That run is a **dry assessment** — it reports a decision and changes nothing. A
+mutating run names its consent scopes itself, through `args`; keel's consent gate
+is not something the action talks its way past:
+
 ```yaml
-name: Nightly Swarm
-on:
-  schedule:
-    - cron: "0 2 * * *" # Every night at 02:00
-  workflow_dispatch:
-
-jobs:
-  swarm:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - uses: berkayturanci/keel-action@v1
-        with:
-          command: swarm
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
+          command: ship
+          args: --live --approve-scope filesystem --approve-scope git --approve-scope github
 ```
+
+### Inputs
+
+| input | default | meaning |
+|---|---|---|
+| `command` | `ship` | `ship`, `run-gates`, `evidence-verify`, `verify-merge`, `swarm-plan`, `swarm-run`, `swarm-land`, `swarm-status`, `validate`, `plan` |
+| `config` | `.keel/project.yaml` | path to the project config |
+| `pr` | — | pull request number. Sent to `ship`, `evidence-verify` and `verify-merge` — the commands that assess one; **required** by the last two |
+| `issue` | — | issue number recorded on the run. Sent to `ship`, `run-gates` and `plan` only: on the swarm commands the same flag *selects* which issues to plan, so pass those through `args` |
+| `args` | — | extra arguments appended verbatim |
+| `keel-version` | `latest` | `keel-workflow` version from PyPI — pin it |
+| `python-version` | `3.12` | Python used to run keel |
+| `comment` | `false` | post the output as a PR comment (needs `pull-requests: write`) |
+| `fail-on-block` | `false` | fail the step when keel exits non-zero |
+| `github-token` | — | token for `gh`, usually `secrets.GITHUB_TOKEN` |
+
+Outputs: `exit-code` (keel's exit code) and `output-file` (the captured stdout).
+
+Delegate credentials are **not** action inputs — set them as job or step `env`, which
+composite steps inherit:
+
+```yaml
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+```
+
+### Swarm planning
+
+```yaml
+      - uses: berkayturanci/keel@v1.22.0
+        with:
+          command: swarm-plan
+          args: --issues 101,102,103 --json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+There is no `swarm` subcommand — the four real ones are `swarm-plan`, `swarm-run`,
+`swarm-land` and `swarm-status`.
 
 ## Adopting it in a consumer repo
 
-Add `.github/workflows/keel-ship.yml` with `uses: berkayturanci/keel-action@v1` and supply your project's API key secrets (`GEMINI_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`). Everything else (the runner, git, gh, quality gates, and reviewer panel) is handled automatically.
+Add `.github/workflows/keel-ship.yml` with `uses: berkayturanci/keel@v1.22.0`, pin
+`keel-version` to the same release, and set whichever delegate API keys your project
+uses as `env`. Everything else (the runner, git, gh, quality gates, and reviewer panel)
+is handled by keel itself.
 
 A repository that copied this workflow file rather than the action needs the `concurrency`
 block copied too, event name and all — an older copy keyed on the pull request number alone

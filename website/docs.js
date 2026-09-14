@@ -116,12 +116,21 @@
   var search = document.getElementById("docs-search-input");
   var noRes = document.getElementById("docs-no-results");
   if (search) {
+    // Armed by the reader's first keystroke, the way `integrations.js` arms on the
+    // first filter touch — and deliberately NOT an emptiness test on the query.
+    // Clearing the box is a result-set change worth announcing, and gating on
+    // `q` being non-empty silences exactly that.
+    var srArmed = false;
+    var srTimer = null;
     search.addEventListener("input", function () {
       var q = search.value.trim().toLowerCase();
       var any = false;
+      var count = 0;
+      srArmed = true;
       document.querySelectorAll(".doc-art").forEach(function (a) {
         var hit = !q || a.dataset.text.indexOf(q) > -1;
-        a.style.display = hit ? "" : "none"; if (hit) any = true;
+        a.style.display = hit ? "" : "none";
+        if (hit) { any = true; count++; }
       });
       document.querySelectorAll("#docs-nav a").forEach(function (a) {
         a.classList.toggle("hidden", !!q && a.dataset.text.indexOf(q) === -1);
@@ -131,6 +140,21 @@
         g.style.display = visible ? "" : "none";
       });
       if (noRes) noRes.classList.toggle("show", !any);
+
+      var sr = srArmed ? document.getElementById("sr-live-region") : null;
+      // Cancelled unconditionally: a keystroke landing while an announcement is
+      // pending must not let the stale one fire after the results moved on.
+      if (srTimer) { clearTimeout(srTimer); srTimer = null; }
+      if (sr) {
+        var announcement = !any
+          ? "No docs match that search."
+          : "Showing " + count + (count === 1 ? " result" : " results");
+        // Cleared first, set on a later tick: a live region announces a *change*,
+        // and typing "sh" then "shi" can leave the same text in place, which a
+        // screen reader reads as nothing happening.
+        sr.textContent = "";
+        srTimer = setTimeout(function () { sr.textContent = announcement; }, 300);
+      }
     });
   }
 

@@ -60,6 +60,11 @@ class GateError(ValueError):
     """Raised when a config references an unknown built-in gate."""
 
 
+#: The backbone steps a gate can run at. `keel run-gates --phases` validates against
+#: this, so a typo is refused rather than scoping the run to nothing (#1172).
+BACKBONE_PHASES: tuple[str, ...] = ("guard", "test", "pre-merge")
+
+
 @dataclass(frozen=True)
 class GateSpec:
     """A planned gate. ``phase`` is the backbone step it runs at."""

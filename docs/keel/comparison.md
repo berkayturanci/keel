@@ -81,9 +81,9 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 | Low-noise inline vs summary review UX | CodeRabbit, Qodo / PR-Agent, Cursor Bugbot | shipped basics; refine via review-cycle work |
 | Plugin/marketplace install surface | agent platforms and Claude Code plugin model | #135 |
 | Capability detection and safe degradation | agent platform packaging and local tool variance | shipped basics; reused by #134 |
-| Fixed-brief iteration with the gates as the judge | Ralph loop (Category 5) | #1165 |
-| Lessons read back into the next session's briefs | compound-engineering plugin (Category 5) | #1155 |
-| Learning files a knowledge-graph builder can link | graphify (Category 5) | #1166 (links), #1163 (landing) |
+| Fixed-brief iteration with the gates as the judge | Ralph loop (Category 5) | #1165 — shipped as `knobs.loop` / `--loop` |
+| Lessons read back into the next session's briefs | compound-engineering plugin (Category 5) | #1155 — shipped |
+| Learning files a knowledge-graph builder can link | graphify (Category 5) | #1166 shipped (links); #1163 open (landing) |
 
 ---
 
@@ -282,8 +282,10 @@ name for.
   independent review, gates, merge window and lock, closeout, capture — and a record. A
   Ralph run leaves no ledger of how many iterations ran, what each changed, or what the
   tests said between them: the stop hook deletes its state file when the promise is
-  detected or the iteration limit is reached, and nothing else is written.
-  [`plugins/ralph-wiggum` README](https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md).
+  detected or the iteration limit is reached, and the only other write bumps the iteration
+  counter in that same file.
+  [`plugins/ralph-wiggum` `hooks/stop-hook.sh`](https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/hooks/stop-hook.sh)
+  — the README describes the loop but never mentions the state file.
   Its completion criterion is the model's own claim (`--completion-promise "DONE"`): that
   README says the promise "uses exact string matching, so you cannot use it for multiple
   completion conditions" and to "always rely on `--max-iterations` as your primary safety
@@ -291,11 +293,11 @@ name for.
   prevent runaway loops".
   [`plugins/ralph-wiggum` README](https://github.com/anthropics/claude-code/blob/main/plugins/ralph-wiggum/README.md),
   [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
-- **What it does that keel does not (today)**: iterate the *implement* step itself. keel's
-  s4 is one pass; a red gate after it falls to the s9 fix loop (which reads review
-  findings) or to the host. #1165 is the proposal that closes this: the same fixed-brief
-  iteration with the **gates** as the judge, bounded by `knobs.loop.max_iterations`, one
-  commit per iteration in the ledger, on every host keel runs in.
+- **What it does that keel does not**: nothing, since #1165 shipped. keel's s4 iterates
+  under `knobs.loop` / `--loop`: the same fixed-brief iteration with the **gates** as the
+  judge — never the implementer's own text — bounded by `max_iterations` (1–10, default 3),
+  one commit per iteration in the ledger, on every host keel runs in. Where the Ralph loop
+  asks the model whether it is done, keel asks the gate run.
 - **Idea to borrow**: "the prompt stays fixed and the evidence changes" as the shape of the
   iteration brief — adopted by #1165. **Assessment**: the loop is the right primitive and
   the judge is the wrong one. keel keeps the loop and replaces "the model says DONE" with
@@ -304,11 +306,12 @@ name for.
 
 ### Compound engineering plugin
 - **What**: Every's official plugin for Claude Code, Codex, Cursor and other hosts — a
-  library of dozens of skills and agents around a six-step `brainstorm → plan → work →
-  simplify → review → compound` loop, whose last step captures lessons into a file the
-  agent reads on every future session. (The plugin's own command docs and the secondary
-  write-ups describe a longer command track around that loop — `/deepen-plan` and
-  `/triage` among them; the README's six steps are the loop itself.)
+  library of 35 skills around a six-step `brainstorm → plan → work → simplify → review →
+  compound` loop, whose last step writes one document per capture into `docs/solutions/`,
+  read by `ce-plan`, `ce-ideate` and `ce-code-review` rather than loaded on every session.
+  Its specialist reviewer and research prompts live inside the skills as local assets —
+  the README says so explicitly — so there is no separate `agents/` directory to install.
+  Installs are documented for around sixteen hosts, not three.
   [EveryInc/compound-engineering-plugin](https://github.com/everyinc/compound-engineering-plugin),
   [desktheory.com](https://desktheory.com/workflows/compound-engineering-plugin-claude-code),
   [rywalker.com](https://rywalker.com/research/compound-engineering-plugin)
@@ -351,9 +354,14 @@ name for.
   with `keel.learning.v1` front matter is plain Markdown a graph builder ingests as-is:
   `labels` cluster lessons, `changed_files` name the code nodes, and keel never learns what
   reads the folder (#1154). Two things decide whether the graph actually shows an edge from
-  a lesson to the file it is about: #1166 renders `changed_files` as Markdown links
-  (relative for the default in-repo sink), which a link-following builder resolves; and
-  #1163 lands the file on the base
+  a lesson to the file it is about, and the first is not the link: graphify's Markdown
+  extractor resolves a link only when its target is itself a document —
+  `_MD_LINKABLE_EXTS` is `.md/.mdx/.qmd/.markdown/.rst/.txt`, and the README says
+  reference edges run *between docs* — so `[src/keel/capture.py](../../src/keel/capture.py)`
+  produces no edge there. The path reaches graphify through its semantic pass, which reads
+  the whole file including the front matter, and #1166's links are for the readers that do
+  follow them (Obsidian, an agent walking an index). What the graph needs is #1163 landing
+  the file on the base
   branch from a worktree run, without which a fresh clone has an empty directory to graph.
 - **What it does that keel does not**: build a graph — and keel should not; its contract
   with every reader is "a directory of Markdown", nothing more.
@@ -385,8 +393,8 @@ or a learning reader. The one real gap the category exposed — iterating s4 at 
 **Host-plugin loops are not competitors either** (Category 5): the Ralph loop iterates one
 step with the model as the judge; the compound-engineering plugin shares keel's loop *shape*
 and none of its invariants; graphify reads the learnings keel writes. keel is the layer that
-decides when a loop is done — the gates — and what happens after; #1165 proposes to give s4
-that loop natively.
+decides when a loop is done — the gates — and what happens after, and since #1165 shipped
+it runs that loop in s4 itself.
 
 ---
 
@@ -510,5 +518,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 - Compound Engineering plugin research: https://rywalker.com/research/compound-engineering-plugin
 - Compound Engineering plugin (Context7 listing): https://context7.com/everyinc/compound-engineering-plugin
 - graphify repo: https://github.com/Graphify-Labs/graphify
-- graphify site: https://graphify.net/
+- graphify site: https://www.graphify.com/ (the repository's own `homepage`)
+- graphify third-party listing: https://graphify.net/ — **not** the project's site, and
+  still reports the licence as MIT; kept here only because this page cites it above
 - graphify overview (AI/TLDR): https://ai-tldr.dev/tools/graphify/

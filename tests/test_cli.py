@@ -24,6 +24,7 @@ from keel import (
     install,
     juryavail,
     ledger,
+    loop,
     model,
     runtime,
     ship,
@@ -1182,6 +1183,175 @@ class TestWindow(unittest.TestCase):
         rc, _, err = run(["window", _write_raw("extends: keel\n")])
         self.assertEqual(rc, 1)
         self.assertIn("invalid keel config", err)
+
+
+class TestOneBaseRef(unittest.TestCase):
+    """Every command diffs against the same base ref (#1184, follow-on of #1174).
+
+    `_gate_runner` runs the **jury** on the diff, so a second spelling of the base ref
+    means the same jury, on the same branch, at the same head, is handed different input
+    depending on which command invoked it. #1174 moved `keel ship` to `origin/<base>` and
+    left `keel run-gates` on the local branch; `_gather_branch_facts` was a third spelling,
+    a bare remote ref with no fallback at all.
+    """
+
+    def test_it_prefers_the_remote_ref_and_falls_back_to_the_local_branch(self):
+        with patch("keel.git.rev_parse", return_value="abc1234"):
+            self.assertEqual(cli._ship_base_ref("main", "."), "origin/main")
+        # An offline or freshly-initialised checkout has no remote-tracking ref; the
+        # configured branch keeps it fail-soft rather than diffing against nothing.
+        with patch("keel.git.rev_parse", return_value=None):
+            self.assertEqual(cli._ship_base_ref("main", "."), "main")
+
+    def test_ship_and_run_gates_ask_for_the_same_ref(self):
+        import tempfile
+
+        seen: dict[str, list] = {"ship": [], "run-gates": []}
+
+        def record(command):
+            def _diff(base, head, **kwargs):
+                seen[command].append((base, head))
+                return ""
+
+            return _diff
+
+        for command in ("ship", "run-gates"):
+            with (
+                tempfile.TemporaryDirectory() as d,
+                patch("keel.git.changed_files", return_value=[]),
+                patch("keel.git.rev_parse", return_value="abc1234"),
+                patch("keel.git.diff", side_effect=record(command)),
+            ):
+                run([command, _write_config("'true'"), "--root", d])
+
+        self.assertTrue(seen["ship"], "ship diffed nothing")
+        self.assertTrue(seen["run-gates"], "run-gates diffed nothing")
+        # The pair, not a hard-coded ref: what matters is that neither can drift from
+        # the other, whichever spelling `_ship_base_ref` settles on.
+        self.assertEqual(
+            {base for base, _ in seen["ship"]}, {base for base, _ in seen["run-gates"]}
+        )
+
+    def test_the_local_branch_is_not_what_either_reaches_for_when_the_remote_exists(self):
+        import tempfile
+
+        bases: list[str] = []
+
+        def _diff(base, head, **kwargs):
+            bases.append(base)
+            return ""
+
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.git.changed_files", return_value=[]),
+            patch("keel.git.rev_parse", return_value="abc1234"),
+            patch("keel.git.diff", side_effect=_diff),
+        ):
+            run(["run-gates", _write_config("'true'"), "--root", d])
+        self.assertTrue(bases)
+        # `main...HEAD` after a base merge carries the commits that merge brought in —
+        # the false-positive class #1174 removed from ship and left here.
+        self.assertTrue(all(base.startswith("origin/") for base in bases), bases)
+
+
+class TestRunGatePhaseScope(unittest.TestCase):
+    """`keel run-gates --phases` (#1172).
+
+    The s4 loop judges the guard and test phases and defers the rest — but the runner
+    still *executed* a `pre-merge` Lego on every iteration, and its red result was what
+    made `run-gates` exit non-zero on an otherwise green one. The recipe tolerated that
+    with `|| true`, which also swallowed a genuine failure.
+    """
+
+    @staticmethod
+    def _specs(mark):
+        from keel.gates import GateSpec
+
+        return (
+            GateSpec("build", "command", "test", "block", run="true"),
+            GateSpec(
+                "release-check",
+                "command",
+                "pre-merge",
+                "block",
+                run=f"sh -c 'echo ran >> {mark}; exit 1'",
+            ),
+        )
+
+    def test_a_gate_outside_the_scope_is_reported_not_run_and_never_executed(self):
+        with tempfile.TemporaryDirectory() as d:
+            mark = str(Path(d) / "ran")
+            from keel import gates
+
+            specs = self._specs(mark)
+            outcomes = gates.run_gates(
+                specs,
+                cli._gate_runner(d, "", run_jury=False, phases=frozenset({"guard", "test"})),
+            )
+            by_id = {o.gate: o for o in outcomes}
+            self.assertTrue(by_id["build"].ok)
+            self.assertFalse(by_id["build"].not_run)
+            # Reported, with its severity, exactly as `--defer-jury` reports the jury.
+            self.assertTrue(by_id["release-check"].not_run)
+            self.assertTrue(by_id["release-check"].ok)
+            self.assertEqual(by_id["release-check"].on_fail, "block")
+            self.assertFalse(Path(mark).exists(), "the pre-merge command was executed")
+
+    def test_without_a_scope_every_planned_phase_still_runs(self):
+        # s8 is unscoped, and this change does not touch it.
+        with tempfile.TemporaryDirectory() as d:
+            mark = str(Path(d) / "ran")
+            from keel import gates
+
+            outcomes = gates.run_gates(self._specs(mark), cli._gate_runner(d, "", run_jury=False))
+            release = {o.gate: o for o in outcomes}["release-check"]
+            self.assertFalse(release.not_run)
+            self.assertFalse(release.ok)
+            self.assertTrue(Path(mark).exists())
+
+    def test_the_tdd_order_gate_honours_the_scope_too(self):
+        """It is evaluated outside the runner, so the scope has to reach it separately.
+
+        `split_deferred` pulls `tdd-order` out and `_run_planned_gates` evaluates it
+        directly, which meant a scope excluding its phase still ran it — the one gate
+        `--phases` did not cover.
+        """
+        from keel import config as project_config
+        from keel.gates import GateSpec
+
+        with tempfile.TemporaryDirectory() as d:
+            config = project_config.load_config(_write_config("'true'"))
+            specs = (
+                GateSpec("build", "command", "test", "block", run="true"),
+                GateSpec("tdd-order", "builtin", "test", "block"),
+            )
+            outcomes, result = cli._run_planned_gates(
+                specs,
+                cli._gate_runner(d, "", run_jury=False, phases=frozenset({"guard"})),
+                config=config,
+                root=d,
+                phases=frozenset({"guard"}),
+            )
+            order = {o.gate: o for o in outcomes}["tdd-order"]
+            self.assertTrue(order.not_run)
+            self.assertIsNone(result)
+
+    def test_an_unknown_phase_is_refused_rather_than_scoping_to_nothing(self):
+        # A typo that matched nothing would report every gate not_run and exit 0 — a green
+        # answer from a run that checked nothing.
+        for value in ("guard,typo", "", "  ", "premerge"):
+            with self.subTest(value=value):
+                self.assertIs(cli._run_gate_phases(value), cli._PHASE_SCOPE_INVALID)
+        self.assertIsNone(cli._run_gate_phases(None))
+        self.assertEqual(cli._run_gate_phases("guard, test"), frozenset({"guard", "test"}))
+
+    def test_the_cli_exits_two_on_an_unknown_phase(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, _, err = run(
+                ["run-gates", _write_config("'true'"), "--root", d, "--phases", "guard,typo"]
+            )
+        self.assertEqual(rc, 2)
+        self.assertIn("--phases", err)
 
 
 class TestShipWizard(unittest.TestCase):
@@ -6721,6 +6891,37 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
         )
         base.update(kw)
         return Namespace(**base)
+
+    def test_an_unresolvable_remote_base_skips_rather_than_using_the_local_branch(self):
+        """verify-branch asks about `origin/<base>` or declines (#1184 round 2).
+
+        `_ship_base_ref` falls back to the local branch so a *diff* always has something
+        to diff against. That fallback is wrong here: the ancestry verdict would be
+        answered against a ref that may be days behind, while the summary still prints
+        `origin/<base>` — a pass reported for an origin nobody observed.
+        `docs/keel/cli.md` and `branchscope._check_ancestry` both promise the skip.
+        """
+        asked: list[str] = []
+
+        def _rev_parse(ref, **kwargs):
+            asked.append(ref)
+            # The shape that matters: the remote ref is gone, the local branch is not.
+            return None if ref.startswith("origin/") else "local1234"
+
+        with (
+            patch("keel.git.rev_parse", side_effect=_rev_parse),
+            patch("keel.git.merge_base", return_value=None),
+            patch("keel.git.rev_count", return_value=None),
+            patch("keel.cli._gh_json", return_value={"head": {"sha": "h", "ref": "r"}}),
+        ):
+            # Worktree facts supplied so only the ancestry seam is exercised here.
+            facts = cli._gather_branch_facts(
+                self._args(worktree_path="/repo", repo_root="/repo", linked_worktree=False),
+                "develop",
+            )
+
+        self.assertIsNone(facts["base_tip_sha"], "a missing origin ref must skip, not substitute")
+        self.assertEqual(asked, ["origin/develop"], "the local branch must not be asked for")
 
     def test_supplied_facts_short_circuit_live_calls(self):
         # Ancestry facts pre-supplied + no head_ref → every `is None` guard takes
@@ -14173,6 +14374,77 @@ class TestLoopCommand(unittest.TestCase):
             data["result"]["closure_comment"],
         )
 
+    def test_ship_records_an_explicit_budget_and_judges_against_it(self):
+        """`--max-iterations` on ship, so a run records the budget it actually used (#1173).
+
+        `keel loop brief` always took an explicit budget; ship did not, so a run that
+        looped four times under `--max-iterations 4` reached s11 and was refused —
+        "iteration 4 exceeds the budget of 3" — against a policy it had never run under,
+        after the work was done.
+        """
+        root, config = self._config()
+        rc, out, _ = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--loop",
+                "--max-iterations",
+                "4",
+                "--loop-iteration",
+                "4=" + "d" * 40 + ":pass",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        block = json.loads(out)["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertTrue(block["enabled"])
+        self.assertEqual(block["max_iterations"], 4)
+        self.assertEqual(block["source"], loop.SOURCE_BUDGET_FLAG)
+        self.assertEqual([i["iteration"] for i in block["iterations"]], [4])
+
+    def test_without_the_flag_the_over_budget_refusal_is_unchanged(self):
+        root, config = self._config()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    root,
+                    "--loop",
+                    "--loop-iteration",
+                    "4=" + "d" * 40 + ":pass",
+                    "--dry-run",
+                    "--json",
+                ]
+            )
+        self.assertNotEqual(rc, 0)
+
+    def test_a_run_with_the_loop_off_publishes_no_budget(self):
+        # `enabled: false` used to sit beside the resolved default while `iteration_problem`
+        # enforced nothing, so the field read as a bound nobody set (#1173).
+        root, config = self._config()
+        rc, out, _ = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--loop-iteration",
+                "1=" + "a" * 40 + ":pass",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        block = json.loads(out)["result"]["run_ledger"]["record"]["run_context"]["implement_loop"]
+        self.assertFalse(block["enabled"])
+        self.assertIsNone(block["max_iterations"])
+
     def _refuses(self, value):
         root, config = self._config()
         err = io.StringIO()
@@ -14539,20 +14811,36 @@ class TestLoopCommand(unittest.TestCase):
         return str(root), str(config)
 
     def test_run_gates_json_scopes_the_loop_to_the_gates_it_can_make_green(self):
-        """The packaged recipe: `keel run-gates --defer-jury --json` -> `keel loop brief`.
+        """The packaged recipe, as the adapter writes it, end to end.
 
-        A failing soft gate, an agentic blocking gate nobody ran, a pre-merge gate that
-        needs the PR and a jury the loop must not convene are all *listed* — and none of
-        them holds the loop open or counts as green. Only the build decides.
+        `keel run-gates --phases guard,test --defer-jury --json` -> `keel loop brief`. A
+        failing soft gate, an agentic blocking gate nobody ran, a pre-merge gate that needs
+        the PR and a jury the loop must not convene are all *listed* — and none of them
+        holds the loop open or counts as green. Only the build decides.
+
+        The invocation carries `--phases` and the exit code is asserted to be **0**,
+        because without both this test passed identically before #1172 and would pass
+        again if the scope were deleted from the runner and the adapter.
         """
         root, config = self._scoped_project("'true'")
         with patch("keel.git.diff", return_value=""):
             rc, out, _ = run(
-                ["run-gates", config, "--root", root, "--phase", "s4", "--defer-jury", "--json"]
+                [
+                    "run-gates",
+                    config,
+                    "--root",
+                    root,
+                    "--phase",
+                    "s4",
+                    "--phases",
+                    "guard,test",
+                    "--defer-jury",
+                    "--json",
+                ]
             )
-        # release-check is red, so the s8-style exit is 1 — the loop reads the document,
-        # not the exit code.
-        self.assertEqual(rc, 1)
+        # The scope means release-check never ran, so the exit reflects only what the loop
+        # judged. Before #1172 this was 1, which is why the fence carried `|| true`.
+        self.assertEqual(rc, 0)
         report = json.loads(out)
         self.assertEqual(report["schema_version"], "keel.run-gates.v1")
         self.assertFalse(report["jury_run"])
@@ -14563,6 +14851,9 @@ class TestLoopCommand(unittest.TestCase):
         self.assertEqual(
             {g["id"]: g["phase"] for g in report["gates"]}["release-check"], "pre-merge"
         )
+        # Reported, with its severity, and never executed.
+        self.assertTrue(by_id["release-check"]["not_run"])
+        self.assertEqual(by_id["release-check"]["on_fail"], "block")
         gates_file = self.scratch / "iter-1.json"
         gates_file.write_text(out, encoding="utf-8")
         rc, out, _ = self.brief(

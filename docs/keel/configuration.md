@@ -1107,9 +1107,10 @@ knobs:
 The contract, which `/keel:ship` drives and `keel loop brief` decides:
 
 - **Iteration 1 is the ordinary implement pass.** After each iteration the orchestrator
-  runs `keel run-gates --phase s4 --defer-jury --json` inside the worktree — it executes
-  every planned command gate and reports the plan beside the outcomes — and the loop judges
-  the guard- and test-phase gates of kind `command` or built-in (`build`, `lint`, the
+  runs `keel run-gates --phase s4 --phases guard,test --defer-jury --json` inside the
+  worktree — it executes only the phases the loop judges and reports the plan beside the
+  outcomes — and the loop judges the guard- and test-phase gates of kind `command` or
+  built-in (`build`, `lint`, the
   presets, any `tester`/`test` Lego of kind `command`). An agentic Lego, the jury and a
   `pre-merge` gate are **deferred**: listed in the brief, never counted as green, never
   holding the loop open — the review, test and merge phases decide them, and no iteration

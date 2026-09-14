@@ -116,6 +116,26 @@ def _gate_status(outcome) -> str:
     return "TIMEOUT" if outcome.timed_out else "FAIL"
 
 
+#: Sentinel for a `--phases` value naming a phase keel has no gates for. Distinct from
+#: `None`, which means "no scope: run every planned phase".
+_PHASE_SCOPE_INVALID = frozenset({"\x00invalid"})
+
+
+def _run_gate_phases(value: str | None) -> frozenset[str] | None:
+    """Parse ``--phases``: ``None`` for no scope, a set, or :data:`_PHASE_SCOPE_INVALID`.
+
+    Refused rather than silently narrowed, because a typo that scoped the run to nothing
+    would report every gate ``not_run`` and exit 0 — a green answer from a run that
+    checked nothing, which is the shape `--require-armed` exists to refuse elsewhere.
+    """
+    if value is None:
+        return None
+    names = frozenset(part.strip() for part in value.split(",") if part.strip())
+    if not names or not names <= frozenset(gates.BACKBONE_PHASES):
+        return _PHASE_SCOPE_INVALID
+    return names
+
+
 def _gate_runner(
     root: str,
     diff_text: str,
@@ -123,8 +143,16 @@ def _gate_runner(
     jury_mode: str = "gating",
     timeout: int = DEFAULT_GATE_TIMEOUT_S,
     run_jury: bool = True,
+    phases: frozenset[str] | None = None,
 ):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
+
+    ``phases`` scopes the run the way ``run_jury`` scopes the panel: a spec whose phase
+    is outside the set is reported ``not_run`` and its command is never executed. The s4
+    loop judges only the guard and test phases (:data:`keel.loop.JUDGED_PHASES`) and
+    defers the rest, but without this the runner still *paid* for a ``pre-merge`` Lego on
+    every iteration and its red result was what made ``run-gates`` exit non-zero on an
+    otherwise green one (#1172). ``None`` runs every planned phase, which is s8.
 
     ``timeout`` is the project's ``knobs.gate_timeout_s``; it covers any command spec
     that reached the runner without a resolved per-gate limit. The jury builtin reads
@@ -137,6 +165,10 @@ def _gate_runner(
     commands = command_gate_runner(root, timeout=timeout)
 
     def run(spec: GateSpec):
+        # Same shape the jury takes below, and the same reason: a gate this run is not
+        # judging must be reported, never executed, and never recorded as a pass.
+        if phases is not None and spec.phase not in phases:
+            return True, [], False, True
         if spec.kind == "builtin" and spec.id == "jury":
             if not run_jury:
                 return True, [], False, True
@@ -176,6 +208,7 @@ def _run_planned_gates(
     *,
     config: cfg.ProjectConfig,
     root: str,
+    phases: frozenset[str] | None = None,
 ) -> tuple[list[GateOutcome], tdd.OrderResult | None]:
     """Run the planned gates, evaluating the deferred ``tdd-order`` gate last.
 
@@ -193,6 +226,12 @@ def _run_planned_gates(
     # (#1165): a pre-merge gate needs the pull request and says nothing about the tests
     # the branch was written against, and it would otherwise turn the order gate red on
     # every loop iteration of a project that carries one.
+    # `tdd-order` is evaluated here rather than through the runner, so the runner's phase
+    # scope does not reach it. Apply the same test: a scope that excludes its phase must
+    # report it `not_run`, like any other gate outside the run (#1172).
+    if phases is not None and later[0].phase not in phases:
+        outcomes.append(gates.run_gates((later[0],), lambda _spec: (True, [], False, True))[0])
+        return outcomes, None
     phase_of = {spec.id: spec.phase for spec in now}
     judged = [o for o in outcomes if phase_of.get(o.gate) in loop.JUDGED_PHASES]
     green = not fnd.summarize(gates.collect_findings(judged)).blocked
@@ -388,6 +427,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         review_delegates=tuple(args.review_delegate),
         tdd_override=args.tdd,
         loop_override=getattr(args, "loop", False),
+        loop_budget=getattr(args, "max_iterations", None),
         # The panel-availability probe for the tier this contract is being built at
         # (#1066) — the same measurement `_review_assignment` hands the other six
         # surfaces, so `keel plan` cannot publish a panel the run it plans could not
@@ -460,7 +500,22 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
     if evaluation.missing_optional:
         print(evaluation.render(), file=sys.stderr)
 
-    diff_text = git.diff(config.base_branch, "HEAD", cwd=args.root)
+    # The same helper `keel ship` uses. `_gate_runner` runs the **jury** on this diff,
+    # so a second spelling meant the same jury on the same branch at the same head got
+    # different input depending on which command invoked it: after a base merge,
+    # `main...HEAD` carries the commits that merge brought in and `origin/main...HEAD`
+    # does not (#1184).
+    phases = _run_gate_phases(args.phases)
+    if phases is _PHASE_SCOPE_INVALID:
+        print(
+            f"--phases: unknown phase in {args.phases!r}; "
+            f"choose from {', '.join(gates.BACKBONE_PHASES)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    base_ref = _ship_base_ref(config.base_branch, args.root)
+    diff_text = git.diff(base_ref, "HEAD", cwd=args.root)
     outcomes, _tdd_result = _run_planned_gates(
         specs,
         _gate_runner(
@@ -469,9 +524,11 @@ def _cmd_run_gates(args: argparse.Namespace) -> int:
             jury_mode="gating",
             timeout=config.knobs.gate_timeout_s,
             run_jury=not args.defer_jury,
+            phases=phases,
         ),
         config=config,
         root=args.root,
+        phases=phases,
     )
     verdict = fnd.summarize(gates.collect_findings(outcomes))
     # Stamp *after* the verdict exists, and carry it. Stamping on reach alone recorded
@@ -1213,14 +1270,34 @@ def _review_assignment(
     )
 
 
-def _ship_base_ref(base_branch: str, root: str) -> str:
-    """Return the canonical base ref for ship's branch diff.
+def _remote_base_ref(base_branch: str) -> str:
+    """The remote-tracking name for the base branch — the one spelling of it.
 
-    A fetched ``origin/<base>`` is authoritative when available.  Falling back
-    to the configured local branch keeps dry-run and offline repositories
-    fail-soft while preserving the historical behaviour there.
+    Separate from :func:`_ship_base_ref` because the *name* is shared and the
+    *fallback* is not. A diff wants something to diff against; a verdict would
+    rather decline than judge against the wrong ref.
     """
-    remote_ref = f"origin/{base_branch}"
+    return f"origin/{base_branch}"
+
+
+def _ship_base_ref(base_branch: str, root: str) -> str:
+    """The base ref a command **diffs** against.
+
+    ``origin/<base>`` when the remote-tracking ref resolves, else the configured local
+    branch, which keeps dry-run and offline repositories fail-soft. Three commands used
+    to spell this three ways — ``keel ship`` through here, ``keel run-gates`` with the
+    local branch, and ``_gather_branch_facts`` with a bare remote ref and no fallback —
+    and `_gate_runner` runs the **jury** on the resulting diff, so the same jury on the
+    same branch at the same head received different input depending on the entry point.
+    After a base merge, ``<base>...HEAD`` carries the commits that merge brought in;
+    ``origin/<base>...HEAD`` carries only the branch's own (#1184, #1174).
+
+    **keel does not fetch.** This prefers whatever the checkout already has, so a
+    worktree that has not fetched in a week prefers a week-old ref over a local branch
+    the operator may keep current. Keeping the ref fresh belongs to whatever drives
+    keel; a fetch here would put a network call inside a diff.
+    """
+    remote_ref = _remote_base_ref(base_branch)
     return remote_ref if git.rev_parse(remote_ref, cwd=root) else base_branch
 
 
@@ -1267,7 +1344,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         return 1
     mode = tdd.resolve_mode(config.knobs.implement_mode, flag=args.tdd)
     loop_policy = loop.resolve(
-        config.knobs.loop, flag=getattr(args, "loop", False), implement_mode=mode.name
+        config.knobs.loop,
+        flag=getattr(args, "loop", False),
+        implement_mode=mode.name,
+        # `keel plan` has no such flag, so ask rather than assume (#1173).
+        max_iterations=getattr(args, "max_iterations", None),
     )
     loop_problem = loop.iteration_problem(loop_policy, getattr(args, "loop_iteration", None) or ())
     if loop_problem:
@@ -1316,6 +1397,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         host_agent=args.host_agent or agents.HOST_DEFAULT,
         tdd_override=args.tdd,
         loop_override=getattr(args, "loop", False),
+        loop_budget=getattr(args, "max_iterations", None),
         # The preflight contract is built before s5 classifies, so its tier is
         # unresolved and no tier's policy can be the panel yet; this probes only when
         # a `review.default: jury` — or the `--team` profile's own `review` — makes the
@@ -2751,7 +2833,7 @@ def _loop_policy(args: argparse.Namespace) -> tuple[loop.LoopPolicy | None, str,
                 True,
                 args.max_iterations,
                 args.gate_output_max_bytes or loop.DEFAULT_GATE_OUTPUT_MAX_BYTES,
-                "flag:--max-iterations",
+                loop.SOURCE_BUDGET_FLAG,
                 loop.WRAPS_IMPLEMENTATION if args.tdd else loop.WRAPS_IMPLEMENT,
             ),
             "ok",
@@ -3916,7 +3998,7 @@ def _cmd_verify_branch(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(f"keel verify-branch — {report['status']}  PR #{args.pr}")
-        print(f"  base          : origin/{base_branch}")
+        print(f"  base          : {_remote_base_ref(base_branch)}")
         print(f"  verdict       : {report['verdict']}")
         ancestry = report["ancestry"]
         if ancestry["base_distance"] is not None:
@@ -3942,7 +4024,6 @@ def _gather_branch_facts(args: argparse.Namespace, base_branch: str) -> dict[str
     """
     head_sha = args.head_sha
     head_ref = args.head_ref
-    base_ref = f"origin/{base_branch}"
     if head_sha is None and not args.offline:
         owner_repo = _owner_repo_from_args(args)
         pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
@@ -3955,7 +4036,15 @@ def _gather_branch_facts(args: argparse.Namespace, base_branch: str) -> dict[str
     base_distance = args.base_distance
     if not args.offline:
         if base_tip_sha is None:
-            base_tip_sha = git.rev_parse(base_ref, cwd=args.root)
+            # **The remote ref or nothing**, never `_ship_base_ref`: the name is shared,
+            # the fallback is not. `docs/keel/cli.md` and `branchscope._check_ancestry`
+            # both promise that a fact which cannot be resolved becomes `None` and the
+            # check is skipped as advisory. Falling back to the local branch would answer
+            # the ancestry question against a ref that may be days behind while the summary
+            # still printed `origin/<base>` — a pass reported for an origin nobody observed.
+            # Resolved here, not hoisted: a caller supplying `--base-tip-sha` wants no live
+            # call, and hoisting turned that documented short-circuit into one `rev-parse`.
+            base_tip_sha = git.rev_parse(_remote_base_ref(base_branch), cwd=args.root)
         if merge_base_sha is None and head_sha is not None and base_tip_sha is not None:
             merge_base_sha = git.merge_base(head_sha, base_tip_sha, cwd=args.root)
         if base_distance is None and merge_base_sha is not None and base_tip_sha is not None:
@@ -6948,6 +7037,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="add the tdd-order gate to this run, as implement_mode: tdd would",
     )
     p_run.add_argument(
+        "--phases",
+        default=None,
+        help="comma-separated backbone phases to execute (guard, test, pre-merge); a gate "
+        "outside the scope is reported not_run, exactly as --defer-jury reports the jury. "
+        "The s4 loop passes `--phases guard,test`, which is what it judges (#1172)",
+    )
+    p_run.add_argument(
         "--defer-jury",
         action="store_true",
         help="report the jury built-in not_run — deferred to the phase that convenes it — "
@@ -8812,6 +8908,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="render conflict-free DAG waves and clusters for a swarm of issues",
     )
     p_sp.add_argument("path", help="path to project.yaml")
+    # Accepted for parity with every sibling that takes a `path`, and because the
+    # published Action builds one argv shape for all of them — `<config> --root .`
+    # plus the command's own flags. `swarm-plan` was the only subcommand whose
+    # parser refused it, so `command: swarm-plan` exited 2 with
+    # `unrecognized arguments: --root .` (#1153). The plan itself is pure: it reads
+    # the config it is given and renders waves, so nothing here resolves against a
+    # root. The flag is part of the interface, not an input to the planning.
+    p_sp.add_argument("--root", default=".", help="repo root, for interface parity")
     p_sp.add_argument(
         "--issues", default=None, help="comma-separated issue numbers (e.g. 101,102,103)"
     )
@@ -9267,6 +9371,18 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         "--loop",
         action="store_true",
         help=_LOOP_FLAG_HELP,
+    )
+    # `keel loop brief` has always taken an explicit budget; ship had no counterpart, so a
+    # run that looped four times under `--max-iterations 4` was refused at s11 — "iteration
+    # 4 exceeds the budget of 3" — against a policy it never used, after the work was done
+    # (#1173). Same bound as `loop brief`'s, so one budget cannot be legal to run and
+    # illegal to record.
+    parser.add_argument(
+        "--max-iterations",
+        type=_bounded_int(loop.MIN_ITERATIONS, loop.MAX_ITERATIONS_LIMIT),
+        default=None,
+        help="explicit loop budget for this run (1..10), recorded as its source; "
+        "without it knobs.loop and --loop are the policy",
     )
     _add_wizard_arguments(parser)
     parser.add_argument("--json", action="store_true", help="emit structured JSON")

@@ -85,7 +85,7 @@ jobs:
       # formatter turns every PR red the day ruff changes its style, for
       # reasons that have nothing to do with the change under review.
       - name: Install the pinned formatter
-        run: python -m pip install --upgrade pip && pip install "ruff==0.16.5"
+        run: python -m pip install --upgrade pip && pip install "ruff==0.16.7"
       - name: Format
         run: ruff format --check .
 
@@ -183,3 +183,44 @@ jobs:
         run: |
           coverage run --rcfile=keel-visual/pyproject.toml -m unittest discover -s keel-visual/tests
           coverage report --rcfile=keel-visual/pyproject.toml
+
+  action-smoke:
+    # `action.yml` is the Marketplace listing — the first thing a stranger runs.
+    # Nothing in this repository had ever executed it: every check read the file
+    # as data, so a `command:` naming a subcommand that does not exist, an argv
+    # the parser refuses, and two outputs nothing writes all shipped green (#1153).
+    # `uses: ./` runs the file the release publishes, against this checkout.
+    name: the published action runs
+    runs-on: ubuntu-latest
+    # measured ~1 min; it installs from PyPI, so the ceiling is the bound that exists.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # keel diffs against the base branch; the action warns on a shallow one.
+          fetch-depth: 0
+      - name: Run the action against this repository
+        id: keel
+        uses: ./
+        with:
+          command: validate
+          config: .keel/project.yaml
+      - name: The declared outputs carry values
+        env:
+          EXIT_CODE: ${{ steps.keel.outputs.exit-code }}
+          OUTPUT_FILE: ${{ steps.keel.outputs.output-file }}
+        run: |
+          set -euo pipefail
+          # Both outputs were declared and never written before #1153, so an empty
+          # string here is the regression this job exists to catch.
+          test -n "$EXIT_CODE" || { echo "::error::exit-code output is empty"; exit 1; }
+          test -n "$OUTPUT_FILE" || { echo "::error::output-file output is empty"; exit 1; }
+          test -f "$OUTPUT_FILE" || { echo "::error::output-file names no file"; exit 1; }
+          # keel's own exit code is deliberately **not** asserted to be 0. The action
+          # installs the released keel-workflow from PyPI, and this repository's config
+          # routinely uses knobs newer than the last release — `keel validate` answering
+          # "unknown property" there is the version gap, not a broken action. What this
+          # job proves is that the file runs, reports, and honours `fail-on-block: false`
+          # by reaching this step at all.
+          echo "action ran: exit=$EXIT_CODE output=$OUTPUT_FILE"
+          head -5 "$OUTPUT_FILE"

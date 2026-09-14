@@ -1185,7 +1185,7 @@ function of the iteration number, the outcomes and the policy:
 
 The loop judges the gates `keel ship` runs on the tree before a pull request exists — the
 guard and test phases, of kind `command` or built-in — and that is what the packaged recipe
-runs: `keel run-gates --phase s4 --defer-jury --json`, whose report carries the plan beside
+runs: `keel run-gates --phase s4 --phases guard,test --defer-jury --json`, whose report carries the plan beside
 the outcomes. A soft gate (`on_fail: suggest` / `warn`) that failed does not hold the loop
 open: it never held a merge either. An agentic gate the command runner did not execute
 (`not_run`), the jury under `--defer-jury`, and a `pre-merge` gate are **deferred**: listed in
@@ -1210,15 +1210,21 @@ or `enabled: false`) with no `--loop` is a refusal (`status: off`, exit 1), as a
 command cannot read is (`status: no-config`, exit 1), rather than a loop nobody bounded;
 `--project` / `--root` name the project, and `--max-iterations N` (1..10) supplies an
 explicit budget for a run without a readable config. `--gate-output-max-bytes N` (at least
-256) overrides the cap; both flags hold the bounds the schema holds the knob to. The
-explicit budget is not recordable: `keel ship --loop-iteration` judges each number against
-the project's policy (`knobs.loop`, or `--loop`'s default), so a looped run that will be
-recorded needs the knob or the flag, not `--max-iterations`. `--tdd` says the run is in
+256) overrides the cap; both flags hold the bounds the schema holds the knob to.
+`keel ship` takes the same `--max-iterations N`, so a run bounded by the flag records the
+budget it actually used: it outranks both `knobs.loop` and `--loop`, publishes
+`source: flag:--max-iterations`, and `--loop-iteration` is judged against it. Without the
+flag each number is still judged against the project's policy, so `--loop-iteration 4=…`
+under a default budget of 3 is refused as it always was. `--tdd` says the run is in
 `implement_mode: tdd`, so the published `wraps` reads `implementation`.
 
+A run whose policy is **off** publishes `max_iterations: null` in
+`run_context.implement_loop`: it bounded nothing, and the field used to carry the resolved
+default beside `enabled: false` while no number was being enforced.
+
 ```bash
-keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 --defer-jury --json \
-  > "$SCRATCH/iter-1.json" || true   # exits 1 on any red gate, a deferred one included
+keel run-gates .keel/project.yaml --root "$WORKTREE" --phase s4 \
+  --phases guard,test --defer-jury --json > "$SCRATCH/iter-1.json"
 keel loop brief --project .keel/project.yaml --root . --iteration 1 \
   --brief "$SCRATCH/brief.md" --gates "$SCRATCH/iter-1.json" \
   --title "$ISSUE_TITLE" --out "$SCRATCH/brief-2.md" --json
@@ -1648,8 +1654,10 @@ used as-is.
 `--json` emits the machine report the [s4 loop](configuration.md#loop) reads — `keel.run-gates.v1`:
 the planned `gates` (id, kind, phase, severity) beside the `gate_outcomes` (each with `ok`,
 `on_fail`, `not_run`, findings), `jury_run`, and `blocked`; the exit code is unchanged, and
-the human listing is not printed — and it is the s8 verdict, a red `pre-merge` gate the loop
-defers included, so the loop recipe tolerates it and reads the report instead. `--defer-jury`
+the human listing is not printed. `--phases guard,test` scopes the run to what the loop
+judges: a gate at another phase is reported `not_run` with its `on_fail` and its command is
+never executed, so the exit code reflects only the judged gates and the loop recipe no longer
+has to tolerate one. Without it every planned phase runs, which is s8. `--defer-jury`
 reports the `jury` built-in `not_run` instead
 of convening a panel, exactly as the command runner reports an agentic gate: the loop's
 per-iteration gate run must not spend a cross-vendor panel on every iteration, and a seat

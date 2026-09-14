@@ -43,7 +43,7 @@ Every contract includes:
 | `mode` / `dry_run` / `no_mutations` | Whether this record represents a non-mutating rehearsal. |
 | `project` | Resolved project config summary plus stable `config_hash`. |
 | `workflow_profile` | Command profile metadata. `ship` is `standard` by default; `keel ship --compound` (`--profile compound`) selects a first-class `compound` profile that inherits the shared ship primitives and declares step overrides. |
-| `implement_mode` | The resolved s4 profile (`mode`: `default` \| `tdd`, its `source`, `phases`, `gate`) and, beside it, the s4 iteration loop as `loop` — `{enabled, max_iterations, gate_output_max_bytes, source, wraps}`, resolved from `knobs.loop` and `--loop` (`wraps` is `implementation` under `tdd`, else `implement`). A project with neither knob publishes `mode: default` and `loop.enabled: false`. |
+| `implement_mode` | The resolved s4 profile (`mode`: `default` \| `tdd`, its `source`, `phases`, `gate`) and, beside it, the s4 iteration loop as `loop` — `{enabled, max_iterations, gate_output_max_bytes, source, wraps}`, resolved from `knobs.loop`, `--loop` and `--max-iterations` (`wraps` is `implementation` under `tdd`, else `implement`). A project with neither knob publishes `mode: default` and `loop.enabled: false`; the ledger's `run_context.implement_loop` then records `max_iterations: null`, because a policy that is off bounded nothing. |
 | `graph` | Command step graph. `ship` (both profiles) uses the fixed backbone steps; other adapters expose their command-local steps; project commands expose a single `project_command` graph entry. |
 | `backbone_plan` | Fixed keel backbone with gates, add-only extension slots, and loaded hooks slotted onto steps. |
 | `gates` | Planned gate specs, including kind, phase, failure behavior, source, and capability declarations. |
@@ -952,10 +952,20 @@ Adapters should pass the selected issue title, body, and labels into `keel plan`
 - `needs-input` — missing or ambiguous scope; adapters must ask the generated questions
   and must not mutate code for that issue.
 - `blocked` — a dependency or waiting condition is present; adapters must not mutate code.
-- `out-of-scope` — an out-of-scope label or an explicit sentence in the issue's title,
-  opening paragraph, or objective declares the issue not planned; structural headings
-  such as `## Out of scope` and the bullets beneath them are exclusions, not verdicts.
-  Adapters must not mutate code.
+- `out-of-scope` — an out-of-scope label; a **title** opening with `Out of scope`,
+  `Not planned`, `Wontfix` or `Not in scope`; or a sentence anywhere in the body
+  naming the issue itself — `this issue is out of scope`. The short form is the
+  title's alone: in a body it cannot be told from a boundary (`Out of scope for v1:
+  the Android client.`) or a carve-out (`Not in scope for Windows.`). The body requires the issue to be
+  named, because `Out of scope: mobile UI` and `Out of scope: closing` are the same
+  string and only one of them is a verdict. A section whose heading *starts with*
+  `Out of scope`, `Non-goals`, `Not in scope` or `Not in this change` has its own prose
+  dropped, because it bounds the change; a nested heading under it is read on its own
+  merits, which is safe because a bullet there naming no issue matches nothing. Everything
+  else is read,
+  heading text included, so `## Decision — this issue is out of scope` is a verdict. A
+  close-reason heading (`## Not planned`, `## Status`, `## Decision`) is **not** an
+  exclusion. Adapters must not mutate code.
 
 The block records `objective`, `deliverable`, `acceptance_criteria`, `risk_tier_inputs`,
 `required_docs_tests`, `missing_info`, `blockers`, `questions`, and a compact
