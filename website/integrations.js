@@ -252,8 +252,8 @@
       name: "Official GitHub Action",
       category: "platforms",
       badge: "CI/CD Automation",
-      desc: "Official 1-click composite action (berkayturanci/keel-action@v1) for autonomous issue shipping and swarm runs.",
-      cmd: "uses: berkayturanci/keel-action@v1",
+      desc: "Official composite action (berkayturanci/keel@v1.22.0) for gates, ship assessment, evidence verification and swarm planning.",
+      cmd: "uses: berkayturanci/keel@v1.22.0",
       logo: "logos/githubactions.svg"
     },
     {

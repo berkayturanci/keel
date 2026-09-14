@@ -183,3 +183,38 @@ jobs:
         run: |
           coverage run --rcfile=keel-visual/pyproject.toml -m unittest discover -s keel-visual/tests
           coverage report --rcfile=keel-visual/pyproject.toml
+
+  action-smoke:
+    # `action.yml` is the Marketplace listing — the first thing a stranger runs.
+    # Nothing in this repository had ever executed it: every check read the file
+    # as data, so a `command:` naming a subcommand that does not exist, an argv
+    # the parser refuses, and two outputs nothing writes all shipped green (#1153).
+    # `uses: ./` runs the file the release publishes, against this checkout.
+    name: the published action runs
+    runs-on: ubuntu-latest
+    # measured ~1 min; it installs from PyPI, so the ceiling is the bound that exists.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # keel diffs against the base branch; the action warns on a shallow one.
+          fetch-depth: 0
+      - name: Run the action against this repository
+        id: keel
+        uses: ./
+        with:
+          command: validate
+          config: .keel/project.yaml
+      - name: The declared outputs carry values
+        env:
+          EXIT_CODE: ${{ steps.keel.outputs.exit-code }}
+          OUTPUT_FILE: ${{ steps.keel.outputs.output-file }}
+        run: |
+          set -euo pipefail
+          # Both outputs were declared and never written before #1153, so an empty
+          # string here is the regression this job exists to catch.
+          test -n "$EXIT_CODE" || { echo "::error::exit-code output is empty"; exit 1; }
+          test -n "$OUTPUT_FILE" || { echo "::error::output-file output is empty"; exit 1; }
+          test -f "$OUTPUT_FILE" || { echo "::error::output-file names no file"; exit 1; }
+          test "$EXIT_CODE" = "0" || { echo "::error::validate exited $EXIT_CODE"; exit 1; }
+          echo "action ran: exit=$EXIT_CODE output=$OUTPUT_FILE"

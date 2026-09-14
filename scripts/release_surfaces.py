@@ -99,6 +99,21 @@ RELEASE_SURFACES: tuple[Surface, ...] = (
     ),
     # --- pinned-install references a user copies ------------------------------
     Surface("README.md", "keel@v{version}", rf"keel@v(?P<version>{VERSION_RE})", False),
+    # The published Action's own pin, in the page that documents it and the card that
+    # advertises it. `by_shape` because both are generated prose with exactly one
+    # spelling of the tag — nothing here is a deliberate historical pin (#1153).
+    Surface(
+        "docs/keel/github-actions.md",
+        "keel@v{version}",
+        rf"keel@v(?P<version>{VERSION_RE})",
+        True,
+    ),
+    Surface(
+        "website/integrations.js",
+        "keel@v{version}",
+        rf"keel@v(?P<version>{VERSION_RE})",
+        True,
+    ),
     Surface(
         ".github/workflows/keel-ship.yml",
         "keel@v{version}",

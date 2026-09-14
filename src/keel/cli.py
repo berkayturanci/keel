@@ -8653,6 +8653,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="render conflict-free DAG waves and clusters for a swarm of issues",
     )
     p_sp.add_argument("path", help="path to project.yaml")
+    # Accepted for parity with every sibling that takes a `path`, and because the
+    # published Action builds one argv shape for all of them — `<config> --root .`
+    # plus the command's own flags. `swarm-plan` was the only subcommand whose
+    # parser refused it, so `command: swarm-plan` exited 2 with
+    # `unrecognized arguments: --root .` (#1153). The plan itself is pure: it reads
+    # the config it is given and renders waves, so nothing here resolves against a
+    # root. The flag is part of the interface, not an input to the planning.
+    p_sp.add_argument("--root", default=".", help="repo root, for interface parity")
     p_sp.add_argument(
         "--issues", default=None, help="comma-separated issue numbers (e.g. 101,102,103)"
     )
