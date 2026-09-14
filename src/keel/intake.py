@@ -255,8 +255,20 @@ def _scannable_chunks(body: str) -> list[str]:
     chunks = [body[: matches[0].start()]]
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-        if _normalize_heading(match.group("title")) not in _SCOPE_EXCLUSION_HEADINGS:
-            chunks.append(body[match.end() : end])
+        if _normalize_heading(match.group("title")) in _SCOPE_EXCLUSION_HEADINGS:
+            continue
+        # The heading's own text is a chunk, **separate from** its body. Both halves
+        # matter and the round-1 and round-2 gate seats found one each: leaving the
+        # heading inline glued it onto the sentence below (`- works ## Decision Out of
+        # scope: closing.`, breaking the sentence-start anchor), and dropping it made a
+        # declaration *written in the heading* invisible — `## Decision — this issue is
+        # out of scope; closing` with nothing beneath it, which is the very example this
+        # change's own docstring and changelog entry use. Note the exclusion test is on
+        # the normalised heading, so `## Out of scope` is a boundary and dropped while
+        # `## Out of scope: closing.` normalises to `out of scope closing`, is kept, and
+        # is read here as the declaration it is.
+        chunks.append(match.group("title"))
+        chunks.append(body[match.end() : end])
     return [chunk for chunk in chunks if chunk.strip()]
 
 

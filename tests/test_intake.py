@@ -291,6 +291,38 @@ class TestIssueIntake(unittest.TestCase):
         )
         self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
 
+    def test_a_declaration_written_in_the_heading_itself_blocks(self):
+        """Round-2 gate finding: dropping the heading line hid the one-line form.
+
+        Round 1 moved the heading out of the body chunk so it could not glue onto the
+        sentence below it. That made a declaration written *in* the heading invisible —
+        `## Decision - this issue is out of scope; closing` with nothing beneath it,
+        which is the example this change's own changelog entry uses. The heading is now
+        its own chunk: separate from the body, but still read.
+        """
+        for heading in (
+            "Decision \u2014 this issue is out of scope; closing",
+            "Decision - this issue is out of scope; closing",
+            "Status \u2014 this issue is out of scope; closing",
+            "Out of scope: closing.",
+            "Won't do: this issue is out of scope",
+        ):
+            with self.subTest(heading=heading):
+                record = intake.assess_issue(
+                    title="Add safe sync", body=self.WELL_FORMED + f"\n## {heading}\n"
+                )
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+                self.assertFalse(record["can_mutate_code"])
+
+    def test_a_bare_exclusion_heading_is_still_only_a_boundary(self):
+        # The exclusion test runs on the *normalised* heading, so `## Out of scope` is
+        # dropped while `## Out of scope: closing.` normalises to `out of scope closing`,
+        # is kept, and is read as the declaration it is (asserted above).
+        record = intake.assess_issue(
+            title="Add safe sync", body=self.WELL_FORMED + "\n## Out of scope\n- Mobile UI.\n"
+        )
+        self.assertEqual(record["status"], intake.READY)
+
     def test_every_exclusion_heading_survives_normalization(self):
         # `Won't do` normalises to `won t do` — an apostrophe is not alphanumeric — so a
         # set entry spelled `wont do` could never match anything. Each entry must be a
