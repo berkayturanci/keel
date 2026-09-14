@@ -620,7 +620,15 @@ The refusal is tested on the path as written **and** on the path after backslash
 slashes, because those disagree: `\etc\hostname` is drive-relative rather than absolute, so
 no flavour of `PurePath` calls it anchored, and the rewrite then turns it into `/etc/hostname`.
 
-Containment is checked on the **resolved** path, not only on its spelling: `git hash-object`
+The path must also be **inside the configured sink**, not merely inside the repository.
+Every other test here asks whether git could address it, and the answer is yes for
+`config/private.env` as much as for a lesson — so a ledger record naming one would have
+fast-forwarded the shared base branch with it, and the exactly-one-file check downstream
+would have agreed, because it *was* exactly one file. Containment is compared by path
+component, so a sibling directory whose name merely begins the same way
+(`.keel/learning-notes/`) is outside.
+
+Containment is also checked on the **resolved** path, not only on its spelling: `git hash-object`
 follows symlinks, and the exactly-one-file check downstream counts paths in the finished
 commit rather than where their bytes came from — so a link inside the sink pointing out of
 the checkout would have published someone else's file to the base branch.

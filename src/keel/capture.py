@@ -2225,6 +2225,9 @@ def learning_land_plan(
             "errors": [],
         }
     normalized = _land_path(artifact)
+    sink_dir = _land_path(
+        str(learning_sink_policy(config).get("path") or DEFAULT_LEARNING_SINK_PATH)
+    )
     errors: list[str] = []
     if artifact is None or not str(artifact).strip():
         status = "no-artifact"
@@ -2238,6 +2241,19 @@ def learning_land_plan(
         # helpfully. `learning_sink_in_worktree` says the *sink* is in-repo; this says
         # the recorded path is too, and they are answered from different values.
         errors.append(f"capture artifact {artifact!r} is absolute or escapes the repository root")
+    elif sink_dir is not None and not _under(normalized, sink_dir):
+        status = "failed"
+        reason = f"the capture artifact is not inside the learning sink ({sink_dir})"
+        # **Inside the repository is not the containment this command needs.** Every
+        # path test above answers "could git address this?", and the answer is yes for
+        # `config/private.env` and for `src/keel/cli.py` alike — so a ledger record
+        # naming one of those fast-forwarded the shared base branch with it, one file
+        # at a time, and the exactly-one-file check downstream agreed because it was
+        # exactly one file. The sink is the only directory this command has any
+        # business writing to, and it is the one value that says which.
+        errors.append(
+            f"capture artifact {artifact!r} is not under the configured learning sink {sink_dir!r}"
+        )
     elif not resolved_base:
         status = "failed"
         reason = "the project declares no base branch to land the lesson on"
@@ -2262,6 +2278,15 @@ def learning_land_plan(
         "attempts": attempts,
         "errors": errors,
     }
+
+
+def _under(path: str, directory: str) -> bool:
+    """Is POSIX ``path`` inside ``directory``? Compared by component, not by prefix.
+
+    A plain ``startswith`` says `.keel/learning-notes/x.md` is inside `.keel/learning`,
+    which is a different directory whose name merely begins the same way.
+    """
+    return path == directory or path.startswith(f"{directory}/")
 
 
 def _land_path(artifact: str | None) -> str | None:

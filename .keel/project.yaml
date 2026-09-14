@@ -134,8 +134,9 @@ policy_pack:
       mode: create-learning
       sink:
         # The default sink writes into `.keel/learning/`, and keel runs its own
-        # ships inside a worktree that s10 then removes — so s11 attempts the
-        # landing with `keel capture-land` (#1163) before the worktree goes.
+        # ships inside a worktree that s10 removes before s11 runs — which is why
+        # s11 attempts the landing with `keel capture-land --root .` (#1163): the
+        # sink and the ledger are under the primary checkout, not the worktree.
         # On *this* repository that landing is refused: `main` requires pull
         # requests with `enforce_admins: true`, so a direct push has nowhere to
         # go and s11 reports `failed` into the closure. The writer, the

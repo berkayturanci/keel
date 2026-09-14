@@ -2862,6 +2862,37 @@ class TestLearningLandPlan(unittest.TestCase):
                 self.assertEqual(plan["status"], "failed", bad)
                 self.assertTrue(plan["errors"], bad)
 
+    def test_an_artifact_outside_the_sink_is_refused(self):
+        """Inside the repository is not the containment this command needs.
+
+        Every other path test asks whether git could address the path, and the answer is
+        yes for `config/private.env` as much as for a lesson — so a ledger record naming
+        one fast-forwarded the shared base branch with it, and the exactly-one-file check
+        downstream agreed, because it was exactly one file. The sink is the only directory
+        this command has business writing to.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp, self._SINK)
+            for outside in ("config/private.env", "src/keel/cli.py", "README.md"):
+                plan = capture.learning_land_plan(config, artifact=outside)
+                self.assertEqual(plan["status"], "failed", outside)
+                self.assertTrue(plan["errors"], outside)
+
+    def test_a_sibling_directory_that_starts_the_same_is_not_the_sink(self):
+        # Compared by component: a prefix test calls `.keel/learning-notes/x.md` inside
+        # `.keel/learning`, and it is a different directory that merely reads alike.
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp, self._SINK)
+            self.assertEqual(
+                capture.learning_land_plan(config, artifact=".keel/learning-notes/x.md")["status"],
+                "failed",
+            )
+            # A nested path genuinely under the sink stays legal.
+            self.assertEqual(
+                capture.learning_land_plan(config, artifact=".keel/learning/2026/x.md")["status"],
+                "planned",
+            )
+
     def test_no_base_branch_is_refused(self):
         class _NoBase:
             policy_pack = {
