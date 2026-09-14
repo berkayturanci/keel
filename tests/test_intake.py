@@ -197,19 +197,85 @@ class TestIssueIntake(unittest.TestCase):
         self.assertEqual(record["questions"], [])
         self.assertFalse(record["can_mutate_code"])
 
+    WELL_FORMED = (
+        "## Problem\nUsers need safer sync.\n\n"
+        "## Deliverable\nImplement the guard.\n\n"
+        "## Acceptance criteria\n- Guard blocks unsafe sync.\n"
+    )
+
     def test_scope_exclusion_heading_and_bullets_do_not_mark_issue(self):
-        for heading in ("Out of scope", "Non-goals", "Not in scope"):
+        for heading in ("Out of scope", "Non-goals", "Not in scope", "Not in this change"):
+            with self.subTest(heading=heading):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=self.WELL_FORMED + f"\n## {heading}\n- Mobile UI changes.\n",
+                )
+                self.assertEqual(record["status"], intake.READY)
+
+    def test_even_a_declaration_sentence_inside_a_scope_section_is_a_boundary(self):
+        """The section is dropped whole, so its prose cannot close the issue that wrote it.
+
+        Each heading carries a sentence that *would* match if the section were not
+        removed — without that, a heading could be dropped from the set and no test
+        would notice, since ordinary bullets match nothing either way.
+        """
+        for heading in ("Out of scope", "Non-goals", "Not in scope", "Not in this change"):
             with self.subTest(heading=heading):
                 record = intake.assess_issue(
                     title="Add safe sync",
                     body=(
-                        "## Problem\nUsers need safer sync.\n\n"
-                        "## Deliverable\nImplement the guard.\n\n"
-                        "## Acceptance criteria\n- Guard blocks unsafe sync.\n\n"
-                        f"## {heading}\n- Mobile UI changes.\n"
+                        self.WELL_FORMED + f"\n## {heading}\n"
+                        "- This issue is out of scope for the mobile rewrite.\n"
                     ),
                 )
                 self.assertEqual(record["status"], intake.READY)
+
+    def test_a_declaration_outside_the_opening_sentence_still_blocks(self):
+        """#1188: the scan reached only the preface's *first* sentence.
+
+        The #1182 changelog said "title, opening paragraph, or objective"; the code read
+        `_sentences(preface)[:1]`, so "Thanks. This issue is out of scope." was READY with
+        `can_mutate_code: true` — s2 would mutate code on an issue declared closed.
+        """
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body="Thanks for the report. This issue is out of scope.\n\n" + self.WELL_FORMED,
+        )
+        self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+        self.assertFalse(record["can_mutate_code"])
+
+    def test_a_declaration_under_any_heading_blocks(self):
+        # The allowlist was objective/problem/summary/context, so a maintainer's
+        # `## Decision` — the most natural place to record a closure — did not block.
+        for heading in ("Decision", "Status", "Resolution", "Update"):
+            with self.subTest(heading=heading):
+                record = intake.assess_issue(
+                    title="Add safe sync",
+                    body=(
+                        self.WELL_FORMED + f"\n## {heading}\nThis issue is out of scope; closing.\n"
+                    ),
+                )
+                self.assertEqual(record["status"], intake.OUT_OF_SCOPE)
+                self.assertFalse(record["can_mutate_code"])
+
+    def test_ordinary_prose_about_a_detail_is_not_a_declaration(self):
+        # The half #1168 removed must stay removed: only a sentence declaring *the issue*
+        # counts, so saying a detail is out of scope for this change reads as prose.
+        record = intake.assess_issue(
+            title="Add safe sync",
+            body=(
+                "## Problem\nFix sync. Rewriting the parser is out of scope for this change.\n\n"
+                "## Deliverable\nImplement the guard.\n\n"
+                "## Acceptance criteria\n- Guard blocks unsafe sync.\n"
+            ),
+        )
+        self.assertEqual(record["status"], intake.READY)
+
+    def test_non_goal_names_a_boundary_not_a_closed_issue(self):
+        # Deliberately not a declaration marker: "Non-goal: X" says X is not a goal of
+        # this change, which is the same statement the `## Non-goals` section makes.
+        record = intake.assess_issue(title="Non-goal: rewrite the parser", body=self.WELL_FORMED)
+        self.assertEqual(record["status"], intake.READY)
 
     def test_explicit_issue_scope_declaration_is_reported_with_sentence(self):
         record = intake.assess_issue(

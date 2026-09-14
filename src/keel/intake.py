@@ -29,6 +29,22 @@ _AMBIGUOUS_RE = re.compile(
     re.IGNORECASE,
 )
 _OUT_OF_SCOPE_LABELS = frozenset({"out-of-scope", "wontfix", "not-planned"})
+#: Headings whose whole section is a boundary statement about the change, never a
+#: status for the issue (#1168). Normalised by :func:`_normalize_heading`, so
+#: ``## Non-goals`` and ``## non goals`` are the same heading. ``not in this change``
+#: is this repository's own spelling, used by every issue written since #1182.
+_SCOPE_EXCLUSION_HEADINGS = frozenset(
+    {
+        "out of scope",
+        "non goals",
+        "non goal",
+        "not in scope",
+        "not in this change",
+        "not planned",
+        "will not do",
+        "wont do",
+    }
+)
 _OUT_OF_SCOPE_DECLARATION_RE = re.compile(
     r"(?:^(?:out[- ]of[- ]scope|not planned|wontfix|won't fix|not in scope)\b|"
     r"\b(?:this|the)\s+issue\s+(?:is|was|remains)\s+"
@@ -215,6 +231,28 @@ def _sentences(text: str) -> list[str]:
     return parts or [compact]
 
 
+def _without_scope_sections(body: str) -> str:
+    """``body`` with every scope-exclusion section — heading and content — removed.
+
+    This is the structural half of #1168. A ``## Out of scope`` section says what *this
+    change* does not cover; it is a boundary, not a status, and matching a declaration
+    inside it refused the issue that wrote it. Dropping the whole section is what makes
+    the rest of the body safe to read in full, which is the half #1188 restores: the
+    first cut kept the broad search out by narrowing *where* it looked — the title, the
+    first sentence of the preface, and four section names — so a declaration in the
+    second sentence, or under ``## Decision``, reached `can_mutate_code: true`.
+    """
+    matches = list(_SECTION_RE.finditer(body))
+    if not matches:
+        return body
+    kept: list[str] = [body[: matches[0].start()]]
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        if _normalize_heading(match.group("title")) not in _SCOPE_EXCLUSION_HEADINGS:
+            kept.append(body[match.start() : end])
+    return "\n".join(kept)
+
+
 def _out_of_scope_reason(
     *,
     title: str | None,
@@ -224,10 +262,23 @@ def _out_of_scope_reason(
 ) -> str | None:
     """Return the concrete scope declaration, ignoring structural exclusions.
 
-    Headings and the bullets below an ``Out of scope``/``Non-goals`` section
-    describe the issue's boundaries; they do not declare the issue itself out
-    of scope.  Only an explicit label or a sentence in the title, opening
-    paragraph, or objective-like section can block intake.
+    Two independent filters, and each does one job:
+
+    * **Structurally**, a scope-exclusion section is removed whole. Its heading and its
+      bullets describe what the change leaves out; none of it says the issue is closed.
+    * **In what remains**, only a sentence shaped like a *declaration about the issue*
+      counts — ``Out of scope: …`` opening a sentence, or ``this issue is out of
+      scope`` — so ordinary prose saying some detail is out of scope for this change
+      still reads as ordinary prose, wherever it sits.
+
+    Everything left is searched, title and body alike. A maintainer writing
+    ``## Decision — this issue is out of scope; closing`` is declaring it closed, and
+    intake must not hand that to s2.
+
+    ``non-goal`` is deliberately **not** a declaration marker. It names a non-goal of
+    the change ("Non-goal: rewrite the parser"), which is a boundary like the section
+    it usually appears under, not a statement that the issue will not be done. The
+    ``## Non-goals`` heading is handled structurally above.
     """
     for label in labels:
         if label in _OUT_OF_SCOPE_LABELS:
@@ -235,14 +286,9 @@ def _out_of_scope_reason(
 
     candidates: list[str] = []
     if title and title.strip():
-        candidates.extend(_sentences(title.strip())[:1])
+        candidates.extend(_sentences(title.strip()))
     if body:
-        first_heading = _SECTION_RE.search(body)
-        preface = body[: first_heading.start()] if first_heading else body
-        candidates.extend(_sentences(preface)[:1])
-    for key in ("objective", "problem", "summary", "context"):
-        if value := _first_sentence_or_bullet(sections.get(key, "")):
-            candidates.append(value)
+        candidates.extend(_sentences(_without_scope_sections(body)))
 
     for candidate in candidates:
         if _OUT_OF_SCOPE_DECLARATION_RE.search(candidate.strip()):
