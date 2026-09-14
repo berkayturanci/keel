@@ -158,6 +158,91 @@ def diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str | No
     return result.stdout if result.ok else None
 
 
+def hash_object(path: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """Write ``path``'s content into the object database; return its blob SHA.
+
+    ``-w`` is what makes the landing possible without a checkout: the blob exists in
+    the repository before any tree references it, so the commit can be assembled with
+    plumbing and pushed, and a failed push leaves nothing but an unreferenced object
+    that ``git gc`` collects.
+    """
+    result = run_argv(["git", "hash-object", "-w", "--", path], cwd=cwd, **_kw(_run))
+    output = result.stdout.strip()
+    return output if result.ok and _SHA_RE.match(output) else None
+
+
+def ls_tree(treeish: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """List one tree's own entries (not recursive); ``None`` when it cannot be read.
+
+    ``None`` and ``""`` are different answers and both are ordinary here: a sink
+    directory that does not exist on the base branch yet cannot be read (``None``),
+    and an existing but empty one reads as no entries. The caller treats the first as
+    "start a new directory" rather than as an error, which is what makes the very
+    first lesson land as cleanly as the hundredth.
+    """
+    result = run_argv(["git", "ls-tree", treeish], cwd=cwd, **_kw(_run))
+    return result.stdout if result.ok else None
+
+
+def mktree(listing: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """Write a tree object from ``ls-tree``-shaped ``listing``; ``None`` on error.
+
+    The listing arrives on **stdin**, never in an argv: it carries object names and
+    file names, and an argv is world-readable in ``ps`` for the life of the process.
+    """
+    result = run_argv(["git", "mktree"], cwd=cwd, stdin_text=listing, **_kw(_run))
+    output = result.stdout.strip()
+    return output if result.ok and _SHA_RE.match(output) else None
+
+
+def commit_tree(
+    tree: str, *, parent: str, message: str, cwd: str | None = None, _run=None
+) -> str | None:
+    """Commit ``tree`` with a single ``parent``; return the new commit SHA.
+
+    The message arrives on stdin for the same reason ``mktree``'s listing does, and
+    because ``-m`` would collapse the marker line into the subject on some git
+    versions' idea of paragraph handling.
+    """
+    result = run_argv(
+        ["git", "commit-tree", tree, "-p", parent, "-F", "-"],
+        cwd=cwd,
+        stdin_text=message,
+        **_kw(_run),
+    )
+    output = result.stdout.strip()
+    return output if result.ok and _SHA_RE.match(output) else None
+
+
+def diff_names(a: str, b: str, *, cwd: str | None = None, _run=None) -> list[str] | None:
+    """Paths differing between two tree-ish objects (two-dot); ``None`` on error.
+
+    Two-dot on purpose, unlike :func:`changed_files`: the landing compares a commit
+    against the parent it was *just built on*, so "what did this commit add" is the
+    literal difference between the two trees and not a merge-base question. ``None``
+    stays distinct from ``[]`` so a caller that must fail closed when it cannot
+    observe — the landing's own "this commit changes exactly one file" check — can
+    tell an unreadable diff from an empty one.
+    """
+    result = run_argv(["git", "diff", "--name-only", a, b], cwd=cwd, **_kw(_run))
+    if not result.ok:
+        return None
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def push_commit(
+    remote: str, commit: str, ref: str, *, cwd: str | None = None, _run=None
+) -> CommandResult:
+    """Fast-forward ``ref`` on ``remote`` to ``commit``.
+
+    Deliberately **not** forced. A rejected push is the concurrency signal the
+    landing is built around: another ship pushed its own lesson first, so this one
+    re-reads the branch and rebuilds its commit on top. Forcing here would discard
+    that ship's lesson — and, on a base branch, whatever else arrived with it.
+    """
+    return run_argv(["git", "push", remote, f"{commit}:{ref}"], cwd=cwd, **_kw(_run))
+
+
 def _kw(_run):
     """Pass ``_run`` through only when provided (so the default subprocess is used otherwise)."""
     return {"_run": _run} if _run is not None else {}

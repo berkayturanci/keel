@@ -2711,5 +2711,189 @@ class TheWriterLinksAtTheHead(unittest.TestCase):
         self.assertIn("REDACTED", text.split(capture.LEARNING_FILES_HEADING, 1)[1])
 
 
+class TestLearningLandPlan(unittest.TestCase):
+    """The pure plan behind `keel capture-land` (#1163).
+
+    keel wrote a learning on every merge and threw it away: with the default
+    relative sink the file sat untracked inside a worktree that s10's pre-clean
+    then deleted. These assert the decision to push to a base branch at all —
+    offline, because it is the one decision that must never be taken by accident.
+    """
+
+    def _config(self, tmp, lines=None):
+        return cfg.load_config(write_config(Path(tmp), lines))
+
+    _SINK = [
+        "  capture:",
+        "    enabled: true",
+        "    mode: extension",
+        "    learning:",
+        "      enabled: true",
+        "      mode: create-learning",
+        "      sink: {}",
+    ]
+
+    def test_in_repo_sink_is_planned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = capture.learning_land_plan(
+                self._config(tmp, self._SINK),
+                artifact=".keel/learning/a.md",
+                pr_number=7,
+            )
+        self.assertEqual(plan["status"], "planned")
+        self.assertEqual(plan["path"], ".keel/learning/a.md")
+        self.assertEqual(plan["ref"], "refs/heads/main")
+        self.assertEqual(plan["remote_ref"], "origin/main")
+        self.assertIn("PR #7", plan["message"])
+        self.assertEqual(plan["errors"], [])
+
+    def test_sink_outside_the_checkout_needs_no_landing(self):
+        # An absolute sink is a folder git never sees, so there is nothing to land
+        # and the command must not fail an s11 whose merge already happened.
+        with tempfile.TemporaryDirectory() as tmp:
+            lines = list(self._SINK)
+            lines[-1] = "      sink: { path: /srv/knowledge }"
+            plan = capture.learning_land_plan(
+                self._config(tmp, lines), artifact="/srv/knowledge/a.md"
+            )
+        self.assertEqual(plan["status"], "not-required")
+        self.assertIsNone(plan["path"])
+        self.assertIsNone(plan["message"])
+
+    def test_no_artifact_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp, self._SINK)
+            for empty in (None, "", "   "):
+                plan = capture.learning_land_plan(config, artifact=empty)
+                self.assertEqual(plan["status"], "no-artifact", empty)
+
+    def test_an_escaping_artifact_is_refused_not_normalised(self):
+        # The command pushes to a shared base branch, so this is the one input that
+        # must never be resolved helpfully.
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp, self._SINK)
+            for bad in ("../outside.md", "/etc/passwd", "C:\\x.md", "\\\\srv\\x.md", "."):
+                plan = capture.learning_land_plan(config, artifact=bad)
+                self.assertEqual(plan["status"], "failed", bad)
+                self.assertTrue(plan["errors"], bad)
+
+    def test_no_base_branch_is_refused(self):
+        class _NoBase:
+            policy_pack = {
+                "capture": {
+                    "enabled": True,
+                    "mode": "extension",
+                    "learning": {"enabled": True, "mode": "create-learning", "sink": {}},
+                }
+            }
+            base_branch = ""
+
+        plan = capture.learning_land_plan(_NoBase(), artifact=".keel/learning/a.md")
+        self.assertEqual(plan["status"], "failed")
+        self.assertIn("base_branch is not configured", plan["errors"])
+
+    def test_remote_and_attempts_are_carried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = capture.learning_land_plan(
+                self._config(tmp, self._SINK),
+                artifact=".keel/learning/a.md",
+                remote="upstream",
+                attempts=5,
+            )
+        self.assertEqual(plan["remote"], "upstream")
+        self.assertEqual(plan["remote_ref"], "upstream/main")
+        self.assertEqual(plan["attempts"], 5)
+
+    def test_message_without_a_pr_number(self):
+        message = capture.learning_land_message(pr_number=None, path=".keel/learning/a.md")
+        self.assertIn("from this run", message)
+        self.assertIn("pr=-", message)
+
+    def test_message_carries_no_vendor_trailer(self):
+        # Core-owned and consumer-neutral: this commit lands on every consumer's base
+        # branch, and keel cannot know whose co-authorship to stamp on it.
+        message = capture.learning_land_message(pr_number=7, path=".keel/learning/a.md")
+        self.assertNotIn("Co-Authored-By", message)
+        self.assertIn("keel-learning: pr=7 path=.keel/learning/a.md", message)
+
+    def test_contract_names_the_land_command_only_when_it_is_needed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            in_repo = capture.contract_as_dict(self._config(tmp, self._SINK))
+            lines = list(self._SINK)
+            lines[-1] = "      sink: { path: /srv/knowledge }"
+            outside = capture.contract_as_dict(self._config(tmp, lines))
+        self.assertTrue(in_repo["durable_artifacts"]["commit_required"])
+        self.assertEqual(in_repo["durable_artifacts"]["land_command"], "keel capture-land")
+        self.assertFalse(outside["durable_artifacts"]["commit_required"])
+        self.assertIsNone(outside["durable_artifacts"]["land_command"])
+
+
+class TestTreeComposition(unittest.TestCase):
+    """Grafting one blob onto the base branch's tree, as a pure string function.
+
+    This is where "the landing commit differs from its parent by exactly one path"
+    becomes a property a test can assert, rather than a property of a live push.
+    """
+
+    def test_adds_into_an_existing_listing_in_git_order(self):
+        listing = f"100644 blob {'a' * 40}\tb.md\n040000 tree {'c' * 40}\tsub\n"
+        out = capture.upsert_tree_entry(
+            listing, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "d" * 40, "a.md")
+        )
+        self.assertEqual(
+            out.splitlines(),
+            [
+                f"100644 blob {'d' * 40}\ta.md",
+                f"100644 blob {'a' * 40}\tb.md",
+                f"040000 tree {'c' * 40}\tsub",
+            ],
+        )
+
+    def test_replaces_the_entry_of_the_same_name(self):
+        listing = f"100644 blob {'a' * 40}\ta.md\n"
+        out = capture.upsert_tree_entry(
+            listing, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "b" * 40, "a.md")
+        )
+        self.assertEqual(out, f"100644 blob {'b' * 40}\ta.md\n")
+
+    def test_a_missing_directory_composes_from_nothing(self):
+        # The first lesson ever landed, where `.keel/learning` is not on the base branch.
+        out = capture.upsert_tree_entry(
+            None, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "a" * 40, "a.md")
+        )
+        self.assertEqual(out, f"100644 blob {'a' * 40}\ta.md\n")
+
+    def test_git_sorts_a_tree_as_if_its_name_ended_in_a_slash(self):
+        # git compares "learning/" against "learning.md", and "." (0x2e) sorts before
+        # "/" (0x2f) - so the blob comes first. Composing it any other way hands
+        # `mktree` an order it has to fix, and two runs stop agreeing byte for byte.
+        listing = f"040000 tree {'a' * 40}\tlearning\n100644 blob {'b' * 40}\tlearning.md\n"
+        out = capture.upsert_tree_entry(
+            listing, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "c" * 40, "a.md")
+        )
+        self.assertEqual(
+            [line.split("\t")[1] for line in out.splitlines()],
+            ["a.md", "learning.md", "learning"],
+        )
+
+    def test_unparseable_lines_are_dropped_not_guessed_at(self):
+        self.assertEqual(capture.parse_tree_listing("garbage\n\n"), [])
+        self.assertEqual(capture.parse_tree_listing(None), [])
+
+    def test_parses_every_entry_kind(self):
+        listing = (
+            f"100644 blob {'a' * 40}\ta.md\n"
+            f"040000 tree {'b' * 40}\tsub\n"
+            f"160000 commit {'c' * 40}\tmodule\n"
+        )
+        self.assertEqual(
+            [(e.kind, e.name) for e in capture.parse_tree_listing(listing)],
+            [("blob", "a.md"), ("tree", "sub"), ("commit", "module")],
+        )
+
+    def test_render_round_trips(self):
+        entry = capture.TreeEntry(capture.TREE_MODE_TREE, "tree", "a" * 40, "sub")
+        self.assertEqual(capture.parse_tree_listing(entry.render()), [entry])
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

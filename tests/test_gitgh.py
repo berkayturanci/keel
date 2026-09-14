@@ -32,6 +32,115 @@ class _Proc:
         self.stderr = err
 
 
+class TestGitLandingPlumbing(unittest.TestCase):
+    """The plumbing `keel capture-land` builds its commit from (#1163).
+
+    Every one of these runs without a checkout of the base branch, which is the
+    property the command exists for: keel ships from a worktree while the primary
+    checkout holds the base branch, so no recipe may check it out again.
+    """
+
+    def test_hash_object_writes_and_parses(self):
+        rec = _Recorder(out=SHA_A + "\n")
+        self.assertEqual(git.hash_object(".keel/learning/a.md", _run=rec), SHA_A)
+        self.assertEqual(
+            rec.calls[0], ["git", "hash-object", "-w", "--", ".keel/learning/a.md"]
+        )
+
+    def test_hash_object_rejects_a_non_sha(self):
+        self.assertIsNone(git.hash_object("a.md", _run=_Recorder(out="not-a-sha\n")))
+
+    def test_hash_object_fail_soft(self):
+        self.assertIsNone(git.hash_object("a.md", _run=_Recorder(code=1, out=SHA_A)))
+
+    def test_ls_tree_returns_stdout(self):
+        listing = f"100644 blob {SHA_A}\ta.md\n"
+        rec = _Recorder(out=listing)
+        self.assertEqual(git.ls_tree(f"{SHA_B}:.keel", _run=rec), listing)
+        self.assertEqual(rec.calls[0], ["git", "ls-tree", f"{SHA_B}:.keel"])
+
+    def test_ls_tree_missing_directory_is_none_not_empty(self):
+        # The first lesson ever landed: `.keel/learning` does not exist on the base
+        # branch, which must read as "compose a new directory", not as an error.
+        self.assertIsNone(git.ls_tree(f"{SHA_B}:.keel", _run=_Recorder(code=128)))
+
+    def test_mktree_sends_the_listing_on_stdin(self):
+        listing = f"100644 blob {SHA_A}\ta.md\n"
+        captured = {}
+
+        def _run(argv, **kwargs):
+            captured["argv"] = argv
+            captured["stdin"] = kwargs.get("input")
+            return _Proc(0, SHA_B + "\n", "")
+
+        self.assertEqual(git.mktree(listing, _run=_run), SHA_B)
+        self.assertEqual(captured["argv"], ["git", "mktree"])
+        # Never an argv: the listing carries object and file names, and an argv is
+        # world-readable in `ps` for the life of the process.
+        self.assertEqual(captured["stdin"], listing)
+
+    def test_mktree_fail_soft(self):
+        self.assertIsNone(git.mktree("garbage\n", _run=_Recorder(code=128)))
+        self.assertIsNone(git.mktree("", _run=_Recorder(out="nope")))
+
+    def test_commit_tree_sends_the_message_on_stdin(self):
+        captured = {}
+
+        def _run(argv, **kwargs):
+            captured["argv"] = argv
+            captured["stdin"] = kwargs.get("input")
+            return _Proc(0, SHA_A + "\n", "")
+
+        message = "chore(learning): record the lesson from PR #7\n\nkeel-learning: pr=7\n"
+        self.assertEqual(
+            git.commit_tree(SHA_B, parent=SHA_A, message=message, _run=_run), SHA_A
+        )
+        self.assertEqual(
+            captured["argv"], ["git", "commit-tree", SHA_B, "-p", SHA_A, "-F", "-"]
+        )
+        self.assertEqual(captured["stdin"], message)
+
+    def test_commit_tree_fail_soft(self):
+        self.assertIsNone(
+            git.commit_tree(SHA_B, parent=SHA_A, message="m", _run=_Recorder(code=1))
+        )
+        self.assertIsNone(
+            git.commit_tree(SHA_B, parent=SHA_A, message="m", _run=_Recorder(out="huh"))
+        )
+
+    def test_push_commit_is_never_forced(self):
+        rec = _Recorder()
+        result = git.push_commit("origin", SHA_A, "refs/heads/main", _run=rec)
+        self.assertEqual(
+            rec.calls[0], ["git", "push", "origin", f"{SHA_A}:refs/heads/main"]
+        )
+        self.assertTrue(result.ok)
+        # A rejected push is the concurrency signal the landing retries on. Forcing
+        # would discard the ship that got there first, on the shared base branch.
+        self.assertNotIn("--force", rec.calls[0])
+        self.assertNotIn("--force-with-lease", rec.calls[0])
+
+    def test_push_commit_reports_rejection(self):
+        rec = _Recorder(code=1, err="! [rejected] (fetch first)")
+        self.assertFalse(git.push_commit("origin", SHA_A, "refs/heads/main", _run=rec).ok)
+
+    def test_diff_names_is_two_dot(self):
+        rec = _Recorder(out=".keel/learning/a.md\n")
+        self.assertEqual(git.diff_names(SHA_A, SHA_B, _run=rec), [".keel/learning/a.md"])
+        # Two-dot, not `a...b`: the landing compares a commit against the parent it
+        # was just built on, which is a plain tree difference, not a merge-base one.
+        self.assertEqual(rec.calls[0], ["git", "diff", "--name-only", SHA_A, SHA_B])
+
+    def test_diff_names_unreadable_is_none_not_empty(self):
+        # The landing fails closed on this: `[]` would read as "this commit changes
+        # nothing", and the safety check would compare it against the one path.
+        self.assertIsNone(git.diff_names(SHA_A, SHA_B, _run=_Recorder(code=128)))
+
+    def test_diff_names_skips_blank_lines(self):
+        rec = _Recorder(out="a.md\n\n  \nb.md\n")
+        self.assertEqual(git.diff_names(SHA_A, SHA_B, _run=rec), ["a.md", "b.md"])
+
+
 class TestGit(unittest.TestCase):
     def test_fetch_argv(self):
         rec = _Recorder()

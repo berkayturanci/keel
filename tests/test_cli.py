@@ -20,6 +20,7 @@ from keel import (
     capture,
     cli,
     evidence,
+    git,
     install,
     juryavail,
     ledger,
@@ -14604,6 +14605,413 @@ class TestLoopCommand(unittest.TestCase):
         )
         self.assertEqual(rc, 1)
         self.assertIn("gate report must be", err)
+
+
+
+
+_LAND_SINK_LINES = [
+    "  capture:",
+    "    enabled: true",
+    "    mode: extension",
+    "    learning:",
+    "      enabled: true",
+    "      mode: create-learning",
+    "      sink: {}",
+]
+
+
+def _land_repo(tmp: Path, *, seed_learning: str | None = None) -> tuple[Path, Path]:
+    """A bare origin plus a clone whose *primary checkout holds `main`*, and a worktree.
+
+    This is keel's own topology, and reproducing it is the point: s2, `overnight` and
+    `swarm` all run s0-s12 inside a worktree while the primary checkout sits on the
+    base branch, so `git switch main` there exits 128 with *'main' is already used by
+    worktree*. A fixture that used a plain checkout would pass against a recipe that
+    can never run (#1163).
+    """
+    origin, seed, work = tmp / "origin.git", tmp / "seed", tmp / "work"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+    _run_git(seed, "config", "user.email", "t@example.com")
+    _run_git(seed, "config", "user.name", "T")
+    (seed / "keep.txt").write_text("keep\n", encoding="utf-8")
+    if seed_learning is not None:
+        (seed / ".keel" / "learning").mkdir(parents=True)
+        (seed / ".keel" / "learning" / "old.md").write_text(seed_learning, encoding="utf-8")
+    _run_git(seed, "add", "-A")
+    _run_git(seed, "commit", "-qm", "init")
+    _run_git(seed, "remote", "add", "origin", str(origin))
+    _run_git(seed, "push", "-q", "origin", "main")
+    subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+    _run_git(work, "config", "user.email", "t@example.com")
+    _run_git(work, "config", "user.name", "T")
+    _run_git(work, "worktree", "add", "-q", str(work / "wt"), "-b", "feature", "origin/main")
+    return origin, work / "wt"
+
+
+def _origin_files(origin: Path) -> list[str]:
+    out = subprocess.run(
+        ["git", "--git-dir", str(origin), "ls-tree", "-r", "main", "--name-only"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return sorted(line for line in out.stdout.splitlines() if line.strip())
+
+
+def _origin_commits(origin: Path) -> int:
+    out = subprocess.run(
+        ["git", "--git-dir", str(origin), "rev-list", "--count", "main"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return int(out.stdout.strip())
+
+
+class TestCaptureLand(unittest.TestCase):
+    """`keel capture-land` — the mechanism #1163 picked.
+
+    It is **not** a merge path: it pushes one commit carrying one file to the base
+    branch. `keel merge` at s10 stays the only way a pull request reaches that branch.
+    """
+
+    def _config(self, wt: Path) -> str:
+        path = wt / "project.yaml"
+        path.write_text(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "policy_pack:\n  name: tmp\n  reports:\n"
+            "    run_ledger: 'state/runs.jsonl'\n" + "\n".join(_LAND_SINK_LINES) + "\n",
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def _write_lesson(self, wt: Path, name: str, body: str = "# Lesson\n") -> str:
+        (wt / ".keel" / "learning").mkdir(parents=True, exist_ok=True)
+        (wt / ".keel" / "learning" / name).write_text(body, encoding="utf-8")
+        return f".keel/learning/{name}"
+
+    def test_lands_from_a_worktree_without_checking_out_the_base_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            # The recipe #1163 ruled out, proven unavailable on this very fixture.
+            switched = subprocess.run(
+                ["git", "switch", "main"], cwd=wt, capture_output=True, text=True
+            )
+            self.assertNotEqual(switched.returncode, 0)
+            self.assertIn("already used by worktree", switched.stderr)
+
+            artifact = self._write_lesson(wt, "a.md")
+            rc, out, _ = run(
+                [
+                    "capture-land", self._config(wt), "--root", str(wt),
+                    "--pr", "7", "--artifact", artifact, "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["status"], "landed")
+            self.assertEqual(_origin_files(origin), [".keel/learning/a.md", "keep.txt"])
+
+    def test_the_landing_commit_adds_only_the_lesson(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp), seed_learning="# Older lesson\n")
+            artifact = self._write_lesson(wt, "b.md")
+            rc, _, _ = run(
+                ["capture-land", self._config(wt), "--root", str(wt),
+                 "--pr", "8", "--artifact", artifact]
+            )
+            # Everything already on the base branch survives, the sibling lesson included.
+            self.assertEqual(rc, 0)
+            self.assertEqual(
+                _origin_files(origin),
+                [".keel/learning/b.md", ".keel/learning/old.md", "keep.txt"],
+            )
+            self.assertEqual(_origin_commits(origin), 2)
+
+    def test_re_running_lands_nothing_a_second_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            config, artifact = self._config(wt), self._write_lesson(wt, "c.md")
+            argv = ["capture-land", config, "--root", str(wt), "--pr", "9", "--artifact", artifact]
+            run(argv)
+            rc, out, _ = run([*argv, "--json"])
+            payload = json.loads(out)
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["status"], "already-landed")
+            # A resumed or retried s11 must not add a commit per attempt.
+            self.assertEqual(_origin_commits(origin), 2)
+
+    def test_a_concurrent_ship_is_retried_onto_the_branch_it_pushed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            config, artifact = self._config(wt), self._write_lesson(wt, "mine.md")
+            real_push = git.push_commit
+            state = {"raced": False}
+
+            def _race(remote, commit, ref, *, cwd=None, _run=None):
+                # Another ship lands its own lesson between this run's read of the base
+                # branch and its push, exactly once - so the first push is rejected.
+                if not state["raced"]:
+                    state["raced"] = True
+                    other = Path(tmp) / "other"
+                    subprocess.run(["git", "clone", "-q", str(origin), str(other)], check=True)
+                    _run_git(other, "config", "user.email", "o@example.com")
+                    _run_git(other, "config", "user.name", "O")
+                    (other / ".keel" / "learning").mkdir(parents=True)
+                    (other / ".keel" / "learning" / "theirs.md").write_text("t\n", encoding="utf-8")
+                    _run_git(other, "add", "-A")
+                    _run_git(other, "commit", "-qm", "theirs")
+                    _run_git(other, "push", "-q", "origin", "main")
+                return real_push(remote, commit, ref, cwd=cwd, _run=_run)
+
+            with patch.object(git, "push_commit", _race):
+                rc, out, _ = run(
+                    ["capture-land", config, "--root", str(wt), "--pr", "10",
+                     "--artifact", artifact, "--json"]
+                )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["status"], "landed")
+            self.assertEqual(
+                [attempt["status"] for attempt in payload["attempts"]], ["contended", "landed"]
+            )
+            # Both ships' lessons are on the base branch: the retry rebuilt onto theirs
+            # rather than forcing over it.
+            self.assertEqual(
+                _origin_files(origin),
+                [".keel/learning/mine.md", ".keel/learning/theirs.md", "keep.txt"],
+            )
+
+    def test_a_branch_that_keeps_moving_exhausts_the_budget_and_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            config, artifact = self._config(wt), self._write_lesson(wt, "d.md")
+            rejected = CommandResult(ok=False, code=1, output="! [rejected] (fetch first)")
+            with patch.object(git, "push_commit", lambda *a, **k: rejected):
+                rc, out, _ = run(
+                    ["capture-land", config, "--root", str(wt), "--pr", "11",
+                     "--artifact", artifact, "--attempts", "2", "--json"]
+                )
+            payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(len(payload["attempts"]), 2)
+        self.assertIn("moved under every one of", payload["detail"])
+
+    def test_the_artifact_is_read_from_the_ledger_when_not_given(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            config = self._config(wt)
+            artifact = self._write_lesson(wt, "from-ledger.md")
+            state = wt / "state"
+            state.mkdir()
+            (state / "runs.jsonl").write_text(
+                ledger.encode_record(
+                    {
+                        "schema_version": "keel.run-ledger.v1",
+                        "record_type": "ship_run",
+                        "pull_request": {"number": 12},
+                        "capture": {"status": "applied", "artifact": artifact},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            rc, out, _ = run(
+                ["capture-land", config, "--root", str(wt), "--pr", "12", "--json"]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["status"], "landed")
+            self.assertEqual(payload["plan"]["path"], artifact)
+            self.assertEqual(
+                _origin_files(origin), [".keel/learning/from-ledger.md", "keep.txt"]
+            )
+
+    def test_a_ledger_with_no_record_for_the_pr_reports_no_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            config = self._config(wt)
+            (wt / "state").mkdir()
+            (wt / "state" / "runs.jsonl").write_text("", encoding="utf-8")
+            rc, out, _ = run(["capture-land", config, "--root", str(wt), "--pr", "13", "--json"])
+            payload = json.loads(out)
+        # Nothing was captured, which is an answer, not a failure of an s11 that merged.
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["status"], "no-artifact")
+
+    def test_an_invalid_ledger_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            config = self._config(wt)
+            (wt / "state").mkdir()
+            (wt / "state" / "runs.jsonl").write_text("{not json\n", encoding="utf-8")
+            rc, _, err = run(["capture-land", config, "--root", str(wt), "--pr", "14"])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid ledger", err)
+
+    def test_dry_run_pushes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "e.md")
+            rc, out, _ = run(
+                ["capture-land", self._config(wt), "--root", str(wt), "--pr", "15",
+                 "--artifact", artifact, "--dry-run", "--json"]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["status"], "would-land")
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+
+    def test_a_missing_artifact_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            rc, out, _ = run(
+                ["capture-land", self._config(wt), "--root", str(wt), "--pr", "16",
+                 "--artifact", ".keel/learning/absent.md", "--json"]
+            )
+            payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("no such capture artifact", payload["detail"])
+
+    def test_an_artifact_outside_the_repository_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            rc, out, _ = run(
+                ["capture-land", self._config(wt), "--root", str(wt), "--pr", "17",
+                 "--artifact", "../escape.md", "--json"]
+            )
+            payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["status"], "failed")
+        self.assertTrue(payload["plan"]["errors"])
+
+    def test_a_sink_outside_the_checkout_is_not_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            path = wt / "outside.yaml"
+            lines = list(_LAND_SINK_LINES)
+            lines[-1] = "      sink: { path: /srv/knowledge }"
+            path.write_text(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "policy_pack:\n  name: tmp\n  reports:\n"
+                "    run_ledger: 'state/runs.jsonl'\n" + "\n".join(lines) + "\n",
+                encoding="utf-8",
+            )
+            rc, out, _ = run(
+                ["capture-land", str(path), "--root", str(wt), "--pr", "18", "--json"]
+            )
+            payload = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["status"], "not-required")
+
+    def test_text_output_names_the_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "f.md")
+            rc, out, _ = run(
+                ["capture-land", self._config(wt), "--root", str(wt), "--pr", "19",
+                 "--artifact", artifact]
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("keel capture-land — landed", out)
+        self.assertIn("commit  :", out)
+
+    def test_a_missing_config_is_reported(self):
+        rc, _, err = run(["capture-land", "no-such-project.yaml", "--root", "."])
+        self.assertEqual(rc, 1)
+        self.assertIn("no such config", err)
+
+    def test_an_invalid_config_is_reported(self):
+        rc, _, err = run(["capture-land", _write_raw("extends: keel\n"), "--root", "."])
+        self.assertEqual(rc, 1)
+        self.assertIn("invalid keel config", err)
+
+    def test_an_unresolvable_base_branch_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "g.md")
+            with patch.object(git, "rev_parse", lambda *a, **k: None):
+                rc, out, _ = run(
+                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "20",
+                     "--artifact", artifact, "--json"]
+                )
+            payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot resolve origin/main", payload["detail"])
+
+    def test_an_unhashable_artifact_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "h.md")
+            with patch.object(git, "hash_object", lambda *a, **k: None):
+                rc, out, _ = run(
+                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "21",
+                     "--artifact", artifact, "--json"]
+                )
+            payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot hash", payload["detail"])
+
+    def test_an_unbuildable_tree_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "i.md")
+            with patch.object(git, "mktree", lambda *a, **k: None):
+                rc, out, _ = run(
+                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "22",
+                     "--artifact", artifact, "--json"]
+                )
+            payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot build a tree", payload["detail"])
+
+    def test_an_uncreatable_commit_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "j.md")
+            with patch.object(git, "commit_tree", lambda *a, **k: None):
+                rc, out, _ = run(
+                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "23",
+                     "--artifact", artifact, "--json"]
+                )
+            payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("cannot create the landing commit", payload["detail"])
+
+    def test_a_commit_touching_anything_else_is_never_pushed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "k.md")
+            pushed = []
+            drifted = [".keel/learning/k.md", "keep.txt"]
+            with patch.object(git, "diff_names", lambda *a, **k: drifted):
+                with patch.object(git, "push_commit", lambda *a, **k: pushed.append(a)):
+                    rc, out, _ = run(
+                        ["capture-land", self._config(wt), "--root", str(wt), "--pr", "24",
+                         "--artifact", artifact, "--json"]
+                    )
+            payload = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertIn("refusing to push", payload["detail"])
+            self.assertEqual(pushed, [])
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+
+    def test_an_unreadable_diff_fails_closed(self):
+        # `None` is "could not check", and this must never push what it could not check.
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "l.md")
+            with patch.object(git, "diff_names", lambda *a, **k: None):
+                rc, out, _ = run(
+                    ["capture-land", self._config(wt), "--root", str(wt), "--pr", "25",
+                     "--artifact", artifact, "--json"]
+                )
+            payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertIn("refusing to push", payload["detail"])
 
 
 if __name__ == "__main__":

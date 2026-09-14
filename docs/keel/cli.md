@@ -538,6 +538,78 @@ On a live append, a missing `--host-agent` emits a run-context warning by defaul
 fields would degrade. `--transport` is auto-filled from the resolved GitHub transport when
 omitted, so adapters should not echo a stale transport value.
 
+## `keel capture-land <project.yaml> [--pr <N>] [--artifact <path>] [--remote <name>] [--attempts <N>] [--dry-run] [--json]`
+
+Land this run's learning document on `origin/<base_branch>` (#1163).
+
+`policy_pack.capture.learning.sink` writes one Markdown learning per applied capture, and
+with a **relative** sink path — `.keel/learning/`, the default keel dogfoods — the file
+lands in the working tree untracked. Before this command keel stopped there, so the lesson
+was written and thrown away: s2 cuts the next worktree from `origin/<base_branch>`, every
+CI runner clones fresh, and s10's pre-clean deletes the worktree outright. The capture
+contract's `durable_artifacts.commit_required` said the file *had* to be committed;
+`durable_artifacts.land_command` now names what commits it.
+
+**This is not a merge path.** It pushes one commit carrying one file to the base branch.
+`keel merge` at s10 remains the only way a pull request reaches that branch, and the
+landing touches no pull request, no merge claim, and no merge window.
+
+```bash
+keel capture-land .keel/project.yaml --root . --pr 456 --json
+```
+
+With no `--artifact`, the path is read from the `capture.artifact` field of the newest
+`ship_run` ledger record for `--pr`, so s11 passes the pull request and nothing else.
+
+### Why plumbing, and not a checkout
+
+The obvious recipe — switch to the base branch, pull, add, commit, push — cannot run on
+the topology keel uses for itself. s2, `overnight` and `swarm` all execute s0–s12 **inside
+a worktree** while the primary checkout holds the base branch:
+
+```
+$ git switch main            # from inside .claude/worktrees/<wt>
+fatal: 'main' is already used by worktree at '/…/keel'
+```
+
+So the commit is built with plumbing instead — `hash-object`, `ls-tree`, `mktree`,
+`commit-tree` against `<remote>/<base_branch>` — and the base branch is never checked out.
+The same command therefore runs unchanged from a worktree, from the primary checkout, and
+from a fresh CI clone.
+
+### Concurrency
+
+Two ships finishing s11 at once both land their lesson. The push is a plain
+fast-forward, never forced: a rejected push means another ship pushed first, so the
+command re-reads the base branch, rebuilds its commit on top of what it now carries, and
+pushes again — up to `--attempts` (default 3) times. Forcing would discard the other
+ship's lesson, and on a base branch whatever arrived with it.
+
+### Safety
+
+The landing commit is composed from the base branch's own tree objects, and the command
+verifies that the finished commit differs from its parent by **exactly** the artifact path
+before pushing. A commit that touches anything else, or a diff that cannot be read at all,
+is refused rather than pushed.
+
+An artifact path that is absolute or climbs out of the checkout (`../x`, `/etc/x`, `C:\x`)
+is refused, not normalised — this command's whole job is to push to a shared branch.
+
+### Statuses and exit codes
+
+| `status` | exit | meaning |
+| --- | --- | --- |
+| `landed` | 0 | the lesson is on `<remote>/<base_branch>` |
+| `already-landed` | 0 | that exact content is already there; nothing was pushed |
+| `not-required` | 0 | the sink is outside the checkout, so git never sees it |
+| `no-artifact` | 0 | this run captured nothing to land |
+| `would-land` | 0 | `--dry-run` |
+| `failed` | 1 | the lesson was not landed; `detail` says why |
+
+The four non-`failed` statuses exit 0 on purpose: s11 runs after the merge already
+happened, and a capture that had nothing to do must not fail it. Capture is fail-soft, so
+a `failed` landing is reported and does not roll anything back.
+
 ## `keel capture-verify <project.yaml> [--merged-pr <N>] [--from-transport] [--json]`
 
 Verify that merged PRs have exactly one valid capture marker in the configured run ledger.
