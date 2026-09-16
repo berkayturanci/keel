@@ -760,11 +760,11 @@ def rest_rollup(check_runs: object, statuses: object) -> list[dict]:
     one implementation asked the same question over either transport, instead of two
     that agree until they do not.
 
-    Commit statuses are carried through with only their ``context`` and ``state``,
-    which is exactly what the GraphQL rollup returns for a ``StatusContext`` — and
-    exactly as much as the reducer reads from one. Including them matters even so:
-    an entry with neither a ``conclusion`` nor a pending ``status`` still makes the
-    rollup non-empty, which is the difference between ``pass`` and ``no-checks``.
+    Commit statuses are carried through with their ``context`` and ``state``, which is
+    what the GraphQL rollup returns for a ``StatusContext`` and what the reducer reads
+    from one (#1202). They are included rather than dropped for two reasons: a failing
+    status has to be able to *fail* a merge, and even a passing one makes the rollup
+    non-empty, which is the difference between ``pass`` and ``no-checks``.
     """
     entries: list[dict] = []
     # `_check_run_rows` has already dropped every non-object, so nothing is re-checked
@@ -780,19 +780,16 @@ def rest_rollup(check_runs: object, statuses: object) -> list[dict]:
             }
         )
     for row in _status_rows(statuses):
-        # **Translated into the fields the reducer reads.** A commit status carries its
-        # verdict in `state`, which `_ci_rollup_state` does not look at — so carried
-        # through as-is, a *failing* Jenkins status counted as a check that had reported
-        # and turned `no-checks` into `pass`. The half that can only ever make CI greener
-        # is the wrong half to add to a merge gate.
-        state = _upper(row.get("state"))
-        pending = state in ("PENDING", "EXPECTED")
+        # **Carried through, not translated.** A commit status keeps its verdict in
+        # `state`, exactly as the GraphQL rollup returns one, because the reducer reads
+        # that field now (#1202). #1175 translated it here instead, which worked and left
+        # the two wires speaking different shapes — and the GraphQL one, which is the
+        # default nearly every run takes, still counted a *failing* status as a check
+        # that had reported. The timestamps come along because dedupe orders by them.
         entries.append(
             {
                 "context": row.get("context"),
-                "state": state,
-                "status": "PENDING" if pending else "COMPLETED",
-                "conclusion": None if pending else state,
+                "state": _upper(row.get("state")),
                 "completedAt": row.get("updated_at"),
                 "startedAt": row.get("created_at"),
             }

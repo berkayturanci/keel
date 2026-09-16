@@ -7353,6 +7353,74 @@ class TestStepVerifyAndRunControls(unittest.TestCase):
         self.assertIn("unknown backbone step", err_unknown)
 
 
+class TestRollupReadsTheWholeUnion(unittest.TestCase):
+    """`statusCheckRollup` is a union, and the reducer used to read half of it (#1202).
+
+    A `CheckRun` carries `status` + `conclusion`. A `StatusContext` — a commit status,
+    which is how non-Actions CI and most third-party integrations report — carries its
+    whole verdict in `state`. Reading only the first pair meant a status arrived with no
+    conclusion and no recognised pending status: neither failing nor in flight, and
+    therefore counted as a check that had **reported**. A failing Jenkins status scored
+    the head `pass` and did not block `keel merge`.
+
+    Latent on this repository and live for a consumer: `main` at `d432725` carries 29
+    check-runs and **zero** commit statuses, and every rollup entry on PR #1183 is a
+    `CheckRun`.
+
+    One fixture, asked of the reducer directly, because both transports now hand it the
+    same shape — #1175 had translated on the REST side only, which is how the wire that
+    nearly every run takes kept the gap.
+    """
+
+    def _check_run(self, conclusion, status="COMPLETED"):
+        return {"name": "ci", "status": status, "conclusion": conclusion}
+
+    def _status(self, state, context="jenkins"):
+        return {"context": context, "state": state}
+
+    def test_a_failing_commit_status_fails_the_rollup(self):
+        for state in ("FAILURE", "ERROR"):
+            with self.subTest(state=state):
+                verdict = cli._ci_rollup_state([self._status(state)])
+                self.assertEqual(verdict["state"], "fail")
+                self.assertEqual(verdict["reason"], state)
+
+    def test_a_pending_commit_status_is_pending_not_reported(self):
+        for state in ("PENDING", "EXPECTED"):
+            with self.subTest(state=state):
+                self.assertEqual(cli._ci_rollup_state([self._status(state)])["state"], "pending")
+
+    def test_a_passing_commit_status_passes(self):
+        self.assertEqual(cli._ci_rollup_state([self._status("SUCCESS")])["state"], "pass")
+
+    def test_a_failing_status_beside_a_green_check_run_still_fails(self):
+        # The case that matters: Actions is green, the other CI is not, and the merge
+        # gate reads one verdict for the head.
+        verdict = cli._ci_rollup_state([self._check_run("SUCCESS"), self._status("FAILURE")])
+        self.assertEqual(verdict["state"], "fail")
+
+    def test_a_rollup_of_check_runs_alone_is_unchanged(self):
+        # This repository's own merges: nothing here may move.
+        self.assertEqual(cli._ci_rollup_state([self._check_run("SUCCESS")])["state"], "pass")
+        self.assertEqual(cli._ci_rollup_state([self._check_run("FAILURE")])["state"], "fail")
+        self.assertEqual(
+            cli._ci_rollup_state([self._check_run(None, "IN_PROGRESS")])["state"], "pending"
+        )
+        self.assertEqual(cli._ci_rollup_state([])["state"], "no-checks")
+
+    def test_a_check_run_is_not_re_judged_by_a_field_it_does_not_own(self):
+        # `state` is read only when neither `conclusion` nor `status` is there. A
+        # CheckRun that happened to carry one must keep answering from its own fields.
+        entry = {**self._check_run("SUCCESS"), "state": "FAILURE"}
+        self.assertEqual(cli._ci_rollup_state([entry])["state"], "pass")
+
+    def test_a_pending_status_outranks_a_concluded_one_for_the_same_context(self):
+        # The dedupe keeps the most recent entry per identity, and "in flight" is more
+        # recent than "concluded" — a rerun cannot be queued before the last one ended.
+        rollup = [self._status("FAILURE"), self._status("PENDING")]
+        self.assertEqual(cli._ci_rollup_state(rollup)["state"], "pending")
+
+
 class _GraphqlBlockedGh:
     """A `gh` that serves the REST API and refuses GraphQL, as a proxy does (#1175).
 

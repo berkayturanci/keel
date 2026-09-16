@@ -235,10 +235,11 @@ landed, and re-driving it over a second wire is how one pull request gets merged
 The REST rollup is assembled from two endpoints — `commits/<sha>/check-runs` and
 `commits/<sha>/statuses` — and **both have to be readable**. An empty rollup means no check
 has reported, which the docs-only carve-out is allowed to merge through; a half that could
-not be read means nothing of the kind, so either failing refuses the merge. A commit status
-carries its verdict in `state`, which the rollup reducer does not read, so it is translated
-into the `status`/`conclusion` pair that reducer does read — untranslated, the half that
-reports non-Actions CI could only ever turn `no-checks` into `pass`, never fail a merge.
+not be read means nothing of the kind, so either failing refuses the merge. Both halves are
+carried through in the shape GraphQL returns, because `statusCheckRollup` is a **union** and
+the reducer reads all of it: a `CheckRun` answers from `status`/`conclusion`, a
+`StatusContext` — a commit status, which is how non-Actions CI reports — from `state`. A
+failing commit status therefore fails the merge on either wire.
 
 REST's `merge_commit_sha` is **not** GraphQL's `mergeCommit.oid`. GitHub fills it with the
 *speculative test-merge* SHA (`refs/pull/<n>/merge`) while the pull request is open, and

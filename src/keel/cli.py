@@ -4830,6 +4830,41 @@ def _merge_snapshot(pr: int, *, cwd: str, transport: str = TRANSPORT_GRAPHQL) ->
 _PENDING_CHECK_STATES = {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
 
 
+def _rollup_verdict(entry: dict) -> tuple[str, bool]:
+    """``(conclusion, pending)`` for one rollup entry, whichever shape it arrived in.
+
+    ``statusCheckRollup`` is a **union**. A ``CheckRun`` carries ``status`` and
+    ``conclusion``; a ``StatusContext`` — a commit status, which is how non-Actions CI
+    and most third-party integrations report — carries its whole verdict in ``state``:
+    ``SUCCESS`` / ``FAILURE`` / ``ERROR`` / ``PENDING`` / ``EXPECTED``.
+
+    Reading only the first pair meant a status arrived with no conclusion and no
+    recognised pending status, so it was neither a failure nor in flight — and was
+    therefore counted as a check that had *reported*. A **failing** Jenkins status scored
+    the head ``pass`` and did not block the merge. The one repository this is measured on
+    posts no commit statuses at all (29 check-runs, 0 statuses on `main` at `d432725`),
+    which is why it stayed invisible here and not for a consumer.
+
+    ``state`` is read only when neither of the other two is present, so a ``CheckRun``
+    cannot be re-judged by a field it does not own.
+    """
+    conclusion = _upper_or_empty(entry.get("conclusion"))
+    status = _upper_or_empty(entry.get("status"))
+    if conclusion or status:
+        return conclusion, not conclusion and status in _PENDING_CHECK_STATES
+    state = _upper_or_empty(entry.get("state"))
+    if state in _PENDING_CHECK_STATES:
+        return "", True
+    # An entry carrying none of the three keeps the behaviour it has always had: not a
+    # failure, not pending, still a check that reported. Changing that is a separate
+    # question about malformed payloads, not about commit statuses.
+    return state, False
+
+
+def _upper_or_empty(value: object) -> str:
+    return value.upper() if isinstance(value, str) else ""
+
+
 def _rollup_recency(entry: dict) -> tuple[bool, str]:
     """Sort key: a check genuinely still in flight is always a more recent
     attempt than any concluded entry for the same check — a new run cannot be
@@ -4843,9 +4878,7 @@ def _rollup_recency(entry: dict) -> tuple[bool, str]:
     outranking a concluded entry, so a genuine stale failure can never be
     masked by an unrecognized shape.
     """
-    status_value = entry.get("status")
-    status_value = status_value.upper() if isinstance(status_value, str) else ""
-    pending = not entry.get("conclusion") and status_value in _PENDING_CHECK_STATES
+    _, pending = _rollup_verdict(entry)
     stamp = entry.get("completedAt") or entry.get("startedAt") or ""
     return (pending, stamp)
 
@@ -4885,18 +4918,14 @@ def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
         "STALE",
         "TIMED_OUT",
     }
-    pending_states = _PENDING_CHECK_STATES
     saw_pending = False
     saw_check = False
     for item in _dedupe_rollup(rollup):
         saw_check = True
-        conclusion = item.get("conclusion")
-        conclusion = conclusion.upper() if isinstance(conclusion, str) else ""
-        status_value = item.get("status")
-        status_value = status_value.upper() if isinstance(status_value, str) else ""
+        conclusion, pending = _rollup_verdict(item)
         if conclusion in failures:
             return {"state": "fail", "reason": conclusion}
-        if not conclusion and status_value in pending_states:
+        if pending:
             saw_pending = True
     if saw_pending:
         return {"state": "pending", "reason": "check-pending"}

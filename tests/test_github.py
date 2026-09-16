@@ -189,7 +189,7 @@ class TestRestTransport(unittest.TestCase):
             [(e["name"], e["conclusion"]) for e in rollup], [("a", "SUCCESS"), ("b", "FAILURE")]
         )
 
-    def test_the_rollup_translation_is_case_and_nothing_more(self):
+    def test_the_rollup_shape_is_case_and_nothing_more(self):
         rollup = github.rest_rollup(
             {
                 "check_runs": [
@@ -214,31 +214,26 @@ class TestRestTransport(unittest.TestCase):
                 "completedAt": None,
             },
         )
-        # A commit status keeps its `state`, and also arrives translated into the two
-        # fields the reducer reads — without which the half that reports non-Actions CI
-        # could only ever turn `no-checks` into `pass`.
+        # A commit status keeps its `state` and nothing is invented beside it; the
+        # timestamps come along because the dedupe orders entries by them.
         self.assertEqual(rollup[1]["context"], "legacy/ci")
         self.assertEqual(rollup[1]["state"], "SUCCESS")
-        self.assertEqual(rollup[1]["conclusion"], "SUCCESS")
 
-    def test_a_failing_commit_status_fails_the_rollup(self):
-        """`state` is where a commit status carries its verdict, and the reducer reads
-        `conclusion`/`status` — so carried through untranslated, a **failing** Jenkins
-        status counted as a check that had reported and scored the head `pass`. A half
-        of a merge gate that can only ever make CI greener is the wrong half to add.
+    def test_a_commit_status_is_carried_through_not_translated(self):
+        """`state` is what a `StatusContext` carries, and what the reducer reads (#1202).
+
+        #1175 translated it into a `status`/`conclusion` pair here, because the reducer
+        looked at neither `state` nor anything else a status owns. That worked on this
+        wire and left the two speaking different shapes — and the GraphQL one, which is
+        the default nearly every run takes, still scored a **failing** status as a check
+        that had reported. The reducer learned the field instead, so this is a copy.
         """
-        for state, expected in (
-            ("failure", "FAILURE"),
-            ("error", "ERROR"),
-            ("success", "SUCCESS"),
-        ):
-            with self.subTest(state=state):
-                row = github.rest_rollup(None, [{"context": "jenkins", "state": state}])[0]
-                self.assertEqual(row["conclusion"], expected)
-                self.assertEqual(row["status"], "COMPLETED")
-        pending = github.rest_rollup(None, [{"context": "jenkins", "state": "pending"}])[0]
-        self.assertIsNone(pending["conclusion"])
-        self.assertEqual(pending["status"], "PENDING")
+        row = github.rest_rollup(None, [{"context": "jenkins", "state": "failure"}])[0]
+        self.assertEqual(row["context"], "jenkins")
+        self.assertEqual(row["state"], "FAILURE")
+        # No second spelling of the same verdict to drift from.
+        self.assertNotIn("conclusion", row)
+        self.assertNotIn("status", row)
 
     def test_a_full_page_that_did_not_reach_past_the_window_is_unreadable(self):
         """The truncation rule, re-derived on REST's only usable sort key.
