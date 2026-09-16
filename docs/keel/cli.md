@@ -757,10 +757,10 @@ beside the code is in the repository, and a checkout-wide test says yes to a lin
 sink configured as the repository root (`path: '.'`) therefore names no directory to confine
 anything to, and the landing refuses rather than falling back to the wider boundary.
 
-### Identifying the commit on the base branch
+### Identifying the landing commit
 
-This is the one commit keel pushes to a base branch outside a pull request, so it says so
-in a line a machine can read:
+This is a commit keel builds and pushes itself rather than one an implementer wrote, so it
+says so in a line a machine can read — which is also what the head-pin exemption reads:
 
 ```
 chore(learning): record the lesson from PR #456
@@ -777,7 +777,7 @@ core command cannot know whose co-authorship to stamp on one.
 
 | `status` | exit | meaning |
 | --- | --- | --- |
-| `landed` | 0 | the lesson is on `<remote>/<base_branch>` |
+| `landed` | 0 | the lesson is on the target branch — the pull request's own with `--onto`, else `<remote>/<base_branch>` |
 | `already-landed` | 0 | that exact content is already there; nothing was pushed |
 | `not-required` | 0 | the sink is outside the checkout, so git never sees it |
 | `no-artifact` | 0 | this run captured nothing to land |

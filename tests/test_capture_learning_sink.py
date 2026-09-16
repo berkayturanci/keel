@@ -400,9 +400,9 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                     # From the primary checkout: the ledger row and the gates-pass live there,
                     # and the worktree is removed by the pre-clean that follows.
                     self.assertNotIn('--root "$WORKTREE"', fence)
-                # A merge that fails after the landing must not leave an `applied` capture
-                # reading as a merged pull request.
-                self.assertIn("--capture-status not-run", s10)
+                # A merge that fails after the landing must not leave the `applied` row
+                # standing as a clean capture — and `not-run` would keep it standing.
+                self.assertIn("--capture-status skipped:merge-failed", s10)
 
     def test_a_dormant_sink_under_a_disabled_capture_promises_nothing(self):
         """The contract must name the writer that will actually write.

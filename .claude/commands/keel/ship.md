@@ -1291,11 +1291,15 @@ refuse to certify the run at s10. Then
   passed against the PR's **current** head SHA, so a stale green run from an older head
   cannot authorize the merge), and only then performs the squash-merge. Any failed stage
   exits non-zero **without merging** — **if the lesson already landed on the branch at the top
-  of s10, first record `keel ship … --append-ledger --capture-status not-run`**: the landing's
-  append said `applied`, and the ledger reads an `applied` capture as a merged pull request, so
-  without it an unmerged PR is reported as a merged capture and the failed merge disappears
-  from the capture health summary. The lesson stays on the branch and lands with the merge that
-  eventually succeeds. Then, on a closed window, append to the morning queue, post
+  of s10, first record `keel ship … --append-ledger --capture-status skipped:merge-failed`**:
+  the landing's append said `applied`, and without a later row saying otherwise the capture
+  health summary reports the unmerged pull request as a clean `applied` capture, so the failed
+  merge vanishes from morning and wrap. `merge-failed` is the closed skip reason for exactly
+  this, and the summary then shows `skipped: merge-failed`. Do **not** use `not-run` here: that
+  declares *this row* never reached capture and keeps the earlier `applied` standing, which is
+  the opposite. The lesson stays on the branch, and the landing at the top of the next s10
+  records `applied` again when the merge succeeds. Then, on a closed window, append to the
+  morning queue, post
   the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
   next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
   ship with `--append-ledger`) against the head and retry — if the refusal names a
@@ -1556,4 +1560,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=ae51c3c66eeeee98f812a4c6f5cb00edd45f43488ed8b9b71a8b587438aef46a generated_sha256=ae51c3c66eeeee98f812a4c6f5cb00edd45f43488ed8b9b71a8b587438aef46a -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=932f41163a24412e5cb486d6622329611949286130a09a8dd6983c6be9d5b9cd generated_sha256=932f41163a24412e5cb486d6622329611949286130a09a8dd6983c6be9d5b9cd -->

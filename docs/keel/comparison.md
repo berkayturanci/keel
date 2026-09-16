@@ -362,8 +362,8 @@ name for.
   the whole file including the front matter, and #1166's links are for the readers that do
   follow them (Obsidian, an agent walking an index). What the graph needs is the file on the
   base branch after a worktree run, without which a fresh clone has an empty directory to
-  graph; #1163 ships `keel capture-land` for that — on a base branch that accepts a direct
-  push, which one requiring pull requests does not.
+  graph; `keel capture-land` puts it there by committing it onto the pull request, so it merges
+  with the work it describes (#1163, #1203).
 - **What it does that keel does not**: build a graph — and keel should not; its contract
   with every reader is "a directory of Markdown", nothing more.
 - **Idea to borrow**: the edge itself — a lesson a graph builder can link to the file it is

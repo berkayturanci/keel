@@ -1291,11 +1291,15 @@ refuse to certify the run at s10. Then
   passed against the PR's **current** head SHA, so a stale green run from an older head
   cannot authorize the merge), and only then performs the squash-merge. Any failed stage
   exits non-zero **without merging** — **if the lesson already landed on the branch at the top
-  of s10, first record `keel ship … --append-ledger --capture-status not-run`**: the landing's
-  append said `applied`, and the ledger reads an `applied` capture as a merged pull request, so
-  without it an unmerged PR is reported as a merged capture and the failed merge disappears
-  from the capture health summary. The lesson stays on the branch and lands with the merge that
-  eventually succeeds. Then, on a closed window, append to the morning queue, post
+  of s10, first record `keel ship … --append-ledger --capture-status skipped:merge-failed`**:
+  the landing's append said `applied`, and without a later row saying otherwise the capture
+  health summary reports the unmerged pull request as a clean `applied` capture, so the failed
+  merge vanishes from morning and wrap. `merge-failed` is the closed skip reason for exactly
+  this, and the summary then shows `skipped: merge-failed`. Do **not** use `not-run` here: that
+  declares *this row* never reached capture and keeps the earlier `applied` standing, which is
+  the opposite. The lesson stays on the branch, and the landing at the top of the next s10
+  records `applied` again when the merge succeeds. Then, on a closed window, append to the
+  morning queue, post
   the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
   next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
   ship with `--append-ledger`) against the head and retry — if the refusal names a

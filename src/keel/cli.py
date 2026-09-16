@@ -2155,15 +2155,15 @@ def _land_result(status: str, detail: str, commit: str | None, base: str | None)
 
 
 def _cmd_capture_land(args: argparse.Namespace) -> int:
-    """Land one run's learning document on ``origin/<base_branch>`` (#1163).
+    """Land one run's learning document on a branch (#1163, #1203).
 
-    keel writes the learning at s11 and, before this command, stopped there: with the
-    default relative sink the file sat untracked in a worktree that s10's pre-clean
-    then deleted, so keel captured a lesson on every merge and threw it away.
+    With ``--onto`` — which is how `/keel:ship` runs it, at s10 before the evidence gate —
+    the branch is the pull request's own, so the lesson merges with the work it describes
+    and base-branch protection never sees the push. Without it the branch is
+    ``<remote>/<base_branch>``, which a base that requires pull requests refuses.
 
-    This is **not** a merge path and does not touch one. It pushes a single commit
-    carrying a single file to the base branch, which is the mechanism #1163 picked;
-    `keel merge` at s10 remains the only way a pull request reaches that branch.
+    This is **not** a merge path and does not touch one. It pushes a single commit carrying
+    a single file; `keel merge` at s10 remains the only way a pull request reaches the base.
     """
     try:
         config = cfg.load_config(args.path)
