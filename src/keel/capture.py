@@ -2255,6 +2255,7 @@ def learning_land_plan(
     issue_number: int | None = None,
     remote: str = "origin",
     base_branch: str | None = None,
+    onto: str | None = None,
     attempts: int = LEARNING_LAND_ATTEMPTS,
 ) -> dict[str, Any]:
     """Plan the landing of one learning artifact onto ``origin/<base_branch>``.
@@ -2278,6 +2279,11 @@ def learning_land_plan(
     a path this command must refuse to write to the base branch.
     """
     resolved_base = base_branch or getattr(config, "base_branch", None) or ""
+    # **The branch the commit goes to, kept apart from the base branch.** #1203 lands the
+    # lesson on the pull request's own branch, as its last commit, so it merges with the
+    # work it describes. The sink template still expands against the *base* branch —
+    # that is the value the writer used — so the two cannot share one variable.
+    target = onto or resolved_base
     if not learning_sink_in_worktree(config):
         return {
             "schema_version": LEARNING_LAND_SCHEMA_VERSION,
@@ -2289,6 +2295,7 @@ def learning_land_plan(
             "path": None,
             "remote": remote,
             "base_branch": resolved_base,
+            "onto": None,
             "ref": None,
             "remote_ref": None,
             "message": None,
@@ -2340,7 +2347,7 @@ def learning_land_plan(
         errors.append("base_branch is not configured")
     else:
         status = "planned"
-        reason = f"land {normalized} on {remote}/{resolved_base}"
+        reason = f"land {normalized} on {remote}/{target}"
     return {
         "schema_version": LEARNING_LAND_SCHEMA_VERSION,
         "status": status,
@@ -2353,8 +2360,9 @@ def learning_land_plan(
         "sink": sink_dir,
         "remote": remote,
         "base_branch": resolved_base,
-        "ref": f"refs/heads/{resolved_base}" if resolved_base else None,
-        "remote_ref": f"{remote}/{resolved_base}" if resolved_base else None,
+        "onto": target or None,
+        "ref": f"refs/heads/{target}" if target else None,
+        "remote_ref": f"{remote}/{target}" if target else None,
         "message": (
             learning_land_message(pr_number=pr_number, path=normalized, issue_number=issue_number)
             if status == "planned"
@@ -2422,6 +2430,78 @@ def path_under_sink(path: str, directory: str) -> bool:
     if len(have) <= len(wanted):
         return False
     return all(want == got for want, got in zip(wanted, have, strict=False))
+
+
+#: The line a landing commit's message carries, as the prefix a reader matches on.
+LEARNING_LAND_MARKER_LINE = f"{LEARNING_LAND_MARKER}:"
+
+
+def land_sink_root(
+    config: _HasPolicyPack | None, *, pr_number: int | None, base_branch: str
+) -> str | None:
+    """The public name for :func:`_land_sink_root`, for the readers outside this module.
+
+    The evidence gate and the merge gate ask the same containment question the landing
+    asks, and a second copy of the answer is how the three would come to disagree.
+    """
+    return _land_sink_root(config, pr_number=pr_number, base_branch=base_branch)
+
+
+def capture_only_descent(
+    base: str,
+    head: str,
+    commits: list[dict[str, Any]],
+    *,
+    sink: str | None,
+) -> bool:
+    """Does ``head`` descend from ``base`` by **capture commits and nothing else**? (#1203)
+
+    The question the head-pin exemption rests on. Every review verdict and every
+    gates-pass is pinned to the head it was recorded against, and #1203 puts the
+    learning on the pull request's own branch as its last commit — after review, before
+    the merge — which moves that head. A verdict for ``base`` still answers for ``head``
+    exactly when nothing between them could change what was reviewed:
+
+    - every commit has **exactly one parent**, and they form an unbroken chain from
+      ``base`` to ``head`` — a merge commit could carry anything;
+    - every commit's message carries the ``keel.capture-land.v1:`` marker line — the
+      exemption is for commits that *say* they are a landing, not for any edit that
+      happens to touch the sink;
+    - every commit differs from its parent by **exactly one path**, and that path is
+      inside the configured sink — the same containment the landing enforces before it
+      pushes, asked again here of commits it did not necessarily build.
+
+    ``commits`` is ordered oldest to newest, each a mapping with ``sha``, ``parents``
+    (a list of SHAs), ``message`` and ``files`` (a list of paths). Anything malformed is
+    ``False``: this answer removes a requirement, so it fails closed.
+
+    A sink that cannot be resolved is ``False`` too. There is then no boundary to hold a
+    commit to, and "inside the sink" would silently mean "anywhere".
+    """
+    if not base or not head or base == head or sink is None or not commits:
+        return False
+    previous = base
+    for commit in commits:
+        if not isinstance(commit, dict):
+            return False
+        parents = commit.get("parents")
+        if not isinstance(parents, list) or parents != [previous]:
+            return False
+        message = commit.get("message")
+        if not isinstance(message, str) or not any(
+            line.strip().startswith(LEARNING_LAND_MARKER_LINE) for line in message.splitlines()
+        ):
+            return False
+        files = commit.get("files")
+        if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], str):
+            return False
+        if not path_under_sink(files[0], sink):
+            return False
+        sha = commit.get("sha")
+        if not isinstance(sha, str) or not sha:
+            return False
+        previous = sha
+    return previous == head
 
 
 def _land_path(artifact: str | None) -> str | None:

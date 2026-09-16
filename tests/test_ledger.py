@@ -876,6 +876,29 @@ class TestGatesPassForHead(unittest.TestCase):
         self.assertTrue(matched)
         self.assertEqual(record["run_id"], "RUN-2")
 
+    def test_a_gates_pass_for_a_covered_head_counts(self):
+        # #1203: the gates ran on `reviewed`, then the learning landed on the branch.
+        records = [_gates_record(pr=42, head_sha="reviewed", run_id="RUN-7")]
+        matched, record = ledger.gates_pass_for_head(
+            records, 42, "with-lesson", covered_heads=("reviewed",)
+        )
+        self.assertTrue(matched)
+        self.assertEqual(record["run_id"], "RUN-7")
+        # And without the proof it is the stale head it always was.
+        self.assertEqual(ledger.gates_pass_for_head(records, 42, "with-lesson"), (False, None))
+
+    def test_latest_wins_across_the_whole_covered_set(self):
+        # A red record for any covered head, after a green one, is the verdict. Scanning
+        # the set for *a* green would reopen the fail-open latest-wins exists to close.
+        green = _gates_record(pr=42, head_sha="reviewed", run_id="RUN-1")
+        red = _gates_record(pr=42, head_sha="with-lesson", run_id="RUN-2")
+        red["verdict"] = {"decision": "BLOCK"}
+        red["gates"] = [{"name": "build", "status": "error"}]
+        matched, _ = ledger.gates_pass_for_head(
+            [green, red], 42, "with-lesson", covered_heads=("reviewed",)
+        )
+        self.assertFalse(matched)
+
     def test_stale_head_does_not_match(self):
         records = [_gates_record(pr=42, head_sha="head-old")]
         matched, record = ledger.gates_pass_for_head(records, 42, "head-new")

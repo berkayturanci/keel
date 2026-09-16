@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -435,6 +435,7 @@ def gates_pass_for_head(
     records: list[dict[str, Any]],
     pr_number: int,
     head_sha: str,
+    covered_heads: Collection[str] = (),
 ) -> tuple[bool, dict[str, Any] | None]:
     """Find a passing gates run recorded against ``head_sha`` for ``pr_number``.
 
@@ -451,9 +452,19 @@ def gates_pass_for_head(
     the superseded pass authorize the merge and the later red never be consulted:
     a fail-open in exactly the gate that exists to hold the merge closed. Only the
     most recent verdict for the head counts.
+
+    ``covered_heads`` are heads the current one descends from by capture commits alone
+    (#1203): the learning lands on the pull request's own branch after the gates ran, so
+    the gates-pass is recorded against a head the branch has moved one lesson past. A
+    record for one of them counts, and **latest-wins still holds across the whole set** —
+    a red record for any of them after a green one is the verdict. The set is produced by
+    `capture.capture_only_descent` and nothing else, so it admits a markdown file inside
+    the sink, never code; CI still runs on the new head and `keel merge` still requires
+    that rollup to be green.
     """
     if not isinstance(head_sha, str) or not head_sha.strip():
         return False, None
+    accepted = {head_sha, *covered_heads}
     latest: dict[str, Any] | None = None
     for record in records:
         if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
@@ -464,7 +475,7 @@ def gates_pass_for_head(
             continue
         git = record.get("git")
         record_sha = git.get("head_sha") if isinstance(git, dict) else None
-        if record_sha != head_sha:
+        if record_sha not in accepted:
             continue
         latest = record
     if latest is None or not record_gates_passed(latest):

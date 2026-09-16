@@ -601,9 +601,10 @@ On a live append, a missing `--host-agent` emits a run-context warning by defaul
 fields would degrade. `--transport` is auto-filled from the resolved GitHub transport when
 omitted, so adapters should not echo a stale transport value.
 
-## `keel capture-land <project.yaml> [--root <dir>] [--pr <N>] [--issue <N>] [--artifact <path>] [--remote <name>] [--attempts <N>] [--dry-run] [--json]`
+## `keel capture-land <project.yaml> [--root <dir>] [--pr <N>] [--issue <N>] [--artifact <path>] [--remote <name>] [--onto <branch>] [--attempts <N>] [--dry-run] [--json]`
 
-Land this run's learning document on `origin/<base_branch>` (#1163).
+Land this run's learning document on a branch — the pull request's own under `/keel:ship`
+(#1203), or `origin/<base_branch>` without `--onto` (#1163).
 
 `policy_pack.capture.learning.sink` writes one Markdown learning per applied capture, and
 with a **relative** sink path — `.keel/learning/`, the default keel dogfoods — the file
@@ -613,13 +614,37 @@ CI runner clones fresh, and s10's pre-clean deletes the worktree outright. The c
 contract's `durable_artifacts.commit_required` said the file *had* to be committed;
 `durable_artifacts.land_command` now names what commits it.
 
-**This is not a merge path.** It pushes one commit carrying one file to the base branch.
-`keel merge` at s10 remains the only way a pull request reaches that branch, and the
-landing touches no pull request, no merge claim, and no merge window.
+**This is not a merge path.** It pushes one commit carrying one file. `keel merge` at s10
+remains the only way a pull request reaches the base branch, and the landing touches no
+merge claim and no merge window.
 
 ```bash
-keel capture-land .keel/project.yaml --root . --pr 456 --issue 123 --json
+keel capture-land .keel/project.yaml --root . --pr 456 --issue 123 --onto "$BRANCH" --json
 ```
+
+### `--onto`: the lesson rides the pull request
+
+`/keel:ship` lands the lesson **onto the pull request's own branch**, at s10 and before the
+evidence gate, so the squash carries it into the base branch with the work it describes. It
+cannot be forgotten — there is no second pull request to merge — and it never pushes to the
+base branch, so branch protection never sees it.
+
+The commit moves the head that every review verdict and the gates-pass are pinned to, so
+`keel evidence-verify` and `keel merge` accept a pin for head **H** on head **H′** exactly
+when every commit between them:
+
+- has **one parent** — a merge commit could carry anything;
+- carries the **`keel.capture-land.v1:` marker line** — the exemption is for commits that say
+  they are a landing, not for any edit that touches the sink;
+- differs from its parent by **exactly one path, inside the configured sink**.
+
+Any other commit invalidates the pins exactly as it always did. The walk runs back from the
+current head, reads each commit from the API so it answers the same on a CI runner as in a
+worktree, and stops at the first commit that is not a landing — ordinarily two reads. It only
+applies to a project whose sink is inside the repository with capture enabled.
+
+Without `--onto` the commit goes to the base branch, which is what #1163 shipped and what a
+protected base refuses.
 
 With no `--artifact`, the path is read from the `capture.artifact` field of the newest
 `ship_run` ledger record for `--pr`, so s11 passes the pull request and nothing else.
@@ -659,11 +684,29 @@ pushes to a shared branch, so it stops and reports rather than guessing.
 
 ### Branch protection
 
-A base branch that requires pull requests refuses this push, and so does one with required
-status checks — the commit is built with `commit-tree` and has never been through CI. The
-command reports `failed` with the server's reason and does not retry. This repository's own
-`main` is in exactly that position, so keel writes its lessons and does not land them; see
-[`configuration.md`](configuration.md) for what a project in that position can do instead.
+Without `--onto`, a base branch that requires pull requests refuses this push, and so does one
+with required status checks — the commit is built with `commit-tree` and has never been through
+CI. Measured against this repository's `main` on 2026-09-16:
+
+```
+remote: error: GH006: Protected branch update failed for refs/heads/main.
+remote: - Changes must be made through a pull request.
+remote: - 13 of 13 required status checks are expected.
+ ! [remote rejected]  … -> main (protected branch hook declined)
+```
+
+The command reports `failed` with the server's reason and does not retry. That refusal is why
+`/keel:ship` lands onto the pull request instead.
+
+### The untracked copy
+
+git will not pull over an untracked file, **even one byte-identical to the file arriving** —
+measured — so a lesson left in the working tree after landing would stop the next `git pull`
+there with *untracked working tree files would be overwritten by merge*. After `landed` or
+`already-landed` the command removes that copy, but only when its bytes equal the committed
+blob; one edited after it was written is kept. `local_copy` in the JSON says which:
+`removed`, `kept` or `absent`. A re-run that finds the copy already gone, and the path already
+on the target branch, reports `already-landed` rather than a missing artifact.
 
 ### Safety
 

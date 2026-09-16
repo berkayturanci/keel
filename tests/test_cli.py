@@ -15440,6 +15440,114 @@ def _origin_commits(origin: Path) -> int:
     return int(out.stdout.strip())
 
 
+class TestCoveredHeadsWalk(unittest.TestCase):
+    """`_covered_heads` — which heads the current one answers for (#1203).
+
+    It walks back from the head while the tip is a capture commit on top of its one
+    parent, and stops at the first commit that is anything else. Driven here through a
+    fake commit reader, because the walk is the I/O and the judgement is
+    `capture.capture_only_descent`, tested on its own.
+    """
+
+    MARKER = "chore(learning): x\n\nkeel.capture-land.v1: pr=7 issue=- path=.keel/learning/a.md\n"
+
+    def _config(self, *, sink=True):
+        lines = (
+            [
+                "  capture:",
+                "    enabled: true",
+                "    mode: extension",
+                "    learning:",
+                "      enabled: true",
+                "      mode: create-learning",
+                "      sink:",
+                "        kind: markdown-dir",
+            ]
+            if sink
+            else []
+        )
+        return cli.cfg.load_config(
+            _write_config_with_ledger("'true'", extra_policy_pack_lines=lines)
+        )
+
+    def _walk(self, history, *, head="TIP", sink=True):
+        def facts(owner_repo, sha, *, cwd):
+            return history.get(sha)
+
+        with patch.object(cli, "_commit_facts", side_effect=facts):
+            return cli._covered_heads(self._config(sink=sink), "o/r", 7, head, cwd=".")
+
+    def _capture(self, sha, parent, path=".keel/learning/a.md"):
+        return {"sha": sha, "parents": [parent], "message": self.MARKER, "files": [path]}
+
+    def _code(self, sha, parent):
+        return {"sha": sha, "parents": [parent], "message": "fix: x", "files": ["src/x.py"]}
+
+    def test_the_commit_reader_takes_the_api_shape_apart(self):
+        payload = {
+            "sha": "TIP",
+            "parents": [{"sha": "REVIEWED"}, "junk"],
+            "commit": {"message": self.MARKER},
+            "files": [{"filename": ".keel/learning/a.md"}, {"status": "no name"}],
+        }
+        with patch.object(cli, "_gh_json", return_value=payload):
+            facts = cli._commit_facts("o/r", "TIP", cwd=".")
+        self.assertEqual(
+            facts,
+            {
+                "sha": "TIP",
+                "parents": ["REVIEWED"],
+                "message": self.MARKER,
+                "files": [".keel/learning/a.md"],
+            },
+        )
+
+    def test_an_unreadable_or_malformed_commit_reads_as_nothing_usable(self):
+        # Unreadable is `None`, and a shape the API did not document yields `None` fields
+        # — which `capture_only_descent` refuses, so the walk stops rather than guessing.
+        with patch.object(cli, "_gh_json", side_effect=ValueError("gh api failed")):
+            self.assertIsNone(cli._commit_facts("o/r", "TIP", cwd="."))
+        with patch.object(cli, "_gh_json", return_value={"sha": "TIP", "commit": "nope"}):
+            facts = cli._commit_facts("o/r", "TIP", cwd=".")
+        self.assertEqual(facts, {"sha": "TIP", "parents": None, "message": None, "files": None})
+
+    def test_one_capture_commit_covers_the_head_it_was_built_on(self):
+        history = {"TIP": self._capture("TIP", "REVIEWED"), "REVIEWED": self._code("REVIEWED", "B")}
+        self.assertEqual(self._walk(history), ("REVIEWED",))
+
+    def test_two_capture_commits_cover_both_heads_behind_them(self):
+        history = {
+            "TIP": self._capture("TIP", "MID", ".keel/learning/b.md"),
+            "MID": self._capture("MID", "REVIEWED"),
+            "REVIEWED": self._code("REVIEWED", "B"),
+        }
+        self.assertEqual(self._walk(history), ("MID", "REVIEWED"))
+
+    def test_a_code_commit_at_the_tip_covers_nothing(self):
+        # The ordinary case, and the one that must be byte-identical to before.
+        self.assertEqual(self._walk({"TIP": self._code("TIP", "B")}), ())
+
+    def test_an_unreadable_commit_stops_the_walk(self):
+        self.assertEqual(self._walk({}), ())
+
+    def test_a_project_with_no_in_repo_sink_is_never_exempt(self):
+        # The exemption exists for the landing; without it, a marker and a path must not
+        # become a way past a pin.
+        history = {"TIP": self._capture("TIP", "REVIEWED")}
+        self.assertEqual(self._walk(history, sink=False), ())
+
+    def test_no_head_covers_nothing(self):
+        self.assertEqual(self._walk({}, head=None), ())
+
+    def test_the_walk_is_bounded(self):
+        # A long run of capture commits stops at the limit rather than reading on.
+        history = {}
+        for i in range(cli._COVERED_HEADS_LIMIT + 5):
+            history[f"C{i}"] = self._capture(f"C{i}", f"C{i + 1}", f".keel/learning/{i}.md")
+        covered = self._walk(history, head="C0")
+        self.assertEqual(len(covered), cli._COVERED_HEADS_LIMIT)
+
+
 class TestCaptureLand(unittest.TestCase):
     """`keel capture-land` — the mechanism #1163 picked.
 
@@ -15928,6 +16036,192 @@ class TestCaptureLand(unittest.TestCase):
             self.assertEqual(rc, 0, payload)
             self.assertEqual(payload["status"], "landed")
             self.assertEqual(_origin_files(origin), [".keel/learning/rel.md", "keep.txt"])
+
+    def test_the_lesson_rides_the_pull_request_past_a_protected_base(self):
+        """#1203, end to end against real git: the base refuses, the branch takes it.
+
+        A `pre-receive` hook refuses every push to `main` — which is what this repository's
+        own protection did to the direct landing, measured. Landed `--onto` the pull
+        request's branch instead, the lesson becomes that branch's last commit, `main` is
+        untouched, and the commit it built is one `capture.capture_only_descent` accepts —
+        so the head-pin exemption holds for the head the merge will actually see.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            _run_git(wt, "push", "-q", "origin", "feature")
+            reviewed = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=wt, check=True, capture_output=True, text=True
+            ).stdout.strip()
+            hook = origin / "hooks" / "pre-receive"
+            hook.write_text(
+                "#!/bin/sh\nwhile read old new ref; do\n"
+                '  [ "$ref" = "refs/heads/main" ] && echo "main is protected" >&2 && exit 1\n'
+                "done\nexit 0\n",
+                encoding="utf-8",
+            )
+            hook.chmod(0o755)
+            artifact = self._write_lesson(wt, "rides.md")
+            config = self._config(wt)
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    config,
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "20",
+                    "--issue",
+                    "1203",
+                    "--artifact",
+                    artifact,
+                    "--onto",
+                    "feature",
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0, payload)
+            self.assertEqual(payload["status"], "landed")
+            # The base branch never saw it.
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+            # The pull request's branch did, as exactly one commit on top of the review.
+            tip = subprocess.run(
+                ["git", "--git-dir", str(origin), "rev-parse", "feature"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            self.assertEqual(tip, payload["commit"])
+            listing = subprocess.run(
+                ["git", "--git-dir", str(origin), "ls-tree", "-r", "--name-only", "feature"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+            self.assertIn(".keel/learning/rides.md", listing)
+            # And the commit is one the head-pin exemption accepts, read back from git
+            # rather than from the command's own report of what it built.
+            show = subprocess.run(
+                ["git", "--git-dir", str(origin), "show", "-s", "--format=%P%n%B", tip],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            parents, _, message = show.partition("\n")
+            files = subprocess.run(
+                ["git", "--git-dir", str(origin), "diff", "--name-only", reviewed, tip],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+            facts = {"sha": tip, "parents": parents.split(), "message": message, "files": files}
+            self.assertTrue(
+                capture.capture_only_descent(reviewed, tip, [facts], sink=".keel/learning")
+            )
+            # The untracked copy that would have blocked a later pull is gone.
+            self.assertEqual(payload["local_copy"], "removed")
+            self.assertFalse((wt / artifact).exists())
+
+    def test_the_landing_builds_on_the_branch_as_it_now_is(self):
+        """The pull request's branch moved on another machine since this checkout saw it.
+
+        A fix pushed from elsewhere, a bot's formatting commit: the remote-tracking ref in
+        this checkout is behind. Fetching the *base* instead of the target left that ref
+        stale, so every attempt built the lesson on the old tip, every push was a genuine
+        non-fast-forward, and the budget ran out on a race the command had set up itself.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            _run_git(wt, "push", "-q", "origin", "feature")
+            other = Path(tmp) / "other"
+            subprocess.run(
+                ["git", "clone", "-q", "-b", "feature", str(origin), str(other)], check=True
+            )
+            _run_git(other, "config", "user.email", "t@example.com")
+            _run_git(other, "config", "user.name", "T")
+            (other / "fix.txt").write_text("from elsewhere\n", encoding="utf-8")
+            _run_git(other, "add", "-A")
+            _run_git(other, "commit", "-qm", "fix: pushed from another machine")
+            _run_git(other, "push", "-q", "origin", "feature")
+            artifact = self._write_lesson(wt, "moved.md")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "22",
+                    "--artifact",
+                    artifact,
+                    "--onto",
+                    "feature",
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0, payload)
+            self.assertEqual(payload["status"], "landed")
+            # Both the other machine's commit and the lesson are on the branch.
+            listing = subprocess.run(
+                ["git", "--git-dir", str(origin), "ls-tree", "-r", "--name-only", "feature"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+            self.assertIn("fix.txt", listing)
+            self.assertIn(".keel/learning/moved.md", listing)
+
+    def test_a_copy_that_is_still_here_and_already_landed_is_recognised(self):
+        # The re-run guarantee has two shapes now: the copy was removed by the landing
+        # (covered above), or it is still in the working tree — restored, or written
+        # again by a retried append. The second must reach `already-landed` by the
+        # content comparison and push nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            config, artifact = self._config(wt), self._write_lesson(wt, "again.md")
+            argv = ["capture-land", config, "--root", str(wt), "--pr", "23", "--artifact", artifact]
+            run(argv)
+            self._write_lesson(wt, "again.md")  # the same bytes, back in the tree
+            rc, out, _ = run([*argv, "--json"])
+            payload = json.loads(out)
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["status"], "already-landed")
+            self.assertEqual(_origin_commits(origin), 2)
+            # And it is still redundant, so it goes again.
+            self.assertEqual(payload["local_copy"], "removed")
+
+    def test_a_lesson_edited_after_it_was_written_is_not_removed(self):
+        # The local copy is only redundant when it is the same bytes that were committed.
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            artifact = self._write_lesson(wt, "edited.md")
+            config = self._config(wt)
+            real_push = git.push_commit
+
+            def edit_then_push(*args, **kwargs):
+                result = real_push(*args, **kwargs)
+                (wt / artifact).write_text("# Edited after the landing\n", encoding="utf-8")
+                return result
+
+            with patch.object(git, "push_commit", side_effect=edit_then_push):
+                rc, out, _ = run(
+                    [
+                        "capture-land",
+                        config,
+                        "--root",
+                        str(wt),
+                        "--pr",
+                        "21",
+                        "--artifact",
+                        artifact,
+                        "--json",
+                    ]
+                )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["local_copy"], "kept")
+            self.assertTrue((wt / artifact).exists())
 
     def test_the_artifact_is_read_from_the_ledger_when_not_given(self):
         with tempfile.TemporaryDirectory() as tmp:

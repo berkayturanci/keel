@@ -1,6 +1,7 @@
 """Tests for deterministic ship evidence verification."""
 
 import unittest
+from pathlib import Path
 
 from keel import agents, artifacts, closure, evidence, ship
 
@@ -299,6 +300,90 @@ class TestEvidenceVerify(unittest.TestCase):
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["counts"]["review_verdict"], 2)
         self.assertEqual(report["counts"]["jury_verdict"], 1)
+
+    def test_a_verdict_for_a_head_the_branch_moved_one_lesson_past_still_counts(self):
+        """#1203: the learning is the pull request's last commit, after review.
+
+        Both verdicts were pinned to `reviewed`; the branch then gained a capture commit
+        and its head is `with-lesson`. Proven by `capture.capture_only_descent`, the
+        reviewed head is *covered*, so the verdicts answer for the head that merges.
+        """
+        comments = [
+            _comment(closure.COMMENT_MARKER),
+            _comment(
+                "keel.review-verdict.v1\nreviewer: alpha\nhead: reviewed\nLGTM"
+                "\n\nsrc/keel/evidence.py: ok."
+            ),
+            _comment(
+                "keel.review-verdict.v1\nreviewer: beta\nhead: reviewed\nLGTM"
+                "\n\nsrc/keel/evidence.py: ok."
+            ),
+        ]
+        covered = evidence.verify(
+            _review_contract(reviewers=2),
+            pr_comments=comments,
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+            head_sha="with-lesson",
+            covered_heads=("reviewed",),
+        )
+        self.assertEqual(covered["status"], "pass")
+        self.assertEqual(covered["counts"]["review_verdict"], 2)
+        # Without the proof, the same verdicts are stale — which is the gate as it was.
+        uncovered = evidence.verify(
+            _review_contract(reviewers=2),
+            pr_comments=comments,
+            issue_comments=[_comment(closure.COMMENT_MARKER)],
+            head_sha="with-lesson",
+        )
+        self.assertEqual(uncovered["counts"]["review_verdict"], 0)
+
+    def test_a_covered_head_is_not_a_blank_one(self):
+        # Covering widens a match; it must never turn a known head into "do not filter".
+        # A verdict for some *other* head stays out.
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_comments=[
+                _comment(
+                    "keel.review-verdict.v1\nreviewer: alpha\nhead: unrelated\nLGTM"
+                    "\n\nsrc/keel/evidence.py: ok."
+                )
+            ],
+            head_sha="with-lesson",
+            covered_heads=("reviewed",),
+        )
+        self.assertEqual(report["counts"]["review_verdict"], 0)
+
+    def test_every_path_to_the_head_matcher_carries_the_covered_heads(self):
+        """The exemption flows through twelve functions that only pass the head along.
+
+        A new path that forwards `head_sha` and forgets `covered_heads` would silently
+        fall back to the strict pin on that path alone — a gate that passes on one reader
+        and refuses on another for the same pull request. Checked from the source rather
+        than by exercising each path, because a missing forward is exactly the kind of
+        omission a behavioural test does not know to look for.
+        """
+        import ast
+
+        tree = ast.parse(Path(evidence.__file__).read_text(encoding="utf-8"))
+        functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        takes = {
+            name
+            for name, fn in functions.items()
+            if any(a.arg == "covered_heads" for a in fn.args.args + fn.args.kwonlyargs)
+        }
+        self.assertIn("_matches_head", takes)
+        missing = []
+        for name in takes:
+            for call in (c for c in ast.walk(functions[name]) if isinstance(c, ast.Call)):
+                callee = getattr(call.func, "id", None)
+                if callee not in takes:
+                    continue
+                forwarded = {k.arg for k in call.keywords} | {
+                    getattr(a, "id", None) for a in call.args
+                }
+                if "covered_heads" not in forwarded:
+                    missing.append(f"{name} -> {callee} (line {call.lineno})")
+        self.assertEqual(missing, [])
 
     def test_review_verdicts_without_matching_head_are_ignored_when_head_known(self):
         report = evidence.verify(

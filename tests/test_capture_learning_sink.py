@@ -357,26 +357,36 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
         ):
             with self.subTest(surface=surface):
                 body = (root / surface).read_text(encoding="utf-8")
-                s11 = body[body.index("### s11 capture") :]
+                s10 = body[body.index("### s10 merge") : body.index("### s11 capture")]
+                s11 = body[body.index("### s11 capture") : body.index("### s12")]
                 self.assertIn("commit_required", body)
-                # The warning stays: the next person to reach for `git switch`
-                # should find out here why it cannot work, not from exit 128.
+                # The warning stays: the next person to reach for `git switch` should
+                # find out here why it cannot work, not from exit 128.
                 self.assertIn("already used by worktree", s11)
-                capture_section = s11[: s11.index("### s12")]
-                self.assertIn("keel capture-land", capture_section)
-                # No hand-rolled git against the base branch. The needles are the
-                # commands themselves, inside a shell fence — the prose above is
-                # allowed to *name* `git switch` because it is warning about it.
-                fences = _shell_fences(capture_section)
-                # A guard that inspected zero fences would pass on a section whose
-                # opener it failed to recognise — the failure mode being fixed here.
-                self.assertTrue(fences, f"{surface}: s11 hands out no runnable block")
-                # **The landing's input is in the block with it.** `capture-land` reads
-                # the artifact off the `ship_run` record the append writes, so a fence
-                # carrying only the landing lands nothing when run as written: no
-                # record, `no-artifact`, exit 0 — the green s11 this section names as
-                # the regression it exists to prevent. Asserted on one fence rather
-                # than on the section, because prose elsewhere is not a recipe.
+                # **The landing is s10's, and it precedes the evidence gate** (#1203): the
+                # lesson rides the pull request, so it has to be on the branch before the
+                # merge is authorised against the head it produces.
+                self.assertIn("keel capture-land", s10)
+                self.assertLess(
+                    s10.index("keel capture-land"),
+                    s10.index("Evidence gate"),
+                    f"{surface}: the lesson must land before the evidence gate",
+                )
+                # No hand-rolled git in either step. The needles are the commands
+                # themselves, inside a shell fence — prose may *name* `git switch`
+                # because it is warning about it.
+                fences = _shell_fences(s10) + _shell_fences(s11)
+                # A guard that inspected zero fences would pass on a section whose opener
+                # it failed to recognise.
+                self.assertTrue(fences, f"{surface}: capture hands out no runnable block")
+                for fence in fences:
+                    for forbidden in ("git switch", "git commit", "git push", "git add"):
+                        self.assertNotIn(forbidden, fence)
+                # **The landing's input is in the block with it, and it targets the pull
+                # request.** `capture-land` reads the artifact off the record the append
+                # writes, so a fence carrying only the landing lands nothing when run as
+                # written; and without `--onto` it pushes at the base branch, which a
+                # protected base refuses — measured on this repository.
                 runnable = [f for f in fences if "keel capture-land" in f]
                 self.assertTrue(runnable, f"{surface}: no fence runs capture-land")
                 for fence in runnable:
@@ -386,9 +396,7 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                         fence.index("keel capture-land"),
                         f"{surface}: the ledger append must come before the landing",
                     )
-                for fence in fences:
-                    for forbidden in ("git switch", "git commit", "git push", "git add"):
-                        self.assertNotIn(forbidden, fence)
+                    self.assertIn("--onto", fence, f"{surface}: the landing must target the PR")
 
     def test_a_dormant_sink_under_a_disabled_capture_promises_nothing(self):
         """The contract must name the writer that will actually write.
@@ -3086,6 +3094,78 @@ class TestLearningLandPlan(unittest.TestCase):
         self.assertEqual(in_repo["durable_artifacts"]["land_command"], "keel capture-land")
         self.assertFalse(outside["durable_artifacts"]["commit_required"])
         self.assertIsNone(outside["durable_artifacts"]["land_command"])
+
+
+class TheLessonRidesThePullRequest(unittest.TestCase):
+    """`capture.capture_only_descent` — the proof the head-pin exemption rests on (#1203).
+
+    The learning is the pull request's last commit, after review and before the merge,
+    which moves the head every verdict and the gates-pass are pinned to. A pin for
+    `base` still answers for `head` only when nothing between them could change what was
+    reviewed. Every refusal below is a way that could happen, and each fails closed,
+    because this answer *removes* a requirement.
+    """
+
+    SINK = ".keel/learning"
+    MARKER = "chore(learning): x\n\nkeel.capture-land.v1: pr=1 issue=- path=.keel/learning/a.md\n"
+
+    def _commit(self, sha="H2", parents=("H1",), message=None, files=(".keel/learning/a.md",)):
+        return {
+            "sha": sha,
+            "parents": list(parents),
+            "message": self.MARKER if message is None else message,
+            "files": list(files),
+        }
+
+    def _descends(self, commits, base="H1", head="H2", sink=SINK):
+        return capture.capture_only_descent(base, head, commits, sink=sink)
+
+    def test_one_capture_commit_is_a_capture_only_descent(self):
+        self.assertTrue(self._descends([self._commit()]))
+
+    def test_several_capture_commits_in_a_chain_are_too(self):
+        second = self._commit(sha="H3", parents=("H2",), files=(".keel/learning/b.md",))
+        self.assertTrue(self._descends([self._commit(), second], head="H3"))
+
+    def test_a_commit_that_does_not_say_it_is_a_landing_is_not_exempt(self):
+        # The exemption is for commits that declare themselves a landing, not for any
+        # edit that happens to touch the sink.
+        self.assertFalse(self._descends([self._commit(message="docs: tidy a lesson")]))
+
+    def test_a_file_outside_the_sink_is_not_exempt(self):
+        self.assertFalse(self._descends([self._commit(files=("src/keel/cli.py",))]))
+
+    def test_two_files_are_not_exempt_even_both_inside_the_sink(self):
+        files = (".keel/learning/a.md", ".keel/learning/b.md")
+        self.assertFalse(self._descends([self._commit(files=files)]))
+
+    def test_a_merge_commit_is_not_exempt(self):
+        # Two parents can carry anything the second parent brought in.
+        self.assertFalse(self._descends([self._commit(parents=("H1", "OTHER"))]))
+
+    def test_a_broken_chain_is_not_a_descent(self):
+        self.assertFalse(self._descends([self._commit()], base="H0"))
+        self.assertFalse(self._descends([self._commit()], head="H9"))
+
+    def test_no_commits_and_the_same_head_are_not_an_exemption(self):
+        self.assertFalse(self._descends([]))
+        self.assertFalse(self._descends([self._commit()], base="H2", head="H2"))
+
+    def test_an_unresolvable_sink_exempts_nothing(self):
+        # With no boundary to hold a commit to, "inside the sink" would mean anywhere.
+        self.assertFalse(self._descends([self._commit()], sink=None))
+
+    def test_malformed_facts_fail_closed(self):
+        for broken in (
+            "not a dict",
+            {**self._commit(), "parents": "H1"},
+            {**self._commit(), "message": None},
+            {**self._commit(), "files": ".keel/learning/a.md"},
+            {**self._commit(), "files": [None]},
+            {**self._commit(), "sha": ""},
+        ):
+            with self.subTest(broken=broken):
+                self.assertFalse(self._descends([broken]))
 
 
 class TestTreeComposition(unittest.TestCase):

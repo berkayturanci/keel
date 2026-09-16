@@ -289,13 +289,15 @@ The block records:
   candidates are suppressed by a stable fingerprint over normalized title, labels, and
   changed files. The decision is stored in the structured run ledger and mirrored in the
   closure comment's Capture line.
-- s11 landing command: `keel capture-land <project.yaml> --root . [--pr N] [--issue N]`
-  — pushes one commit carrying exactly the learning artifact to `<remote>/<base_branch>`,
-  built with plumbing and no checkout of the base branch (s2, `overnight` and `swarm` all
-  run inside a worktree while the primary checkout holds it). It is **not** a merge and
-  touches none: `keel merge` at s10 remains the only path a pull request takes to that
-  branch. `--root .`, never the worktree — s10's pre-clean has already removed that and the
-  ledger append writes under the primary checkout. The artifact must sit inside the
+- landing command, run at **s10 before the evidence gate**:
+  `keel capture-land <project.yaml> --root . --pr N --issue N --onto <branch>` — pushes one
+  commit carrying exactly the learning artifact **onto the pull request's own branch**, so the
+  squash carries the lesson into `base_branch` with the work (#1203). Built with plumbing and
+  no checkout (s2, `overnight` and `swarm` all run inside a worktree while the primary checkout
+  holds the base). It is **not** a merge and touches none: `keel merge` remains the only path a
+  pull request takes to the base branch. The head it produces is accepted for the review
+  verdicts and gates-pass pinned to the head before it **only** when every commit in between
+  has one parent, the `keel.capture-land.v1` marker, and exactly one path inside the sink. The artifact must sit inside the
   configured sink, not merely inside the repository. Statuses `landed`, `already-landed`,
   `not-required`, `no-artifact` and `would-land` exit 0 (capture is fail-soft after a merge
   that already happened); only `failed` exits 1. The commit's marker line is

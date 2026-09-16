@@ -1091,7 +1091,13 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             except ledger.LedgerError as exc:
                 return _finish_merge(args, payload, f"invalid run ledger: {exc}", code=1)
             matched, record = ledger.gates_pass_for_head(
-                gates_records, args.pr, head_sha if isinstance(head_sha, str) else ""
+                gates_records,
+                args.pr,
+                head_sha if isinstance(head_sha, str) else "",
+                # The same set the evidence gate just proved, not a second walk: two reads
+                # of one history could disagree, and the merge would then be judged by the
+                # more permissive of them.
+                covered_heads=tuple(evidence_payload.get("covered_heads") or ()),
             )
             gates_run_id = record.get("run_id") if record else None
             payload["gates_sha"] = {
@@ -2004,11 +2010,15 @@ def _land_learning_attempt(args, plan: dict) -> dict:
     # non-fast-forward, and that is genuine contention by every test we have. It is
     # retried, the fetch fails the same way, and the budget is spent on a race with
     # nobody. A fetch that could not run is the answer, not the symptom it produces.
-    fetched = git.fetch(remote, plan["base_branch"], cwd=root)
+    # The branch the commit goes **to**, which is the pull request's own under #1203 —
+    # fetching the base instead would build the lesson on a remote-tracking ref that
+    # names the wrong branch entirely, or a stale copy of the right one.
+    target = plan.get("onto") or plan["base_branch"]
+    fetched = git.fetch(remote, target, cwd=root)
     if not fetched.ok:
         return _land_result(
             "failed",
-            f"cannot fetch {remote}/{plan['base_branch']}: {fetched.output.strip()}",
+            f"cannot fetch {remote}/{target}: {fetched.output.strip()}",
             None,
             None,
         )
@@ -2021,6 +2031,19 @@ def _land_learning_attempt(args, plan: dict) -> dict:
     # bug once already, sixty lines away, and the comment there says so.
     resolved = _recorded_artifact(path, root)
     if resolved is None:
+        # **Gone locally because a landing already took it.** A successful landing removes
+        # the now-redundant working-tree copy, so a resumed or retried s11 finds no file —
+        # and reporting `failed` there would break the re-run guarantee the command makes.
+        # The path already on the target branch is the answer: the lesson is where it
+        # belongs. Only a path that is neither here nor there is a missing artifact.
+        if git.rev_parse(f"{base_sha}:{path}", cwd=root) is not None:
+            return _land_result(
+                "already-landed",
+                f"{path} is already on {plan['remote_ref']}; the local copy was removed "
+                "by the landing that put it there",
+                None,
+                base_sha,
+            )
         return _land_result(
             "failed", f"no such capture artifact: {_resolve_under_root(path, root)}", None, base_sha
         )
@@ -2073,6 +2096,33 @@ def _land_learning_attempt(args, plan: dict) -> dict:
     if capture.push_rejection_is_contention(detail):
         return _land_result("contended", detail, commit, base_sha)
     return _land_result("failed", detail, commit, base_sha)
+
+
+def _drop_landed_copy(root: str, path: str, landed: str | None) -> str:
+    """Remove the working-tree copy of a lesson now committed, when it is the same bytes.
+
+    **git will not pull over an untracked file, even one byte-identical to the file
+    arriving.** Measured: the writer puts the lesson in the checkout untracked, the landing
+    puts the same path on the branch, and the next `git pull` there aborts with *untracked
+    working tree files would be overwritten by merge* — until someone deletes a file keel
+    wrote. The landing is what made that copy redundant, so the landing removes it.
+
+    Only when it is provably redundant: the blob in the working tree must equal the blob
+    at that path in ``landed``. A lesson someone edited after it was written is kept, and
+    so is anything that cannot be read. Returns ``removed``, ``kept`` or ``absent``.
+    """
+    local = _recorded_artifact(path, root)
+    if local is None:
+        return "absent"
+    committed = git.rev_parse(f"{landed}:{path}", cwd=root) if landed else None
+    current = git.hash_object(str(local.resolve()), cwd=root)
+    if committed is None or current != committed:
+        return "kept"
+    try:
+        local.unlink()
+    except OSError:  # pragma: no cover - a file that vanished or is read-only stays as-is
+        return "kept"
+    return "removed"
 
 
 #: Landing outcomes that must not fail an s11 whose merge already happened.
@@ -2128,6 +2178,7 @@ def _cmd_capture_land(args: argparse.Namespace) -> int:
         pr_number=args.pr,
         issue_number=args.issue,
         remote=args.remote,
+        onto=args.onto,
         attempts=args.attempts,
     )
     attempts: list[dict] = []
@@ -2155,6 +2206,11 @@ def _cmd_capture_land(args: argparse.Namespace) -> int:
                     last["base"],
                 )
 
+    local_copy = None
+    if outcome["status"] == "landed":
+        local_copy = _drop_landed_copy(args.root, plan["path"], outcome["commit"])
+    elif outcome["status"] == "already-landed":
+        local_copy = _drop_landed_copy(args.root, plan["path"], outcome["base"])
     payload = {
         "schema_version": capture.LEARNING_LAND_SCHEMA_VERSION,
         "plan": plan,
@@ -2163,6 +2219,7 @@ def _cmd_capture_land(args: argparse.Namespace) -> int:
         "commit": outcome["commit"],
         "base": outcome["base"],
         "attempts": attempts,
+        "local_copy": local_copy,
     }
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -3784,6 +3841,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         pr_title=artifacts.get("pr_title", ""),
         pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
+        covered_heads=artifacts.get("covered_heads", ()),
         ledger_record=ledger_record,
         dry_run=args.dry_run,
         enforced=enforced,
@@ -4996,6 +5054,7 @@ def _verify_merge_evidence(
         pr_title=artifacts.get("pr_title", ""),
         pr_labels=artifacts["pr_labels"],
         head_sha=artifacts["head_sha"],
+        covered_heads=artifacts.get("covered_heads", ()),
         enforced=enforced,
         phase=phase,
     )
@@ -5006,6 +5065,7 @@ def _verify_merge_evidence(
         "enforced": enforced,
         "verification": report,
         "head_sha": artifacts["head_sha"],
+        "covered_heads": list(artifacts.get("covered_heads", ())),
         "head_ref": artifacts.get("head_ref"),
         "changed_files": changed_files,
         "docs_only": docs_only,
@@ -5039,6 +5099,86 @@ def _issue_context_provided(args: argparse.Namespace) -> bool:
     )
 
 
+#: How many capture commits the head-pin walk will step back through before it stops.
+#: A ship adds one; a resumed or re-captured one might add a second. Past this bound the
+#: walk stops and covers what it has proven so far, rather than reading a long history.
+_COVERED_HEADS_LIMIT = 10
+
+
+def _commit_facts(owner_repo: str, sha: str, *, cwd: str) -> dict[str, object] | None:
+    """``{sha, parents, message, files}`` for one commit, or ``None`` when unreadable.
+
+    Read from the API rather than the checkout, so it answers the same on a CI runner
+    as in a worktree. A commit it cannot read is not a capture commit: the walk that
+    consumes this removes a requirement, so an unreadable step stops it.
+    """
+    try:
+        payload = _gh_json(["repos", owner_repo, "commits", sha], cwd=cwd)
+    except ValueError:
+        return None
+    commit = payload.get("commit")
+    parents = payload.get("parents")
+    files = payload.get("files")
+    return {
+        "sha": payload.get("sha"),
+        "parents": [
+            p.get("sha") for p in parents if isinstance(p, dict) and isinstance(p.get("sha"), str)
+        ]
+        if isinstance(parents, list)
+        else None,
+        "message": commit.get("message") if isinstance(commit, dict) else None,
+        "files": [
+            f.get("filename")
+            for f in files
+            if isinstance(f, dict) and isinstance(f.get("filename"), str)
+        ]
+        if isinstance(files, list)
+        else None,
+    }
+
+
+def _covered_heads(
+    config: cfg.ProjectConfig,
+    owner_repo: str,
+    pr_number: int | None,
+    head_sha: str | None,
+    *,
+    cwd: str,
+) -> tuple[str, ...]:
+    """Heads that ``head_sha`` answers for because only capture commits separate them.
+
+    Walks back from the current head: while the tip is a capture commit on top of its one
+    parent — `capture.capture_only_descent` says so, the same predicate the gates read —
+    the parent is covered and the walk steps to it. The first commit that is anything
+    else ends it. A ship adds one capture commit, so this is ordinarily two reads.
+
+    Walking back rather than testing each head a verdict was pinned to is what keeps it
+    cheap: a pull request that went through eight review rounds has eight such heads,
+    most of them ancestors by *code* commits, and each would cost a compare and a read
+    per commit only to be refused.
+
+    Empty unless this project lands learnings into the repository at all. The exemption
+    exists for that mechanism; a project with no in-repo sink has no capture commits to
+    exempt, and granting it anyway would turn a marker and a path into a way past a pin.
+    """
+    if not head_sha or not capture.learning_sink_in_worktree(config):
+        return ()
+    sink = capture.land_sink_root(config, pr_number=pr_number, base_branch=config.base_branch or "")
+    covered: list[str] = []
+    current = head_sha
+    for _ in range(_COVERED_HEADS_LIMIT):
+        facts = _commit_facts(owner_repo, current, cwd=cwd)
+        parents = facts.get("parents") if facts else None
+        if not isinstance(parents, list) or len(parents) != 1:
+            break
+        parent = parents[0]
+        if not capture.capture_only_descent(parent, current, [facts], sink=sink):
+            break
+        covered.append(parent)
+        current = parent
+    return tuple(covered)
+
+
 def _load_evidence_artifacts(
     args: argparse.Namespace,
     config: cfg.ProjectConfig,
@@ -5053,6 +5193,7 @@ def _load_evidence_artifacts(
     # the path, which is the behaviour that existed before #794.
     patches: dict[str, str] = {}
     head_sha = args.head_sha
+    covered_heads: tuple[str, ...] = ()
     head_ref = getattr(args, "head_ref", None)
     issue_number = args.issue
     injected_labels = list(args.pr_label or ())
@@ -5105,6 +5246,7 @@ def _load_evidence_artifacts(
             issue_comments = _gh_json_list(
                 ["repos", owner_repo, "issues", str(issue_number), "comments"], cwd=args.root
             )
+        covered_heads = _covered_heads(config, owner_repo, args.pr, head_sha, cwd=args.root)
     elif issue_number is None:
         issue_number = _linked_issue_from_body(pr_body)
     return {
@@ -5115,6 +5257,10 @@ def _load_evidence_artifacts(
         "pr_reviews": pr_reviews,
         "issue": issue_number,
         "head_sha": head_sha,
+        # Offline fixtures never walk: a supplied `--head-sha` and supplied comments are a
+        # closed world, and reaching out to GitHub from one would make the result depend
+        # on a network the caller chose not to use.
+        "covered_heads": covered_heads,
         "head_ref": head_ref,
         "changed_files": changed_files,
         "patches": patches,
@@ -7551,6 +7697,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="repo-relative path to land (default: capture.artifact of the PR's ship_run record)",
     )
     p_land.add_argument("--remote", default="origin", help="remote holding the base branch")
+    p_land.add_argument(
+        "--onto",
+        default=None,
+        help="land on this branch instead of the base branch — the pull request's own, so "
+        "the lesson merges with the work it describes",
+    )
     p_land.add_argument(
         "--attempts",
         type=_positive_int,

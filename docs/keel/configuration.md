@@ -1527,35 +1527,37 @@ The capture contract says which case you are in: `durable_artifacts.commit_requi
 is true exactly when the path is inside the repository, and
 `durable_artifacts.land_command` then names the command that lands it.
 
-**An in-repo sink is durable on a base branch that accepts a direct push.** s11 runs
-`keel capture-land <project.yaml> --root . --pr <N>` after the ledger append, and the
-lesson is on `origin/<base_branch>` when the run ends. It is deliberately not a
-`git switch`-and-commit recipe: s2, `overnight` and `swarm` all run inside a worktree
-while the primary checkout holds `base_branch`, so `git switch <base>` there fails
-with *already used by worktree*. The command builds its commit with plumbing against
-`origin/<base_branch>` instead and never checks the base branch out, so the same
-recipe works from a worktree, the primary checkout and a CI clone. It pushes one
-commit carrying one file — it is not a merge, and `keel merge` stays the only path a
-pull request takes to the base branch. Concurrent ships each land their own lesson.
-See [`cli.md`](cli.md) for the statuses and exit codes.
+**An in-repo sink is durable, and the lesson merges with the work (#1203).** At s10, before
+the evidence gate, the ship writes the lesson and runs
+`keel capture-land <project.yaml> --root . --pr <N> --onto <branch>`, which commits it onto
+the **pull request's own branch** as its last commit. The squash carries it into
+`base_branch` together with the work it describes — so it cannot be forgotten, because there
+is no second thing to merge, and it never pushes to the base branch, so branch protection
+never sees it. The command builds its commit with plumbing and never checks a branch out:
+s2, `overnight` and `swarm` all run inside a worktree while the primary checkout holds
+`base_branch`, so `git switch <base>` there fails with *already used by worktree*. See
+[`cli.md`](cli.md) for the statuses and exit codes.
 
-**A base branch that requires pull requests refuses this push, and keel's own does.**
-The commit `capture-land` builds is a direct push to `base_branch`, so every protection
-rule that governs one applies: a branch with `required_pull_request_reviews` rejects it
-outright — *"Changes must be made through a pull request"* — and one with required status
-checks rejects it for having none, since a commit built with `commit-tree` has never been
-through CI. Read off this repository's own `main` on 2026-09-14: `required_pull_request_reviews`
-present, `enforce_admins: true`, 13 required contexts. So keel does **not** land its own
-lessons; it writes them, `capture-land` reports `failed` with the server's reason, and s11
-carries that into the closure rather than failing the ship. The rejection is permanent, not
-contention, so it is not retried — a refusal and a branch that moved under you are told
-apart by git's own words (`fetch first` / `non-fast-forward`), and only the second is worth
-another attempt.
+**The review still holds for the head the landing produces.** Every review verdict and the
+gates-pass are pinned to a head, and the landing moves it by one commit. `keel evidence-verify`
+and `keel merge` therefore accept a pin for head **H** on head **H′** exactly when every
+commit between them has one parent, carries the `keel.capture-land.v1` marker line, and
+differs from its parent by **exactly one path inside this sink**. Any other commit
+invalidates the pins as it always did — so nothing but the landing may be added to a pull
+request after review. The exemption only exists for a project whose sink is inside the
+repository with capture enabled; for any other project a marker and a path grant nothing.
 
-Projects in that position have two honest options, and neither is a keel setting: allow the
-capture commit through the protection (a push allowance for the account that ships), or
-configure a sink **outside** the checkout, where no push is involved at all — at the price
-the next paragraph names.
+**Why not a direct push to the base branch.** That was the first shape (#1163), and a base
+branch that requires pull requests refuses it — measured against this repository's `main` on
+2026-09-16: *GH006: Protected branch update failed … Changes must be made through a pull
+request … 13 of 13 required status checks are expected.* `capture-land` without `--onto`
+still does that, and still reports such a refusal as `failed` with the server's reason, not
+retried.
+
+**The command removes the untracked copy it landed.** git will not pull over an untracked
+file even when it is byte-identical to the one arriving — measured — so a lesson left in the
+working tree after landing would stop the next `git pull` there. The copy is removed only
+when its bytes equal the committed blob; one edited after it was written is kept.
 
 **A path outside the checkout needs no landing step, and is durable on the machine
 that wrote it, and only
@@ -1563,7 +1565,8 @@ there.** The recorded `capture.artifact` is that machine's absolute path, and th
 ledger *is* committed — so a teammate or a CI runner reading the same record finds no
 file, the dedupe cannot point at it, and the run records `applied` with no artifact.
 An in-repo sink has no such problem: the path in the record is repo-relative and the
-file is on the base branch, which is why it is now the better default of the two.
+file reaches the base branch in the same squash as the work, which is why it is the better
+default of the two.
 
 The default `.keel/learning/` is **not** runtime-ignored. Everything else keel writes
 under `.keel/` is disposable per-run state; learnings are the exception, because a

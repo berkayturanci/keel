@@ -1213,6 +1213,40 @@ calls and hand-rolled lock shells are **spec violations** for ship-style flows �
 lock, window re-check, CI rollup read, evidence verification, and the SHA-stamped
 gates-pass check must run deterministically inside core, not as adapter prose.
 
+- **Land the lesson on the pull request — before the evidence gate (#1203).** The
+  learning is part of the work, so it merges with the work: written now, committed onto
+  this pull request's own branch as its last commit, and carried into `base_branch` by the
+  same squash. It cannot be forgotten, because there is no second thing to merge. Skip
+  this bullet only when `capture.durable_artifacts.commit_required` is false (no in-repo
+  sink) — then s11 records the capture and nothing needs landing.
+
+  ```bash
+  keel ship .keel/project.yaml --root . --live --append-ledger --run-id "$RUN_ID" \
+    --issue <ISSUE> --pull-request <PR> --head-sha "$HEAD_SHA" \
+    --capture-status applied --json
+  keel capture-land .keel/project.yaml --root . --pr <PR> --issue <ISSUE> --onto "$BRANCH" --json
+  ```
+
+  **Both commands, in this order.** The landing reads the artifact off the `ship_run` record
+  the append writes; run alone it finds none, reports `no-artifact` and exits 0 — a green
+  step that lands nothing. **`--onto "$BRANCH"`** is what puts the commit on the pull
+  request rather than on `base_branch`: a protected base refuses a direct push — measured on
+  this repository — while the pull request's own branch accepts it. The command removes the
+  now-redundant untracked copy it wrote, because git will not later pull over it.
+
+  **The head moves, and the review still holds.** The landing is one commit on top of the
+  head every verdict and the gates-pass were pinned to. `keel evidence-verify` and
+  `keel merge` accept those pins for the new head **only** when every commit in between
+  carries the `keel.capture-land.v1` marker and adds exactly one path inside the sink — so
+  never add anything else to this branch after review: any other commit invalidates the
+  pins exactly as before. **Wait for CI to go green on the new head** before continuing;
+  `keel merge` reads that rollup.
+
+  Read `status` from the `--json` result. `landed` and `already-landed` are success;
+  `not-required` and `no-artifact` mean there was nothing to land. `failed` is **fail-soft**:
+  record it in the closure and merge anyway — a lesson that did not land must not hold the
+  work back, and must not be reported as durable.
+
 - **Evidence gate — do this first, on every path (audit GAP-REV):** before *any*
   merge — including a raw `gh`/REST merge you might be tempted to use — run
   `keel evidence-verify .keel/project.yaml --root . --pr <PR> --phase pre-merge` — adding this
@@ -1309,64 +1343,26 @@ the failure mode being fixed here, so surface the report in the closure comment 
 only in the run log.
 
 ### s11 capture
-**keel writes the learning file; `keel capture-land` lands it.** With
-`policy_pack.capture.learning.sink` configured, `keel ship --live --append-ledger`
-writes one Markdown file and records its path as `capture.artifact`.
-`capture.durable_artifacts.commit_required` says whether that path is inside the
-repository — a relative `path` is; an absolute or `~` one is a folder git never sees.
+**The lesson already landed — at s10, on the pull request.** With
+`policy_pack.capture.learning.sink` configured, `keel ship --live --append-ledger` writes one
+Markdown file and records its path as `capture.artifact`, and s10's first bullet committed it
+onto the pull request so the squash carried it into `base_branch`. s11 does not land anything;
+it records the outcome and verifies it.
 
-**When it is true, land it with `keel capture-land` — never by hand.**
-An untracked file in the working tree is one the next worktree never sees — s2 cuts
-that from `origin/<base_branch>` — and one every CI runner discards.
+**Do not improvise a push, here or there.** A hand-rolled `git add` / `git commit` /
+`git push` sweeps in whatever else is in the working tree, carries no landing marker, and
+therefore invalidates every review pin at s10 — and `git switch "$BASE_BRANCH"` cannot run
+at all where this command runs: s2, `overnight` and `swarm` execute inside a worktree while
+the primary checkout holds `base_branch`, so it exits 128 with
+*'<base>' is already used by worktree*. `keel capture-land` builds its commit with plumbing,
+verifies it differs from its parent by exactly the artifact, and never checks a branch out.
 
-**Both commands, in this order, as one step.** The landing reads the artifact off the
-`ship_run` record the append writes, so run alone it finds no record, reports
-`no-artifact` and exits 0 — a green s11 that lands nothing, which is the regression this
-step exists to prevent. The append below is the same one s0's *Run ledger* section
-specifies; pass it the flags that section lists for this run.
-
-```bash
-keel ship .keel/project.yaml --root . --live --append-ledger --run-id "$RUN_ID" \
-  --issue <ISSUE> --pull-request <PR> --head-sha "$HEAD_SHA" \
-  --capture-status applied --capture-artifact <path> --json
-keel capture-land .keel/project.yaml --root . --pr <PR> --issue <ISSUE> --json
-```
-
-**`--root .`, not the worktree.** s10's pre-clean has already removed `$WORKTREE` by
-the time s11 runs, and the ledger append above writes under the primary checkout — so
-the sink and the `ship_run` record are both there. Pointed at the deleted worktree the
-command finds no ledger, reads an empty history, reports `no-artifact` and exits 0:
-a green s11 that lands nothing and discards the lesson, which is the regression this
-step exists to prevent.
-
-**Do not improvise a push.** The obvious recipe cannot run on the topology this
-command runs in: s2, `overnight` and `swarm` all execute inside a worktree while the
-primary checkout holds `base_branch`, so `git switch "$BASE_BRANCH"` there exits 128
-with *'<base>' is already used by worktree*. `keel capture-land` builds its commit
-with plumbing against `origin/<base_branch>` and never checks the base branch out, so
-it runs the same from a worktree, the primary checkout, or a CI clone.
-
-**It is not a merge and does not touch one.** It pushes a single commit carrying a
-single file; the merge claim, the window and `keel merge` at s10 are untouched, and
-s10 remains the only path a pull request takes to `base_branch`. Two ships finishing
-s11 at once both land theirs — a rejected push means the other got there first, and
-the commit is rebuilt on the branch as it now is rather than forced over it.
-
-Read `status` from the `--json` result, do not infer it from the exit code alone:
-`landed` and `already-landed` are both success (the second is what a resumed or
-retried s11 reports, and it pushes nothing), `not-required` and `no-artifact` mean
-there was nothing to do. Only `failed` is a failure, and it is **fail-soft** like
-every capture step — report it in the closure, never roll back a merge that already
-happened, and never report the lesson as durable when the landing did not succeed.
-
-**A sink outside the checkout needs no git step** — an absolute or `~` `path` is
-written and read back directly, `commit_required` is false for it, and
-`keel capture-land` reports `not-required`. **A path outside the checkout is durable
-on the machine that wrote it, and only
-there.** The recorded `capture.artifact` is that machine's absolute path, and the run
-ledger *is* committed — so a teammate or a CI runner reading the same record finds no
-file, the dedupe cannot point at it, and the run records `applied` with no artifact.
-Portable artifact references are tracked separately in #1185.
+**A sink outside the checkout needs no git step** — an absolute or `~` `path` is written and
+read back directly, `commit_required` is false for it, and `keel capture-land` reports
+`not-required`. **A path outside the checkout is durable on the machine that wrote it, and
+only there.** The recorded `capture.artifact` is that machine's absolute path, and the run
+ledger *is* committed — so a teammate or a CI runner reading the same record finds no file;
+`keel capture-verify` reports it as the `applied-elsewhere` note (#1185).
 
 Record the run for `/keel:wrap`: the **effective** implementer + reviewer vendors/models
 (as `keel attribution` reported them at s4/s7 — the closure repeats those labels, it does
@@ -1545,4 +1541,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=076cab37949936ae1ae9d8373a45cb12a523eba738a68511d9688ea6903dd8aa generated_sha256=076cab37949936ae1ae9d8373a45cb12a523eba738a68511d9688ea6903dd8aa -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=80cb26bcf5eeecbeee0d37ffd5564f2c74b1b4bc97987f878ac9eeb22a68cdc9 generated_sha256=80cb26bcf5eeecbeee0d37ffd5564f2c74b1b4bc97987f878ac9eeb22a68cdc9 -->

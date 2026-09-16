@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -368,6 +368,7 @@ def verify(
     pr_title: str = "",
     pr_labels: Sequence[str] | None = None,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     ledger_record: dict[str, Any] | None = None,
     dry_run: bool = False,
     enforced: bool = True,
@@ -414,6 +415,7 @@ def verify(
         issue_comments=issue_comments or [],
         pr_reviews=pr_reviews or [],
         head_sha=head_sha,
+        covered_heads=covered_heads,
         enforced=enforced,
         ledger_record=ledger_record,
     )
@@ -453,6 +455,7 @@ def verify(
         pr_comments=pr_comments or [],
         pr_reviews=pr_reviews or [],
         head_sha=head_sha,
+        covered_heads=covered_heads,
         enforced=enforced,
     )
     if distinct is not None:
@@ -460,6 +463,7 @@ def verify(
     substance = _verdict_substance_findings(
         [*(pr_comments or []), *(pr_reviews or [])],
         head_sha=head_sha,
+        covered_heads=covered_heads,
         enforced=enforced,
         pr_title=pr_title,
     )
@@ -544,6 +548,7 @@ def _verdict_substance_findings(
     items: list[dict[str, Any]],
     *,
     head_sha: str | None,
+    covered_heads: Collection[str] = (),
     enforced: bool,
     pr_title: str,
 ) -> list[dict[str, Any]]:
@@ -558,7 +563,7 @@ def _verdict_substance_findings(
     findings: an advisory run should say what it saw without failing.
     """
     _, rejected = _review_evidence_keys_and_rejections(
-        items, head_sha=head_sha, enforced=enforced, pr_title=pr_title
+        items, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced, pr_title=pr_title
     )
     return [
         {
@@ -616,6 +621,7 @@ def _distinct_vendor_finding(
     pr_comments: list[dict[str, Any]],
     pr_reviews: list[dict[str, Any]],
     head_sha: str | None,
+    covered_heads: Collection[str] = (),
     enforced: bool,
 ) -> dict[str, Any] | None:
     """Return a blocking finding when the optional vendor-distinctness check fails.
@@ -634,6 +640,7 @@ def _distinct_vendor_finding(
     provenance = _review_vendor_provenance(
         [*pr_comments, *pr_reviews],
         head_sha=head_sha,
+        covered_heads=covered_heads,
         enforced=enforced,
     )
     if review_panel(review_contract) == JURY_PANEL:
@@ -701,12 +708,14 @@ def _evidence_counts(
     issue_comments: list[dict[str, Any]],
     pr_reviews: list[dict[str, Any]],
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
     ledger_record: dict[str, Any] | None = None,
 ) -> dict[str, int]:
     review_keys = _review_evidence_keys(
         [*pr_comments, *pr_reviews],
         head_sha=head_sha,
+        covered_heads=covered_heads,
         enforced=enforced,
     )
     return {
@@ -720,7 +729,9 @@ def _evidence_counts(
         ),
         "review_verdict": len(review_keys),
         "jury_verdict": sum(
-            _is_jury_verdict(comment, head_sha=head_sha, enforced=enforced)
+            _is_jury_verdict(
+                comment, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced
+            )
             for comment in pr_comments
         ),
     }
@@ -995,11 +1006,12 @@ def _review_evidence_keys(
     items: list[dict[str, Any]],
     *,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
     pr_title: str = "",
 ) -> set[str]:
     keys, _ = _review_evidence_keys_and_rejections(
-        items, head_sha=head_sha, enforced=enforced, pr_title=pr_title
+        items, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced, pr_title=pr_title
     )
     return keys
 
@@ -1008,6 +1020,7 @@ def _review_evidence_keys_and_rejections(
     items: list[dict[str, Any]],
     *,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
     pr_title: str = "",
 ) -> tuple[set[str], list[tuple[str, str]]]:
@@ -1026,7 +1039,7 @@ def _review_evidence_keys_and_rejections(
         body = _body(item)
         if not _is_review_verdict_body(body):
             continue
-        if not _matches_head(item, body, head_sha):
+        if not _matches_head(item, body, head_sha, covered_heads):
             continue
         key = _reviewer_key(item, body)
         ok, reason = verdict_substance(body, pr_title=pr_title)
@@ -1044,6 +1057,7 @@ def _review_vendor_provenance(
     items: list[dict[str, Any]],
     *,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
 ) -> dict[str, str | None]:
     """Map each accepted review-verdict reviewer-key to its declared vendor.
@@ -1060,7 +1074,7 @@ def _review_vendor_provenance(
         body = _body(item)
         if not _is_review_verdict_body(body):
             continue
-        if not _matches_head(item, body, head_sha):
+        if not _matches_head(item, body, head_sha, covered_heads):
             continue
         key = _reviewer_key(item, body)
         if key in provenance:
@@ -1744,7 +1758,12 @@ def _reviewer_key(item: dict[str, Any], body: str) -> str:
     return f"body:{digest}"
 
 
-def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool:
+def _matches_head(
+    item: dict[str, Any],
+    body: str,
+    head_sha: str | None,
+    covered_heads: Collection[str] = (),
+) -> bool:
     """Does this comment answer for ``head_sha``? A blank head means *do not filter*.
 
     **Deliberately not :func:`keel.juryavail.is_pinnable_head`'s rule, and the difference
@@ -1772,12 +1791,20 @@ def _matches_head(item: dict[str, Any], body: str, head_sha: str | None) -> bool
     """
     if not head_sha:
         return True
+    # **A head the current one descends from by capture commits alone** answers for it
+    # too (#1203). The learning is the pull request's last commit, written after review
+    # and before the merge, so every verdict would otherwise be pinned to a head the
+    # branch has already moved past. `covered_heads` is never filled from a comment or an
+    # argument an agent supplies: its only producer is `capture.capture_only_descent`,
+    # which holds each commit in between to one parent, the landing marker, and exactly
+    # one path inside the configured sink — so what it admits is a lesson, never code.
+    accepted = {head_sha, *covered_heads}
     fields = _fields(body)
     recorded = fields.get("head")
     if recorded:
-        return recorded == head_sha
+        return recorded in accepted
     commit_id = item.get("commit_id")
-    return isinstance(commit_id, str) and commit_id == head_sha
+    return isinstance(commit_id, str) and commit_id in accepted
 
 
 def _fields(body: str) -> dict[str, str]:
@@ -1855,6 +1882,7 @@ def jury_participating_vendors(
     pr_reviews: list[dict[str, Any]] | None = None,
     *,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
 ) -> int | None:
     """Return the panel size declared by a posted jury verdict, or ``None``.
@@ -1896,7 +1924,7 @@ def jury_participating_vendors(
     counts = [
         parsed
         for item in [*(pr_comments or []), *(pr_reviews or [])]
-        if _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
+        if _is_jury_verdict(item, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced)
         if (parsed := _parse_vendor_count(_fields(_body(item)).get("vendors"))) is not None
     ]
     return max(counts) if counts else None
@@ -1907,6 +1935,7 @@ def jury_panel_size(
     pr_reviews: list[dict[str, Any]] | None = None,
     *,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
 ) -> int | None:
     """Return the panel size declared by a posted jury verdict, or ``None`` (#1015).
@@ -1933,7 +1962,7 @@ def jury_panel_size(
     counts = [
         parsed
         for item in [*(pr_comments or []), *(pr_reviews or [])]
-        if _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
+        if _is_jury_verdict(item, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced)
         if (parsed := _parse_vendor_count(_fields(_body(item)).get("panelists"))) is not None
     ]
     return max(counts) if counts else None
@@ -1944,6 +1973,7 @@ def panel_verdict_posted(
     pr_reviews: list[dict[str, Any]] | None = None,
     *,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
 ) -> bool:
     """Is a head-pinned jury verdict already on this pull request? (#1066)
@@ -1972,7 +2002,7 @@ def panel_verdict_posted(
     in front of.
     """
     return any(
-        _is_jury_verdict(item, head_sha=head_sha, enforced=enforced)
+        _is_jury_verdict(item, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced)
         for item in [*(pr_comments or []), *(pr_reviews or [])]
     )
 
@@ -2084,6 +2114,7 @@ def _is_jury_verdict(
     item: dict[str, Any],
     *,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
 ) -> bool:
     if not _is_trusted_source(item, enforced=enforced):
@@ -2091,4 +2122,6 @@ def _is_jury_verdict(
     body = _body(item)
     if _is_ship_assessment(body):
         return False
-    return marker_in_header(body) == JURY_VERDICT_MARKER and _matches_head(item, body, head_sha)
+    return marker_in_header(body) == JURY_VERDICT_MARKER and _matches_head(
+        item, body, head_sha, covered_heads
+    )

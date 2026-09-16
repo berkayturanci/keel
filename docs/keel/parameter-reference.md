@@ -699,6 +699,7 @@ keel capture-verify .keel/project.yaml --root . --from-transport --merged-since 
 | `--issue` | int | — | issue the lesson came from; recorded in the commit's marker line |
 | `--artifact` | path | from the ledger | repo-relative path to land; must be inside the configured learning sink |
 | `--remote` | str | `origin` | remote holding the base branch |
+| `--onto` | str | the base branch | branch to land on — `/keel:ship` passes the pull request's own, so the lesson merges with the work (#1203) |
 | `--attempts` | int | 3 | rebuild-and-retry budget when a concurrent ship pushes first |
 | `--dry-run` | flag | off | report `would-land` and push nothing |
 | `--json` | flag | off | emit the structured result |
