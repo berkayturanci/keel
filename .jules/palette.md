@@ -68,3 +68,7 @@
 ## 2026-09-08 - Use sr-live-region for Search Updates
 **Learning:** For dynamic content updates like search results, applying `aria-live` to the entire container holding the results can be problematic or too noisy, especially if it contains interactive elements.
 **Action:** Remove `aria-live` from the content grid and instead use a dedicated off-screen `.sr-only` container with `aria-live="polite"` (like `#sr-live-region`) to announce the results or count changes to screen readers explicitly.
+
+## 2026-09-14 - Label in Name mismatch with visually similar characters
+**Learning:** Replacing visual text with an `aria-label` that uses visually similar but distinct unicode characters (e.g., replacing the letter 'x' in '1x' with the multiplication sign '×' in 'Animation speed 1×') breaks WCAG 2.5.3 (Label in Name). Speech-input users who say "click 1x" will no longer match the button, because the `aria-label` does not contain the visible string.
+**Action:** When adding an `aria-label` to expand context, always ensure the exact visible text string is a substring of the new `aria-label`. Do not substitute characters for typographically "correct" ones if it breaks this matching constraint.

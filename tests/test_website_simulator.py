@@ -1,7 +1,4 @@
-"""Unit tests for the website Swarm DAG simulator and client-side assets."""
-
-from __future__ import annotations
-
+import re
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -224,6 +221,40 @@ class TestSimulatorCopyButtonLabels(unittest.TestCase):
         self.assertIn('var COPY_ARIA = "Copy CLI command";', handler)
         self.assertIn('var COPY_TEXT = "Copy";', handler)
 
+
+class TestSimulatorSpeedButtons(unittest.TestCase):
+    """The simulator's speed buttons must comply with Label in Name.
+
+    WCAG 2.5.3 requires the visible text to be a substring of the accessible name,
+    otherwise speech-input users who say "click 1x" will not match the button
+    they are looking at.
+    """
+
+    def test_the_visible_text_survives_inside_the_accessible_name(self):
+        source = (REPO_ROOT / "website" / "swarm-simulator.js").read_text(encoding="utf-8")
+        for speed in (1, 2, 4):
+            pattern = re.compile(
+                rf'<button[^>]+data-speed="{speed}"[^>]*>(.*?)</button>'
+            )
+            match = pattern.search(source)
+            self.assertTrue(match, f"No button found for speed {speed}")
+
+            button_tag = match.group(0)
+            visible_text = match.group(1).strip()
+
+            # The label might not be there at all (the original state), which is
+            # not a Label in Name violation (the text is the name).
+            label_match = re.search(r'aria-label="([^"]+)"', button_tag)
+            if not label_match:
+                continue
+
+            label = label_match.group(1)
+            self.assertIn(
+                visible_text.lower(),
+                label.lower(),
+                f"aria-label {label!r} does not contain the visible text "
+                f"{visible_text!r}, so speech input cannot activate this button",
+            )
 
 if __name__ == "__main__":
     unittest.main()
