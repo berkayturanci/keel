@@ -983,6 +983,7 @@ def count_review_verdicts(
     pr_reviews: list[dict[str, Any]] | None = None,
     *,
     head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
     enforced: bool = True,
     pr_title: str = "",
 ) -> int:
@@ -996,6 +997,7 @@ def count_review_verdicts(
     keys = _review_evidence_keys(
         [*(pr_comments or []), *(pr_reviews or [])],
         head_sha=head_sha,
+        covered_heads=covered_heads,
         enforced=enforced,
         pr_title=pr_title,
     )

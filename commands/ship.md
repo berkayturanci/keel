@@ -1227,6 +1227,12 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   keel capture-land .keel/project.yaml --root . --pr <PR> --issue <ISSUE> --onto "$BRANCH" --json
   ```
 
+  **Run it from the primary checkout, like every other command in s10** — `--root .` there,
+  never `--root "$WORKTREE"`. The ledger row this append writes, and the gates-pass
+  `keel merge` reads moments later, live under the primary checkout; the worktree is the
+  delegates' working copy and is removed by the pre-clean below, taking anything written into
+  it along.
+
   **Both commands, in this order.** The landing reads the artifact off the `ship_run` record
   the append writes; run alone it finds none, reports `no-artifact` and exits 0 — a green
   step that lands nothing. **`--onto "$BRANCH"`** is what puts the commit on the pull
@@ -1284,7 +1290,12 @@ refuse to certify the run at s10. Then
   artifacts, requires a SHA-stamped gates-pass (a `ship_run` ledger record whose gates
   passed against the PR's **current** head SHA, so a stale green run from an older head
   cannot authorize the merge), and only then performs the squash-merge. Any failed stage
-  exits non-zero **without merging** — on a closed window, append to the morning queue, post
+  exits non-zero **without merging** — **if the lesson already landed on the branch at the top
+  of s10, first record `keel ship … --append-ledger --capture-status not-run`**: the landing's
+  append said `applied`, and the ledger reads an `applied` capture as a merged pull request, so
+  without it an unmerged PR is reported as a merged capture and the failed merge disappears
+  from the capture health summary. The lesson stays on the branch and lands with the merge that
+  eventually succeeds. Then, on a closed window, append to the morning queue, post
   the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
   next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
   ship with `--append-ledger`) against the head and retry — if the refusal names a
@@ -1545,4 +1556,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=70cb197db5d3a995da12656bf94f1de166f4d224a3607e98d99c98530e1bb93e generated_sha256=70cb197db5d3a995da12656bf94f1de166f4d224a3607e98d99c98530e1bb93e -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.22.0 source_sha256=ae51c3c66eeeee98f812a4c6f5cb00edd45f43488ed8b9b71a8b587438aef46a generated_sha256=ae51c3c66eeeee98f812a4c6f5cb00edd45f43488ed8b9b71a8b587438aef46a -->

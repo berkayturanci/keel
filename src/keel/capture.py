@@ -2481,10 +2481,11 @@ def is_branch_name(name: object) -> bool:
     - no ``..``, no ``@{``, no ``//``, not ending in ``/`` or ``.``;
     - no path component beginning with ``.`` or ending in ``.lock``.
 
-    ``@`` alone is refused although git accepts it: ``--branch`` expands it to the current
-    branch, which is not a name a caller can mean as a literal target.
+    ``HEAD`` is refused, as git refuses it. ``@`` alone is refused although git accepts it:
+    ``--branch`` expands it to the current branch, which is not a name a caller can mean as a
+    literal target.
     """
-    if not isinstance(name, str) or not name or name == "@":
+    if not isinstance(name, str) or not name or name in ("@", "HEAD"):
         return False
     if name[0] in "-/" or name.endswith(("/", ".")):
         return False

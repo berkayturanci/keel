@@ -397,6 +397,12 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                         f"{surface}: the ledger append must come before the landing",
                     )
                     self.assertIn("--onto", fence, f"{surface}: the landing must target the PR")
+                    # From the primary checkout: the ledger row and the gates-pass live there,
+                    # and the worktree is removed by the pre-clean that follows.
+                    self.assertNotIn('--root "$WORKTREE"', fence)
+                # A merge that fails after the landing must not leave an `applied` capture
+                # reading as a merged pull request.
+                self.assertIn("--capture-status not-run", s10)
 
     def test_a_dormant_sink_under_a_disabled_capture_promises_nothing(self):
         """The contract must name the writer that will actually write.
@@ -3074,6 +3080,9 @@ class TestLearningLandPlan(unittest.TestCase):
             "a.",
             "a@{b",
             "a\\b",
+            "HEAD",
+            "FETCH_HEAD",
+            "a/HEAD",
             "a?",
             "a*",
             "a[",

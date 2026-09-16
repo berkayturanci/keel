@@ -373,15 +373,19 @@ class TestEvidenceVerify(unittest.TestCase):
         }
         self.assertIn("_matches_head", takes)
         missing = []
-        for name in takes:
-            for call in (c for c in ast.walk(functions[name]) if isinstance(c, ast.Call)):
+        # Every function in the module, not only the ones that already declare the set: a
+        # reader that forwards `head_sha` into the chain *without* declaring `covered_heads`
+        # is the blind spot — `count_review_verdicts` sat in it, invisible to a check that
+        # only walked functions it already knew about.
+        for name, fn in functions.items():
+            for call in (c for c in ast.walk(fn) if isinstance(c, ast.Call)):
                 callee = getattr(call.func, "id", None)
                 if callee not in takes:
                     continue
                 forwarded = {k.arg for k in call.keywords} | {
                     getattr(a, "id", None) for a in call.args
                 }
-                if "covered_heads" not in forwarded:
+                if "head_sha" in forwarded and "covered_heads" not in forwarded:
                     missing.append(f"{name} -> {callee} (line {call.lineno})")
         self.assertEqual(missing, [])
 
