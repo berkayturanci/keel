@@ -158,7 +158,8 @@ class TestGit(unittest.TestCase):
     def test_fetch_argv(self):
         rec = _Recorder()
         git.fetch("origin", "main", _run=rec)
-        self.assertEqual(rec.calls[0], ["git", "fetch", "origin", "main", "--quiet"])
+        # Fully qualified, so a value that begins with `-` can never be read as an option.
+        self.assertEqual(rec.calls[0], ["git", "fetch", "--quiet", "origin", "refs/heads/main"])
 
     def test_worktree_add_argv(self):
         rec = _Recorder()

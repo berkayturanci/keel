@@ -299,8 +299,9 @@ The block records:
   verdicts and gates-pass pinned to the head before it **only** when every commit in between
   has one parent, the `keel.capture-land.v1` marker, and exactly one path inside the sink. The artifact must sit inside the
   configured sink, not merely inside the repository. Statuses `landed`, `already-landed`,
-  `not-required`, `no-artifact` and `would-land` exit 0 (capture is fail-soft after a merge
-  that already happened); only `failed` exits 1. The commit's marker line is
+  `not-required`, `no-artifact` and `would-land` exit 0; only `failed` exits 1, and the
+  ship treats it as fail-soft — the landing runs before the merge, and a lesson that did not
+  land is recorded in the closure rather than allowed to hold the work back. The commit's marker line is
   `keel.capture-land.v1: pr=<N> issue=<N> path=<path>`, so a history reader can tell a
   capture commit from a stray push. A base branch that requires pull requests refuses the
   push; that is reported as `failed` with the server's reason and is not retried.

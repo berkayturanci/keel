@@ -2308,7 +2308,17 @@ def learning_land_plan(
     normalized = _land_path(artifact)
     sink_dir = _land_sink_root(config, pr_number=pr_number, base_branch=resolved_base)
     errors: list[str] = []
-    if artifact is None or not str(artifact).strip():
+    if remote.startswith("-") or (target or "").startswith("-"):
+        status = "failed"
+        reason = "the remote or the target branch is not a name git can take as one"
+        # **Refused before any git call sees it.** Both reach `git fetch <remote> <ref>` as
+        # positional arguments, and git reads a leading `-` there as an option: `--onto
+        # '--upload-pack=/usr/bin/true'` is not a branch, it names a program for git to run.
+        # No remote or branch name can begin with `-` — git refuses to create one — so this
+        # refuses nothing legitimate, and it is answered here, in the one place every
+        # landing is planned, rather than trusted to each wrapper that later forwards it.
+        errors.append(f"remote {remote!r} or target {target!r} begins with '-'")
+    elif artifact is None or not str(artifact).strip():
         status = "no-artifact"
         reason = "no capture artifact was recorded for this run, so there is nothing to land"
     elif normalized is None:

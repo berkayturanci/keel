@@ -3012,6 +3012,34 @@ class TestLearningLandPlan(unittest.TestCase):
                     artifact,
                 )
 
+    def test_an_option_shaped_remote_or_target_is_refused(self):
+        """Both reach `git fetch` as positional arguments, where a leading `-` is an option.
+
+        `--onto '--upload-pack=/usr/bin/true'` is not a branch — it names a program for git
+        to run. No remote or branch name can begin with `-`, so refusing it refuses nothing
+        legitimate, and it is refused in the plan: the one place every landing passes.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            config = self._config(tmp, self._SINK)
+            for kwargs in (
+                {"onto": "--upload-pack=/usr/bin/true"},
+                {"onto": "-x"},
+                {"remote": "--upload-pack=/usr/bin/true"},
+            ):
+                with self.subTest(**kwargs):
+                    plan = capture.learning_land_plan(
+                        config, artifact=".keel/learning/a.md", pr_number=7, **kwargs
+                    )
+                    self.assertEqual(plan["status"], "failed")
+                    self.assertTrue(plan["errors"])
+            # An ordinary branch name is untouched by the rule.
+            self.assertEqual(
+                capture.learning_land_plan(
+                    config, artifact=".keel/learning/a.md", pr_number=7, onto="feature/x-1"
+                )["status"],
+                "planned",
+            )
+
     def test_an_artifact_outside_the_sink_is_refused(self):
         """Inside the repository is not the containment this command needs.
 

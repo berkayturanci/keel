@@ -15,7 +15,15 @@ from .runner import CommandResult, run_argv
 
 
 def fetch(remote: str, ref: str, *, cwd: str | None = None, _run=None) -> CommandResult:
-    return run_argv(["git", "fetch", remote, ref, "--quiet"], cwd=cwd, **_kw(_run))
+    """Fetch one branch of ``remote``.
+
+    The branch goes as ``refs/heads/<ref>``, never bare: a positional argument that begins
+    with ``-`` is an *option* to git, and ``--upload-pack=<program>`` among those runs a
+    program. The landing plan already refuses such a name; this keeps the wrapper from being
+    the thing that makes a stray value dangerous. git still updates ``<remote>/<ref>`` for a
+    fully qualified ref, so nothing downstream reads a different name.
+    """
+    return run_argv(["git", "fetch", "--quiet", remote, f"refs/heads/{ref}"], cwd=cwd, **_kw(_run))
 
 
 def worktree_add(
