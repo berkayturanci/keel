@@ -49,6 +49,8 @@ same thin seam every other command reads git through; core is handed its *output
 from __future__ import annotations
 
 import fnmatch
+import functools
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -158,13 +160,22 @@ def _unique(globs: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(globs))
 
 
+@functools.lru_cache(maxsize=128)
+def _compile_globs(globs: tuple[str, ...]) -> re.Pattern:
+    """⚡ Bolt Optimization: compile multiple fnmatch globs into a single regex for speed."""
+    return re.compile("|".join(fnmatch.translate(g) for g in globs))
+
+
 def is_test_path(path: str, globs: Sequence[str]) -> bool:
     """Does ``path`` sit under one of the project's test globs?
 
     ``fnmatch`` semantics, the same matcher :mod:`keel.classify` uses for
     ``tier3_globs`` and ``docs_gate_paths``, so one project writes one kind of glob.
     """
-    return any(fnmatch.fnmatch(path, glob) for glob in globs)
+    if not globs:
+        return False
+    # Convert sequence to tuple to ensure hashability for lru_cache
+    return bool(_compile_globs(tuple(globs)).match(path))
 
 
 #: ``--name-status`` letters this module reasons about. Only ``D`` is load-bearing: every

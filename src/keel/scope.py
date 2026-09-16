@@ -15,14 +15,21 @@ classification so docs-only extras are exempt rather than flagged.
 from __future__ import annotations
 
 import fnmatch
+import functools
+import re
 from typing import Any
 
 
+@functools.lru_cache(maxsize=128)
+def _compile_globs(globs: tuple[str, ...]) -> re.Pattern:
+    """⚡ Bolt Optimization: compile multiple fnmatch globs into a single regex for speed."""
+    return re.compile("|".join(fnmatch.translate(g) for g in globs))
+
+
 def _matches_any(path: str, globs: tuple[str, ...]) -> bool:
-    for g in globs:
-        if fnmatch.fnmatch(path, g):
-            return True
-    return False
+    if not globs:
+        return False
+    return bool(_compile_globs(globs).match(path))
 
 
 SCHEMA_VERSION = "keel.scope-verify.v1"

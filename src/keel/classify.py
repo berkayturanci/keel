@@ -8,6 +8,7 @@ project's globs, with no I/O. The tier drives the reviewer count (see
 from __future__ import annotations
 
 import fnmatch
+import functools
 import re
 
 #: Default tier when nothing else matches.
@@ -91,11 +92,16 @@ def privileged_change(patch: str) -> tuple[bool, str]:
 UNKNOWN_TIER = 3
 
 
+@functools.lru_cache(maxsize=128)
+def _compile_globs(globs: tuple[str, ...]) -> re.Pattern:
+    """⚡ Bolt Optimization: compile multiple fnmatch globs into a single regex for speed."""
+    return re.compile("|".join(fnmatch.translate(g) for g in globs))
+
+
 def _matches_any(path: str, globs: tuple[str, ...]) -> bool:
-    for g in globs:
-        if fnmatch.fnmatch(path, g):
-            return True
-    return False
+    if not globs:
+        return False
+    return bool(_compile_globs(globs).match(path))
 
 
 def is_docs_only(changed: list[str], docs_globs: tuple[str, ...]) -> bool:
