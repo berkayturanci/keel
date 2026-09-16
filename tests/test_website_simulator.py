@@ -130,6 +130,54 @@ class TestReplayButtonAccessibleName(unittest.TestCase):
         self.assertNotIn("\u21bb", self._button("replay").visible)
 
 
+class TestSimulatorSpeedButtons(unittest.TestCase):
+    """The speed control says *which* speed is selected, and says it the way the
+    pills twelve lines above it do.
+
+    The three buttons choose one of three — the same interaction the backlog-scenario
+    pills implement with ``role="radiogroup"`` / ``role="radio"`` / ``aria-checked``.
+    The speed box shipped with none of it: selection was carried by the ``active``
+    CSS class alone, so a screen-reader user could hear all three buttons and not
+    which one was in effect. Naming the buttons is the smaller half of that problem;
+    the state is the half that was missing.
+
+    **The name stays the visible text.** An `aria-label` *overrides* it, and the
+    obvious label — "Animation speed 1×" — does not contain "1x": `×` is U+00D7 and
+    the button says a letter `x`. That is a WCAG 2.5.3 (Label in Name) divergence,
+    the same class :class:`TestReplayButtonAccessibleName` exists to pin, and it
+    costs a speech-input user the ability to say "click 1x". `role="radio"` carries
+    the state without touching the name, so nothing has to diverge.
+
+    Not pinned here: arrow-key navigation, which a radiogroup conventionally offers
+    and neither this group nor the pills implement. Tab still reaches every button,
+    so this is the pills' shape exactly — a wider keyboard change belongs to both.
+    """
+
+    def _markup(self) -> str:
+        source = (REPO_ROOT / "website" / "swarm-simulator.js").read_text(encoding="utf-8")
+        start = source.index('<div class="sim-speed-box"')
+        return source[start : source.index("</div>", start)]
+
+    def test_the_group_is_a_named_radiogroup(self):
+        markup = self._markup()
+        self.assertIn('role="radiogroup"', markup)
+        self.assertIn('aria-label="Animation speed"', markup)
+
+    def test_each_button_announces_whether_it_is_the_selected_speed(self):
+        markup = self._markup()
+        self.assertEqual(markup.count('role="radio"'), 3)
+        # Bound to the same condition as the `active` class, not to a constant: an
+        # `aria-checked` that never changes is worse than none, because it asserts.
+        for speed in (1, 2, 4):
+            self.assertIn(f"aria-checked=\"' + (state.speed === {speed}) + '\"", markup)
+            self.assertIn(f"(state.speed === {speed} ? 'active' : '')", markup)
+
+    def test_the_buttons_carry_no_aria_label_to_diverge_from(self):
+        # See the class docstring: the accessible name is the visible text, and an
+        # `aria-label` here is how "1x" and "1×" come to disagree.
+        self.assertNotIn("aria-label", self._markup().split("<span>", 1)[1])
+
+
 class TestCopyButtonFlash(unittest.TestCase):
     """`flashCopy` swaps a button's label to "copied" and restores it after 1400ms.
 
