@@ -364,6 +364,7 @@
       var COPY_TEXT = "Copy";
       var COPY_ARIA = "Copy CLI command";
       var copyResetTimer = null;
+      var srTimer = null;
       copyBtn.onclick = function () {
         var preset = getActivePreset();
         var cmd = "keel swarm-plan .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',') + " && keel swarm-run .keel/project.yaml";
@@ -371,6 +372,12 @@
           navigator.clipboard.writeText(cmd).then(function () {
             copyBtn.textContent = "Copied! ✓";
             copyBtn.setAttribute("aria-label", "Copied to clipboard");
+            var sr = document.getElementById("sr-live-region");
+            if (sr) {
+              sr.textContent = "Copied to clipboard";
+              clearTimeout(srTimer);
+              srTimer = setTimeout(function () { sr.textContent = ""; }, 3000);
+            }
             clearTimeout(copyResetTimer);
             copyResetTimer = setTimeout(function () {
               copyBtn.textContent = COPY_TEXT;

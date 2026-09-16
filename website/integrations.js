@@ -396,12 +396,19 @@
     document.querySelectorAll(".integ-copy-btn").forEach(function (btn) {
       var origLabel = btn.getAttribute("aria-label") || "Copy command";
       var copyTimer = null;
+      var srTimer = null;
       btn.onclick = function () {
         var text = btn.getAttribute("data-copy");
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(function () {
             btn.textContent = "Copied! ✓";
             btn.setAttribute("aria-label", "Copied to clipboard");
+            var sr = document.getElementById("sr-live-region");
+            if (sr) {
+              sr.textContent = "Copied to clipboard";
+              clearTimeout(srTimer);
+              srTimer = setTimeout(function () { sr.textContent = ""; }, 3000);
+            }
             clearTimeout(copyTimer);
             copyTimer = setTimeout(function () {
               btn.textContent = "Copy";

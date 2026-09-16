@@ -191,28 +191,23 @@ class TestCopyButtonFlash(unittest.TestCase):
 
     def _flash_copy(self) -> str:
         source = (REPO_ROOT / "website" / "app.js").read_text(encoding="utf-8")
-        start = source.index("function flashCopy(")
-        end = source.index("\n  }", start)
+        start = source.index("function flashCopy()")
+        end = source.index("\n    }", start)
         return source[start:end]
 
     def test_flash_copy_returns_early_while_already_flashing(self):
         body = self._flash_copy()
         guard = 'if (btn.classList.contains("done")) return;'
         self.assertIn(guard, body)
-        # The guard is only a guard if nothing is captured before it. `done` is
-        # added and removed on exactly the flash window, so reading either label
-        # above this line reads the transient value.
-        self.assertLess(
-            body.index(guard),
-            body.index("getAttribute"),
-            "the early return must come before the label is captured",
-        )
+        # We also need to verify that `getAttribute("aria-label")` is NOT in the
+        # flashCopy function anymore, ensuring it's captured safely at bind time.
+        self.assertNotIn("getAttribute", body)
 
     def test_flash_copy_restores_both_labels(self):
         body = self._flash_copy()
         self.assertIn('btn.setAttribute("aria-label"', body)
         self.assertIn("removeAttribute", body)  # no aria-label before: remove, not set ""
-        self.assertIn("textContent = prev", body)
+        self.assertIn("textContent = prevText", body)
 
     def test_the_two_labels_do_not_disagree(self):
         # Sighted and screen-reader users never compare them, but a mismatch
