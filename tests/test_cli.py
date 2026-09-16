@@ -16665,5 +16665,496 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("refusing to push", payload["detail"])
 
 
+def _git_stdout(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+class TestCaptureLandWrite(unittest.TestCase):
+    """`keel capture-land --write` — s10 writes the lesson and lands it, recording nothing (#1203).
+
+    The writer s10 used before was `keel ship --append-ledger`: a ship-run recorder that
+    appended an `applied` capture for a merge that had not happened, which no later row for
+    that head could take back. These hold the replacement to the three things that one got
+    wrong — no ledger row, gate words from the gates-pass rather than from gates it runs, and
+    one lesson per pull request however often s10 is retried.
+    """
+
+    PR = 20
+
+    def _config(self, root: Path, sink_lines=None, *, owner="o") -> str:
+        path = root / "project.yaml"
+        path.write_text(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+            + (f"owner: {owner}\n" if owner else "")
+            + "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "policy_pack:\n  name: tmp\n  reports:\n"
+            "    run_ledger: 'state/runs.jsonl'\n"
+            + "\n".join(sink_lines or _LAND_SINK_LINES)
+            + "\n",
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def _gates_pass(self, root: Path, head: str, *, blocked=False) -> Path:
+        """The row s8's `run-gates` leaves behind, with one gate of each word."""
+        path = root / "state" / "runs.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        gate = {"skipped": False, "not_run": False, "on_fail": "block", "error": None}
+        record = {
+            "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+            "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+            "pull_request": {"number": self.PR},
+            "git": {"head_sha": head},
+            "verdict": {"blocked": blocked},
+            "gates": [
+                {**gate, "gate": "build", "ok": True},
+                {**gate, "gate": "lint", "ok": True, "skipped": True},
+                {**gate, "gate": "review", "ok": True, "not_run": True, "on_fail": "warn"},
+            ],
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
+        return path
+
+    @contextlib.contextmanager
+    def _host(self, *, head, files, commits=(), facts=None, pull=None):
+        """The host reads `--write` makes, answered; every one of them asserted by shape."""
+        issue = json.dumps(
+            {
+                "title": "capture: the lesson rides the pull request",
+                "body": "The learning merges with the work it describes.",
+                "labels": [{"name": "core"}],
+            }
+        )
+
+        def gh_json(args, *, cwd):
+            self.assertEqual(args, ["repos", "o/tmp", "pulls", str(self.PR)])
+            return {"head": {"sha": head}} if pull is None else pull
+
+        def gh_json_list(args, *, cwd):
+            self.assertEqual(args, ["repos", "o/tmp", "pulls", str(self.PR), "commits"])
+            return list(commits)
+
+        with (
+            patch.object(cli, "_gh_json", side_effect=gh_json),
+            patch.object(cli, "_gh_json_list", side_effect=gh_json_list),
+            patch.object(
+                cli, "_commit_facts", side_effect=lambda _o, sha, *, cwd: (facts or {}).get(sha)
+            ) as reader,
+            patch.object(cli.github, "pr_files", return_value=files),
+            patch.object(
+                cli.github, "issue_facts", return_value=CommandResult(True, 0, issue, stdout=issue)
+            ),
+        ):
+            yield reader
+
+    def _land(self, config, root, *extra):
+        rc, out, err = run(
+            [
+                "capture-land",
+                config,
+                "--root",
+                str(root),
+                "--pr",
+                str(self.PR),
+                "--issue",
+                "1203",
+                *extra,
+                "--json",
+            ]
+        )
+        return rc, (json.loads(out) if out.strip() else None), err
+
+    def _lessons(self, root: Path) -> list[str]:
+        sink = root / ".keel" / "learning"
+        return sorted(p.name for p in sink.glob("*.md")) if sink.is_dir() else []
+
+    def test_writes_the_lesson_lands_it_on_the_pull_request_and_records_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            _run_git(wt, "push", "-q", "origin", "feature")
+            reviewed = _git_stdout(wt, "rev-parse", "HEAD")
+            config = self._config(wt)
+            ledger_path = self._gates_pass(wt, reviewed)
+            before = ledger_path.read_text(encoding="utf-8")
+            with self._host(head=reviewed, files=["src/x.py"]) as reader:
+                rc, payload, err = self._land(config, wt, "--onto", "feature", "--write")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(payload["status"], "landed", payload)
+            self.assertEqual(payload["write"]["status"], "written")
+            path = payload["plan"]["path"]
+            self.assertEqual(path, payload["write"]["path"])
+            self.assertTrue(path.startswith(".keel/learning/"), path)
+            # On the pull request's branch, as its last commit — the base never saw it.
+            self.assertEqual(_origin_files(origin), ["keep.txt"])
+            self.assertEqual(
+                _git_stdout(wt, "ls-remote", "origin", "refs/heads/feature").split()[0],
+                payload["commit"],
+            )
+            lesson = subprocess.run(
+                ["git", "--git-dir", str(origin), "show", f"feature:{path}"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            self.assertIn("capture: the lesson rides the pull request", lesson)
+            self.assertIn("src/x.py", lesson)
+            # The gates are the gates-pass s8 recorded, word for word: s10 runs none.
+            self.assertIn("build: ok, lint: skipped, review: not run", lesson)
+            # **Nothing recorded.** The capture is s11's, after a merge that happened.
+            self.assertEqual(ledger_path.read_text(encoding="utf-8"), before)
+            self.assertEqual(payload["local_copy"], "removed")
+            self.assertEqual(self._lessons(wt), [])
+            # No commit carried the marker, so no commit was read.
+            reader.assert_not_called()
+
+    def test_a_retry_tomorrow_reuses_the_lesson_already_on_the_pull_request(self):
+        """The merge window closed, and the run resumes the next morning.
+
+        The filename carries the date, so a writer that did not look first rendered a second
+        lesson under tomorrow's name, landed it beside the first, and merged both.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            _run_git(wt, "push", "-q", "origin", "feature")
+            reviewed = _git_stdout(wt, "rev-parse", "HEAD")
+            config = self._config(wt)
+            self._gates_pass(wt, reviewed)
+            with self._host(head=reviewed, files=["src/x.py"]):
+                _, first, _ = self._land(config, wt, "--onto", "feature", "--write")
+            landing, path = first["commit"], first["plan"]["path"]
+            message = subprocess.run(
+                ["git", "--git-dir", str(origin), "show", "-s", "--format=%B", landing],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            commits = [
+                {"sha": reviewed, "commit": {"message": "feat: the work"}},
+                {"sha": landing, "commit": {"message": message}},
+            ]
+            facts = {
+                landing: {
+                    "sha": landing,
+                    "parents": [reviewed],
+                    "message": message,
+                    "files": [path],
+                    "statuses": ["added"],
+                }
+            }
+            with (
+                patch.object(cli, "_today", return_value="2999-01-02"),
+                self._host(
+                    head=landing, files=["src/x.py", path], commits=commits, facts=facts
+                ) as reader,
+            ):
+                rc, payload, err = self._land(config, wt, "--onto", "feature", "--write")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(payload["status"], "already-landed", payload)
+            self.assertEqual(payload["write"]["status"], "already-landed")
+            self.assertEqual(payload["plan"]["path"], path)
+            self.assertEqual(payload["commit"], landing)
+            self.assertEqual(payload["attempts"], [])
+            # Nothing written, nothing pushed.
+            self.assertEqual(self._lessons(wt), [])
+            self.assertEqual(
+                _git_stdout(wt, "ls-remote", "origin", "refs/heads/feature").split()[0], landing
+            )
+            # Only the commit carrying the marker was read.
+            reader.assert_called_once()
+            self.assertEqual(reader.call_args.args[1], landing)
+
+    def test_write_refuses_what_it_cannot_do_before_reading_anything(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._config(root)
+            for label, argv, needle in (
+                ("no pull request", ["capture-land", config, "--write"], "--pr"),
+                (
+                    "an artifact too",
+                    ["capture-land", config, "--pr", "20", "--write", "--artifact", "a.md"],
+                    "--artifact",
+                ),
+                (
+                    "a dry run",
+                    ["capture-land", config, "--pr", "20", "--write", "--dry-run"],
+                    "--dry-run",
+                ),
+            ):
+                with self.subTest(label), patch.object(cli, "_gh_json") as host:
+                    rc, _, err = run([*argv, "--root", str(root)])
+                    self.assertEqual(rc, 1)
+                    self.assertIn(needle, err)
+                    host.assert_not_called()
+
+    def test_what_the_plan_refuses_costs_no_read_and_no_lesson(self):
+        """A sink outside the checkout is s11's to write; a bad branch name is nobody's."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = [*_LAND_SINK_LINES[:-1], "      sink: { path: /srv/knowledge }"]
+            for label, lines, extra, status in (
+                ("sink outside the checkout", outside, (), "not-required"),
+                ("a branch git cannot take", None, ("--onto", "bad..name"), "failed"),
+            ):
+                with self.subTest(label), patch.object(cli, "_gh_json") as host:
+                    rc, payload, _ = self._land(self._config(root, lines), root, *extra, "--write")
+                    self.assertEqual(payload["status"], status, payload)
+                    self.assertEqual(payload["write"]["status"], status)
+                    self.assertEqual(rc, 0 if status == "not-required" else 1)
+                    host.assert_not_called()
+                    self.assertEqual(self._lessons(root), [])
+
+    def test_a_host_that_cannot_answer_fails_soft_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            head = "a" * 40
+            self._gates_pass(root, head)
+
+            def broken(*_args, **_kwargs):
+                raise ValueError("gh api failed: 502")
+
+            cases = (
+                ("no owner in the config", {"owner": None}, {}, "cannot read pull request #20"),
+                ("the pull request", {}, {"pull_error": True}, "cannot read pull request #20"),
+                ("no head", {}, {"pull": {}}, "reports no head commit"),
+                ("the files", {}, {"files": None}, "cannot read the files"),
+                ("the commits", {}, {"commits_error": True}, "commits"),
+            )
+            for label, config_kwargs, host, needle in cases:
+                with self.subTest(label):
+                    config = self._config(root, **config_kwargs)
+                    with self._host(
+                        head=head, files=host.get("files", ["src/x.py"]), pull=host.get("pull")
+                    ):
+                        with contextlib.ExitStack() as stack:
+                            if host.get("pull_error"):
+                                stack.enter_context(
+                                    patch.object(cli, "_gh_json", side_effect=broken)
+                                )
+                            if host.get("commits_error"):
+                                stack.enter_context(
+                                    patch.object(cli, "_gh_json_list", side_effect=broken)
+                                )
+                            rc, payload, _ = self._land(config, root, "--write")
+                    self.assertEqual(rc, 1)
+                    self.assertEqual(payload["status"], "failed", payload)
+                    self.assertIn(needle, payload["detail"])
+                    self.assertIsNone(payload["write"]["path"])
+                    self.assertEqual(self._lessons(root), [])
+
+    def test_no_gates_pass_for_the_head_writes_no_lesson(self):
+        """The lesson reports the gates that passed; with none recorded it would invent them."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._config(root)
+            head = "a" * 40
+            for label, record in (("no row", None), ("a blocked row", True)):
+                with self.subTest(label):
+                    if record is not None:
+                        self._gates_pass(root, head, blocked=record)
+                    with self._host(head=head, files=["src/x.py"]):
+                        rc, payload, _ = self._land(config, root, "--write")
+                    self.assertEqual(rc, 1)
+                    self.assertEqual(payload["status"], "failed", payload)
+                    self.assertIn(f"no gates-pass is recorded for {head}", payload["detail"])
+                    self.assertEqual(self._lessons(root), [])
+
+    def test_what_the_writer_answers_is_what_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._config(root)
+            head = "a" * 40
+            self._gates_pass(root, head)
+            for label, answer, status, needle in (
+                ("the policy writes nothing", None, "no-artifact", "writes no document"),
+                (
+                    "the write failed",
+                    {"ok": False, "path": None, "error": "disk full", "reused": False},
+                    "failed",
+                    "disk full",
+                ),
+                (
+                    "a duplicate of a durable lesson",
+                    {"ok": True, "path": ".keel/learning/old.md", "error": None, "reused": True},
+                    "no-artifact",
+                    "duplicates .keel/learning/old.md",
+                ),
+            ):
+                with (
+                    self.subTest(label),
+                    self._host(head=head, files=["src/x.py"]),
+                    patch.object(cli, "_write_learning_sink", return_value=answer) as writer,
+                ):
+                    rc, payload, _ = self._land(config, root, "--write")
+                    self.assertEqual(payload["status"], status, payload)
+                    self.assertIn(needle, payload["detail"])
+                    self.assertEqual(rc, 1 if status == "failed" else 0)
+                    self.assertIsNone(payload["plan"]["path"])
+                    # Handed the flags s11's append carries, so both render one lesson.
+                    ship_args = writer.call_args.args[0]
+                    self.assertEqual(
+                        (ship_args.live, ship_args.append_ledger, ship_args.capture_status),
+                        (True, True, "applied"),
+                    )
+                    self.assertEqual((ship_args.ledger_pr, ship_args.issue), (self.PR, 1203))
+                    self.assertEqual(ship_args.head_sha, head)
+
+    def test_without_an_issue_the_lesson_is_written_from_the_pull_request_alone(self):
+        """`--issue` is optional, as on the ship: no issue is invented and none is asked for."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = self._config(root)
+            head = "a" * 40
+            self._gates_pass(root, head)
+            with (
+                self._host(head=head, files=["src/x.py"]),
+                patch.object(cli.github, "issue_facts") as issue,
+                patch.object(cli, "_write_learning_sink", return_value=None) as writer,
+            ):
+                rc, out, err = run(
+                    ["capture-land", config, "--root", str(root), "--pr", "20", "--write", "--json"]
+                )
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(json.loads(out)["status"], "no-artifact")
+            self.assertIsNone(writer.call_args.args[0].issue)
+            issue.assert_not_called()
+
+    def test_a_lesson_that_did_not_land_is_not_left_behind(self):
+        """Untracked in the primary checkout, it is the orphan #1203 exists to end."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            reviewed = _git_stdout(wt, "rev-parse", "HEAD")
+            config = self._config(wt)
+            self._gates_pass(wt, reviewed)
+            # `feature` was never pushed, so the fetch the landing starts with fails.
+            with self._host(head=reviewed, files=["src/x.py"]):
+                rc, payload, _ = self._land(config, wt, "--onto", "feature", "--write")
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed", payload)
+            self.assertEqual(payload["write"]["status"], "written")
+            self.assertEqual(payload["local_copy"], "removed")
+            self.assertEqual(self._lessons(wt), [])
+
+    def test_a_tracked_lesson_is_never_deleted(self):
+        """After `git pull` the lesson is tracked, and every same-bytes check passes on it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp), seed_learning="# Older lesson\n")
+            _run_git(wt, "push", "-q", "origin", "feature")
+            config = self._config(wt)
+            rc, payload, err = self._land(
+                config, wt, "--artifact", ".keel/learning/old.md", "--onto", "feature"
+            )
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(payload["status"], "already-landed")
+            self.assertEqual(payload["local_copy"], "kept")
+            self.assertTrue((wt / ".keel" / "learning" / "old.md").is_file())
+            self.assertEqual(_git_stdout(wt, "status", "--porcelain", "--", ".keel"), "")
+            self.assertEqual(cli._discard_unlanded_lesson(str(wt), ".keel/learning/old.md"), "kept")
+            self.assertEqual(
+                cli._discard_unlanded_lesson(str(wt), ".keel/learning/gone.md"), "absent"
+            )
+
+
+class TestLandedLesson(unittest.TestCase):
+    """`_landed_lesson` — which lesson a landing already put on a pull request (#1203)."""
+
+    SINK = ".keel/learning"
+
+    def _config(self):
+        return cli.cfg.load_config(
+            _write_config_with_ledger(
+                "'true'",
+                extra_policy_pack_lines=[
+                    "  capture:",
+                    "    enabled: true",
+                    "    mode: extension",
+                    "    learning:",
+                    "      enabled: true",
+                    "      mode: create-learning",
+                    "      sink:",
+                    "        kind: markdown-dir",
+                ],
+            )
+        )
+
+    def _marker(self, path):
+        return f"chore(learning): x\n\nkeel.capture-land.v1: pr=7 issue=- path={path}\n"
+
+    def _landing(self, sha, parent, path, *, parents=None, status="added"):
+        commit = {"sha": sha, "commit": {"message": self._marker(path)}}
+        facts = {
+            "sha": sha,
+            "parents": parents or [parent],
+            "message": self._marker(path),
+            "files": [path],
+            "statuses": [status],
+        }
+        return commit, facts
+
+    def _find(self, commits, facts, files):
+        with (
+            patch.object(cli, "_gh_json_list", return_value=commits),
+            patch.object(
+                cli, "_commit_facts", side_effect=lambda _o, sha, *, cwd: facts.get(sha)
+            ) as reader,
+        ):
+            return cli._landed_lesson(self._config(), "o/r", 7, files, cwd="."), reader
+
+    def test_a_lesson_below_a_later_fix_is_still_this_pull_requests(self):
+        landing, facts = self._landing("L", "R", ".keel/learning/a.md")
+        commits = [
+            {"sha": "R", "commit": {"message": "feat: x"}},
+            landing,
+            {"sha": "F", "commit": {"message": "fix: after review"}},
+        ]
+        found, reader = self._find(commits, {"L": facts}, ["src/x.py", ".keel/learning/a.md"])
+        self.assertEqual(found, {"sha": "L", "path": ".keel/learning/a.md"})
+        # Commits without the marker are never read.
+        reader.assert_called_once()
+
+    def test_the_newest_carried_landing_wins(self):
+        old, old_facts = self._landing("L1", "R", ".keel/learning/a.md")
+        new, new_facts = self._landing("L2", "L1", ".keel/learning/b.md")
+        found, _ = self._find(
+            [old, new],
+            {"L1": old_facts, "L2": new_facts},
+            [".keel/learning/a.md", ".keel/learning/b.md"],
+        )
+        self.assertEqual(found["sha"], "L2")
+
+    def test_what_is_not_a_landing_is_skipped(self):
+        carried = [".keel/learning/a.md", "src/x.py"]
+        good, good_facts = self._landing("G", "R", ".keel/learning/a.md")
+        for label, commit, facts in (
+            ("unreadable", *self._landing("U", "R", ".keel/learning/a.md")[:1], None),
+            ("a merge", *self._landing("M", "R", ".keel/learning/a.md", parents=["R", "S"])),
+            ("outside the sink", *self._landing("O", "R", "src/x.py")),
+            (
+                "a lesson the pull request no longer carries",
+                *self._landing("D", "R", ".keel/learning/d.md"),
+            ),
+        ):
+            with self.subTest(label):
+                found, _ = self._find(
+                    [good, {"sha": 7}, {"sha": "N", "commit": None}, commit],
+                    {"G": good_facts, commit["sha"]: facts},
+                    carried,
+                )
+                self.assertEqual(found, {"sha": "G", "path": ".keel/learning/a.md"})
+                found, _ = self._find([commit], {commit["sha"]: facts}, carried)
+                self.assertIsNone(found)
+
+    def test_the_reads_are_bounded(self):
+        commits = [
+            {"sha": f"C{i}", "commit": {"message": self._marker(".keel/learning/a.md")}}
+            for i in range(cli._COVERED_HEADS_LIMIT + 2)
+        ]
+        found, reader = self._find(commits, {}, [".keel/learning/a.md"])
+        self.assertIsNone(found)
+        self.assertEqual(reader.call_count, cli._COVERED_HEADS_LIMIT)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1218,27 +1218,28 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   this pull request's own branch as its last commit, and carried into `base_branch` by the
   same squash. It cannot be forgotten, because there is no second thing to merge. Skip
   this bullet only when `capture.durable_artifacts.commit_required` is false (no in-repo
-  sink) — then s11 records the capture and nothing needs landing.
+  sink) — then s11 writes and records the capture, and nothing needs landing.
 
   ```bash
-  keel ship .keel/project.yaml --root . --live --append-ledger --run-id "$RUN_ID" \
-    --issue <ISSUE> --pull-request <PR> --head-sha "$HEAD_SHA" \
-    --capture-status applied --json
-  keel capture-land .keel/project.yaml --root . --pr <PR> --issue <ISSUE> --onto "$BRANCH" --json
+  keel capture-land .keel/project.yaml --root . --pr <PR> --issue <ISSUE> \
+    --onto "$BRANCH" --write --json
   ```
 
   **Run it from the primary checkout, like every other command in s10** — `--root .` there,
-  never `--root "$WORKTREE"`. The ledger row this append writes, and the gates-pass
-  `keel merge` reads moments later, live under the primary checkout; the worktree is the
-  delegates' working copy and is removed by the pre-clean below, taking anything written into
-  it along.
+  never `--root "$WORKTREE"`. `--write` words the lesson's gates from the gates-pass s8
+  recorded for the pull request's head, and that ledger lives under the primary checkout; the
+  worktree is the delegates' working copy and is removed by the pre-clean below, taking
+  anything written into it along.
 
-  **Both commands, in this order.** The landing reads the artifact off the `ship_run` record
-  the append writes; run alone it finds none, reports `no-artifact` and exits 0 — a green
-  step that lands nothing. **`--onto "$BRANCH"`** is what puts the commit on the pull
-  request rather than on `base_branch`: a protected base refuses a direct push — measured on
-  this repository — while the pull request's own branch accepts it. The command removes the
-  now-redundant untracked copy it wrote, because git will not later pull over it.
+  **One command writes and lands, and it records nothing.** `--write` renders the lesson from
+  the pull request, its issue and that gates-pass; **`--onto "$BRANCH"`** puts the commit on
+  the pull request rather than on `base_branch`: a protected base refuses a direct push —
+  measured on this repository — while the pull request's own branch accepts it. The command
+  removes the now-redundant untracked copy, because git will not later pull over it. Do
+  **not** write the lesson with `keel ship --append-ledger` here: that appends a ledger row
+  claiming `applied` for a merge that has not happened, and no later row for the same head
+  can take it back. The capture is recorded at s11, after the merge. A lesson already on the
+  pull request — s10 retried, today or tomorrow — is reused, never written a second time.
 
   **The head moves, and the review still holds.** The landing is one commit on top of the
   head every verdict and the gates-pass were pinned to. `keel evidence-verify` and
@@ -1248,10 +1249,11 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   pins exactly as before. **Wait for CI to go green on the new head** before continuing;
   `keel merge` reads that rollup.
 
-  Read `status` from the `--json` result. `landed` and `already-landed` are success;
-  `not-required` and `no-artifact` mean there was nothing to land. `failed` is **fail-soft**:
-  record it in the closure and merge anyway — a lesson that did not land must not hold the
-  work back, and must not be reported as durable.
+  Read `status` from the `--json` result, and **keep `plan.path`: s11 records it.** `landed`
+  and `already-landed` are success; `not-required` and `no-artifact` mean there was nothing
+  to land. `failed` is **fail-soft** and leaves no lesson on disk: record it in the closure
+  and merge anyway — a lesson that did not land must not hold the work back, and must not be
+  reported as durable.
 
 - **Evidence gate — right after the landing, on every path (audit GAP-REV):** before *any*
   merge — including a raw `gh`/REST merge you might be tempted to use — run
@@ -1290,16 +1292,10 @@ refuse to certify the run at s10. Then
   artifacts, requires a SHA-stamped gates-pass (a `ship_run` ledger record whose gates
   passed against the PR's **current** head SHA, so a stale green run from an older head
   cannot authorize the merge), and only then performs the squash-merge. Any failed stage
-  exits non-zero **without merging** — **if the lesson already landed on the branch at the top
-  of s10, first record `keel ship … --append-ledger --capture-status skipped:merge-failed`**:
-  the landing's append said `applied`, and without a later row saying otherwise the capture
-  health summary reports the unmerged pull request as a clean `applied` capture, so the failed
-  merge vanishes from morning and wrap. `merge-failed` is the closed skip reason for exactly
-  this, and the summary then shows `skipped: merge-failed`. Do **not** use `not-run` here: that
-  declares *this row* never reached capture and keeps the earlier `applied` standing, which is
-  the opposite. The lesson stays on the branch, and the landing at the top of the next s10
-  records `applied` again when the merge succeeds. Then, on a closed window, append to the
-  morning queue, post
+  exits non-zero **without merging**. A lesson landed at the top of s10 simply stays on the
+  branch: nothing has recorded it — the capture is s11's, after a merge that happened — and
+  the next s10 finds it on the pull request and reuses it. Then, on a closed window, append
+  to the morning queue, post
   the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
   next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
   ship with `--append-ledger`) against the head and retry — if the refusal names a
@@ -1362,11 +1358,28 @@ the failure mode being fixed here, so surface the report in the closure comment 
 only in the run log.
 
 ### s11 capture
-**The lesson already landed — at s10, on the pull request.** With
-`policy_pack.capture.learning.sink` configured, `keel ship --live --append-ledger` writes one
-Markdown file and records its path as `capture.artifact`, and s10's first bullet committed it
-onto the pull request so the squash carried it into `base_branch`. s11 does not land anything;
-it records the outcome and verifies it.
+**The lesson already landed — at s10, on the pull request.** With an in-repo
+`policy_pack.capture.learning.sink`, s10's `keel capture-land --write` wrote one Markdown file
+and committed it onto the pull request, so the squash carried it into `base_branch`. s11 writes
+and lands nothing for that sink; it **records** the capture, then verifies it:
+
+```bash
+keel ship .keel/project.yaml --root . --live --append-ledger --run-id "$RUN_ID" \
+  --issue <ISSUE> --pull-request <PR> --head-sha "$MERGED_HEAD_SHA" \
+  --capture-status applied --capture-artifact <plan.path from s10> --json
+```
+
+- **`--capture-artifact` is the `plan.path` s10 reported** with `landed` or `already-landed`.
+  Naming it is what keeps this append from writing a second copy into the checkout — untracked,
+  so the next `git pull` refuses to overwrite it, or under a later date's name that nothing
+  ever lands. If that output is gone, run s10's command again: it finds the lesson on the pull
+  request and reports the same path, writing and pushing nothing.
+- **`--head-sha` is the head that merged** — after a landing that is the landing commit, not
+  the head s7 reviewed: read it back with `gh pr view <PR> --json headRefOid --jq .headRefOid`.
+- **After s10 reported `not-required` or `no-artifact`, drop `--capture-artifact`**: the append
+  then writes the document for a sink outside the checkout, or points at the lesson this one
+  duplicates, as it always has. **After `failed`, record `--capture-status
+  skipped:capability-unavailable`** — the lesson is not durable, and `applied` would say it is.
 
 **Do not improvise a push, here or there.** A hand-rolled `git add` / `git commit` /
 `git push` sweeps in whatever else is in the working tree, carries no landing marker, and
@@ -1421,7 +1434,7 @@ mandatory and never empty, but it is a human audit mirror, not the parser source
 
 Also append the structured `ship_run` record to `contract.run_ledger.path` via
 `keel ship --live --append-ledger` or the equivalent core ledger writer — the same append
-the landing block above runs, not a second one. The ledger append
+the block at the top of this step runs, not a second one. The ledger append
 is the machine-readable source for `/keel:morning`, `/keel:wrap`, overnight summaries, and
 capture verification; the closure comments are human/audit mirrors, not the parser source.
 Capture artifacts MUST pass through the core redaction policy first: default secret rules plus
@@ -1560,4 +1573,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=932f41163a24412e5cb486d6622329611949286130a09a8dd6983c6be9d5b9cd generated_sha256=932f41163a24412e5cb486d6622329611949286130a09a8dd6983c6be9d5b9cd -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=1bec0ff41faa79ddce4b663cfd8f9995552e5c981e8a8e8a231b9ba5ea626009 generated_sha256=1bec0ff41faa79ddce4b663cfd8f9995552e5c981e8a8e8a231b9ba5ea626009 -->

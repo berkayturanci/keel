@@ -1528,9 +1528,11 @@ is true exactly when the path is inside the repository, and
 `durable_artifacts.land_command` then names the command that lands it.
 
 **An in-repo sink is durable, and the lesson merges with the work (#1203).** At s10, before
-the evidence gate, the ship writes the lesson and runs
-`keel capture-land <project.yaml> --root . --pr <N> --onto <branch>`, which commits it onto
-the **pull request's own branch** as its last commit. The squash carries it into
+the evidence gate, the ship runs
+`keel capture-land <project.yaml> --root . --pr <N> --onto <branch> --write`, which writes the
+lesson and commits it onto the **pull request's own branch** as its last commit. It records
+nothing: s11 appends the capture after the merge, naming that file with `--capture-artifact`,
+so a merge that fails leaves no `applied` claim behind. The squash carries it into
 `base_branch` together with the work it describes — so it cannot be forgotten, because there
 is no second thing to merge, and it never pushes to the base branch, so branch protection
 never sees it. The command builds its commit with plumbing and never checks a branch out:
@@ -1557,7 +1559,8 @@ retried.
 **The command removes the untracked copy it landed.** git will not pull over an untracked
 file even when it is byte-identical to the one arriving — measured — so a lesson left in the
 working tree after landing would stop the next `git pull` there. The copy is removed only
-when its bytes equal the committed blob; one edited after it was written is kept.
+when its bytes equal the committed blob; one edited after it was written is kept, and a file
+the checkout tracks is never removed.
 
 **A path outside the checkout needs no landing step, and is durable on the machine
 that wrote it, and only

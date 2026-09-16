@@ -342,9 +342,9 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
         none could run. Now one can: `keel capture-land` builds its commit with
         plumbing and never checks the base branch out. So the property is no
         longer "no shell fence" but the thing that fence was standing in for —
-        s11 hands out **that** command, still warns why the obvious one is
-        wrong, and hands out no `git switch` / `git commit` / `git push` of its
-        own for the operator to run against the base branch.
+        s10 hands out **that** command (#1203), s11 still warns why the obvious one
+        is wrong, and neither hands out a `git switch` / `git commit` / `git push`
+        of its own for the operator to run.
         """
         root = Path(__file__).resolve().parents[1]
         for surface in (
@@ -382,27 +382,36 @@ class TheContractSaysWhoWritesTheFile(unittest.TestCase):
                 for fence in fences:
                     for forbidden in ("git switch", "git commit", "git push", "git add"):
                         self.assertNotIn(forbidden, fence)
-                # **The landing's input is in the block with it, and it targets the pull
-                # request.** `capture-land` reads the artifact off the record the append
-                # writes, so a fence carrying only the landing lands nothing when run as
-                # written; and without `--onto` it pushes at the base branch, which a
-                # protected base refuses — measured on this repository.
-                runnable = [f for f in fences if "keel capture-land" in f]
-                self.assertTrue(runnable, f"{surface}: no fence runs capture-land")
+                # **The landing writes its own input, and it targets the pull request.**
+                # Without `--write` the landing reads the artifact off a ledger record, and
+                # the only writer of one was `keel ship --append-ledger` — which records an
+                # `applied` capture for a merge that has not happened, and which no later row
+                # for that head can take back (measured: the second append writes nothing).
+                # Without `--onto` it pushes at the base branch, which a protected base
+                # refuses — measured on this repository.
+                s10_fences = _shell_fences(s10)
+                runnable = [f for f in s10_fences if "keel capture-land" in f]
+                self.assertTrue(runnable, f"{surface}: no s10 fence runs capture-land")
                 for fence in runnable:
-                    self.assertIn("--append-ledger", fence)
-                    self.assertLess(
-                        fence.index("--append-ledger"),
-                        fence.index("keel capture-land"),
-                        f"{surface}: the ledger append must come before the landing",
-                    )
+                    self.assertIn("--write", fence, f"{surface}: the landing must write")
                     self.assertIn("--onto", fence, f"{surface}: the landing must target the PR")
-                    # From the primary checkout: the ledger row and the gates-pass live there,
+                    # From the primary checkout: the gates-pass the lesson reports lives there,
                     # and the worktree is removed by the pre-clean that follows.
                     self.assertNotIn('--root "$WORKTREE"', fence)
-                # A merge that fails after the landing must not leave the `applied` row
-                # standing as a clean capture — and `not-run` would keep it standing.
-                self.assertIn("--capture-status skipped:merge-failed", s10)
+                for fence in s10_fences:
+                    self.assertNotIn(
+                        "--append-ledger", fence, f"{surface}: s10 must record no capture"
+                    )
+                # **The record is s11's, and it names the lesson rather than writing another.**
+                recorders = [
+                    f for f in _shell_fences(s11) if "keel ship" in f and "--append-ledger" in f
+                ]
+                self.assertTrue(recorders, f"{surface}: s11 hands out no capture record")
+                for fence in recorders:
+                    self.assertIn("--capture-artifact", fence)
+                # The instruction the old writer needed is gone with it: there is no `applied`
+                # row before the merge for a failed merge to take back.
+                self.assertNotIn("skipped:merge-failed", s10)
 
     def test_a_dormant_sink_under_a_disabled_capture_promises_nothing(self):
         """The contract must name the writer that will actually write.
@@ -1824,6 +1833,32 @@ class ShipWritesTheFileAndRecordsItAsTheArtifact(unittest.TestCase):
             block = self.ledger_capture(root)
             self.assertEqual(block["learning"]["decision"], "duplicate")
             self.assertEqual(block["artifact"], first)
+
+    def test_the_record_after_the_landing_fingerprints_the_lesson_written_before_it(self):
+        """#1203: s10 writes the lesson, the landing adds it to the PR, s11 records it.
+
+        By s11 the host lists the landed lesson among the pull request's files, so the record
+        hashed one path more than the document it names — and the append, not told the
+        lesson already existed, wrote a second copy into the checkout. Named with
+        `--capture-artifact`, it writes nothing and records the path it was given.
+        """
+        with tempfile.TemporaryDirectory() as before, tempfile.TemporaryDirectory() as after:
+            config = write_config(Path(before), self.SINK_LINES)
+            with _github_pr_files(["src/keel/capture.py"]):
+                self.assertEqual(self.ship_with(before, config, pr=1203)[0], 0)
+            (written,) = sorted((Path(before) / "learnings").glob("*.md"))
+            lesson = f"learnings/{written.name}"
+            document = _front_matter_fields(written.read_text(encoding="utf-8"))
+
+            config = write_config(Path(after), self.SINK_LINES)
+            with _github_pr_files(["src/keel/capture.py", lesson]):
+                code, _, err = self.ship_with(after, config, "--capture-artifact", lesson, pr=1203)
+            self.assertEqual(code, 0, err)
+            self.assertFalse((Path(after) / "learnings").exists())
+            block = self.ledger_capture(after)
+            self.assertEqual(block["artifact"], lesson)
+            self.assertEqual(block["status"], "applied")
+            self.assertEqual(block["learning"]["fingerprint"], document["fingerprint"])
 
     def test_no_host_leaves_the_files_as_the_diff_reported_them(self):
         """Fail-soft: offline the lesson is scored on its title alone, not lost."""
@@ -3301,6 +3336,82 @@ class TheLessonRidesThePullRequest(unittest.TestCase):
         ):
             with self.subTest(broken=broken):
                 self.assertFalse(self._descends([broken]))
+
+
+class TheLessonIsNotAmongItsOwnFiles(unittest.TestCase):
+    """`capture.lesson_changed_files` and `capture.carries_landing_marker` (#1203).
+
+    Once the landing has put the lesson on the pull request, the host lists it among that
+    pull request's files. The document is written before the landing and the s11 record
+    after the merge, and both read that list — so without the subtraction they fingerprint
+    different lessons.
+    """
+
+    MARKER = "keel.capture-land.v1: pr=7 issue=- path=.keel/learning/a.md"
+
+    def _config(self, sink, *, enabled=True):
+        return cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.1",
+            knobs={},
+            owner="o",
+            repo="r",
+            base_branch="main",
+            policy_pack={
+                "capture": {
+                    "enabled": enabled,
+                    "mode": "extension",
+                    "learning": {"enabled": True, "mode": "create-learning", "sink": sink},
+                }
+            },
+        )
+
+    def _files(self, sink, files, *, pr=7, enabled=True):
+        return capture.lesson_changed_files(
+            self._config(sink, enabled=enabled), files, pr_number=pr, base_branch="main"
+        )
+
+    def test_the_sink_is_subtracted_and_nothing_beside_it(self):
+        files = [
+            "src/x.py",
+            ".keel/learning/2026-09-16-pr7-x.md",
+            ".keel/learning/nested/y.md",
+            # Neighbours that only *look* inside: a longer sibling, and the directory itself.
+            ".keel/learning-notes/z.md",
+            ".keel/learning",
+        ]
+        self.assertEqual(
+            self._files({}, files), ["src/x.py", ".keel/learning-notes/z.md", ".keel/learning"]
+        )
+
+    def test_a_pr_sink_subtracts_only_this_pull_requests_directory(self):
+        files = ["docs/7/lesson.md", "docs/8/lesson.md", "docs/guide.md"]
+        self.assertEqual(
+            self._files({"path": "docs/{pr}"}, files), ["docs/8/lesson.md", "docs/guide.md"]
+        )
+
+    def test_where_there_is_no_boundary_nothing_is_subtracted(self):
+        files = ["docs/guide.md", ".keel/learning/a.md", "learnings/2026/a.md"]
+        for label, sink, pr, enabled in (
+            # `docs/{pr}` with no pull request resolves to `docs` — the run's own work.
+            ("no pull request", {"path": "docs/{pr}"}, None, True),
+            ("a sink outside the checkout", {"path": "/srv/knowledge"}, 7, True),
+            ("a sink no landing can resolve", {"path": "learnings/{date}"}, 7, True),
+            ("capture disabled", {}, 7, False),
+        ):
+            with self.subTest(label):
+                self.assertEqual(self._files(sink, files, pr=pr, enabled=enabled), files)
+
+    def test_the_marker_is_a_line_of_its_own(self):
+        for label, message, expected in (
+            ("the line", f"chore(learning): x\n\n{self.MARKER}\n", True),
+            ("indented", f"chore(learning): x\n\n    {self.MARKER}\n", True),
+            ("inside another line", f"see {self.MARKER}\n", False),
+            ("absent", "fix: x\n", False),
+            ("not text", None, False),
+        ):
+            with self.subTest(label):
+                self.assertIs(capture.carries_landing_marker(message), expected)
 
 
 class TestTreeComposition(unittest.TestCase):

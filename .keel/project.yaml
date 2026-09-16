@@ -135,7 +135,7 @@ policy_pack:
       sink:
         # The default sink writes into `.keel/learning/`, and keel runs its own
         # ships inside a worktree, so s10 — before the evidence gate — lands the
-        # lesson with `keel capture-land --root . --onto "$BRANCH"` (#1203): one
+        # lesson with `keel capture-land --root . --onto "$BRANCH" --write` (#1203): one
         # commit on the pull request's own branch, carried into `main` by the
         # same squash as the work. `main` requires pull requests with
         # `enforce_admins: true` and refuses a direct push (measured 2026-09-16),

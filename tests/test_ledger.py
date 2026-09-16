@@ -860,51 +860,6 @@ class TestExistingCaptureMarker(unittest.TestCase):
         )
 
 
-class TestAFailedMergeAfterTheLanding(unittest.TestCase):
-    """What s10 records when the merge fails after the lesson landed (#1203).
-
-    The landing's append says `applied`. If nothing follows it, the capture health summary
-    reports the still-open pull request as a clean `applied` capture. The adapter's failure
-    path records `skipped:merge-failed`; these tests hold the summary to what that text says
-    it does, because the first version of that text named `not-run` and did nothing — the
-    summary filters rows it reads as merged *before* taking the latest, so a `not-run` row
-    never reaches the comparison.
-    """
-
-    def _row(self, status=None, reason=None, not_run=False):
-        marker = None
-        if status:
-            marker = f"compound-learning: pr=9 status={status}" + (f":{reason}" if reason else "")
-        capture = {"status": status, "reason": reason, "marker": marker}
-        if not_run:
-            capture = {"status": None, "not_run": True, "marker": None}
-        return {
-            "record_type": ledger.RECORD_TYPE_SHIP_RUN,
-            "pull_request": {"number": 9},
-            "assessment": {"merge": {"action": "merge"}},
-            "capture": capture,
-        }
-
-    def test_merge_failed_makes_the_failure_visible(self):
-        summary = ledger.capture_health_summary(
-            [self._row("applied"), self._row("skipped", "merge-failed")]
-        )
-        self.assertEqual(summary["counts"]["applied"], 0)
-        self.assertEqual(summary["skipped_by_reason"], {"merge-failed": 1})
-
-    def test_not_run_would_leave_the_applied_row_standing(self):
-        # Pinned so the wrong instruction cannot come back looking right.
-        summary = ledger.capture_health_summary([self._row("applied"), self._row(not_run=True)])
-        self.assertEqual(summary["counts"]["applied"], 1)
-
-    def test_the_merge_that_later_succeeds_reads_as_applied_again(self):
-        summary = ledger.capture_health_summary(
-            [self._row("applied"), self._row("skipped", "merge-failed"), self._row("applied")]
-        )
-        self.assertEqual(summary["counts"]["applied"], 1)
-        self.assertEqual(summary["skipped_by_reason"], {})
-
-
 class TestGatesPassForHead(unittest.TestCase):
     def test_matching_head_with_passing_gates_matches(self):
         records = [_gates_record(pr=42, head_sha="head-new", run_id="RUN-9")]

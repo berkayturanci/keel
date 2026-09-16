@@ -694,12 +694,13 @@ keel capture-verify .keel/project.yaml --root . --from-transport --merged-since 
 | flag | type | default | meaning |
 | --- | --- | --- | --- |
 | `<project.yaml>` | path | — | project config (positional) |
-| `--root` | path | `.` | repo root the sink path resolves against — the **primary checkout**, where the ledger append writes; at s10 the lesson is written there and landed from there, then its untracked copy is removed |
-| `--pr` | int | — | pull request the lesson came from; also how the artifact is read from the newest `ship_run` record |
+| `--root` | path | `.` | repo root the sink path resolves against — the **primary checkout**, where the gates-pass `--write` reads is recorded; at s10 the lesson is written there and landed from there, then its untracked copy is removed |
+| `--pr` | int | — | pull request the lesson came from; also how the artifact is read from the newest `ship_run` record. Required with `--write` |
 | `--issue` | int | — | issue the lesson came from; recorded in the commit's marker line |
 | `--artifact` | path | from the ledger | repo-relative path to land; must be inside the configured learning sink |
 | `--remote` | str | `origin` | remote holding the target branch; a value beginning with `-` is refused |
 | `--onto` | str | the base branch | branch to land on — `/keel:ship` passes the pull request's own, so the lesson merges with the work (#1203); a value beginning with `-` is refused |
+| `--write` | flag | off | write the lesson first — from the pull request, its issue and the gates-pass recorded for its head — then land it; appends nothing to the ledger, and reuses a lesson a landing already put on the pull request. Refuses `--artifact` and `--dry-run` (#1203) |
 | `--attempts` | int | 3 | rebuild-and-retry budget when a concurrent ship pushes first |
 | `--dry-run` | flag | off | report `would-land` and push nothing |
 | `--json` | flag | off | emit the structured result |

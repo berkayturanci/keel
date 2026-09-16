@@ -172,7 +172,8 @@ one fail-closed path:
    workflow is expected to trigger); on any other PR it blocks;
 4. run `evidence-verify` for the current PR artifacts;
 5. require a SHA-stamped gates-pass: the **latest** `ship_run` ledger record for the PR
-   whose `git.head_sha` equals the PR's current head must have passed its gates — so
+   whose `git.head_sha` equals the PR's current head — or a head it covers, one it descends
+   from by `keel capture-land` commits alone (#1203) — must have passed its gates — so
    neither a stale green run from an older head nor a green run superseded by a later red
    one on the *same* head can authorize the merge. A gate flagged `not_run` (the
    command-only runner does not dispatch agentic gates) never counts as passed when the
@@ -290,9 +291,14 @@ The block records:
   changed files. The decision is stored in the structured run ledger and mirrored in the
   closure comment's Capture line.
 - landing command, run at **s10 before the evidence gate**:
-  `keel capture-land <project.yaml> --root . --pr N --issue N --onto <branch>` — pushes one
-  commit carrying exactly the learning artifact **onto the pull request's own branch**, so the
-  squash carries the lesson into `base_branch` with the work (#1203). Built with plumbing and
+  `keel capture-land <project.yaml> --root . --pr N --issue N --onto <branch> --write` — writes
+  the lesson from the pull request, its issue and the gates-pass recorded for its head, and
+  pushes one commit carrying exactly that artifact **onto the pull request's own branch**, so
+  the squash carries the lesson into `base_branch` with the work (#1203). It appends nothing to
+  the run ledger: s11 records the capture after the merge with
+  `keel ship --append-ledger --capture-artifact <path>`, which records a named artifact and
+  writes none. A lesson a landing already put on the pull request is reused, never written a
+  second time. Built with plumbing and
   no checkout (s2, `overnight` and `swarm` all run inside a worktree while the primary checkout
   holds the base). It is **not** a merge and touches none: `keel merge` remains the only path a
   pull request takes to the base branch. The head it produces is accepted for the review

@@ -2460,6 +2460,37 @@ def land_sink_root(
     return _land_sink_root(config, pr_number=pr_number, base_branch=base_branch)
 
 
+def lesson_changed_files(
+    config: _HasPolicyPack | None,
+    changed_files: list[str] | tuple[str, ...],
+    *,
+    pr_number: int | None,
+    base_branch: str,
+) -> list[str]:
+    """The files a lesson is about: the pull request's, less the lessons in the sink (#1203).
+
+    The landing puts the lesson on the pull request itself, so once it has landed the host
+    lists the lesson among the files that pull request changed. The document is written
+    before the landing and the s11 record after the merge, and both read the host's list:
+    without this the record fingerprinted one more path than the document it names — the
+    mismatch the shared list exists to prevent — and a retried s10 rendered a lesson whose
+    **Files** section named the lesson.
+
+    Only an in-repo sink is subtracted, and only for a pull request. A sink outside the
+    checkout never appears in a pull request's files, and one whose path cannot be resolved
+    has no boundary to subtract by. Without a pull request there is no landing to subtract —
+    and a ``{pr}`` sink resolved with none reads as its parent (``docs/{pr}`` as ``docs``),
+    which would take the run's real work in ``docs/`` out of its own lesson.
+    """
+    paths = list(changed_files)
+    if pr_number is None or not learning_sink_in_worktree(config):
+        return paths
+    sink = _land_sink_root(config, pr_number=pr_number, base_branch=base_branch)
+    if sink is None:
+        return paths
+    return [path for path in paths if not path_under_sink(path, sink)]
+
+
 #: Characters `git check-ref-format` refuses anywhere in a ref name.
 _REF_FORBIDDEN = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
 
@@ -2504,6 +2535,18 @@ def is_remote_name(name: object) -> bool:
 LANDING_FILE_STATUSES = ("added", "modified")
 
 
+def carries_landing_marker(message: object) -> bool:
+    """Does a commit message carry the ``keel.capture-land.v1:`` marker line?
+
+    One predicate for both of its readers: the head-pin exemption below, and the search for
+    a lesson already riding a pull request (``keel capture-land --write``). Two copies of the
+    match would drift apart, and the search would then find landings the exemption refuses.
+    """
+    return isinstance(message, str) and any(
+        line.strip().startswith(LEARNING_LAND_MARKER_LINE) for line in message.splitlines()
+    )
+
+
 def capture_only_descent(
     base: str,
     head: str,
@@ -2546,10 +2589,7 @@ def capture_only_descent(
         parents = commit.get("parents")
         if not isinstance(parents, list) or parents != [previous]:
             return False
-        message = commit.get("message")
-        if not isinstance(message, str) or not any(
-            line.strip().startswith(LEARNING_LAND_MARKER_LINE) for line in message.splitlines()
-        ):
+        if not carries_landing_marker(commit.get("message")):
             return False
         files = commit.get("files")
         if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], str):
