@@ -2258,7 +2258,10 @@ def learning_land_plan(
     onto: str | None = None,
     attempts: int = LEARNING_LAND_ATTEMPTS,
 ) -> dict[str, Any]:
-    """Plan the landing of one learning artifact onto ``origin/<base_branch>``.
+    """Plan the landing of one learning artifact onto a branch.
+
+    ``onto`` names it — the pull request's own under `/keel:ship` (#1203) — and without it
+    the target is ``origin/<base_branch>`` (#1163).
 
     Pure: it reads the config's *shape* and the artifact's path and answers what the
     I/O layer should do, the way :func:`learning_sink_plan` answers what the writer
@@ -2447,6 +2450,11 @@ def land_sink_root(
     return _land_sink_root(config, pr_number=pr_number, base_branch=base_branch)
 
 
+#: What a landing commit may do to its one path: write a new lesson, or rewrite one at the
+#: same path. Never rename, copy or remove — those are other changes wearing the marker.
+LANDING_FILE_STATUSES = ("added", "modified")
+
+
 def capture_only_descent(
     base: str,
     head: str,
@@ -2469,11 +2477,13 @@ def capture_only_descent(
       happens to touch the sink;
     - every commit differs from its parent by **exactly one path**, and that path is
       inside the configured sink — the same containment the landing enforces before it
-      pushes, asked again here of commits it did not necessarily build.
+      pushes, asked again here of commits it did not necessarily build;
+    - and that one path was **added or modified** — not renamed, copied or removed.
 
     ``commits`` is ordered oldest to newest, each a mapping with ``sha``, ``parents``
-    (a list of SHAs), ``message`` and ``files`` (a list of paths). Anything malformed is
-    ``False``: this answer removes a requirement, so it fails closed.
+    (a list of SHAs), ``message``, ``files`` (every path the commit touches, a rename's
+    source included) and ``statuses`` (one per changed entry). Anything malformed or
+    absent is ``False``: this answer removes a requirement, so it fails closed.
 
     A sink that cannot be resolved is ``False`` too. There is then no boundary to hold a
     commit to, and "inside the sink" would silently mean "anywhere".
@@ -2496,6 +2506,16 @@ def capture_only_descent(
         if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], str):
             return False
         if not path_under_sink(files[0], sink):
+            return False
+        # **What happened to that path, not only which path it was.** A rename or a copy
+        # into the sink arrives as one entry naming a path inside it; `files` counts the
+        # path it came from too, and this refuses the status outright, so neither a moved
+        # reviewed file nor a deleted lesson reads as a landing. Absent is refused as well:
+        # a reader that cannot say what the commit did has not shown it only *added*.
+        statuses = commit.get("statuses")
+        if not isinstance(statuses, list) or len(statuses) != 1:
+            return False
+        if statuses[0] not in LANDING_FILE_STATUSES:
             return False
         sha = commit.get("sha")
         if not isinstance(sha, str) or not sha:

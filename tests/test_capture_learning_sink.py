@@ -3109,12 +3109,20 @@ class TheLessonRidesThePullRequest(unittest.TestCase):
     SINK = ".keel/learning"
     MARKER = "chore(learning): x\n\nkeel.capture-land.v1: pr=1 issue=- path=.keel/learning/a.md\n"
 
-    def _commit(self, sha="H2", parents=("H1",), message=None, files=(".keel/learning/a.md",)):
+    def _commit(
+        self,
+        sha="H2",
+        parents=("H1",),
+        message=None,
+        files=(".keel/learning/a.md",),
+        statuses=("added",),
+    ):
         return {
             "sha": sha,
             "parents": list(parents),
             "message": self.MARKER if message is None else message,
             "files": list(files),
+            "statuses": list(statuses),
         }
 
     def _descends(self, commits, base="H1", head="H2", sink=SINK):
@@ -3154,6 +3162,38 @@ class TheLessonRidesThePullRequest(unittest.TestCase):
     def test_an_unresolvable_sink_exempts_nothing(self):
         # With no boundary to hold a commit to, "inside the sink" would mean anywhere.
         self.assertFalse(self._descends([self._commit()], sink=None))
+
+    def test_a_lesson_rewritten_at_the_same_path_is_a_landing(self):
+        # A re-capture that changes the lesson at its own path is the other legitimate shape.
+        self.assertTrue(self._descends([self._commit(statuses=("modified",))]))
+
+    def test_a_rename_into_the_sink_is_not_a_landing(self):
+        """The API reports a rename as one entry, so it has to be refused on two counts.
+
+        `status: renamed`, `filename` inside the sink, `previous_filename` outside it. Read
+        as one path, a marker-carrying commit that moved `src/keel/cli.py` into the sink
+        passed as a landing and kept the review pins over a tree that had just lost a
+        reviewed file. The reader counts the source path, and the status is refused too.
+        """
+        both_paths = self._commit(
+            files=("src/keel/cli.py", ".keel/learning/a.md"), statuses=("renamed",)
+        )
+        self.assertFalse(self._descends([both_paths]))
+        # Even if a reader dropped the source path, the status alone refuses it.
+        self.assertFalse(self._descends([self._commit(statuses=("renamed",))]))
+
+    def test_a_copy_or_a_removal_is_not_a_landing(self):
+        for status in ("copied", "removed", "changed", "unchanged"):
+            with self.subTest(status=status):
+                self.assertFalse(self._descends([self._commit(statuses=(status,))]))
+
+    def test_a_reader_that_cannot_say_what_the_commit_did_is_refused(self):
+        # Absent statuses have not shown the commit only *added* a lesson.
+        without = self._commit()
+        del without["statuses"]
+        self.assertFalse(self._descends([without]))
+        self.assertFalse(self._descends([self._commit(statuses=())]))
+        self.assertFalse(self._descends([self._commit(statuses=("added", "added"))]))
 
     def test_malformed_facts_fail_closed(self):
         for broken in (

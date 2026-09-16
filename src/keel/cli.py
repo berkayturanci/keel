@@ -1219,18 +1219,33 @@ def _shipped_jury_availability(
     authority a posted jury verdict has — no more. An untrusted author's comment may not
     relax the contract in either shape.
     """
-    head_sha = artifacts["head_sha"]
-    return juryavail.pin(
-        ledger_record,
-        head_sha=head_sha,
-        closure_panel_decision=evidence.shipped_panel_decision(
-            artifacts["pr_comments"], head_sha=head_sha
-        ),
-        panel_verdict_posted=juryavail.is_pinnable_head(head_sha)
-        and evidence.panel_verdict_posted(
-            artifacts["pr_comments"], artifacts["pr_reviews"], head_sha=head_sha
-        ),
-    )
+    # **The current head first, then each head it covers** (#1203). The panel decision is
+    # a pin, and a pin removes requirements — so it keeps `juryavail`'s strict one-head
+    # rule, asked once per head rather than widened. Every source it ranks (the ledger
+    # record, the closure comment, a posted jury verdict) was written against the head
+    # before the lesson landed; asked only about the landing's head, all three missed, the
+    # pin came back `None`, and the caller *probed this machine* for the panel instead —
+    # re-deriving the review contract from the landing host's availability, which is the
+    # rewrite #1066 and #1068 exist to stop. The landing changes one file inside the sink,
+    # never who reviewed the code, so a pin for a covered head is the ship's own statement.
+    for head in (artifacts["head_sha"], *artifacts.get("covered_heads", ())):
+        decision = juryavail.pin(
+            ledger_record,
+            head_sha=head,
+            closure_panel_decision=evidence.shipped_panel_decision(
+                artifacts["pr_comments"], head_sha=head
+            ),
+            panel_verdict_posted=juryavail.is_pinnable_head(head)
+            and evidence.panel_verdict_posted(
+                artifacts["pr_comments"],
+                artifacts["pr_reviews"],
+                head_sha=head,
+                covered_heads=(),
+            ),
+        )
+        if decision is not None:
+            return decision
+    return None
 
 
 def _review_assignment(
@@ -3809,6 +3824,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
                 artifacts["pr_comments"],
                 artifacts["pr_reviews"],
                 head_sha=artifacts["head_sha"],
+                covered_heads=artifacts.get("covered_heads", ()),
             )
         ),
         # The panel size the posted jury verdict declared. On a tier whose panel *is*
@@ -3819,6 +3835,7 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
             artifacts["pr_comments"],
             artifacts["pr_reviews"],
             head_sha=artifacts["head_sha"],
+            covered_heads=artifacts.get("covered_heads", ()),
         ),
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
@@ -5032,6 +5049,7 @@ def _verify_merge_evidence(
             artifacts["pr_comments"],
             artifacts["pr_reviews"],
             head_sha=artifacts["head_sha"],
+            covered_heads=artifacts.get("covered_heads", ()),
         ),
     )
     gate_label = args.gate_label or config.knobs.evidence_gate_label
@@ -5119,6 +5137,7 @@ def _commit_facts(owner_repo: str, sha: str, *, cwd: str) -> dict[str, object] |
     commit = payload.get("commit")
     parents = payload.get("parents")
     files = payload.get("files")
+    entries = [f for f in files if isinstance(f, dict)] if isinstance(files, list) else None
     return {
         "sha": payload.get("sha"),
         "parents": [
@@ -5127,13 +5146,21 @@ def _commit_facts(owner_repo: str, sha: str, *, cwd: str) -> dict[str, object] |
         if isinstance(parents, list)
         else None,
         "message": commit.get("message") if isinstance(commit, dict) else None,
+        # **Every path the commit touches, not only where each file ended up.** The API
+        # reports a rename as *one* entry — `status: renamed`, `filename` the new path,
+        # `previous_filename` the old — so a commit carrying the landing marker that
+        # renamed `src/keel/cli.py` into the sink read as exactly one path inside it,
+        # passed the exemption, and kept the review pins over a tree that had just lost a
+        # reviewed file. Counting the old path too makes that two paths, which it is.
         "files": [
-            f.get("filename")
-            for f in files
-            if isinstance(f, dict) and isinstance(f.get("filename"), str)
+            path
+            for entry in entries
+            for path in (entry.get("previous_filename"), entry.get("filename"))
+            if isinstance(path, str)
         ]
-        if isinstance(files, list)
+        if entries is not None
         else None,
+        "statuses": [entry.get("status") for entry in entries] if entries is not None else None,
     }
 
 
@@ -5216,6 +5243,7 @@ def _load_evidence_artifacts(
             "pr_reviews": [],
             "issue": issue_number,
             "head_sha": head_sha,
+            "covered_heads": (),
             "head_ref": head_ref,
             "changed_files": changed_files,
             "patches": {},
@@ -7675,7 +7703,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_land = sub.add_parser(
         "capture-land",
-        help="land this run's learning document on the base branch (no checkout, no merge)",
+        help="land this run's learning document on a branch — the pull request's own with "
+        "--onto, else the base branch (no checkout, no merge)",
     )
     p_land.add_argument("path", help="path to project.yaml")
     p_land.add_argument("--root", default=".", help="repo root the sink path resolves against")

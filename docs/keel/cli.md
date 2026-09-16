@@ -636,7 +636,19 @@ when every commit between them:
 - has **one parent** — a merge commit could carry anything;
 - carries the **`keel.capture-land.v1:` marker line** — the exemption is for commits that say
   they are a landing, not for any edit that touches the sink;
-- differs from its parent by **exactly one path, inside the configured sink**.
+- differs from its parent by **exactly one path, inside the configured sink**;
+- and that path was **added or modified** — never renamed, copied or removed.
+
+The last rule is not decoration. GitHub's API reports a rename as *one* entry naming where the
+file went, so a marker-carrying commit that moved `src/keel/cli.py` into the sink would read as
+one path inside it; the reader counts the path it came from too, and the status is refused.
+
+**Every reader of a head honours it, the panel pin included.** The review verdicts, the
+gates-pass, the jury vendor count and panel size, and the pin that decides the review contract
+all answer for a covered head. The pin keeps its strict one-head rule — it removes requirements
+— and is simply asked once for the current head and once for each head it covers; asked only
+about the landing's head it missed all three of its sources and let the contract be re-derived
+by probing the landing machine.
 
 Any other commit invalidates the pins exactly as it always did. The walk runs back from the
 current head, reads each commit from the API so it answers the same on a CI runner as in a

@@ -385,6 +385,43 @@ class TestEvidenceVerify(unittest.TestCase):
                     missing.append(f"{name} -> {callee} (line {call.lineno})")
         self.assertEqual(missing, [])
 
+    def test_every_caller_outside_the_module_forwards_the_covered_heads_too(self):
+        """The same invariant, at the boundary the first one could not see.
+
+        The internal check held while four callers in `cli.py` — the jury vendor count,
+        the jury panel size twice, and the posted-verdict pin — forwarded `head_sha` and
+        dropped `covered_heads`. Each fell back to the strict pin on its own path, so after
+        a landing the panel was re-derived by probing the machine instead of read from the
+        ship. A gate that is exempt in one reader and strict in the next is not one rule.
+
+        An explicit `covered_heads=()` passes: that is a caller saying, in the source, that
+        it iterates the heads itself.
+        """
+        import ast
+
+        from keel import cli
+
+        tree = ast.parse(Path(evidence.__file__).read_text(encoding="utf-8"))
+        takes = {
+            n.name
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef)
+            and any(a.arg == "covered_heads" for a in n.args.args + n.args.kwonlyargs)
+        }
+        missing = []
+        for call in ast.walk(ast.parse(Path(cli.__file__).read_text(encoding="utf-8"))):
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
+                continue
+            owner = call.func.value
+            if not (isinstance(owner, ast.Name) and owner.id == "evidence"):
+                continue
+            if call.func.attr not in takes:
+                continue
+            keywords = {k.arg for k in call.keywords}
+            if "head_sha" in keywords and "covered_heads" not in keywords:
+                missing.append(f"evidence.{call.func.attr} (cli.py line {call.lineno})")
+        self.assertEqual(missing, [])
+
     def test_review_verdicts_without_matching_head_are_ignored_when_head_known(self):
         report = evidence.verify(
             _review_contract(reviewers=1, jury=True),

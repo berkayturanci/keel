@@ -1247,12 +1247,16 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   record it in the closure and merge anyway — a lesson that did not land must not hold the
   work back, and must not be reported as durable.
 
-- **Evidence gate — do this first, on every path (audit GAP-REV):** before *any*
+- **Evidence gate — right after the landing, on every path (audit GAP-REV):** before *any*
   merge — including a raw `gh`/REST merge you might be tempted to use — run
   `keel evidence-verify .keel/project.yaml --root . --pr <PR> --phase pre-merge` — adding this
   run's `--effort` / `--team` when it had them, or the gate re-derives a bench the run never
   dispatched — and confirm it **exits 0**. It fails when the s7 review verdict (a posted PR comment/review
-  carrying `keel.review-verdict.v1` for the **current head**) is not on the PR. A
+  carrying `keel.review-verdict.v1` for the **current head**) is not on the PR. **A verdict
+  for the head *before* the landing counts for the head after it** — that is the exemption
+  the landing bullet names, and a pass here after a landing is the review holding, not a
+  stale one: do not go back to s7 to re-review a capture commit. Any *other* new commit
+  still makes the verdicts stale. A
   prior session's summary, a chat-only review, the rich PR body, and the `keel
   ship` assessment block do **not** satisfy it. If it fails, **STOP — do not
   merge**: go back to s7 and post the review verdict for the current head, then

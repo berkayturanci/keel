@@ -15478,17 +15478,29 @@ class TestCoveredHeadsWalk(unittest.TestCase):
             return cli._covered_heads(self._config(sink=sink), "o/r", 7, head, cwd=".")
 
     def _capture(self, sha, parent, path=".keel/learning/a.md"):
-        return {"sha": sha, "parents": [parent], "message": self.MARKER, "files": [path]}
+        return {
+            "sha": sha,
+            "parents": [parent],
+            "message": self.MARKER,
+            "files": [path],
+            "statuses": ["added"],
+        }
 
     def _code(self, sha, parent):
-        return {"sha": sha, "parents": [parent], "message": "fix: x", "files": ["src/x.py"]}
+        return {
+            "sha": sha,
+            "parents": [parent],
+            "message": "fix: x",
+            "files": ["src/x.py"],
+            "statuses": ["modified"],
+        }
 
     def test_the_commit_reader_takes_the_api_shape_apart(self):
         payload = {
             "sha": "TIP",
             "parents": [{"sha": "REVIEWED"}, "junk"],
             "commit": {"message": self.MARKER},
-            "files": [{"filename": ".keel/learning/a.md"}, {"status": "no name"}],
+            "files": [{"filename": ".keel/learning/a.md", "status": "added"}, "junk"],
         }
         with patch.object(cli, "_gh_json", return_value=payload):
             facts = cli._commit_facts("o/r", "TIP", cwd=".")
@@ -15499,8 +15511,31 @@ class TestCoveredHeadsWalk(unittest.TestCase):
                 "parents": ["REVIEWED"],
                 "message": self.MARKER,
                 "files": [".keel/learning/a.md"],
+                "statuses": ["added"],
             },
         )
+
+    def test_a_rename_is_read_as_the_two_paths_it_touches(self):
+        # The API's one `renamed` entry names where the file went *and* where it came from.
+        payload = {
+            "sha": "TIP",
+            "parents": [{"sha": "REVIEWED"}],
+            "commit": {"message": self.MARKER},
+            "files": [
+                {
+                    "filename": ".keel/learning/a.md",
+                    "previous_filename": "src/keel/cli.py",
+                    "status": "renamed",
+                }
+            ],
+        }
+        with patch.object(cli, "_gh_json", return_value=payload):
+            facts = cli._commit_facts("o/r", "TIP", cwd=".")
+        self.assertEqual(facts["files"], ["src/keel/cli.py", ".keel/learning/a.md"])
+        self.assertEqual(facts["statuses"], ["renamed"])
+        # And the walk refuses it, end to end through the reader.
+        with patch.object(cli, "_gh_json", return_value=payload):
+            self.assertEqual(cli._covered_heads(self._config(), "o/r", 7, "TIP", cwd="."), ())
 
     def test_an_unreadable_or_malformed_commit_reads_as_nothing_usable(self):
         # Unreadable is `None`, and a shape the API did not document yields `None` fields
@@ -15509,7 +15544,42 @@ class TestCoveredHeadsWalk(unittest.TestCase):
             self.assertIsNone(cli._commit_facts("o/r", "TIP", cwd="."))
         with patch.object(cli, "_gh_json", return_value={"sha": "TIP", "commit": "nope"}):
             facts = cli._commit_facts("o/r", "TIP", cwd=".")
-        self.assertEqual(facts, {"sha": "TIP", "parents": None, "message": None, "files": None})
+        self.assertEqual(
+            facts,
+            {"sha": "TIP", "parents": None, "message": None, "files": None, "statuses": None},
+        )
+
+    def test_the_panel_pin_is_read_from_a_covered_head(self):
+        """A pin removes requirements, so it keeps the one-head rule — asked once per head.
+
+        Every source the pin ranks was written before the lesson landed. Asked only about
+        the landing's head, all three missed, the pin came back `None`, and the caller
+        probed this machine for the panel — re-deriving the review contract from the
+        landing host's availability, the rewrite #1066 and #1068 exist to stop.
+        """
+        seen = []
+
+        def pin(record, *, head_sha, closure_panel_decision, panel_verdict_posted):
+            seen.append(head_sha)
+            return {"decision": "sat", "head": head_sha} if head_sha == "REVIEWED" else None
+
+        artifacts = {
+            "head_sha": "WITH-LESSON",
+            "covered_heads": ("REVIEWED",),
+            "pr_comments": [],
+            "pr_reviews": [],
+        }
+        with patch.object(cli.juryavail, "pin", side_effect=pin):
+            decision = cli._shipped_jury_availability(artifacts, None)
+        self.assertEqual(decision, {"decision": "sat", "head": "REVIEWED"})
+        # The landing's own head is asked first; the covered one answers.
+        self.assertEqual(seen, ["WITH-LESSON", "REVIEWED"])
+
+    def test_with_nothing_covered_the_pin_is_exactly_what_it_was(self):
+        artifacts = {"head_sha": "H", "covered_heads": (), "pr_comments": [], "pr_reviews": []}
+        with patch.object(cli.juryavail, "pin", return_value=None) as pin:
+            self.assertIsNone(cli._shipped_jury_availability(artifacts, None))
+        self.assertEqual(pin.call_count, 1)
 
     def test_one_capture_commit_covers_the_head_it_was_built_on(self):
         history = {"TIP": self._capture("TIP", "REVIEWED"), "REVIEWED": self._code("REVIEWED", "B")}
@@ -16108,13 +16178,21 @@ class TestCaptureLand(unittest.TestCase):
                 text=True,
             ).stdout
             parents, _, message = show.partition("\n")
-            files = subprocess.run(
-                ["git", "--git-dir", str(origin), "diff", "--name-only", reviewed, tip],
+            name_status = subprocess.run(
+                ["git", "--git-dir", str(origin), "diff", "--name-status", reviewed, tip],
                 check=True,
                 capture_output=True,
                 text=True,
-            ).stdout.split()
-            facts = {"sha": tip, "parents": parents.split(), "message": message, "files": files}
+            ).stdout.split("\n")
+            rows = [line.split("\t") for line in name_status if line.strip()]
+            words = {"A": "added", "M": "modified", "D": "removed"}
+            facts = {
+                "sha": tip,
+                "parents": parents.split(),
+                "message": message,
+                "files": [row[-1] for row in rows],
+                "statuses": [words.get(row[0][:1], row[0]) for row in rows],
+            }
             self.assertTrue(
                 capture.capture_only_descent(reviewed, tip, [facts], sink=".keel/learning")
             )
