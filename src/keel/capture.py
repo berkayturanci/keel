@@ -2308,16 +2308,16 @@ def learning_land_plan(
     normalized = _land_path(artifact)
     sink_dir = _land_sink_root(config, pr_number=pr_number, base_branch=resolved_base)
     errors: list[str] = []
-    if remote.startswith("-") or (target or "").startswith("-"):
+    if not is_remote_name(remote) or (target and not is_branch_name(target)):
         status = "failed"
         reason = "the remote or the target branch is not a name git can take as one"
-        # **Refused before any git call sees it.** Both reach `git fetch <remote> <ref>` as
-        # positional arguments, and git reads a leading `-` there as an option: `--onto
-        # '--upload-pack=/usr/bin/true'` is not a branch, it names a program for git to run.
-        # No remote or branch name can begin with `-` — git refuses to create one — so this
-        # refuses nothing legitimate, and it is answered here, in the one place every
-        # landing is planned, rather than trusted to each wrapper that later forwards it.
-        errors.append(f"remote {remote!r} or target {target!r} begins with '-'")
+        # **Refused before any git call sees it, by git's own rules.** Both reach
+        # `git fetch <remote> <ref>` as positional arguments. A leading `-` is read there as
+        # an option — `--upload-pack=<program>` runs a program — and a `:` makes the branch
+        # a two-sided refspec: `foo:refs/heads/main` moves the local `main` to `foo`'s tip.
+        # Refusing only the `-` shipped first and was not enough. Answered here, in the one
+        # place every landing is planned, rather than trusted to each wrapper downstream.
+        errors.append(f"remote {remote!r} or target {target!r} is not a valid name")
     elif artifact is None or not str(artifact).strip():
         status = "no-artifact"
         reason = "no capture artifact was recorded for this run, so there is nothing to land"
@@ -2458,6 +2458,44 @@ def land_sink_root(
     asks, and a second copy of the answer is how the three would come to disagree.
     """
     return _land_sink_root(config, pr_number=pr_number, base_branch=base_branch)
+
+
+#: Characters `git check-ref-format` refuses anywhere in a ref name.
+_REF_FORBIDDEN = re.compile(r"[\x00-\x20\x7f~^:?*\[\\]")
+
+#: A remote *name* — what `--remote` documents — rather than a URL or a refspec.
+_REMOTE_NAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def is_branch_name(name: object) -> bool:
+    """Would ``git check-ref-format --branch`` accept ``name`` as a literal branch? (#1203)
+
+    Pure, so the landing plan can refuse a bad target before any git call sees it. The
+    rules are git's own, and the test holds this function to git's verdict case by case
+    rather than to a reading of the man page:
+
+    - not empty, not beginning with ``-`` (git reads that as an option) or ``/``;
+    - no ``:`` — ``foo:refs/heads/main`` is a two-sided refspec, and handed to
+      ``git fetch`` it moves the local ``main`` to another branch's tip (measured);
+    - no control character, space, ``~``, ``^``, ``?``, ``*``, ``[`` or backslash;
+    - no ``..``, no ``@{``, no ``//``, not ending in ``/`` or ``.``;
+    - no path component beginning with ``.`` or ending in ``.lock``.
+
+    ``@`` alone is refused although git accepts it: ``--branch`` expands it to the current
+    branch, which is not a name a caller can mean as a literal target.
+    """
+    if not isinstance(name, str) or not name or name == "@":
+        return False
+    if name[0] in "-/" or name.endswith(("/", ".")):
+        return False
+    if _REF_FORBIDDEN.search(name) or ".." in name or "@{" in name or "//" in name:
+        return False
+    return not any(part.startswith(".") or part.endswith(".lock") for part in name.split("/"))
+
+
+def is_remote_name(name: object) -> bool:
+    """Is ``name`` a plain remote name — letters, digits, ``.``, ``_``, ``-``, no leading ``-``?"""
+    return isinstance(name, str) and bool(_REMOTE_NAME.match(name))
 
 
 #: What a landing commit may do to its one path: write a new lesson, or rewrite one at the

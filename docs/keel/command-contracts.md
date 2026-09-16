@@ -303,8 +303,10 @@ The block records:
   ship treats it as fail-soft — the landing runs before the merge, and a lesson that did not
   land is recorded in the closure rather than allowed to hold the work back. The commit's marker line is
   `keel.capture-land.v1: pr=<N> issue=<N> path=<path>`, so a history reader can tell a
-  capture commit from a stray push. A base branch that requires pull requests refuses the
-  push; that is reported as `failed` with the server's reason and is not retried.
+  capture commit from a stray push. Because the push goes to the pull request's branch,
+  base-branch protection never applies to it. Without `--onto` the push goes to the base
+  branch, where a branch that requires pull requests refuses it — reported as `failed` with
+  the server's reason and not retried.
 - session-end verifier command: `keel capture-verify`
 - post-merge recovery command: `keel capture-reconcile`
 - reconcile plan guarantees: idempotent actions only, never reopen implementation, never

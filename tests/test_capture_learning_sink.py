@@ -3025,6 +3025,10 @@ class TestLearningLandPlan(unittest.TestCase):
                 {"onto": "--upload-pack=/usr/bin/true"},
                 {"onto": "-x"},
                 {"remote": "--upload-pack=/usr/bin/true"},
+                # A colon makes the branch a two-sided refspec: handed to `git fetch` it
+                # moves the local `main` to another branch's tip. Refusing only `-` missed it.
+                {"onto": "foo:refs/heads/main"},
+                {"remote": "origin:refs/heads/main"},
             ):
                 with self.subTest(**kwargs):
                     plan = capture.learning_land_plan(
@@ -3039,6 +3043,60 @@ class TestLearningLandPlan(unittest.TestCase):
                 )["status"],
                 "planned",
             )
+
+    def test_the_branch_name_rule_is_gits_own(self):
+        """Held to `git check-ref-format --branch` itself, case by case.
+
+        Not to a reading of the man page: git is the authority on what it will parse as a
+        branch, and a rule that drifted from it in either direction is a refusal of a real
+        branch or a pass for a refspec.
+        """
+        import shutil
+        import subprocess
+
+        if shutil.which("git") is None:  # pragma: no cover - every CI leg has git
+            self.skipTest("git is not installed")
+        for name in (
+            "main",
+            "feature/x-1",
+            "fix/issue-1203-learning",
+            "foo:refs/heads/main",
+            "-x",
+            "a..b",
+            "a b",
+            "a~1",
+            "a^",
+            "x.lock",
+            "a/.b",
+            "/a",
+            "a/",
+            "a//b",
+            "a.",
+            "a@{b",
+            "a\\b",
+            "a?",
+            "a*",
+            "a[",
+            "a\x01",
+        ):
+            with self.subTest(name=name):
+                accepted = (
+                    subprocess.run(
+                        ["git", "check-ref-format", "--branch", name], capture_output=True
+                    ).returncode
+                    == 0
+                )
+                self.assertEqual(capture.is_branch_name(name), accepted)
+        # The one deliberate departure: git expands `@` to the current branch.
+        self.assertFalse(capture.is_branch_name("@"))
+        self.assertFalse(capture.is_branch_name(""))
+        self.assertFalse(capture.is_branch_name(None))
+
+    def test_a_remote_is_a_name_not_a_url_or_a_refspec(self):
+        for good in ("origin", "upstream", "my-fork", "fork_2.backup"):
+            self.assertTrue(capture.is_remote_name(good), good)
+        for bad in ("", "-x", "origin:x", "https://github.com/o/r", "a b", None):
+            self.assertFalse(capture.is_remote_name(bad), bad)
 
     def test_an_artifact_outside_the_sink_is_refused(self):
         """Inside the repository is not the containment this command needs.

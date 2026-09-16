@@ -16269,6 +16269,52 @@ class TestCaptureLand(unittest.TestCase):
             # And it is still redundant, so it goes again.
             self.assertEqual(payload["local_copy"], "removed")
 
+    def test_a_refspec_in_the_target_moves_no_branch(self):
+        """The measured attack, end to end: `--onto 'feature:refs/heads/main'`.
+
+        Handed to `git fetch` as `refs/heads/feature:refs/heads/main`, that is a two-sided
+        refspec, and it moved this checkout's local `main` to `feature`'s tip. Refused in
+        the plan, nothing is fetched and no ref moves.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            primary = wt.parent
+            before = subprocess.run(
+                ["git", "rev-parse", "main"],
+                cwd=primary,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            artifact = self._write_lesson(wt, "refspec.md")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "24",
+                    "--artifact",
+                    artifact,
+                    "--onto",
+                    "feature:refs/heads/main",
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["attempts"], [])
+            after = subprocess.run(
+                ["git", "rev-parse", "main"],
+                cwd=primary,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            self.assertEqual(after, before)
+
     def test_a_lesson_edited_after_it_was_written_is_not_removed(self):
         # The local copy is only redundant when it is the same bytes that were committed.
         with tempfile.TemporaryDirectory() as tmp:

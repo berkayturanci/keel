@@ -679,11 +679,11 @@ from a fresh CI clone.
 
 ### Concurrency
 
-Two ships finishing s11 at once both land their lesson. The push is a plain
-fast-forward, never forced: a rejected push means another ship pushed first, so the
-command re-reads the base branch, rebuilds its commit on top of what it now carries, and
-pushes again — up to `--attempts` (default 3) times. Forcing would discard the other
-ship's lesson, and on a base branch whatever arrived with it.
+A push is a plain fast-forward, never forced. If the target branch moved between this
+command's read and its push — another push to the pull request's branch, or, without `--onto`,
+another ship landing on the base — the push is rejected, the command re-reads the branch as
+it now is, rebuilds its commit on top, and pushes again, up to `--attempts` (default 3) times.
+Forcing would discard whatever the other push brought.
 
 **Only a ref that moved is retried.** git exits 1 for every rejection, so the two are told
 apart by what it says: `fetch first` and `non-fast-forward` mean the branch moved and
