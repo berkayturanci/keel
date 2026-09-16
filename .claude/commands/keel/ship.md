@@ -1229,7 +1229,10 @@ gates-pass check must run deterministically inside core, not as adapter prose.
   never `--root "$WORKTREE"`. `--write` words the lesson's gates from the gates-pass s8
   recorded for the pull request's head, and that ledger lives under the primary checkout; the
   worktree is the delegates' working copy and is removed by the pre-clean below, taking
-  anything written into it along.
+  anything written into it along. **That gates-pass has to exist first** — the same one
+  `keel merge` refuses without — so an `agentic` gate's result is recorded with
+  `--gate-result` (s8, dispatched at s9) *before* this runs; without it the command reports
+  `failed` and writes nothing, rather than a lesson that names a gate result nobody recorded.
 
   **One command writes and lands, and it records nothing.** `--write` renders the lesson from
   the pull request, its issue and that gates-pass; **`--onto "$BRANCH"`** puts the commit on
@@ -1573,4 +1576,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=1bec0ff41faa79ddce4b663cfd8f9995552e5c981e8a8e8a231b9ba5ea626009 generated_sha256=1bec0ff41faa79ddce4b663cfd8f9995552e5c981e8a8e8a231b9ba5ea626009 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.22.0 source_sha256=c1b3fd07830286a4c547610ae39d3d2cc42eea0d364e791c4c42ddbec8fe72a4 generated_sha256=c1b3fd07830286a4c547610ae39d3d2cc42eea0d364e791c4c42ddbec8fe72a4 -->
