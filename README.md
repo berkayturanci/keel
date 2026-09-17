@@ -110,7 +110,7 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   `contract.implement_mode.loop` and rendered in the closure comment. It composes with
   `--tdd` (the loop wraps phase B only) and runs on every host keel runs in
   ([reference](docs/keel/configuration.md#loop)).
-- **Every merge leaves a lesson the next run reads** — with `policy_pack.capture.learning.sink`
+- **Every merge can leave a lesson the next run reads** — with `policy_pack.capture.learning.sink`
   set, an applied `create-learning` capture writes one Markdown learning: the issue, the gate
   results on the head it merges, and a link to every file it changed, so a knowledge-graph
   builder gets the edges ([reference](docs/keel/configuration.md#policy_packcapturelearningsink)).

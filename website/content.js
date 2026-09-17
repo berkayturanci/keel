@@ -546,7 +546,7 @@ window.KEEL = {
     },
     {
       group: "Operating", title: "Capture & learning", slug: "capture-learning",
-      summary: "Every merge leaves a lesson: written at s10, landed on the pull request so it merges with the work, read back into later briefs — behind a stable, verifiable marker.",
+      summary: "A stable, verifiable capture marker on every merge — and, with a learning sink, a lesson: written at s10, landed on the pull request with an in-repo sink, read back into later briefs.",
       body:
         "<p>The <code>s11 capture</code> step owns a stable marker contract — <code>compound-learning: pr=&lt;N&gt; status=&lt;applied|deferred|skipped:reason&gt;</code> — exposed in <code>keel plan --json</code>. The allowed skip reasons are closed, capture is <b>fail-soft</b> after a successful merge, and <code>keel capture-verify</code> checks the run ledger offline at session end.</p>" +
         "<p><b>The lesson rides the pull request.</b> With <code>policy_pack.capture.learning.sink</code> set, an applied <code>create-learning</code> capture writes one Markdown learning — the issue, the gate results on the head it merges, and a link to every file it changed, so a knowledge-graph builder gets the edges. With an in-repo sink, <code>/keel:ship</code> writes and lands it at <b>s10, before the evidence gate</b>: <code>keel capture-land --write --onto \"$BRANCH\"</code> commits it onto the pull request's own branch, so the same squash carries it into the base branch. A protected base never sees a direct push, and there is no second pull request to forget.</p>" +

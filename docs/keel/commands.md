@@ -44,7 +44,8 @@ successful merge, and `keel capture-verify` can check the run ledger offline at 
 With an in-repo learning sink the lesson itself does not wait for the merge. At s10, before
 the evidence gate, `/keel:ship` runs `keel capture-land --write --onto "$BRANCH"`, which writes
 the Markdown learning and commits it onto the pull request so it merges with the work; s11 then
-records the capture with `keel ship --append-ledger --capture-artifact <path>`. See
+records the capture with
+`keel ship --live --append-ledger --capture-status applied --capture-artifact <path>`. See
 [the sink](configuration.md#policy_packcapturelearningsink) and
 [`keel capture-land`](cli.md#--write-the-lesson-is-written-here-and-recorded-at-s11).
 

@@ -24,5 +24,5 @@
 - Extension slots: named hooks where a project snaps in its own implementers/reviewers
 - Auditable evidence chain: commit-SHA-bound review provenance, model attribution, and audited deferrals
 - Gate-verified iteration: `knobs.loop` repeats the implement step until the command gates pass, bounded by `max_iterations`
-- Learning chain: each merge writes a Markdown lesson, commits it onto the pull request (`keel capture-land`), and reads matching lessons back into later implement and review briefs
+- Learning chain: with a learning sink configured, a merge writes a Markdown lesson — committed onto the pull request by `keel capture-land` when the sink is inside the repository — and later implement and review briefs read matching lessons back
 - Pure-core / thin-I/O split with a strict 100% coverage bar
