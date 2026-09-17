@@ -41,11 +41,10 @@ The allowed skip reasons are closed (`dry-run`, `deferred`, `merge-failed`,
 `recursion-guard`, `capability-unavailable`, `no-policy`), capture is fail-soft after a
 successful merge, and `keel capture-verify` can check the run ledger offline at session end.
 
-With an in-repo learning sink and `learning.mode: create-learning`, the lesson itself does not
-wait for the merge. At s10, before the evidence gate, `/keel:ship` runs
+With an in-repo learning sink, `learning.enabled: true` and `learning.mode: create-learning`,
+the lesson itself does not wait for the merge. At s10, before the evidence gate, `/keel:ship` runs
 `keel capture-land --write --onto "$BRANCH"`, which writes the Markdown learning and commits it
-onto the pull request so it merges with the work (under any other mode it writes and commits
-nothing). s11 then records the capture with
+onto the pull request so it merges with the work (otherwise it writes and commits nothing). s11 then records the capture with
 `keel ship --live --append-ledger --capture-status applied --capture-artifact <path>`. A sink
 outside the checkout is written at s11 instead, after the merge, and needs no landing. See
 [the sink](configuration.md#policy_packcapturelearningsink) and

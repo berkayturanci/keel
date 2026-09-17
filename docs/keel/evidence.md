@@ -34,8 +34,9 @@ In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictl
   ```
 * If the head commit changes by even one byte, previous review evidence is automatically invalidated,
   and Keel halts the merge until the new commit is re-verified by the backbone.
-* **One exemption, and only one: the lesson `keel capture-land` lands (#1203).** `/keel:ship`
-  commits the run's learning onto the pull request after review, which moves the head. A verdict or
+* **One exemption, and only one: the lesson `keel capture-land` lands (#1203).** With an in-repo
+  learning sink, `/keel:ship` commits the run's learning onto the pull request after review, which
+  moves the head. A verdict or
   gates-pass pinned to head `H` answers for head `H′` only when every commit between them has
   **one parent**, carries the **`keel.capture-land.v1:` marker line**, and **adds or modifies
   exactly one path inside the configured learning sink**. Any other commit invalidates the pins as

@@ -205,7 +205,7 @@ window.KEEL = {
     ["keel checkpoint / keel resume", "write the safe resume point at step boundaries; render a dry-run resume plan after interruption"],
     ["keel ledger <cfg> [--limit N]", "read the structured run ledger offline (with capture health)"],
     ["keel capture-verify --merged-pr N", "assert exactly one valid capture marker per merged PR"],
-    ["keel capture-land <cfg> --pr N --onto BRANCH --write", "s10: write this run's lesson and commit it onto the pull request, so it merges with the work"],
+    ["keel capture-land <cfg> --pr N --onto BRANCH --write", "s10: write this run's lesson and commit it onto the pull request (in-repo sink, create-learning), so it merges with the work"],
     ["keel claim / keel release", "single-host resource claims — the mkdir lock primitive keel merge uses"],
     ["keel post-comment --artifact …", "the sanctioned write path for evidence artifacts — marker-validated, idempotent per run-id"],
     ["keel runcontrols <events>", "deterministic work caps: run budget, per-slot caps, oscillation detection — hard halts fail closed"],
@@ -453,7 +453,7 @@ window.KEEL = {
       summary: "How keel selects a GitHub transport (gh CLI, API, …) and normalizes operations across them.",
       body:
         "<p>Issue, PR, review and comment operations go through a selected <b>transport</b> with normalized capabilities \u2014 so the same command works whether the session has the <code>gh</code> CLI, direct API access, or a restricted runner. Public side effects must go through the transport; chat-only notes never satisfy a step.</p>" +
-        "<p><b>The merge path runs where GraphQL is blocked.</b> <code>keel merge</code> and <code>keel verify-merge</code> take <code>--transport auto|graphql|rest</code>: <code>auto</code> tries GraphQL and switches to REST only when a probe finds that endpoint blocked. The claim, window, rollup, evidence and SHA-pinned gates-pass are the same objects on either wire, and the merge payload records which one answered.</p>",
+        "<p><b>The merge path runs where GraphQL is blocked.</b> <code>keel merge</code> takes <code>--transport auto|graphql|rest</code>: <code>auto</code> tries GraphQL and switches to REST only when a probe finds that endpoint blocked. The claim, window, rollup, evidence and SHA-pinned gates-pass are the same objects on either wire, and the merge payload records which one answered. Its read-only drift check, <code>keel verify-merge</code>, takes the same flag.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/github-transport.md",
     },
     {
@@ -546,7 +546,7 @@ window.KEEL = {
     },
     {
       group: "Operating", title: "Capture & learning", slug: "capture-learning",
-      summary: "A stable, verifiable capture marker on every merge — and, under create-learning with a sink, a lesson: landed on the pull request at s10 when the sink is in the repository, written at s11 when it is not, read back into later briefs.",
+      summary: "A stable, verifiable capture marker on every merge — and, with learning enabled in create-learning mode and a sink, a lesson: landed on the pull request at s10 when the sink is in the repository, written at s11 when it is not, read back into later briefs.",
       body:
         "<p>The <code>s11 capture</code> step owns a stable marker contract — <code>compound-learning: pr=&lt;N&gt; status=&lt;applied|deferred|skipped:reason&gt;</code> — exposed in <code>keel plan --json</code>. The allowed skip reasons are closed, capture is <b>fail-soft</b> after a successful merge, and <code>keel capture-verify</code> checks the run ledger offline at session end.</p>" +
         "<p><b>The lesson rides the pull request.</b> With <code>policy_pack.capture.learning.sink</code> set, an applied <code>create-learning</code> capture writes one Markdown learning — the issue, the gate results on the head it merges, and a link to every file it changed, so a knowledge-graph builder gets the edges. With an in-repo sink, <code>/keel:ship</code> writes and lands it at <b>s10, before the evidence gate</b>: <code>keel capture-land --write --onto \"$BRANCH\"</code> commits it onto the pull request's own branch, so the same squash carries it into the base branch. A protected base never sees a direct push, and there is no second pull request to forget. A sink outside the checkout is written at s11, after the merge, and needs no landing.</p>" +

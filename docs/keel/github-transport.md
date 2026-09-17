@@ -78,10 +78,10 @@ The full `capabilities` object always contains every operation in the table abov
 
 ## The merge path: GraphQL, or REST when the endpoint is blocked
 
-`keel merge` and `keel verify-merge` read the pull request and merge it through `gh`, and
-`gh pr view --json` and `gh pr merge` go over GitHub's **GraphQL** endpoint. On a host whose
-egress proxy serves the REST API and blocks GraphQL, both commands take
-`--transport auto|graphql|rest`:
+`keel merge` reads the pull request and merges it through `gh`, and its read-only drift check,
+`keel verify-merge`, reads the pull request the same way. `gh pr view --json` and `gh pr merge`
+go over GitHub's **GraphQL** endpoint. On a host whose egress proxy serves the REST API and
+blocks GraphQL, both commands take `--transport auto|graphql|rest`:
 
 | `--transport` | behaviour |
 | --- | --- |
@@ -89,12 +89,14 @@ egress proxy serves the REST API and blocks GraphQL, both commands take
 | `graphql` | GraphQL only |
 | `rest` | REST only; the probe never runs |
 
-This is a choice of **wire** inside the `gh` transport above, not a third transport. The merge
-claim, the window re-check, the rollup semantics, the evidence gate and the SHA-pinned
-gates-pass are the same objects on either wire, and the merge payload records which one
-answered (`transport: gh-graphql` or `gh-rest`). The transport is settled by the reads, before
-anything is written, so a merge is never retried over a second wire. See
-[`keel merge`](cli.md#transport-graphql-or-rest-when-the-endpoint-is-blocked) for the details.
+This is a choice of **wire** inside the `gh` transport above, not a third transport. For
+`keel merge`, the merge claim, the window re-check, the rollup semantics, the evidence gate and
+the SHA-pinned gates-pass are the same objects on either wire, and the merge payload records
+which one answered (`transport: gh-graphql` or `gh-rest`); the transport is settled by the
+reads, before anything is written, so a merge is never retried over a second wire.
+`keel verify-merge` writes nothing, and reports the wire it used as `transport` in its drift
+report. See [`keel merge`](cli.md#transport-graphql-or-rest-when-the-endpoint-is-blocked) for the
+details.
 
 ## Boundary
 

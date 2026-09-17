@@ -120,8 +120,8 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   ([reference](docs/keel/cli.md#--write-the-lesson-is-written-here-and-recorded-at-s11)). The
   review still holds for the head that landing produces — the evidence gate accepts a pin across
   a commit with one parent, the `keel.capture-land.v1` marker and exactly one added or modified
-  file inside the sink, and across nothing else. Before implementation, `keel plan` and
-  `keel ship` read matching lessons back into the implement and review briefs, at most five
+  file inside the sink, and across nothing else. `keel plan` and `keel ship` read matching
+  lessons back into the implement and review briefs, at most five
   ([reference](docs/keel/configuration.md#policy_packcapturelearningsource)).
 - **Know which providers this machine can actually dispatch to** — `keel doctor --providers [--json]`
   probes every provider keel supports (agent CLIs, hosted APIs, local Ollama models, delegate profiles
@@ -141,9 +141,10 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   armed now **blocks** rather than reporting a pass having checked nothing. Requirements are
   split by phase, so the merge gate asks for the review/jury evidence that exists at s10 and
   not the closure comments s11 writes after it. Where a host's egress proxy blocks GitHub's
-  GraphQL endpoint, `keel merge` and `keel verify-merge` ask the same questions over REST
-  (`--transport auto|graphql|rest`); the claim, window, rollup, evidence and SHA-pinned
-  gates-pass are unchanged ([reference](docs/keel/cli.md#transport-graphql-or-rest-when-the-endpoint-is-blocked)).
+  GraphQL endpoint, `keel merge` asks the same questions over REST
+  (`--transport auto|graphql|rest`) — the claim, window, rollup, evidence and SHA-pinned
+  gates-pass are unchanged — and its read-only drift check, `keel verify-merge`, takes the same
+  flag ([reference](docs/keel/cli.md#transport-graphql-or-rest-when-the-endpoint-is-blocked)).
 
 ### How Keel compares
 
