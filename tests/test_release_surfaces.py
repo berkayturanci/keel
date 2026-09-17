@@ -74,7 +74,10 @@ FIXTURE: dict[str, str] = {
     ),
     # The published Action's pin, in the page that documents it and the card that
     # advertises it — both `by_shape`, so a drifted file is re-synced rather than left.
-    "docs/keel/github-actions.md": "      - uses: berkayturanci/keel@v{v}\n",
+    "docs/keel/github-actions.md": (
+        "      - uses: berkayturanci/keel@v{v}\n"
+        '          keel-version: "{v}"\n'
+    ),
     "website/integrations.js": '      cmd: "uses: berkayturanci/keel@v{v}",\n',
     "website/docs.html": '<span class="ver" data-version>v{v}</span>\n',
     "website/coverage.html": '<span class="ver" data-version>v{v}</span>\n',

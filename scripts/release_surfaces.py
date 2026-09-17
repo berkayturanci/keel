@@ -108,6 +108,17 @@ RELEASE_SURFACES: tuple[Surface, ...] = (
         rf"keel@v(?P<version>{VERSION_RE})",
         True,
     ),
+    # The CLI version that same example installs. It is half of a pair with the `uses:` tag
+    # above: `action.yml` installs `keel-workflow==<keel-version>`, and the page tells the
+    # reader to pin both to one release. Only the tag was a surface, so the 1.23.0 bump
+    # published an example running the new Action against the previous CLI — and
+    # `release-check` passed, because nothing it read had drifted.
+    Surface(
+        "docs/keel/github-actions.md",
+        'keel-version: "{version}"',
+        rf'keel-version: "(?P<version>{VERSION_RE})"',
+        True,
+    ),
     Surface(
         "website/integrations.js",
         "keel@v{version}",

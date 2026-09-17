@@ -133,7 +133,7 @@ jobs:
           command: ship
           config: .keel/project.yaml
           pr: ${{ github.event.pull_request.number }}
-          keel-version: "1.22.0"
+          keel-version: "1.23.0"
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
