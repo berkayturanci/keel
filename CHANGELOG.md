@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The integration cards' and the swarm simulator's copy buttons tell a screen reader the copy worked** (#1212). `app.js` announces a copy through the page's `#sr-live-region`; the per-card Copy buttons in `website/integrations.js` and the simulator's Copy button only changed their own `aria-label`, which is not a live-region update, so the same action was spoken on one button and not the next. Both now announce, clearing the region first and setting the message on the next tick — the technique the integrations filter already uses — so a second copy in a row is announced again. Re-landed from Jules PR #1207, without its `app.js` rewrite: `flashCopy` already returns before capturing a label, and a test pins that.
+
 ## [1.23.0] - 2026-09-17
 
 ### Added

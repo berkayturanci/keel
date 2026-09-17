@@ -392,6 +392,20 @@
     wireCopyButtons();
   }
 
+  // A successful copy is announced through the page's live region, as `app.js` does for its
+  // copy buttons (#1212). A button's own aria-label changing is not a live-region update, so
+  // whether it is spoken depends on the screen reader and on focus. It shares `srTimer` with
+  // the filter announcement above, so whichever the reader did last is what they hear, and it
+  // is cleared first and set on the next tick for the same reason the filter is: a second copy
+  // in a row would otherwise leave identical text in place and be announced as nothing.
+  function announceCopied() {
+    var sr = document.getElementById("sr-live-region");
+    if (!sr) return;
+    if (srTimer) { clearTimeout(srTimer); srTimer = null; }
+    sr.textContent = "";
+    srTimer = setTimeout(function () { sr.textContent = "Copied to clipboard"; }, 0);
+  }
+
   function wireCopyButtons() {
     document.querySelectorAll(".integ-copy-btn").forEach(function (btn) {
       var origLabel = btn.getAttribute("aria-label") || "Copy command";
@@ -402,6 +416,7 @@
           navigator.clipboard.writeText(text).then(function () {
             btn.textContent = "Copied! ✓";
             btn.setAttribute("aria-label", "Copied to clipboard");
+            announceCopied();
             clearTimeout(copyTimer);
             copyTimer = setTimeout(function () {
               btn.textContent = "Copy";

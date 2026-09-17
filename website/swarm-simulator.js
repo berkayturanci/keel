@@ -319,6 +319,20 @@
     ].join("\n");
   }
 
+  // A successful copy is announced through the page's live region (#1212), which
+  // `integrations.js` also announces into on the same page. Cleared first and set on the
+  // next tick, as that file does, so a second copy in a row is announced again rather than
+  // leaving identical text in place; the pending set is cancelled per click so an earlier
+  // one cannot land after a later one.
+  var copyAnnounceTimer = null;
+  function announceCopied() {
+    var sr = document.getElementById("sr-live-region");
+    if (!sr) return;
+    clearTimeout(copyAnnounceTimer);
+    sr.textContent = "";
+    copyAnnounceTimer = setTimeout(function () { sr.textContent = "Copied to clipboard"; }, 0);
+  }
+
   function wireEvents() {
     var toggleBtn = document.getElementById("sim-toggle-btn");
     if (toggleBtn) {
@@ -371,6 +385,7 @@
           navigator.clipboard.writeText(cmd).then(function () {
             copyBtn.textContent = "Copied! ✓";
             copyBtn.setAttribute("aria-label", "Copied to clipboard");
+            announceCopied();
             clearTimeout(copyResetTimer);
             copyResetTimer = setTimeout(function () {
               copyBtn.textContent = COPY_TEXT;

@@ -273,5 +273,68 @@ class TestSimulatorCopyButtonLabels(unittest.TestCase):
         self.assertIn('var COPY_TEXT = "Copy";', handler)
 
 
+class TestCopyAnnouncements(unittest.TestCase):
+    """The integration cards' and the simulator's copy buttons announce a copy (#1212).
+
+    `app.js` writes "Copied to clipboard" into `#sr-live-region`; these two buttons only
+    changed their own aria-label, which is not a live-region update. Both now announce, and
+    both clear the region before setting it on the next tick — the technique the integrations
+    filter already uses — because a live region announces a change, and a second copy in a
+    row would otherwise leave identical text in place and say nothing.
+    """
+
+    FILES = ("integrations.js", "swarm-simulator.js")
+
+    def _source(self, name: str) -> str:
+        return (REPO_ROOT / "website" / name).read_text(encoding="utf-8")
+
+    def _announcer(self, name: str) -> str:
+        source = self._source(name)
+        start = source.index("function announceCopied()")
+        return source[start : source.index("\n  }", start)]
+
+    def test_the_page_has_the_region_both_scripts_write_to(self):
+        page = (REPO_ROOT / "website" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="sr-live-region"', page)
+        for name in self.FILES:
+            with self.subTest(file=name):
+                self.assertIn(name, page)
+
+    def test_the_success_path_announces(self):
+        for name in self.FILES:
+            with self.subTest(file=name):
+                source = self._source(name)
+                flash = source.index('.setAttribute("aria-label", "Copied to clipboard");')
+                self.assertEqual(source.count("announceCopied();"), 1)
+                call = source.index("announceCopied();")
+                # Inside the clipboard's success callback, right after the label flips —
+                # not before the write resolves, which would announce a copy that failed.
+                self.assertLess(flash, call)
+                self.assertLess(call - flash, 120)
+
+    def test_the_region_is_cleared_before_the_message_is_set(self):
+        for name in self.FILES:
+            with self.subTest(file=name):
+                body = self._announcer(name)
+                self.assertIn('document.getElementById("sr-live-region")', body)
+                self.assertIn("if (!sr) return;", body)
+                cleared = body.index('sr.textContent = "";')
+                armed = body.index("setTimeout(")
+                self.assertLess(cleared, armed)
+                self.assertIn('sr.textContent = "Copied to clipboard"', body[armed:])
+
+    def test_a_pending_announcement_is_cancelled_first(self):
+        for name, timer in (
+            ("integrations.js", "srTimer"),
+            ("swarm-simulator.js", "copyAnnounceTimer"),
+        ):
+            with self.subTest(file=name):
+                body = self._announcer(name)
+                self.assertIn(f"clearTimeout({timer})", body)
+                self.assertLess(
+                    body.index(f"clearTimeout({timer})"), body.index(f"{timer} = setTimeout")
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
