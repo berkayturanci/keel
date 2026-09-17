@@ -114,7 +114,7 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2â€
   set, an applied `create-learning` capture writes one Markdown learning: the issue, the gate
   results on the head it merges, and a link to every file it changed, so a knowledge-graph
   builder gets the edges ([reference](docs/keel/configuration.md#policy_packcapturelearningsink)).
-  With an in-repo sink, s10 runs `keel capture-land --write --onto "$BRANCH"`, which commits the
+  With an in-repo sink, s10 runs `keel capture-land --write --onto "$BRANCH"`, which commits that
   lesson onto the pull request itself, so the same squash carries it into the base branch: a
   protected base never sees a direct push, and there is no second pull request to forget
   ([reference](docs/keel/cli.md#--write-the-lesson-is-written-here-and-recorded-at-s11)). The
