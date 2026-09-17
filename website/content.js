@@ -59,7 +59,7 @@ window.KEEL = {
       cmd: "keel:ship",
       one: "Drive a GitHub issue end-to-end through the whole backbone.",
       detail:
-        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides. <b>--tdd</b> (<code>knobs.implement_mode: tdd</code>) selects the test-first s4 profile: a test-only commit carrying the issue's acceptance criteria, then the implementation, verified at s8 by the blocking <code>tdd-order</code> gate. <b>--team</b> and <b>--effort</b> staff the run from a named <code>knobs.team</code> bench.",
+        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides. <b>--tdd</b> (<code>knobs.implement_mode: tdd</code>) selects the test-first s4 profile: a test-only commit carrying the issue's acceptance criteria, then the implementation, verified at s8 by the blocking <code>tdd-order</code> gate. <b>--loop</b> (<code>knobs.loop</code>) iterates s4 with the gates as the judge, up to <code>max_iterations</code>. <b>--team</b> and <b>--effort</b> staff the run from a named <code>knobs.team</code> bench.",
     },
     {
       slug: "swarm", name: "/keel:swarm", group: "Flagship", flagship: true, featured: true, scene: "swarm",
@@ -196,7 +196,7 @@ window.KEEL = {
     ["keel run-gates <cfg>", "run the project's build / lint / command gates"],
     ["keel window <cfg>", "is the merge window open right now?"],
     ["keel ship <cfg>", "full dry assessment: tier, window, gates, decision"],
-    ["keel merge <cfg> --pr N", "fail-closed core-owned merge: lock → window re-check → CI rollup → evidence → gh merge"],
+    ["keel merge <cfg> --pr N", "fail-closed core-owned merge: lock → window re-check → CI rollup → evidence → gh merge (over REST when GraphQL is blocked)"],
     ["keel review <cfg> --pr N --reviews FILE", "render, post and re-verify a review evidence bundle in one idempotent step"],
     ["keel review <cfg> --pr N --from-jury REPORT", "the ai-jury panel IS the review: one head-pinned verdict per ballot, with its vendor + model, plus the panel's consensus record"],
     ["keel fixloop brief --findings FILE", "s9: render the round's fix brief and name its fixer, walking the implementer → gate → host ladder"],
@@ -205,6 +205,7 @@ window.KEEL = {
     ["keel checkpoint / keel resume", "write the safe resume point at step boundaries; render a dry-run resume plan after interruption"],
     ["keel ledger <cfg> [--limit N]", "read the structured run ledger offline (with capture health)"],
     ["keel capture-verify --merged-pr N", "assert exactly one valid capture marker per merged PR"],
+    ["keel capture-land <cfg> --pr N --onto BRANCH --write", "s10: write this run's lesson and commit it onto the pull request, so it merges with the work"],
     ["keel claim / keel release", "single-host resource claims — the mkdir lock primitive keel merge uses"],
     ["keel post-comment --artifact …", "the sanctioned write path for evidence artifacts — marker-validated, idempotent per run-id"],
     ["keel runcontrols <events>", "deterministic work caps: run budget, per-slot caps, oscillation detection — hard halts fail closed"],
@@ -364,7 +365,8 @@ window.KEEL = {
       body:
         "<p>A keel consumer is configured with <b>values, not copied command bodies</b>. Top-level fields choose the core version, repository, base branch, timezone, merge window, built-in gates, extension directory and add-only hooks. <code>knobs</code> declares runnable commands, risk globs, docs paths, CI workflow mapping, local agent roles and runtime capabilities. <code>policy_pack</code> is durable project-owned data. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict.</p>" +
         "<p><b><code>knobs.team</code> is the whole team as values.</b> Who implements (per issue role, with model and reasoning effort), the one mandatory gate reviewer from a <i>different</i> vendor, the reviewer seats per risk tier — or the string <code>jury</code>, when the cross-vendor panel <b>is</b> that tier's review — who applies the findings in the s9 fix loop, and named benches an operator selects with <code>--team &lt;profile&gt;</code>. It resolves into a single <code>assignment</code> that <code>keel plan</code> and <code>keel ship --json</code> publish, so every host runs the same team, and <code>keel validate</code> refuses a policy keel cannot execute.</p>" +
-        "<p><b><code>knobs.implement_mode</code></b> chooses the s4 profile: <code>default</code> (one pass) or <code>tdd</code> (test-first — a test-only commit carrying the issue's acceptance criteria, then the implementation, with the blocking <code>tdd-order</code> gate added at s8). <code>--tdd</code> is the per-run spelling.</p>",
+        "<p><b><code>knobs.implement_mode</code></b> chooses the s4 profile: <code>default</code> (one pass) or <code>tdd</code> (test-first — a test-only commit carrying the issue's acceptance criteria, then the implementation, with the blocking <code>tdd-order</code> gate added at s8). <code>--tdd</code> is the per-run spelling.</p>" +
+        "<p><b><code>knobs.loop</code></b> makes s4 a bounded, gate-verified loop: after each iteration the command gates run; green ends it, red starts the next iteration with the same brief plus the gate output, up to <code>max_iterations</code>. The judge is the gate run, never the implementer's own \"done\"; every iteration is one commit the ledger names, and the loop composes with <code>tdd</code> by wrapping its implementation phase. <code>--loop</code> is the per-run spelling.</p>",
       render: "config",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md",
     },
@@ -372,7 +374,7 @@ window.KEEL = {
       group: "Architecture", title: "Evidence chain & auditability", slug: "evidence",
       summary: "How keel guarantees commit-SHA-bound review provenance, model attribution, and auditable exceptions.",
       body:
-        "<p>Every PR merged through Keel carries an unbroken, tamper-evident record of reviewer verdicts, test results, and agent attribution. Approvals are cryptographically locked to the exact <code>HEAD_SHA</code> commit to prevent approval drift across subsequent pushes, with fully audited exception tracking via <code>--deferral</code>.</p>",
+        "<p>Every PR merged through Keel carries an unbroken, tamper-evident record of reviewer verdicts, test results, and agent attribution. Approvals are pinned to the exact <code>HEAD_SHA</code> commit to prevent approval drift across subsequent pushes — a lesson <code>keel capture-land</code> lands is the one commit they survive — with fully audited exception tracking via <code>--deferral</code>.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/evidence.md",
     },
     {
@@ -450,7 +452,8 @@ window.KEEL = {
       group: "Reference", title: "GitHub transport", slug: "github-transport",
       summary: "How keel selects a GitHub transport (gh CLI, API, …) and normalizes operations across them.",
       body:
-        "<p>Issue, PR, review and comment operations go through a selected <b>transport</b> with normalized capabilities \u2014 so the same command works whether the session has the <code>gh</code> CLI, direct API access, or a restricted runner. Public side effects must go through the transport; chat-only notes never satisfy a step.</p>",
+        "<p>Issue, PR, review and comment operations go through a selected <b>transport</b> with normalized capabilities \u2014 so the same command works whether the session has the <code>gh</code> CLI, direct API access, or a restricted runner. Public side effects must go through the transport; chat-only notes never satisfy a step.</p>" +
+        "<p><b>The merge path runs where GraphQL is blocked.</b> <code>keel merge</code> and <code>keel verify-merge</code> take <code>--transport auto|graphql|rest</code>: <code>auto</code> tries GraphQL and switches to REST only when a probe finds that endpoint blocked. The claim, window, rollup, evidence and SHA-pinned gates-pass are the same objects on either wire, and the merge payload records which one answered.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/github-transport.md",
     },
     {
@@ -543,9 +546,12 @@ window.KEEL = {
     },
     {
       group: "Operating", title: "Capture & learning", slug: "capture-learning",
-      summary: "Post-merge capture has a stable marker contract: sanitized by default, fail-soft, deduped by fingerprint, verifiable offline.",
+      summary: "Every merge leaves a lesson: written at s10, landed on the pull request so it merges with the work, read back into later briefs — behind a stable, verifiable marker.",
       body:
         "<p>The <code>s11 capture</code> step owns a stable marker contract — <code>compound-learning: pr=&lt;N&gt; status=&lt;applied|deferred|skipped:reason&gt;</code> — exposed in <code>keel plan --json</code>. The allowed skip reasons are closed, capture is <b>fail-soft</b> after a successful merge, and <code>keel capture-verify</code> checks the run ledger offline at session end.</p>" +
+        "<p><b>The lesson rides the pull request.</b> With <code>policy_pack.capture.learning.sink</code> set, an applied <code>create-learning</code> capture writes one Markdown learning — the issue, the gate results on the head it merges, and a link to every file it changed, so a knowledge-graph builder gets the edges. With an in-repo sink, <code>/keel:ship</code> writes and lands it at <b>s10, before the evidence gate</b>: <code>keel capture-land --write --onto \"$BRANCH\"</code> commits it onto the pull request's own branch, so the same squash carries it into the base branch. A protected base never sees a direct push, and there is no second pull request to forget.</p>" +
+        "<p><b>The review still holds.</b> The landing moves the head every verdict and the gates-pass are pinned to, so the evidence gate accepts a pin across a commit with one parent, the <code>keel.capture-land.v1</code> marker and exactly one added or modified file inside the sink — and across nothing else. The capture is recorded at s11, after the merge, so a merge that fails leaves no <code>applied</code> claim behind, and a retried s10 reuses the lesson already on the pull request.</p>" +
+        "<p><b>The next run reads it.</b> <code>keel plan</code> and <code>keel ship</code> retrieve matching lessons from <code>policy_pack.capture.learning.source</code> — the sink, by default — into the implement and review briefs. Declared labels and paths outrank prose, at most five reach a brief, and the run ledger records which were shown.</p>" +
         "<p>Capture artifacts are <b>sanitized by default</b> before they become durable: generic secret redaction plus project-owned <code>policy_pack.capture_redaction.deny_patterns</code>, storing only an audit of rule ids and counts. Durable learning is optional — policy can choose <code>create-learning</code>, <code>marker-only</code>, or <code>defer</code> — and duplicate candidates are suppressed by stable fingerprints so routine merges don't flood the learning surface.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/commands.md",
     },

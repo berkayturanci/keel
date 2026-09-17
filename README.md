@@ -110,6 +110,19 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   `contract.implement_mode.loop` and rendered in the closure comment. It composes with
   `--tdd` (the loop wraps phase B only) and runs on every host keel runs in
   ([reference](docs/keel/configuration.md#loop)).
+- **Every merge leaves a lesson the next run reads** — with `policy_pack.capture.learning.sink`
+  set, an applied `create-learning` capture writes one Markdown learning: the issue, the gate
+  results on the head it merges, and a link to every file it changed, so a knowledge-graph
+  builder gets the edges ([reference](docs/keel/configuration.md#policy_packcapturelearningsink)).
+  With an in-repo sink, s10 runs `keel capture-land --write --onto "$BRANCH"`, which commits the
+  lesson onto the pull request itself, so the same squash carries it into the base branch: a
+  protected base never sees a direct push, and there is no second pull request to forget
+  ([reference](docs/keel/cli.md#--write-the-lesson-is-written-here-and-recorded-at-s11)). The
+  review still holds for the head that landing produces — the evidence gate accepts a pin across
+  a commit with one parent, the `keel.capture-land.v1` marker and exactly one added or modified
+  file inside the sink, and across nothing else. Before implementation, `keel plan` and
+  `keel ship` read matching lessons back into the implement and review briefs, at most five
+  ([reference](docs/keel/configuration.md#policy_packcapturelearningsource)).
 - **Know which providers this machine can actually dispatch to** — `keel doctor --providers [--json]`
   probes every provider keel supports (agent CLIs, hosted APIs, local Ollama models, delegate profiles
   and registry entries) and reports `available` / `reason` / transport / capabilities / model list for
@@ -118,7 +131,8 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 - **Auditable evidence chain & compliance** — every PR merged through Keel carries a
   tamper-evident, commit-SHA-bound record of reviewer verdicts, test results, and model
   attributions ([guide](docs/keel/evidence.md)). Approvals are locked to the exact HEAD commit,
-  preventing approval drift across subsequent pushes, with first-class, audited exception tracking.
+  preventing approval drift across subsequent pushes — a lesson `keel capture-land` lands is the one
+  commit they survive, under the rule above — with first-class, audited exception tracking.
 - **Safe merges by construction** — the core-owned `keel merge` path (resource claim,
   window re-check, live CI rollup, and evidence verification before the merge), timezone-aware
   night no-merge window, risk-tier → reviewer count, hotfix bypass with an audit line,
@@ -126,7 +140,10 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   only the operator-applied `keel:evidence-waived` label disarms it, and a gate that never
   armed now **blocks** rather than reporting a pass having checked nothing. Requirements are
   split by phase, so the merge gate asks for the review/jury evidence that exists at s10 and
-  not the closure comments s11 writes after it.
+  not the closure comments s11 writes after it. Where a host's egress proxy blocks GitHub's
+  GraphQL endpoint, `keel merge` and `keel verify-merge` ask the same questions over REST
+  (`--transport auto|graphql|rest`); the claim, window, rollup, evidence and SHA-pinned
+  gates-pass are unchanged ([reference](docs/keel/cli.md#transport-graphql-or-rest-when-the-endpoint-is-blocked)).
 
 ### How Keel compares
 

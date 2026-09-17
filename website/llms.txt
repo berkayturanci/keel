@@ -23,4 +23,6 @@
 - Project-neutral core: all project specifics live in `project.yaml`, read via the `keel` CLI
 - Extension slots: named hooks where a project snaps in its own implementers/reviewers
 - Auditable evidence chain: commit-SHA-bound review provenance, model attribution, and audited deferrals
+- Gate-verified iteration: `knobs.loop` repeats the implement step until the command gates pass, bounded by `max_iterations`
+- Learning chain: each merge writes a Markdown lesson, commits it onto the pull request (`keel capture-land`), and reads matching lessons back into later implement and review briefs
 - Pure-core / thin-I/O split with a strict 100% coverage bar

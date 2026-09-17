@@ -28,12 +28,19 @@ In traditional PR workflows, an approval given on commit `A` remains valid even 
 is pushed.
 
 In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictly bound to the **exact `HEAD_SHA`**:
-* Structured verdict comments carry a signed machine-readable payload:
+* Structured verdict comments carry a machine-readable payload:
   ```json
   <!-- keel:evidence {"contract":"keel.review-verdict.v1","head_sha":"cfe06ca8...","verdict":"approve","reviewers":2,"tier":"TIER-2"} -->
   ```
 * If the head commit changes by even one byte, previous review evidence is automatically invalidated,
   and Keel halts the merge until the new commit is re-verified by the backbone.
+* **One exemption, and only one: the lesson `keel capture-land` lands (#1203).** `/keel:ship`
+  commits the run's learning onto the pull request after review, which moves the head. A verdict or
+  gates-pass pinned to head `H` answers for head `H′` only when every commit between them has
+  **one parent**, carries the **`keel.capture-land.v1:` marker line**, and **adds or modifies
+  exactly one path inside the configured learning sink**. Any other commit invalidates the pins as
+  before, and a project without an in-repo sink and capture enabled gets no exemption at all. See
+  [`--onto`](cli.md#--onto-the-lesson-rides-the-pull-request).
 
 ### 2. Multi-Vendor Agent Attribution
 Every agentic mutation (implementation in `s4`, review in `s7`) is permanently stamped with standard attribution:

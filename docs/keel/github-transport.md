@@ -76,6 +76,26 @@ that normalized field.
 
 The full `capabilities` object always contains every operation in the table above.
 
+## The merge path: GraphQL, or REST when the endpoint is blocked
+
+`keel merge` and `keel verify-merge` read the pull request and merge it through `gh`, and
+`gh pr view --json` and `gh pr merge` go over GitHub's **GraphQL** endpoint. On a host whose
+egress proxy serves the REST API and blocks GraphQL, both commands take
+`--transport auto|graphql|rest`:
+
+| `--transport` | behaviour |
+| --- | --- |
+| `auto` (default) | GraphQL first; if a read fails, a probe asks whether the endpoint is reachable at all, and only a blocked endpoint switches the run to REST |
+| `graphql` | GraphQL only |
+| `rest` | REST only; the probe never runs |
+
+This is a choice of **wire** inside the `gh` transport above, not a third transport. The merge
+claim, the window re-check, the rollup semantics, the evidence gate and the SHA-pinned
+gates-pass are the same objects on either wire, and the merge payload records which one
+answered (`transport: gh-graphql` or `gh-rest`). The transport is settled by the reads, before
+anything is written, so a merge is never retried over a second wire. See
+[`keel merge`](cli.md#transport-graphql-or-rest-when-the-endpoint-is-blocked) for the details.
+
 ## Boundary
 
 Transport selection is runtime-owned, not project-owned. Projects may require GitHub side

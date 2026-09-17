@@ -41,6 +41,13 @@ The allowed skip reasons are closed (`dry-run`, `deferred`, `merge-failed`,
 `recursion-guard`, `capability-unavailable`, `no-policy`), capture is fail-soft after a
 successful merge, and `keel capture-verify` can check the run ledger offline at session end.
 
+With an in-repo learning sink the lesson itself does not wait for the merge. At s10, before
+the evidence gate, `/keel:ship` runs `keel capture-land --write --onto "$BRANCH"`, which writes
+the Markdown learning and commits it onto the pull request so it merges with the work; s11 then
+records the capture with `keel ship --append-ledger --capture-artifact <path>`. See
+[the sink](configuration.md#policy_packcapturelearningsink) and
+[`keel capture-land`](cli.md#--write-the-lesson-is-written-here-and-recorded-at-s11).
+
 Long-running work blocks expose progress through `keel status`. This is a snapshot command,
 not a daemon: it reads the last safe checkpoint plus the structured run ledger and reports
 the current issue/step, PR/branch/worktree, wait reason, completed item counts, and next
