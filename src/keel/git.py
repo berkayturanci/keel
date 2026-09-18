@@ -37,11 +37,12 @@ def resolve_ref(ref: str, *, cwd: str | None = None, _run=None) -> str | None:
     ``show-ref --verify`` takes the name as the complete ref and looks nowhere else, where
     :func:`rev_parse` would try ``refs/tags/<ref>`` and ``refs/heads/<ref>`` after it (#1223).
 
-    The answer is the ref's object, which is a commit under ``refs/heads/`` (git refuses
-    anything else there). A ``refs/remotes/`` ref normally holds the fetched branch's commit
-    too, but git accepts any object there when it is set by hand — measured with an annotated
-    tag — so a caller that needs a commit must still get one: the landing's ``commit-tree``
-    refuses a parent that is not (#1225).
+    The answer is whatever object the ref holds, and that is not always a commit. git's own
+    writers keep one there — ``update-ref`` refuses a non-commit under ``refs/heads/``, and a
+    fetch writes the branch's commit under ``refs/remotes/`` — but a ref set by hand can hold
+    any object: ``update-ref`` accepts an annotated tag under ``refs/remotes/``, and a symbolic
+    ref under ``refs/heads/`` can point at one (both measured). A caller that needs a commit
+    must still get one; the landing's ``commit-tree`` refuses a parent that is not (#1225).
     """
     result = run_argv(["git", "show-ref", "--verify", "--hash", ref], cwd=cwd, **_kw(_run))
     output = result.stdout.strip()
