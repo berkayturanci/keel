@@ -14673,6 +14673,70 @@ class TestTddOrderGateOnTheCli(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("policy_pack.test_groups", out)
 
+    def test_a_stale_local_base_does_not_put_someone_elses_commit_first(self):
+        """keel cuts worktrees from `origin/<base>` while the local branch lags (#1227).
+
+        `main..HEAD` then starts below the branch point, so the base commit the branch was
+        cut on top of was judged as this implementer's first commit — and a test-first
+        branch was blocked for touching `src/` first. `--first-parent` cannot drop it: it
+        is on the branch's own line. The gate reads the range every other gate diffs
+        against, which is `refs/remotes/origin/main` here.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            origin, seed, work = Path(d) / "origin.git", Path(d) / "seed", Path(d) / "work"
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+            subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+            for repo in (seed,):
+                _run_git(repo, "config", "user.email", "test@example.com")
+                _run_git(repo, "config", "user.name", "Test User")
+            (seed / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(seed, "add", "-A")
+            _run_git(seed, "commit", "-qm", "base")
+            _run_git(seed, "remote", "add", "origin", str(origin))
+            _run_git(seed, "push", "-q", "origin", "main")
+            subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+            _run_git(work, "config", "user.email", "test@example.com")
+            _run_git(work, "config", "user.name", "Test User")
+            # Someone else lands an implementation change on the base; this clone fetches
+            # it but never moves its local `main`.
+            (seed / "src").mkdir()
+            (seed / "src" / "base.py").write_text("theirs\n", encoding="utf-8")
+            _run_git(seed, "add", "-A")
+            _run_git(seed, "commit", "-qm", "base: someone else's change")
+            _run_git(seed, "push", "-q", "origin", "main")
+            _run_git(work, "fetch", "-q", "origin")
+            _run_git(work, "checkout", "-q", "-b", "feature", "origin/main")
+            (work / "tests").mkdir()
+            (work / "tests" / "test_y.py").write_text("first\n", encoding="utf-8")
+            _run_git(work, "add", "-A")
+            _run_git(work, "commit", "-qm", "tests first")
+            (work / "src" / "y.py").write_text("second\n", encoding="utf-8")
+            _run_git(work, "add", "-A")
+            _run_git(work, "commit", "-qm", "implementation second")
+            rc, out, _ = run(["run-gates", self._config(), "--root", str(work), "--tdd"])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("tdd-order", out)
+        self.assertNotIn("src/base.py", out)
+
+    def test_a_tag_named_like_the_base_branch_does_not_move_the_range(self):
+        """`main` is a short name, and git resolves `refs/tags/main` before the branch.
+
+        With the tag on the branch's first, implementation-first commit, `main..HEAD` hid
+        that commit: what was left began with the tests, and the gate passed a branch that
+        was not written test-first. The range now starts at `refs/heads/main` by name.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._repo(root, tests_first=False)
+            (root / "src" / "z.py").write_text("third\n", encoding="utf-8")
+            _run_git(root, "add", "-A")
+            _run_git(root, "commit", "-m", "third: src/z.py")
+            _run_git(root, "tag", "main", "HEAD~2")
+            rc, out, _ = run(["run-gates", self._config(), "--root", d, "--tdd"])
+        self.assertEqual(rc, 1, out)
+        self.assertIn("not written test-first", out)
+        self.assertIn("src/x.py", out)
+
     def test_a_base_commit_merged_in_later_is_never_the_first_commit(self):
         """The ordering bug: `git log` defaults to commit-*date* order (#1020 review).
 

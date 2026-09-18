@@ -191,9 +191,20 @@ def _tdd_order_outcome(
     The only I/O is one :func:`keel.git.commit_log` read; parsing the log, matching the
     paths and deciding the verdict all live in :mod:`keel.tdd`, which is why the gate is
     unit-tested offline against commit lists instead of against a repository.
+
+    **The range starts at the base ref every other gate diffs against** —
+    :func:`_ship_base_ref`, not the bare local branch. keel cuts its worktrees from
+    ``origin/<base>`` while the primary checkout's local branch lags, and ``<base>..HEAD``
+    then begins below the branch point: somebody else's base commit became "this
+    implementer's first commit", and a test-first branch was blocked for touching
+    ``src/`` first (measured, #1227). ``--first-parent`` cannot drop such a commit, because
+    the branch was cut on top of it. The bare name is also a short one, which a tag called
+    ``main`` outranks — the class #1220 closed for the diff base.
     """
     result = tdd.check_order(
-        tdd.parse_commits(git.commit_log(config.base_branch, "HEAD", cwd=root)),
+        tdd.parse_commits(
+            git.commit_log(_ship_base_ref(config.base_branch, root), "HEAD", cwd=root)
+        ),
         test_globs=tdd.test_globs(config.policy_pack),
         gates_green=gates_green,
     )

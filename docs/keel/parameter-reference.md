@@ -1601,7 +1601,9 @@ gate, evaluated **after** every other gate because its verdict includes theirs: 
 when the first non-merge commit on the branch touches only the project's test paths and
 adds or modifies at least one of them, no later commit removes a test (deleted or renamed
 out of the test paths), a later commit touches an implementation path, and the rest of the gate run is green. It reads the branch
-through one `git log --topo-order --first-parent --name-status` and decides in `keel.tdd`
+through one `git log --topo-order --first-parent --name-status`, starting at the base ref every
+other gate diffs against (`refs/remotes/origin/<base_branch>`, else `refs/heads/<base_branch>`),
+and decides in `keel.tdd`
 — order by ancestry, not by commit date, so integrating the base branch cannot make one of
 its commits the "first" one. It checks order and paths only, never whether phase A's tests
 were red; see [`knobs.implement_mode`](configuration.md#implement_mode).
