@@ -15,14 +15,18 @@ from __future__ import annotations
 
 import re
 import unittest
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REPO_URL = "https://github.com/berkayturanci/keel"
 
 #: `[text](target)` — not an image, not an autolink. A title after the target is allowed.
-#: The text may be an image, so a linked badge `[![alt](src)](target)` yields its target.
-LINK = re.compile(r'(?<!!)\[(?:!\[[^\]]*\]\([^)]*\)|[^\]])*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+LINK = re.compile(r'(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+#: `![alt](src)`, blanked out before LINK runs so a linked badge `[![alt](src)](target)`
+#: reads as `[xxxx](target)` and yields its target. Two linear patterns, not one with an
+#: image alternative inside the link text: there `!` and `[` could match either branch, and
+#: CodeQL's py/redos is right that such a pattern backtracks exponentially.
+IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 EXPLICIT_ANCHOR = re.compile(r'<a\s+(?:name|id)="([^"]+)"')
 SITE_LINK = re.compile(re.escape(REPO_URL) + r"/(?:blob|tree)/main/([^\s\"'<>)#]+)(?:#([\w\-]+))?")
@@ -70,6 +74,16 @@ def _paragraphs(text: str):
         yield start, "\n".join(lines)
 
 
+def link_matches(paragraph: str):
+    """LINK's matches in ``paragraph``, images blanked first.
+
+    Each image becomes as many ``x`` as it had characters, newlines kept, so a match's
+    offset — and the line number read from it — is the same as in the paragraph itself.
+    """
+    blank = IMAGE.sub(lambda m: re.sub(r"[^\n]", "x", m.group(0)), paragraph)
+    return LINK.finditer(blank)
+
+
 def anchors(path: Path) -> set[str]:
     """Every anchor a document offers: heading slugs (duplicates numbered) and explicit ids."""
     text = path.read_text(encoding="utf-8")
@@ -91,9 +105,11 @@ def documents() -> list[Path]:
 
 
 def _resolve(source: Path, target: str) -> Path:
-    path = target.lstrip("/")
+    # A plain join: `Path` takes `/` on every platform. Round-tripping through
+    # `PurePosixPath` turned `D:/a/keel` into the drive-relative `D:a\keel` on
+    # Windows under Python 3.11, and every link there read as missing.
     base = REPO_ROOT if target.startswith("/") else source.parent
-    return Path(PurePosixPath((base / path).as_posix()))
+    return base / target.lstrip("/")
 
 
 class TestDocumentLinksResolve(unittest.TestCase):
@@ -103,7 +119,7 @@ class TestDocumentLinksResolve(unittest.TestCase):
         for document in documents():
             text = document.read_text(encoding="utf-8")
             for start, paragraph in _paragraphs(text):
-                for match in LINK.finditer(paragraph):
+                for match in link_matches(paragraph):
                     target = match.group(1)
                     if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("//"):
                         continue
@@ -133,7 +149,12 @@ class TestDocumentLinksResolve(unittest.TestCase):
     def test_a_linked_badge_yields_its_target_not_its_image(self):
         # README's license and install badges link into the repo; the image URL is external.
         self.assertEqual(
-            LINK.findall("[![License](https://img.shields.io/x.svg)](LICENSE) [a](b.md#c)"),
+            [
+                m.group(1)
+                for m in link_matches(
+                    "[![License](https://img.shields.io/x.svg)](LICENSE) [a](b.md#c)"
+                )
+            ],
             ["LICENSE", "b.md#c"],
         )
 
@@ -143,7 +164,9 @@ class TestDocumentLinksResolve(unittest.TestCase):
         self.assertEqual(
             paragraphs, [(1, "see the [merge\nwindow](cli.md#init-wizard) rule"), (7, "end")]
         )
-        self.assertEqual(LINK.findall(paragraphs[0][1]), ["cli.md#init-wizard"])
+        self.assertEqual(
+            [m.group(1) for m in link_matches(paragraphs[0][1])], ["cli.md#init-wizard"]
+        )
 
     def test_a_tilde_fence_is_a_fence_and_only_its_own_marker_closes_it(self):
         text = "a\n~~~\n[x](gone.md)\n```\n[y](gone.md)\n~~~\nb [ok](ok.md)"
