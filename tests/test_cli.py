@@ -17118,6 +17118,28 @@ class TestCaptureLandWrite(unittest.TestCase):
             self.assertEqual(payload["local_copy"], "removed")
             self.assertEqual(self._lessons(wt), [])
 
+    def test_without_onto_the_lesson_lands_on_the_base_with_no_head_pin(self):
+        """The head pin is for `--onto`: the base branch is never the pull request's head.
+
+        `plan["onto"]` names the destination either way — the base branch when `--onto` is
+        omitted — so a pin read off the plan refused every `--write` landing on the base.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            (wt / "work.py").write_text("x = 1\n", encoding="utf-8")
+            _run_git(wt, "add", "work.py")
+            _run_git(wt, "commit", "-qm", "the pull request's own work")
+            _run_git(wt, "push", "-q", "origin", "feature")
+            reviewed = _git_stdout(wt, "rev-parse", "HEAD")
+            config = self._config(wt)
+            self._gates_pass(wt, reviewed)
+            with self._host(head=reviewed, files=["work.py"]):
+                rc, payload, err = self._land(config, wt, "--write")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(payload["status"], "landed", payload)
+            self.assertEqual(payload["write"]["head"], reviewed)
+            self.assertEqual(_origin_files(origin), [payload["plan"]["path"], "keep.txt"])
+
     def test_a_branch_named_like_the_remote_ref_does_not_move_what_is_landed_on(self):
         """`gh pr checkout` names a local branch after a pull request's head branch.
 

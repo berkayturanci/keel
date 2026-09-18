@@ -2483,8 +2483,10 @@ def _cmd_capture_land(args: argparse.Namespace) -> int:
         else:
             # `--write --onto` rendered the lesson for the head it read, so the branch must
             # still be at that head. Without `--onto` the target is the base branch, which
-            # is never a pull request's head; without `--write` no head was read.
-            expect_head = written["head"] if written is not None and plan["onto"] else None
+            # is never a pull request's head; without `--write` no head was read. Asked of
+            # the flag, not the plan: `plan["onto"]` names the destination either way, the
+            # base branch included, so reading it pinned every base landing to the PR head.
+            expect_head = written["head"] if written is not None and args.onto else None
             for _ in range(plan["attempts"]):
                 outcome = _land_learning_attempt(args, plan, expect_head=expect_head)
                 attempts.append(outcome)
