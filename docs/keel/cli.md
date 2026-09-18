@@ -186,7 +186,7 @@ longer authorizes a merge of a newer head; if no record matches, the merge refus
 `no gates-pass recorded for the current head <sha>`. The decision is reported in the
 `gates_sha` block of the JSON payload (`matched`, `head_sha`, `run_id`).
 
-Once the merge lands, `keel merge` runs the [`verify-merge`](#keel-verify-merge-projectyaml---root-dir---pr-n---merge-sha-sha---json)
+Once the merge lands, `keel merge` runs the [`verify-merge`](#keel-verify-merge-projectyaml---root-dir---pr-n---merge-sha-sha---transport-autographqlrest---json)
 drift check on it and reports the result as `merge_verification` in the payload and a
 `drift :` line in human output. Exit codes: **0** merged and clean, **1** the merge did not
 happen, **3** it happened *and* may have written over work another PR merged after this one
