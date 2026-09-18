@@ -122,8 +122,36 @@ class TestGitLandingPlumbing(unittest.TestCase):
         # was just built on, which is a plain tree difference, not a merge-base one.
         self.assertEqual(
             rec.calls[0],
-            ["git", "-c", "core.quotePath=false", "diff", "--name-only", "-z", SHA_A, SHA_B],
+            [
+                "git",
+                "-c",
+                "core.quotePath=false",
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                SHA_A,
+                SHA_B,
+            ],
         )
+
+    def test_diff_names_lists_both_sides_of_a_rename(self):
+        """A deletion must not hide inside a rename into the lesson's path.
+
+        With rename detection on, a commit that removed a file and added the lesson with
+        the same bytes printed one name — the lesson's — and passed the landing's "exactly
+        one path" check. `--no-renames` lists the path it left as well.
+        """
+        rec = _Recorder(out="src/app.py\x00.keel/learning/a.md\x00")
+        self.assertEqual(
+            git.diff_names(SHA_A, SHA_B, _run=rec), ["src/app.py", ".keel/learning/a.md"]
+        )
+        self.assertIn("--no-renames", rec.calls[0])
+
+    def test_diff_names_keeps_a_whitespace_name(self):
+        # Only the empty record after the final NUL is dropped; " " is a legal filename.
+        rec = _Recorder(out=".keel/learning/a.md\x00 \x00")
+        self.assertEqual(git.diff_names(SHA_A, SHA_B, _run=rec), [".keel/learning/a.md", " "])
 
     def test_diff_names_does_not_c_quote_a_non_ascii_path(self):
         """The safety check compares these names against the path it planned.
@@ -158,8 +186,21 @@ class TestGit(unittest.TestCase):
     def test_fetch_argv(self):
         rec = _Recorder()
         git.fetch("origin", "main", _run=rec)
-        # Fully qualified, so a value that begins with `-` can never be read as an option.
-        self.assertEqual(rec.calls[0], ["git", "fetch", "--quiet", "origin", "refs/heads/main"])
+        # Fully qualified, so a value that begins with `-` can never be read as an option,
+        # and into the remote-tracking ref by name, so the ref the landing resolves next is
+        # the one this fetch wrote whatever the remote's configured refspec says.
+        self.assertEqual(
+            rec.calls[0],
+            ["git", "fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main"],
+        )
+
+    def test_remote_tracking_ref_is_spelled_in_full(self):
+        # `origin/main` resolves `refs/tags/origin/main` and `refs/heads/origin/main` first.
+        self.assertEqual(git.remote_tracking_ref("origin", "main"), "refs/remotes/origin/main")
+        self.assertEqual(
+            git.remote_tracking_ref("upstream", "feature/issue-7"),
+            "refs/remotes/upstream/feature/issue-7",
+        )
 
     def test_worktree_add_argv(self):
         rec = _Recorder()

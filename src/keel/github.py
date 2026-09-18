@@ -502,9 +502,24 @@ def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> Co
 
 
 def merge_pr(
-    pr: int | str, *, method: str = "squash", cwd: str | None = None, _run=None
+    pr: int | str,
+    *,
+    method: str = "squash",
+    head_sha: str | None = None,
+    cwd: str | None = None,
+    _run=None,
 ) -> CommandResult:
-    return run_argv(["gh", "pr", "merge", str(pr), f"--{method}"], cwd=cwd, **_kw(_run))
+    """Merge the pull request over GraphQL, pinned to ``head_sha`` when one is known.
+
+    ``--match-head-commit`` is this transport's spelling of the pin :func:`rest_merge_pr`
+    sends as ``sha``: GitHub refuses the merge if the head is not that commit. Without it
+    the head could move between the checks `keel merge` ran and this call, and the merge
+    would land whatever it moved to.
+    """
+    argv = ["gh", "pr", "merge", str(pr), f"--{method}"]
+    if head_sha:
+        argv += ["--match-head-commit", head_sha]
+    return run_argv(argv, cwd=cwd, **_kw(_run))
 
 
 def comment(pr: int | str, body: str, *, cwd: str | None = None, _run=None) -> CommandResult:
@@ -828,9 +843,9 @@ def rest_merge_pr(
     """Merge the pull request over REST, pinned to ``head_sha`` when one is known.
 
     ``sha`` is REST's own head-pin: the merge is refused if the pull request has moved
-    since it was read. `gh pr merge` has no equivalent it applies by default, so this
-    transport is *stricter* than the one it stands in for — deliberately, because a
-    merge is the one operation here that cannot be taken back.
+    since it was read. `gh pr merge` applies none by default; :func:`merge_pr` passes
+    ``--match-head-commit`` for the same pin, so the two transports are equally strict —
+    deliberately, because a merge is the one operation here that cannot be taken back.
     """
     argv = [
         "gh",

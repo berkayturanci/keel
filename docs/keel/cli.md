@@ -176,6 +176,13 @@ failure-before-pending precedence, runs `evidence-verify` against the current PR
 requires a SHA-stamped gates-pass for the PR's current head, and only then calls
 `gh pr merge`.
 
+**One head throughout.** The merge snapshot (merge state, CI rollup) and the evidence load
+(verdicts, changed files, the heads a capture landing covers) each read the pull request's
+head. When the two reads name different commits, or either cannot be read, the merge
+refuses with *the pull request's head changed while it was being checked* — run it again.
+The merge is then pinned to that head on both transports, so GitHub refuses it if the branch
+moves after the checks (#1219).
+
 The gates-SHA check reads the run ledger and requires a `ship_run` record whose
 `pull_request.number` matches the PR, whose `git.head_sha` equals the PR's current head
 (from the live merge snapshot) — or a head that head **covers**: one it descends from by
@@ -251,9 +258,9 @@ served, and the drift check would judge the test merge instead of the squash. Th
 window read therefore waits until that SHA is **reachable from the base branch**, not
 merely present, and `keel merge` prefers the SHA the merge response itself returns.
 
-The REST merge is also the **stricter** of the two: it sends `sha=<the head the gates-pass
-was checked against>`, so the API refuses it if the branch moved since the snapshot.
-`gh pr merge` applies no such pin by default.
+Both transports pin the merge to the head every check was run against: REST sends
+`sha=<head>`, and the GraphQL path runs `gh pr merge --match-head-commit <head>`. `gh pr merge`
+applies no pin by default, so keel always passes one; before #1219 only the REST merge did.
 
 Raw adapter `gh pr merge` calls are a spec violation for ship-style flows: adapters should
 delegate s10 to this command so lock, window, CI, evidence, and gates-SHA checks are
@@ -762,7 +769,18 @@ on the target branch, reports `already-landed` rather than a missing artifact.
 The landing commit is composed from the base branch's own tree objects, and the command
 verifies that the finished commit differs from its parent by **exactly** the artifact path
 before pushing. A commit that touches anything else, or a diff that cannot be read at all,
-is refused rather than pushed.
+is refused rather than pushed. The diff is read with `--no-renames`, so a deletion cannot
+pass as a rename into the lesson, and the tree listing is split on NUL alone, so a sibling
+whose name holds a newline stays in the rebuilt tree (#1219).
+
+**What it builds on is named in full.** The fetch writes
+`refs/remotes/<remote>/<branch>` by name and the landing resolves exactly that ref, never the
+short `<remote>/<branch>`: git resolves a short name through `refs/tags/` and `refs/heads/`
+first, so a tag or local branch literally named `origin/<branch>` — a tag arrives unasked
+with a fetch of any remote whose history carries it — would have been the base, and the
+one-file check, comparing against the same base, would have agreed. With `--write --onto`
+the branch must also still be at the pull request head the lesson was written for; if it
+moved, the landing reports `failed` and pushes nothing (#1219).
 
 An artifact path that is absolute or climbs out of the checkout (`../x`, `/etc/x`, `C:\x`,
 `~/x`) is refused, not normalised — this command's whole job is to push to a shared branch.
@@ -1256,8 +1274,8 @@ Two independent checks compose into one verdict:
 The comparison itself is pure (`keel.branchscope.verify`): given the head/merge-base/base-tip
 SHAs, the commit distance, and the worktree facts, it returns an `ok`/`stale`/`contaminated`
 verdict with a per-check breakdown. The CLI gathers the live facts via the thin `git`/`gh`
-wrappers (`merge-base`, `rev-parse origin/<base>`, `rev-list --count`, `worktree list
---porcelain`), fail-soft — a fact that cannot be resolved becomes `None` and the pure layer
+wrappers (`merge-base`, `rev-parse refs/remotes/origin/<base>`, `rev-list --count`,
+`worktree list --porcelain`), fail-soft — a fact that cannot be resolved becomes `None` and the pure layer
 skips that check rather than hard-blocking.
 
 ```bash

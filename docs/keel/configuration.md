@@ -1633,6 +1633,12 @@ sink has ever written.
 A file with no front matter is plain Markdown and ranks on its text alone, so learnings
 keel wrote and learnings a person wrote both reach a brief.
 
+**Only files that really live in the directory are read.** A lesson is text a brief quotes
+to an agent, and a symlink in the directory — `.keel/learning/x.md -> ~/.aws/credentials` —
+would make whatever it points at into one. A file whose real path is outside the directory
+is skipped; a link to another lesson in the same directory, or a directory reached through
+a link, still reads (#1219).
+
 At most five reach a brief, under a fixed **Relevant past learnings** heading, each as a
 title, one line and a path. The rendered section is capped so a brief cannot become an
 unbounded prompt.

@@ -79,6 +79,15 @@ class TestGithubComments(unittest.TestCase):
         self.assertTrue(res.ok)
         self.assertEqual(mock_runner.call_args[0][0], ["gh", "pr", "merge", "10", "--squash"])
 
+    def test_merge_pr_pins_the_head_it_is_given(self):
+        # GraphQL's spelling of the REST `sha` pin: GitHub refuses if the head is elsewhere.
+        mock_runner = MagicMock(return_value=_proc(""))
+        github.merge_pr(10, method="squash", head_sha="abc", _run=mock_runner)
+        self.assertEqual(
+            mock_runner.call_args[0][0],
+            ["gh", "pr", "merge", "10", "--squash", "--match-head-commit", "abc"],
+        )
+
     def test_comment(self):
         mock_runner = MagicMock(return_value=_proc(""))
         res = github.comment(10, "lgtm", _run=mock_runner)

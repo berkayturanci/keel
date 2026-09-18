@@ -845,6 +845,35 @@ class TestRetrieveRelevantLearnings(unittest.TestCase):
             with patch.object(Path, "read_text", side_effect=OSError("permission denied")):
                 self.assertEqual(capture.retrieve_relevant_learnings("lesson content", td), [])
 
+    def test_a_link_out_of_the_directory_is_not_read_as_a_lesson(self):
+        """A lesson is text an agent brief quotes; a link must not make any file one.
+
+        `is_file` and `read_text` both follow a symlink, so `leak.md -> ../credentials`
+        put the target's first line into the brief as a lesson title. A link to another
+        lesson in the same directory still reads.
+        """
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            lessons = root / "learning"
+            lessons.mkdir()
+            outside = root / "credentials.md"
+            outside.write_text("# Auth token: s3cr3t\nauth token rotation", encoding="utf-8")
+            (lessons / "leak.md").symlink_to(outside)
+            (lessons / "real.md").write_text(
+                "# Auth token handling\nRefresh the auth token before it expires.",
+                encoding="utf-8",
+            )
+            (lessons / "alias.md").symlink_to(lessons / "real.md")
+            results = capture.retrieve_relevant_learnings("auth token", lessons, max_results=5)
+            # Reached through a link, the directory is still the directory.
+            (root / "via").symlink_to(lessons, target_is_directory=True)
+            via = capture.retrieve_relevant_learnings("auth token", root / "via", max_results=5)
+        self.assertEqual(sorted(r["file"] for r in results), ["alias.md", "real.md"])
+        self.assertEqual(sorted(r["file"] for r in via), ["alias.md", "real.md"])
+
 
 class TestCaptureImportGraph(unittest.TestCase):
     def test_capture_does_not_import_config(self):

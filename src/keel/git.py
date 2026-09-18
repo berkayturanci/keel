@@ -14,16 +14,44 @@ from . import tdd
 from .runner import CommandResult, run_argv
 
 
+def remote_tracking_ref(remote: str, branch: str) -> str:
+    """``refs/remotes/<remote>/<branch>``: the remote-tracking ref, spelled in full.
+
+    **Never the short ``<remote>/<branch>``.** git resolves a short name through
+    ``refs/tags/`` and ``refs/heads/`` *before* ``refs/remotes/``, so a tag or a local branch
+    literally named ``origin/main`` answers in its place — and a tag arrives unasked with any
+    fetch of a remote whose history carries it. The warning git prints goes to stderr, which
+    :func:`rev_parse` does not read, so nothing notices. A name beginning ``refs/`` matches
+    that ref and nothing else.
+    """
+    return f"refs/remotes/{remote}/{branch}"
+
+
 def fetch(remote: str, ref: str, *, cwd: str | None = None, _run=None) -> CommandResult:
-    """Fetch one branch of ``remote``.
+    """Fetch one branch of ``remote`` into :func:`remote_tracking_ref`.
 
     The branch goes as ``refs/heads/<ref>``, never bare: a positional argument that begins
     with ``-`` is an *option* to git, and ``--upload-pack=<program>`` among those runs a
     program. The landing plan already refuses such a name; this keeps the wrapper from being
-    the thing that makes a stray value dangerous. git still updates ``<remote>/<ref>`` for a
-    fully qualified ref, so nothing downstream reads a different name.
+    the thing that makes a stray value dangerous.
+
+    **The destination is named, not left to the remote's configured refspec.** The landing
+    resolves exactly that ref next, so what it builds on is what this fetch downloaded on any
+    configuration — a remote whose ``fetch`` refspec does not map the branch would otherwise
+    leave the ref where an older fetch put it. ``+`` because the branch may have been
+    rewritten, which is what the default refspec allows too.
     """
-    return run_argv(["git", "fetch", "--quiet", remote, f"refs/heads/{ref}"], cwd=cwd, **_kw(_run))
+    return run_argv(
+        [
+            "git",
+            "fetch",
+            "--quiet",
+            remote,
+            f"+refs/heads/{ref}:{remote_tracking_ref(remote, ref)}",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
 
 
 def worktree_add(
@@ -250,14 +278,31 @@ def diff_names(a: str, b: str, *, cwd: str | None = None, _run=None) -> list[str
     # escape — `".keel/learning/caf\\303\\251.md"` — which can never equal the raw path
     # the landing planned, so the one live safety check refused every such artifact
     # permanently and blamed the commit for changing a file nobody asked for.
+    #
+    # `--no-renames`, because this is that "exactly one file" check. With rename detection
+    # on — git's default — a commit that deleted a file and added the lesson with the same
+    # content prints as one rename, named by where the file went, so the deletion never
+    # showed. Every path either side touches is listed separately here, the one it left too.
     result = run_argv(
-        ["git", "-c", "core.quotePath=false", "diff", "--name-only", "-z", a, b],
+        [
+            "git",
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            a,
+            b,
+        ],
         cwd=cwd,
         **_kw(_run),
     )
     if not result.ok:
         return None
-    return [name for name in result.stdout.split("\0") if name.strip()]
+    # Only the empty record after the final NUL is dropped. `name.strip()` also dropped a
+    # path made of whitespace, which is a legal filename and exactly as much of a change.
+    return [name for name in result.stdout.split("\0") if name]
 
 
 def push_commit(

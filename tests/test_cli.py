@@ -1197,11 +1197,40 @@ class TestOneBaseRef(unittest.TestCase):
 
     def test_it_prefers_the_remote_ref_and_falls_back_to_the_local_branch(self):
         with patch("keel.git.rev_parse", return_value="abc1234"):
-            self.assertEqual(cli._ship_base_ref("main", "."), "origin/main")
+            self.assertEqual(cli._ship_base_ref("main", "."), "refs/remotes/origin/main")
         # An offline or freshly-initialised checkout has no remote-tracking ref; the
         # configured branch keeps it fail-soft rather than diffing against nothing.
         with patch("keel.git.rev_parse", return_value=None):
-            self.assertEqual(cli._ship_base_ref("main", "."), "main")
+            self.assertEqual(cli._ship_base_ref("main", "."), "refs/heads/main")
+
+    def test_a_branch_or_tag_named_like_the_remote_ref_is_not_what_it_diffs_against(self):
+        """Both spellings are full ref names, so nothing shadows either (git 2.x lookup order).
+
+        `origin/main` resolves `refs/tags/origin/main` and `refs/heads/origin/main` before
+        `refs/remotes/origin/main`, and `main` resolves `refs/tags/main` before the branch.
+        `gh pr checkout` names a local branch after a pull request's head branch, so a
+        contributor branch called `origin/main` was enough to change what the gates and
+        the jury were shown. Measured against real git, not a mock of it.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            real = _git_stdout(wt, "rev-parse", "refs/remotes/origin/main")
+            (wt / "planted.py").write_text("x = 1\n", encoding="utf-8")
+            _run_git(wt, "add", "planted.py")
+            _run_git(wt, "commit", "-qm", "planted")
+            planted = _git_stdout(wt, "rev-parse", "HEAD")
+            _run_git(wt, "branch", "origin/main", planted)
+            _run_git(wt, "tag", "main", planted)
+            # The short names now answer with the planted commit, as git documents.
+            for short in ("origin/main", "main"):
+                self.assertEqual(git.rev_parse(short, cwd=str(wt)), planted, short)
+            base = cli._ship_base_ref("main", str(wt))
+            self.assertEqual(git.rev_parse(base, cwd=str(wt)), real)
+            # Offline, with no remote-tracking ref: the branch, not the tag named like it.
+            _run_git(wt, "update-ref", "-d", "refs/remotes/origin/main")
+            fallback = cli._ship_base_ref("main", str(wt))
+            self.assertEqual(fallback, "refs/heads/main")
+            self.assertEqual(git.rev_parse(fallback, cwd=str(wt)), real)
 
     def test_ship_and_run_gates_ask_for_the_same_ref(self):
         import tempfile
@@ -1251,7 +1280,7 @@ class TestOneBaseRef(unittest.TestCase):
         self.assertTrue(bases)
         # `main...HEAD` after a base merge carries the commits that merge brought in —
         # the false-positive class #1174 removed from ship and left here.
-        self.assertTrue(all(base.startswith("origin/") for base in bases), bases)
+        self.assertTrue(all(base.startswith("refs/remotes/origin/") for base in bases), bases)
 
 
 class TestRunGatePhaseScope(unittest.TestCase):
@@ -1462,8 +1491,8 @@ class TestShip(unittest.TestCase):
                 rc, out, _ = run(["ship", _write_config("'true'"), "--root", d, "--json"])
 
         self.assertEqual(rc, 0)
-        rev_parse.assert_called_once_with("origin/main", cwd=d)
-        changed.assert_called_once_with("origin/main", "HEAD", cwd=d)
+        rev_parse.assert_called_once_with("refs/remotes/origin/main", cwd=d)
+        changed.assert_called_once_with("refs/remotes/origin/main", "HEAD", cwd=d)
         payload = json.loads(out)
         self.assertEqual(payload["result"]["changed_files"], ["src/keel/cli.py"])
 
@@ -6668,7 +6697,7 @@ class TestVerifyBranch(unittest.TestCase):
         )
         self.assertEqual(rc, 1)
         self.assertIn("keel verify-branch — fail", out)
-        self.assertIn("base          : origin/develop", out)
+        self.assertIn("base          : refs/remotes/origin/develop", out)
         self.assertIn("verdict       : stale", out)
         self.assertIn("base-distance : 9 (tolerance 5)", out)
         self.assertIn("isolation     : ok", out)
@@ -6935,7 +6964,7 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
         def _rev_parse(ref, **kwargs):
             asked.append(ref)
             # The shape that matters: the remote ref is gone, the local branch is not.
-            return None if ref.startswith("origin/") else "local1234"
+            return None if ref.startswith("refs/remotes/origin/") else "local1234"
 
         with (
             patch("keel.git.rev_parse", side_effect=_rev_parse),
@@ -6950,7 +6979,9 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
             )
 
         self.assertIsNone(facts["base_tip_sha"], "a missing origin ref must skip, not substitute")
-        self.assertEqual(asked, ["origin/develop"], "the local branch must not be asked for")
+        self.assertEqual(
+            asked, ["refs/remotes/origin/develop"], "the local branch must not be asked for"
+        )
 
     def test_supplied_facts_short_circuit_live_calls(self):
         # Ancestry facts pre-supplied + no head_ref → every `is None` guard takes
@@ -7608,7 +7639,11 @@ class TestMergeOverRest(unittest.TestCase):
             patch("keel.github.run_argv_retry", gh),
             patch(
                 "keel.cli._verify_merge_evidence",
-                return_value={"enforced": True, "verification": {"status": "pass", "missing": []}},
+                return_value={
+                    "head_sha": "abc",
+                    "enforced": True,
+                    "verification": {"status": "pass", "missing": []},
+                },
             ),
             patch("keel.cli.ledger.read_records", return_value=[]),
             patch("keel.cli.ledger.gates_pass_for_head", return_value=(True, {"run_id": "RUN-1"})),
@@ -7642,8 +7677,8 @@ class TestMergeOverRest(unittest.TestCase):
         argv = gh.argv_for("/merge")
         self.assertIsNotNone(argv)
         # REST takes `sha` as its own head pin, so the merge is refused server-side if
-        # the branch moved between the snapshot and the call. `gh pr merge` applies no
-        # such pin by default, which makes this transport the stricter of the two.
+        # the branch moved between the snapshot and the call. The GraphQL merge sends the
+        # same pin as `--match-head-commit` (`test_the_graphql_merge_is_pinned_…`).
         self.assertIn("sha=abc", argv)
         self.assertIn("merge_method=squash", argv)
 
@@ -7717,7 +7752,11 @@ class TestMergeOverRest(unittest.TestCase):
             patch("keel.github.run_argv_retry", gh),
             patch(
                 "keel.cli._verify_merge_evidence",
-                return_value={"enforced": True, "verification": {"status": "pass", "missing": []}},
+                return_value={
+                    "head_sha": "abc",
+                    "enforced": True,
+                    "verification": {"status": "pass", "missing": []},
+                },
             ),
             patch("keel.cli.ledger.read_records", return_value=[]),
             patch("keel.cli.ledger.gates_pass_for_head", return_value=(True, {"run_id": "RUN-1"})),
@@ -8153,7 +8192,10 @@ class TestCoreMerge(unittest.TestCase):
             patch("keel.cli.runtime.detect", return_value=fake_report),
             patch("keel.cli.window.is_merge_open", return_value=True),
             patch("keel.cli.github.pr_merge_snapshot", return_value=snapshot),
-            patch("keel.cli._verify_merge_evidence", return_value={"docs_only": False}),
+            patch(
+                "keel.cli._verify_merge_evidence",
+                return_value={"head_sha": "abc", "docs_only": False},
+            ),
         ):
             rc, out, _ = run(_merge_args(json_out=True))
 
@@ -8173,6 +8215,7 @@ class TestCoreMerge(unittest.TestCase):
             }
         )
         evidence = {
+            "head_sha": "abc",
             "docs_only": True,
             "enforced": True,
             "verification": {"status": "pass", "missing": []},
@@ -8365,6 +8408,7 @@ class TestCoreMerge(unittest.TestCase):
                 "keel.cli.github.pr_merge_snapshot",
                 return_value=_json_result(
                     {
+                        "headRefOid": "abc",
                         "mergeStateStatus": "CLEAN",
                         "statusCheckRollup": [{"conclusion": "SUCCESS"}],
                     }
@@ -8373,6 +8417,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -8495,6 +8540,7 @@ class TestCoreMerge(unittest.TestCase):
                 "keel.cli.github.pr_merge_snapshot",
                 return_value=_json_result(
                     {
+                        "headRefOid": "abc",
                         "mergeStateStatus": "CLEAN",
                         "statusCheckRollup": [{"conclusion": "SUCCESS"}],
                     }
@@ -8503,6 +8549,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -8616,6 +8663,7 @@ class TestCoreMerge(unittest.TestCase):
                 "keel.cli.github.pr_merge_snapshot",
                 return_value=_json_result(
                     {
+                        "headRefOid": "abc",
                         "mergeStateStatus": "CLEAN",
                         "statusCheckRollup": [{"conclusion": "SUCCESS"}],
                     }
@@ -8624,6 +8672,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": False,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -8654,6 +8703,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "fail", "missing": ["review-verdict-1"]},
                 },
@@ -8691,6 +8741,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -8747,6 +8798,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -8781,6 +8833,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -8806,6 +8859,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -8843,6 +8897,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -8879,6 +8934,71 @@ class TestCoreMerge(unittest.TestCase):
         # the whole shape of this issue.
         self.assertEqual(rc_human, 0)
         self.assertIn("drift  : clean", out_human)
+
+    def test_the_graphql_merge_is_pinned_to_the_head_it_checked(self):
+        # `--match-head-commit`: GitHub refuses the merge if the head moved after the checks.
+        with contextlib.ExitStack() as stack:
+            for p in self._merge_success_patches():
+                stack.enter_context(p)
+            stack.enter_context(patch("keel.cli._merge_drift_report", return_value={}))
+            merge = stack.enter_context(patch("keel.cli.github.merge_pr"))
+            merge.return_value = _proc("merged")
+            rc, _, _ = run(_merge_args(json_out=True))
+        self.assertEqual(rc, 0)
+        self.assertEqual(merge.call_args.kwargs["head_sha"], "abc")
+
+    def _merge_across_two_reads(self, snapshot_head, evidence_head):
+        """`keel merge` where the snapshot and the evidence load saw the given heads."""
+        snapshot = {"mergeStateStatus": "CLEAN", "statusCheckRollup": [{"conclusion": "SUCCESS"}]}
+        if snapshot_head is not None:
+            snapshot["headRefOid"] = snapshot_head
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch("keel.cli.github.pr_merge_snapshot", return_value=_json_result(snapshot)),
+            patch(
+                "keel.cli._verify_merge_evidence",
+                return_value={
+                    "head_sha": evidence_head,
+                    # What a capture landing on top of the reviewed head covers.
+                    "covered_heads": ["reviewed"],
+                    "enforced": True,
+                    "verification": {"status": "pass", "missing": []},
+                },
+            ),
+            patch("keel.cli.ledger.gates_pass_for_head", return_value=(True, {})) as gates,
+            patch("keel.cli.github.merge_pr") as merge,
+            patch("keel.cli.github.rest_merge_pr") as rest_merge,
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+        return rc, json.loads(out), gates, (merge, rest_merge)
+
+    def test_a_head_that_moved_between_the_two_reads_is_not_merged(self):
+        """The snapshot and the evidence load each read the head; they must name one commit.
+
+        The covered set is walked from the evidence head and was applied to the gates-pass
+        lookup for the snapshot head — so with the branch at unreviewed code for the first
+        read and at a capture landing for the second, the reviewed head's gates-pass
+        answered for the unreviewed one, and the merge pinned to it landed it.
+        """
+        rc, payload, gates, merges = self._merge_across_two_reads("unreviewed", "landing")
+        self.assertEqual(rc, 1)
+        self.assertIn("head changed while it was being checked", payload["reason"])
+        self.assertIn("(unreviewed, then landing)", payload["reason"])
+        self.assertFalse(payload["merged"])
+        gates.assert_not_called()
+        for merge in merges:
+            merge.assert_not_called()
+
+    def test_a_head_neither_read_could_name_is_not_merged(self):
+        # Equal is not enough: two unreadable heads agree, and a merge pinned to nothing is
+        # the unpinned merge this closes.
+        rc, payload, gates, merges = self._merge_across_two_reads(None, None)
+        self.assertEqual(rc, 1)
+        self.assertIn("(unreadable, then unreadable)", payload["reason"])
+        gates.assert_not_called()
+        for merge in merges:
+            merge.assert_not_called()
 
     def test_drift_after_a_landed_merge_exits_three_and_names_the_pr(self):
         """Distinct from 1: the merge succeeded, so "fail" would invite a retry.
@@ -8937,6 +9057,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "head-new",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -9003,6 +9124,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "head-new",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -9058,6 +9180,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "head-new",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -9110,6 +9233,7 @@ class TestCoreMerge(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "head-new",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -10766,6 +10890,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -10915,6 +11040,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -10961,6 +11087,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
             patch(
                 "keel.cli._verify_merge_evidence",
                 return_value={
+                    "head_sha": "abc",
                     "enforced": True,
                     "verification": {"status": "pass", "missing": []},
                 },
@@ -16318,6 +16445,87 @@ class TestCaptureLand(unittest.TestCase):
             self.assertIn("fix.txt", listing)
             self.assertIn(".keel/learning/moved.md", listing)
 
+    def test_a_tag_named_like_the_remote_ref_is_not_what_the_lesson_is_built_on(self):
+        """`origin/main` is a short name, and git resolves a tag of that name first.
+
+        Tags arrive unasked with a fetch of any remote whose history carries them, and
+        they are shared by every worktree of the repository. With the landing resolving
+        the short name, a tag `origin/main` on a commit that adds a file became the base
+        the lesson was built on; the one-file check compared against that same base and
+        passed; and the push fast-forwarded the real branch to carry the planted commit.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            (wt / "planted.py").write_text("import os\n", encoding="utf-8")
+            _run_git(wt, "add", "planted.py")
+            _run_git(wt, "commit", "-qm", "planted")
+            _run_git(wt, "tag", "origin/main", "HEAD")
+            _run_git(wt, "reset", "-q", "--hard", "HEAD~1")
+            artifact = self._write_lesson(wt, "tagged.md")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "23",
+                    "--artifact",
+                    artifact,
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0, payload)
+            self.assertEqual(payload["status"], "landed")
+            self.assertEqual(_origin_files(origin), [".keel/learning/tagged.md", "keep.txt"])
+            self.assertEqual(_origin_commits(origin), 2)
+
+    @unittest.skipIf(os.name == "nt", "a newline in a filename is a POSIX-filesystem case")
+    def test_a_sibling_whose_name_holds_a_newline_is_kept_not_renamed_away(self):
+        """The rebuild dropped such an entry, and rename detection hid that it had.
+
+        `ls-tree -z` returns a newline in a name raw, and the parser split on newlines too,
+        so the sibling fell out of the rebuilt tree. With the same bytes as the lesson, the
+        diff read the deletion as one rename *into* the lesson — one path, the lesson's —
+        and the "exactly one file" check pushed a commit that deleted the sibling.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            body = "# Lesson\n\nThe same bytes as the sibling.\n"
+            (wt / ".keel" / "learning").mkdir(parents=True)
+            (wt / ".keel" / "learning" / "\nodd.md").write_text(body, encoding="utf-8")
+            _run_git(wt, "add", "-A")
+            _run_git(wt, "commit", "-qm", "an oddly named sibling")
+            _run_git(wt, "push", "-q", "origin", "HEAD:main")
+            _run_git(wt, "rm", "-q", "--cached", ".keel/learning/\nodd.md")
+            (wt / ".keel" / "learning" / "\nodd.md").unlink()
+            artifact = self._write_lesson(wt, "same.md", body)
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "24",
+                    "--artifact",
+                    artifact,
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 0, payload)
+            self.assertEqual(payload["status"], "landed")
+            names = subprocess.run(
+                ["git", "--git-dir", str(origin), "ls-tree", "-r", "-z", "--name-only", "main"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split("\0")
+            self.assertIn(".keel/learning/\nodd.md", names)
+            self.assertIn(".keel/learning/same.md", names)
+
     def test_a_copy_that_is_still_here_and_already_landed_is_recognised(self):
         # The re-run guarantee has two shapes now: the copy was removed by the landing
         # (covered above), or it is still in the working tree — restored, or written
@@ -16614,7 +16822,7 @@ class TestCaptureLand(unittest.TestCase):
                 )
             payload = json.loads(out)
         self.assertEqual(rc, 1)
-        self.assertIn("cannot resolve origin/main", payload["detail"])
+        self.assertIn("cannot resolve refs/remotes/origin/main", payload["detail"])
 
     def test_an_unhashable_artifact_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -16877,6 +17085,70 @@ class TestCaptureLandWrite(unittest.TestCase):
             self.assertEqual(self._lessons(wt), [])
             # No commit carried the marker, so no commit was read.
             reader.assert_not_called()
+
+    def test_a_branch_that_moved_past_the_head_the_lesson_was_written_for_is_not_landed_on(self):
+        """`--write` renders the lesson for the head it read; the branch must still be there.
+
+        The lesson reports that head's gates-pass, and the head-pin exemption covers a
+        landing on top of *that* commit. A push since then is code nobody checked, and
+        building on it would have carried it along with the lesson.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            _run_git(wt, "push", "-q", "origin", "feature")
+            reviewed = _git_stdout(wt, "rev-parse", "HEAD")
+            (wt / "later.py").write_text("x = 2\n", encoding="utf-8")
+            _run_git(wt, "add", "later.py")
+            _run_git(wt, "commit", "-qm", "a later push")
+            _run_git(wt, "push", "-q", "origin", "feature")
+            later = _git_stdout(wt, "rev-parse", "HEAD")
+            config = self._config(wt)
+            self._gates_pass(wt, reviewed)
+            with self._host(head=reviewed, files=["src/x.py"]):
+                rc, payload, _ = self._land(config, wt, "--onto", "feature", "--write")
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed", payload)
+            self.assertEqual(payload["write"]["head"], reviewed)
+            self.assertIn(f"is at {later}, not at {reviewed}", payload["detail"])
+            # Nothing pushed, one attempt (a moved head is not contention), no lesson left.
+            self.assertEqual(
+                _git_stdout(wt, "ls-remote", "origin", "refs/heads/feature").split()[0], later
+            )
+            self.assertEqual(len(payload["attempts"]), 1)
+            self.assertEqual(payload["local_copy"], "removed")
+            self.assertEqual(self._lessons(wt), [])
+
+    def test_a_branch_named_like_the_remote_ref_does_not_move_what_is_landed_on(self):
+        """`gh pr checkout` names a local branch after a pull request's head branch.
+
+        A contributor branch called `origin/feature` therefore became a local branch that
+        the short name `origin/feature` resolved to ahead of the remote-tracking ref. The
+        full ref name is not shadowed, and the head pin would refuse the planted commit.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            _run_git(wt, "push", "-q", "origin", "feature")
+            reviewed = _git_stdout(wt, "rev-parse", "HEAD")
+            (wt / "planted.py").write_text("import os\n", encoding="utf-8")
+            _run_git(wt, "add", "planted.py")
+            _run_git(wt, "commit", "-qm", "planted")
+            _run_git(wt, "branch", "origin/feature", "HEAD")
+            _run_git(wt, "reset", "-q", "--hard", reviewed)
+            config = self._config(wt)
+            self._gates_pass(wt, reviewed)
+            with self._host(head=reviewed, files=["src/x.py"]):
+                rc, payload, err = self._land(config, wt, "--onto", "feature", "--write")
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(payload["status"], "landed", payload)
+            self.assertEqual(payload["base"], reviewed)
+            listing = subprocess.run(
+                ["git", "--git-dir", str(origin), "ls-tree", "-r", "--name-only", "feature"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.split()
+            self.assertNotIn("planted.py", listing)
+            self.assertIn(payload["plan"]["path"], listing)
 
     def test_a_retry_tomorrow_reuses_the_lesson_already_on_the_pull_request(self):
         """The merge window closed, and the run resumes the next morning.

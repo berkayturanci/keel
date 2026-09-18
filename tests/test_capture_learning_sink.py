@@ -35,7 +35,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keel import capture, cli, gates
+from keel import capture, cli, gates, git
 from keel import config as cfg
 
 
@@ -2904,7 +2904,8 @@ class TestLearningLandPlan(unittest.TestCase):
         self.assertEqual(plan["status"], "planned")
         self.assertEqual(plan["path"], ".keel/learning/a.md")
         self.assertEqual(plan["ref"], "refs/heads/main")
-        self.assertEqual(plan["remote_ref"], "origin/main")
+        # In full: the short `origin/main` resolves a tag or local branch of that name first.
+        self.assertEqual(plan["remote_ref"], "refs/remotes/origin/main")
         self.assertIn("PR #7", plan["message"])
         self.assertEqual(plan["errors"], [])
 
@@ -3197,7 +3198,9 @@ class TestLearningLandPlan(unittest.TestCase):
                 attempts=5,
             )
         self.assertEqual(plan["remote"], "upstream")
-        self.assertEqual(plan["remote_ref"], "upstream/main")
+        self.assertEqual(plan["remote_ref"], "refs/remotes/upstream/main")
+        # The ref the landing resolves is the one `git.fetch` writes, spelled the same way.
+        self.assertEqual(plan["remote_ref"], git.remote_tracking_ref("upstream", "main"))
         self.assertEqual(plan["attempts"], 5)
 
     def test_message_without_a_pr_number(self):
@@ -3505,6 +3508,29 @@ class TestTreeComposition(unittest.TestCase):
     def test_render_round_trips(self):
         entry = capture.TreeEntry(capture.TREE_MODE_TREE, "tree", "a" * 40, "sub")
         self.assertEqual(capture.parse_tree_listing(entry.render()), [entry])
+
+    def test_a_name_holding_a_newline_survives_the_rebuild(self):
+        """git allows a newline in a name, and `ls-tree -z` returns it raw.
+
+        Split on newlines as well as NULs, that record was cut in two, neither half parsed,
+        and the entry was missing from the tree the landing rebuilt: a landing commit that
+        deleted a file nobody asked it to touch.
+        """
+        listing = f"100644 blob {'a' * 40}\t\nodd.md\x00100644 blob {'b' * 40}\tkeep.md\x00"
+        self.assertEqual(
+            [e.name for e in capture.parse_tree_listing(listing)], ["\nodd.md", "keep.md"]
+        )
+        out = capture.upsert_tree_entry(
+            listing, capture.TreeEntry(capture.TREE_MODE_BLOB, "blob", "c" * 40, "new.md")
+        )
+        self.assertEqual(
+            _records(out),
+            [
+                f"100644 blob {'a' * 40}\t\nodd.md",
+                f"100644 blob {'b' * 40}\tkeep.md",
+                f"100644 blob {'c' * 40}\tnew.md",
+            ],
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

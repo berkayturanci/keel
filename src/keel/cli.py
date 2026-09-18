@@ -1063,6 +1063,22 @@ def _cmd_merge(args: argparse.Namespace) -> int:
 
         evidence_payload = _verify_merge_evidence(args, config, phase=evidence.PHASE_PRE_MERGE)
         payload["evidence"] = evidence_payload
+        # **One head, or no merge.** The snapshot and the evidence load each read the pull
+        # request's head, and what follows is judged across the two reads: the CI rollup and
+        # the merge pin come from the first; the verdicts, the changed files and the heads a
+        # capture landing covers come from the second. A push between them had the covered
+        # set of one head admit the gates-pass lookup for another — and that other head was
+        # the one merged. Both reads must name the same commit, and it must be a commit.
+        snapshot_head = snapshot["head_sha"]
+        if not snapshot_head or evidence_payload.get("head_sha") != snapshot_head:
+            return _finish_merge(
+                args,
+                payload,
+                "the pull request's head changed while it was being checked "
+                f"({snapshot_head or 'unreadable'}, then "
+                f"{evidence_payload.get('head_sha') or 'unreadable'}); run keel merge again",
+                code=1,
+            )
         if ci_state == "no-checks":
             # ship.md's rule, now enforced in core rather than by adapter prose: an
             # empty check set is acceptable only when every changed path is a docs
@@ -1081,7 +1097,8 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             missing = ", ".join(evidence_payload["verification"]["missing"])
             return _finish_merge(args, payload, f"missing evidence: {missing}", code=1)
 
-        head_sha = snapshot["head_sha"]
+        # A string from here on: the evidence load types its head, and the two are equal.
+        head_sha: str = evidence_payload["head_sha"]
         gates_run_id: str | None = None
         if args.hotfix:
             payload["gates_sha"] = {"bypassed": True, "reason": "hotfix", "head_sha": head_sha}
@@ -1093,10 +1110,11 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             matched, record = ledger.gates_pass_for_head(
                 gates_records,
                 args.pr,
-                head_sha if isinstance(head_sha, str) else "",
+                head_sha,
                 # The same set the evidence gate just proved, not a second walk: two reads
                 # of one history could disagree, and the merge would then be judged by the
-                # more permissive of them.
+                # more permissive of them. Walked from this very head, which the check
+                # above is what guarantees.
                 covered_heads=tuple(evidence_payload.get("covered_heads") or ()),
             )
             gates_run_id = record.get("run_id") if record else None
@@ -1123,15 +1141,12 @@ def _cmd_merge(args: argparse.Namespace) -> int:
 
         if args.dry_run:
             return _finish_merge(args, payload, "dry-run: merge not performed", code=0)
+        # Pinned on both wires: every check above was of this head, so GitHub is asked to
+        # merge this head or nothing — `sha` over REST, `--match-head-commit` over GraphQL.
         merged = (
-            github.rest_merge_pr(
-                args.pr,
-                method=args.method,
-                head_sha=head_sha if isinstance(head_sha, str) else None,
-                cwd=args.root,
-            )
+            github.rest_merge_pr(args.pr, method=args.method, head_sha=head_sha, cwd=args.root)
             if transport == TRANSPORT_REST
-            else github.merge_pr(args.pr, method=args.method, cwd=args.root)
+            else github.merge_pr(args.pr, method=args.method, head_sha=head_sha, cwd=args.root)
         )
         payload["merged"] = merged.ok
         payload["merge_output"] = merged.output
@@ -1315,15 +1330,23 @@ def _remote_base_ref(base_branch: str) -> str:
     Separate from :func:`_ship_base_ref` because the *name* is shared and the
     *fallback* is not. A diff wants something to diff against; a verdict would
     rather decline than judge against the wrong ref.
+
+    Spelled in full (:func:`keel.git.remote_tracking_ref`): a local branch named
+    ``origin/<base>`` — which ``gh pr checkout`` creates for a pull request whose head
+    branch is called that — outranks the remote-tracking ref under the short spelling, and
+    the gates and the jury then diffed against it.
     """
-    return f"origin/{base_branch}"
+    return git.remote_tracking_ref("origin", base_branch)
 
 
 def _ship_base_ref(base_branch: str, root: str) -> str:
     """The base ref a command **diffs** against.
 
     ``origin/<base>`` when the remote-tracking ref resolves, else the configured local
-    branch, which keeps dry-run and offline repositories fail-soft. Three commands used
+    branch, which keeps dry-run and offline repositories fail-soft — each spelled in full,
+    ``refs/remotes/origin/<base>`` and ``refs/heads/<base>``, because git resolves a short
+    name through ``refs/tags/`` first and a tag called ``main`` would otherwise stand in
+    for the branch. Three commands used
     to spell this three ways — ``keel ship`` through here, ``keel run-gates`` with the
     local branch, and ``_gather_branch_facts`` with a bare remote ref and no fallback —
     and `_gate_runner` runs the **jury** on the resulting diff, so the same jury on the
@@ -1337,7 +1360,7 @@ def _ship_base_ref(base_branch: str, root: str) -> str:
     keel; a fetch here would put a network call inside a diff.
     """
     remote_ref = _remote_base_ref(base_branch)
-    return remote_ref if git.rev_parse(remote_ref, cwd=root) else base_branch
+    return remote_ref if git.rev_parse(remote_ref, cwd=root) else f"refs/heads/{base_branch}"
 
 
 def _cmd_ship(args: argparse.Namespace) -> int:
@@ -2017,11 +2040,13 @@ def _contained_real_path(path: Path, root: str, sink: str) -> Path | None:
     return real if capture.path_under_sink(relative, sink) else None
 
 
-def _land_learning_attempt(args, plan: dict) -> dict:
+def _land_learning_attempt(args, plan: dict, *, expect_head: str | None = None) -> dict:
     """One build-and-push attempt. Returns ``{"status", "detail", "commit", "base"}``.
 
     ``status`` is ``landed``, ``already-landed``, ``contended`` (another ship pushed
-    first - the caller retries) or ``failed``.
+    first - the caller retries) or ``failed``. ``expect_head`` is the commit the target
+    branch must be at — the pull request head ``--write`` rendered the lesson for; anything
+    else is ``failed``.
     """
     root, path, remote = args.root, plan["path"], plan["remote"]
     # **Checked, because the ref resolves either way.** s11 runs after s10 moved
@@ -2045,6 +2070,19 @@ def _land_learning_attempt(args, plan: dict) -> dict:
     base_sha = git.rev_parse(plan["remote_ref"], cwd=root)
     if base_sha is None:
         return _land_result("failed", f"cannot resolve {plan['remote_ref']}", None, None)
+    # **The pull request's head, or nothing is built.** `--onto` names a branch, and a
+    # branch is only a name: the lesson reports the gates-pass recorded for one head, and
+    # the head-pin exemption covers a landing on top of *that* commit. A tip that is
+    # anything else — a push since, or a commit that reached the ref some other way — was
+    # not what anyone checked, and building on it would push it along with the lesson.
+    if expect_head is not None and base_sha != expect_head:
+        return _land_result(
+            "failed",
+            f"{plan['remote_ref']} is at {base_sha}, not at {expect_head}, the head of pull "
+            f"request #{args.pr}; nothing was pushed",
+            None,
+            base_sha,
+        )
     # `_recorded_artifact`, not `os.path.join(root, path)`: the join resolved against
     # the *process* directory for `isfile` and then again against `root` inside git,
     # so a relative root that is not `.` was applied twice. The repo fixed this exact
@@ -2185,8 +2223,15 @@ def _land_result(status: str, detail: str, commit: str | None, base: str | None)
     return {"status": status, "detail": detail, "commit": commit, "base": base}
 
 
-def _lesson_write(status: str, path: str | None, detail: str, commit: str | None = None) -> dict:
-    return {"status": status, "path": path, "detail": detail, "commit": commit}
+def _lesson_write(
+    status: str,
+    path: str | None,
+    detail: str,
+    commit: str | None = None,
+    head: str | None = None,
+) -> dict:
+    """``head`` is the pull request head a ``written`` lesson was rendered for."""
+    return {"status": status, "path": path, "detail": detail, "commit": commit, "head": head}
 
 
 def _land_write_refusal(args: argparse.Namespace) -> str | None:
@@ -2291,7 +2336,7 @@ def _write_lesson_to_land(args: argparse.Namespace, config: cfg.ProjectConfig, r
             f"this lesson duplicates {result['path']}, which is already durable; "
             "the s11 append records that one",
         )
-    return _lesson_write("written", result["path"], f"wrote {result['path']}")
+    return _lesson_write("written", result["path"], f"wrote {result['path']}", head=head_sha)
 
 
 def _recorded_gate_outcomes(record: dict) -> list[GateOutcome]:
@@ -2436,8 +2481,12 @@ def _cmd_capture_land(args: argparse.Namespace) -> int:
         if args.dry_run:
             outcome = _land_result("would-land", plan["reason"], None, None)
         else:
+            # `--write --onto` rendered the lesson for the head it read, so the branch must
+            # still be at that head. Without `--onto` the target is the base branch, which
+            # is never a pull request's head; without `--write` no head was read.
+            expect_head = written["head"] if written is not None and plan["onto"] else None
             for _ in range(plan["attempts"]):
-                outcome = _land_learning_attempt(args, plan)
+                outcome = _land_learning_attempt(args, plan, expect_head=expect_head)
                 attempts.append(outcome)
                 if outcome["status"] != "contended":
                     break

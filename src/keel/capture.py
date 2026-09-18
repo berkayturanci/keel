@@ -2133,9 +2133,17 @@ def retrieve_relevant_learnings(
     if not tokens and not want_labels and not want_files:
         return []
 
+    # **Only files that really live here.** A lesson is text an agent brief quotes, and a
+    # link in this directory — `.keel/learning/x.md -> ~/.aws/credentials` — made whatever
+    # it pointed at into one: `is_file` and `read_text` both follow it. Resolved on both
+    # ends, as the landing's `_contained_real_path` does, so a link to another lesson in
+    # the same directory still reads and a directory reached through a link still works.
+    real_dir = path.resolve()
     results: list[dict[str, Any]] = []
     for file_path in sorted(path.glob("*")):
         if not file_path.is_file() or file_path.suffix not in LEARNING_READ_SUFFIXES:
+            continue
+        if file_path.resolve().parent != real_dir:
             continue
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
@@ -2375,7 +2383,10 @@ def learning_land_plan(
         "base_branch": resolved_base,
         "onto": target or None,
         "ref": f"refs/heads/{target}" if target else None,
-        "remote_ref": f"{remote}/{target}" if target else None,
+        # Spelled in full, as `git.remote_tracking_ref` spells it and `git.fetch` writes it:
+        # the short `<remote>/<target>` resolves a tag or local branch of that name first,
+        # and the landing builds its commit on whatever this resolves to.
+        "remote_ref": f"refs/remotes/{remote}/{target}" if target else None,
         "message": (
             learning_land_message(pr_number=pr_number, path=normalized, issue_number=issue_number)
             if status == "planned"
@@ -2671,7 +2682,8 @@ def push_rejection_is_contention(output: str | None) -> bool:
 
 
 #: One ``git ls-tree`` / ``git mktree`` line: ``<mode> SP <type> SP <sha> TAB <name>``.
-_TREE_ENTRY_RE = re.compile(r"\A(\d{6}) (blob|tree|commit) ([0-9a-f]{40,64})\t(.+)\Z")
+#: ``DOTALL`` because a name may contain a newline, which ``-z`` returns raw.
+_TREE_ENTRY_RE = re.compile(r"\A(\d{6}) (blob|tree|commit) ([0-9a-f]{40,64})\t(.+)\Z", re.DOTALL)
 
 #: git's own mode for a regular, non-executable file and for a subdirectory.
 TREE_MODE_BLOB = "100644"
@@ -2698,13 +2710,21 @@ def parse_tree_listing(listing: str | None) -> list[TreeEntry]:
     into a sink directory that does not exist on the base branch yet is the ordinary
     first run, not a failure.
 
-    Records are NUL-separated (see :func:`keel.git.ls_tree`), and a newline is split
-    on as well so a listing that reached this from a LF-terminated source still
-    parses — the reader is permissive, the *writer* is the side that has to be exact.
+    Records are NUL-separated (see :func:`keel.git.ls_tree`). A listing with no NUL in it
+    at all is read one record per line, so one that reached this from a LF-terminated
+    source still parses — the reader is permissive, the *writer* is the side that has to
+    be exact.
+
+    **Never both.** git allows a newline inside a name and ``-z`` returns it raw, so
+    splitting a ``-z`` listing on newlines as well cut that record in two; neither half
+    parsed, the entry was dropped, and the tree rebuilt from what was left no longer had
+    it — a landing commit that deleted a file it was never asked to touch. Without ``-z``
+    git C-quotes such a name, so the line-per-record form has no raw newline to cut.
     """
+    text = listing or ""
     entries: list[TreeEntry] = []
-    for line in re.split(r"[\0\n]", listing or ""):
-        match = _TREE_ENTRY_RE.match(line.rstrip("\n"))
+    for line in text.split("\0") if "\0" in text else text.split("\n"):
+        match = _TREE_ENTRY_RE.match(line)
         if match is not None:
             entries.append(
                 TreeEntry(match.group(1), match.group(2), match.group(3), match.group(4))
