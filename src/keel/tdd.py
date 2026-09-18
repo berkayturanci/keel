@@ -42,8 +42,9 @@ reviewer's catch rather than a gate's:
 The red-then-green half is the implementer's brief and its PR body, not this gate.
 
 Pure and deterministic: no wall-clock, no randomness, no I/O, and — at module scope — no
-keel imports at all. The one git read the gate needs is :func:`keel.git.commit_log`, the
-same thin seam every other command reads git through; core is handed its *output*.
+keel imports at all. The git reads the gate needs — the base ref's exact lookup, then
+:func:`keel.git.commit_log` — happen in the CLI, through the same thin seam every other
+command reads git through; core is handed the log's *output*.
 """
 
 from __future__ import annotations
