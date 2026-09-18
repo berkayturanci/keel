@@ -21,7 +21,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 REPO_URL = "https://github.com/berkayturanci/keel"
 
 #: `[text](target)` — not an image, not an autolink. A title after the target is allowed.
-LINK = re.compile(r'(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+#: The text may be an image, so a linked badge `[![alt](src)](target)` yields its target.
+LINK = re.compile(r'(?<!!)\[(?:!\[[^\]]*\]\([^)]*\)|[^\]])*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
 HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 EXPLICIT_ANCHOR = re.compile(r'<a\s+(?:name|id)="([^"]+)"')
 SITE_LINK = re.compile(re.escape(REPO_URL) + r"/(?:blob|tree)/main/([^\s\"'<>)#]+)(?:#([\w\-]+))?")
@@ -44,6 +45,26 @@ def _outside_fences(text: str):
             continue
         if not fenced:
             yield number, line
+
+
+def _paragraphs(text: str):
+    """Runs of non-blank lines outside code fences, each with the line it starts on.
+
+    Links are matched per paragraph, not per line: a link's text may wrap, as
+    `[merge\\nwindow](cli.md#init-wizard)` does in onboarding.md, and a line-by-line
+    match sees neither half.
+    """
+    start, lines, previous = 0, [], 0
+    for number, line in _outside_fences(text):
+        if lines and (not line.strip() or number != previous + 1):
+            yield start, "\n".join(lines)
+            lines = []
+        if line.strip():
+            start = start if lines else number
+            lines.append(line)
+        previous = number
+    if lines:
+        yield start, "\n".join(lines)
 
 
 def anchors(path: Path) -> set[str]:
@@ -78,11 +99,13 @@ class TestDocumentLinksResolve(unittest.TestCase):
         checked = 0
         for document in documents():
             text = document.read_text(encoding="utf-8")
-            for number, line in _outside_fences(text):
-                for target in LINK.findall(line):
+            for start, paragraph in _paragraphs(text):
+                for match in LINK.finditer(paragraph):
+                    target = match.group(1)
                     if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("//"):
                         continue
                     checked += 1
+                    number = start + paragraph.count("\n", 0, match.start())
                     path, _, anchor = target.partition("#")
                     resolved = _resolve(document, path).resolve() if path else document
                     where = f"{document.relative_to(REPO_ROOT)}:{number} -> {target}"
@@ -103,6 +126,21 @@ class TestDocumentLinksResolve(unittest.TestCase):
             ),
             "keel-verify-merge-projectyaml---root-dir---pr-n---transport-autographqlrest",
         )
+
+    def test_a_linked_badge_yields_its_target_not_its_image(self):
+        # README's license and install badges link into the repo; the image URL is external.
+        self.assertEqual(
+            LINK.findall("[![License](https://img.shields.io/x.svg)](LICENSE) [a](b.md#c)"),
+            ["LICENSE", "b.md#c"],
+        )
+
+    def test_a_wrapped_link_is_matched_and_blocks_stay_apart(self):
+        text = "see the [merge\nwindow](cli.md#init-wizard) rule\n\n```\n[x](gone.md)\n```\nend"
+        paragraphs = list(_paragraphs(text))
+        self.assertEqual(
+            paragraphs, [(1, "see the [merge\nwindow](cli.md#init-wizard) rule"), (7, "end")]
+        )
+        self.assertEqual(LINK.findall(paragraphs[0][1]), ["cli.md#init-wizard"])
 
 
 class TestSiteLinksIntoTheRepoResolve(unittest.TestCase):
