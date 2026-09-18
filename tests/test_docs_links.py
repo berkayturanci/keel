@@ -38,12 +38,15 @@ def slug(heading: str) -> str:
 
 
 def _outside_fences(text: str):
-    fenced = False
+    """Lines outside fenced code, numbered. A fence opens with ``` or ~~~ and only the same
+    marker closes it, so a ~~~ line inside a ``` block is content, not a fence."""
+    fence = None
     for number, line in enumerate(text.splitlines(), 1):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
+        marker = line.lstrip()[:3]
+        if marker in ("```", "~~~") and fence in (None, marker):
+            fence = marker if fence is None else None
             continue
-        if not fenced:
+        if fence is None:
             yield number, line
 
 
@@ -141,6 +144,10 @@ class TestDocumentLinksResolve(unittest.TestCase):
             paragraphs, [(1, "see the [merge\nwindow](cli.md#init-wizard) rule"), (7, "end")]
         )
         self.assertEqual(LINK.findall(paragraphs[0][1]), ["cli.md#init-wizard"])
+
+    def test_a_tilde_fence_is_a_fence_and_only_its_own_marker_closes_it(self):
+        text = "a\n~~~\n[x](gone.md)\n```\n[y](gone.md)\n~~~\nb [ok](ok.md)"
+        self.assertEqual(list(_paragraphs(text)), [(1, "a"), (7, "b [ok](ok.md)")])
 
 
 class TestSiteLinksIntoTheRepoResolve(unittest.TestCase):
