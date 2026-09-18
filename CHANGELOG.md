@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The site shows the gate-verified loop and test-first mode in use** (#1215). keel-ship.dev described `knobs.loop` / `--loop` and `knobs.implement_mode: tdd` / `--tdd` in prose only, so turning either on meant leaving the site for `docs/keel/configuration.md`. The Configuration article now carries a test-first example with the `policy_pack.test_groups` the `tdd-order` gate reads, what that gate checks, and a loop example with its iteration contract; it names the Ralph loop the loop is shaped after and the two ways it differs (the gate run, not the agent, decides when the work is done, and every iteration is a named commit). The Configuration table gains a `knobs.loop` row, the sample `project.yaml` a `loop:` block, and `llms.txt` names test-first mode.
+
 ### Fixed
 - **The integration cards' and the swarm simulator's copy buttons tell a screen reader the copy worked** (#1212). `app.js` announces a copy through the page's `#sr-live-region`; the per-card Copy buttons in `website/integrations.js` and the simulator's Copy button only changed their own `aria-label`, which is not a live-region update, so the same action was spoken on one button and not the next. Both now announce, clearing the region first and setting the message on the next tick — the technique the integrations filter already uses — so a second copy in a row is announced again. Re-landed from Jules PR #1207, without its `app.js` rewrite: `flashCopy` already returns before capturing a label, and a test pins that.
 

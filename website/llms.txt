@@ -23,6 +23,7 @@
 - Project-neutral core: all project specifics live in `project.yaml`, read via the `keel` CLI
 - Extension slots: named hooks where a project snaps in its own implementers/reviewers
 - Auditable evidence chain: commit-SHA-bound review provenance, model attribution, and audited deferrals
+- Test-first mode: `knobs.implement_mode: tdd` writes the failing tests first, and the blocking `tdd-order` gate verifies that order
 - Gate-verified iteration: `knobs.loop` repeats the implement step until the command gates pass, bounded by `max_iterations`
 - Learning chain: with `learning.enabled`, `learning.mode: create-learning` and a sink, an applied capture writes a Markdown lesson — committed onto the pull request by `keel capture-land` when the sink is inside the repository, written after the merge when it is not — and later implement and review briefs read matching lessons back
 - Pure-core / thin-I/O split with a strict 100% coverage bar

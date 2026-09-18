@@ -374,7 +374,7 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
 
         <!-- Configuration -->
         <section class="view" id="view-config" data-view="config">
-          <div class="view-head"><p class="view-kicker brass">Layer 2 · values, not copied commands</p><h1>Configured with a small project.yaml</h1><p>A keel consumer is driven by values. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict. <code>knobs.team</code> states the whole team — who implements, who gives the mandatory gate review from a different vendor, who reviews at each risk tier (or <code>jury</code>, when the cross-vendor panel <b>is</b> the review) and who applies the findings — and <code>knobs.implement_mode: tdd</code> makes s4 test-first.</p></div>
+          <div class="view-head"><p class="view-kicker brass">Layer 2 · values, not copied commands</p><h1>Configured with a small project.yaml</h1><p>A keel consumer is driven by values. Unknown keys are rejected by the bundled schema, so the reference is intentionally strict. <code>knobs.team</code> states the whole team — who implements, who gives the mandatory gate review from a different vendor, who reviews at each risk tier (or <code>jury</code>, when the cross-vendor panel <b>is</b> the review) and who applies the findings — and <code>knobs.implement_mode: tdd</code> makes s4 test-first, while <code>knobs.loop</code> repeats it until the gates pass.</p></div>
           <div class="split">
             <div class="cfg-keys" id="cfg-keys"></div>
             <div class="codewrap">
@@ -392,6 +392,8 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
   <span class="k">lint_cmd</span>: <span class="s">make lint</span>
   <span class="k">tier3_globs</span>: [<span class="s">"src/keel/orchestrator.py"</span>]
   <span class="k">implement_mode</span>: <span class="s">tdd</span>  <span class="cm"># test-first s4 + tdd-order gate</span>
+  <span class="k">loop</span>:               <span class="cm"># repeat s4 until the gates pass</span>
+    <span class="k">max_iterations</span>: <span class="s">3</span>
   <span class="k">team</span>:               <span class="cm"># the whole team, as values</span>
     <span class="k">implement</span>:
       <span class="k">default</span>: { <span class="k">provider</span>: <span class="s">claude</span> }
