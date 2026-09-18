@@ -1,7 +1,7 @@
 """Unit tests for agent dispatch + attribution."""
 
 import unittest
-from unittest import mock
+import unittest.mock as mock
 
 from keel import agents, contracts, swarm, team
 from keel import config as cfg

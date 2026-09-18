@@ -199,6 +199,10 @@ runs:
           echo "::warning::comment requested but github-token is empty; skipping."
           exit 0
         fi
-        { echo "### ⚓ keel $KEEL_COMMAND"; echo '```'; cat "$OUT"; echo '```'; } > body.md
-        gh pr comment "$KEEL_PR" --body-file body.md || \
+        # In the runner's temp directory, like the output file: the workspace is the
+        # caller's checkout, where a `body.md` of theirs would be overwritten and a
+        # later step that commits the tree would pick this one up.
+        BODY="$RUNNER_TEMP/keel-comment.md"
+        { echo "### ⚓ keel $KEEL_COMMAND"; echo '```'; cat "$OUT"; echo '```'; } > "$BODY"
+        gh pr comment "$KEEL_PR" --body-file "$BODY" || \
           echo "::warning::could not post the comment (needs pull-requests: write)."

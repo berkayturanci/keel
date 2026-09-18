@@ -16,6 +16,8 @@
   // Set the first time the reader touches a filter, so the initial render is
   // silent and every change after it is announced — including clearing the box.
   var srArmed = false;
+  // The query is whatever the reader typed, and the empty state puts it into markup.
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
   var INTEGRATIONS = [
     // --- 1. AI Agents & Coding Assistants (12) ---
@@ -358,7 +360,7 @@
     }
 
     if (items.length === 0) {
-      grid.innerHTML = '<div class="integ-empty">No integrations found matching "' + searchQuery + '".</div>';
+      grid.innerHTML = '<div class="integ-empty">No integrations found matching "' + esc(searchQuery) + '".</div>';
       return;
     }
 

@@ -887,8 +887,6 @@ class ParsersTest(unittest.TestCase):
     def test_the_agy_stdin_frame_is_one_ndjson_user_message(self):
         frame = delegate.stream_json_frame("hello")
         self.assertTrue(frame.endswith("\n"))
-        import json
-
         event = json.loads(frame)
         self.assertEqual(event["event"], "user")
         self.assertEqual(event["message"], {"role": "user", "content": "hello"})

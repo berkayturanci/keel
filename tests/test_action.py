@@ -256,6 +256,19 @@ class TheDeclaredOutputsAreActuallyWritten(unittest.TestCase):
                     f"output {name!r} is declared but never written to the step output file",
                 )
 
+    def test_the_comment_body_is_written_outside_the_workspace(self):
+        """The comment step runs in the caller's checkout; its scratch file must not.
+
+        It wrote `body.md` into the working directory, overwriting a file of that name the
+        project might track and leaving one for any later step that commits the tree.
+        """
+        step = next(s for s in self.steps if s.get("name") == "Comment on the pull request")
+        run = step["run"]
+        self.assertIn('BODY="$RUNNER_TEMP/', run)
+        self.assertIn('> "$BODY"', run)
+        self.assertIn('--body-file "$BODY"', run)
+        self.assertNotRegex(run, r"(?m)>\s*body\.md|--body-file\s+body\.md")
+
     def test_the_step_the_outputs_name_exists(self):
         ids = {step.get("id") for step in self.steps}
         for name, spec in self.outputs.items():

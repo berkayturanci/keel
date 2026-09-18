@@ -197,6 +197,9 @@ const since = () => { const w = sr.writes.slice(); sr.writes.length = 0; return 
   out.one_match = since();
   search.oninput({ target: { value: "zzzznope" } }); await tick();
   out.empty_result = since();
+  search.oninput({ target: { value: "<img src=x onerror=alert(1)>&" } }); await tick();
+  out.markup_query = nodes["integrations-grid"].innerHTML;
+  since();
   search.oninput({ target: { value: "" } }); await tick();
   out.cleared = since();
   console.log(JSON.stringify(out));
@@ -256,6 +259,16 @@ class TheAnnouncementIsExercisedRatherThanGrepped(unittest.TestCase):
 
     def test_no_matches_names_the_query(self):
         self.assertEqual(self.said["empty_result"][-1], 'No integrations found matching "zzzznope"')
+
+    def test_a_query_that_looks_like_markup_is_shown_as_text(self):
+        """The empty state concatenates the query into `innerHTML`; it must be escaped.
+
+        Only the reader's own typing reaches it, so this was never reflected — but a
+        pasted `<img onerror>` ran, and the query should read back as what was typed.
+        """
+        grid = self.said["markup_query"]
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;&amp;", grid)
+        self.assertNotIn("<img", grid)
 
     def test_clearing_the_box_announces_the_full_set(self):
         """Emptying the box is a result-set change, and a `searchQuery` gate
