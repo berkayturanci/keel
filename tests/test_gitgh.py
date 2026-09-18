@@ -194,6 +194,25 @@ class TestGit(unittest.TestCase):
             ["git", "fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main"],
         )
 
+    def test_resolve_ref_asks_for_the_exact_ref(self):
+        # `show-ref --verify` looks nowhere but the named ref; `rev-parse` would fall back
+        # through refs/tags/<ref> and refs/heads/<ref> when it is missing (#1223).
+        rec = _Recorder(out=SHA_A + "\n")
+        self.assertEqual(git.resolve_ref("refs/remotes/origin/main", _run=rec), SHA_A)
+        self.assertEqual(
+            rec.calls[0], ["git", "show-ref", "--verify", "--hash", "refs/remotes/origin/main"]
+        )
+        self.assertIsNone(git.resolve_ref("refs/remotes/origin/main", _run=_Recorder(code=128)))
+        self.assertIsNone(git.resolve_ref("refs/heads/main", _run=_Recorder(out="garbage\n")))
+
+    def test_remote_url_reads_the_configured_remote_only(self):
+        rec = _Recorder(out="git@github.com:o/r.git\n")
+        self.assertEqual(git.remote_url("origin", _run=rec), "git@github.com:o/r.git")
+        self.assertEqual(rec.calls[0], ["git", "config", "--get", "remote.origin.url"])
+        # Unconfigured: git exits 1 with nothing — not a path to read a repository from.
+        self.assertIsNone(git.remote_url("origin", _run=_Recorder(code=1)))
+        self.assertIsNone(git.remote_url("origin", _run=_Recorder(out="\n")))
+
     def test_remote_tracking_ref_is_spelled_in_full(self):
         # `origin/main` resolves `refs/tags/origin/main` and `refs/heads/origin/main` first.
         self.assertEqual(git.remote_tracking_ref("origin", "main"), "refs/remotes/origin/main")

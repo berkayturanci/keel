@@ -21,10 +21,38 @@ def remote_tracking_ref(remote: str, branch: str) -> str:
     ``refs/tags/`` and ``refs/heads/`` *before* ``refs/remotes/``, so a tag or a local branch
     literally named ``origin/main`` answers in its place — and a tag arrives unasked with any
     fetch of a remote whose history carries it. The warning git prints goes to stderr, which
-    :func:`rev_parse` does not read, so nothing notices. A name beginning ``refs/`` matches
-    that ref and nothing else.
+    :func:`rev_parse` does not read, so nothing notices.
+
+    Spelled in full, the name finds that ref whenever it exists. When it does **not**, git
+    still falls back through ``refs/tags/`` and ``refs/heads/`` — a local branch literally
+    named ``refs/remotes/origin/main`` answers ``rev-parse`` then (measured) — so ask
+    :func:`resolve_ref`, which matches the exact ref or nothing (#1223).
     """
     return f"refs/remotes/{remote}/{branch}"
+
+
+def resolve_ref(ref: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """The object a fully spelled ``ref`` names, or ``None`` when that exact ref is absent.
+
+    ``show-ref --verify`` takes the name as the complete ref and looks nowhere else, where
+    :func:`rev_parse` would try ``refs/tags/<ref>`` and ``refs/heads/<ref>`` after it (#1223).
+    For a ``refs/heads/`` or ``refs/remotes/`` ref the object is the commit itself.
+    """
+    result = run_argv(["git", "show-ref", "--verify", "--hash", ref], cwd=cwd, **_kw(_run))
+    output = result.stdout.strip()
+    return output if result.ok and _SHA_RE.match(output) else None
+
+
+def remote_url(remote: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """The fetch URL configured for ``remote``; ``None`` when no such remote is configured.
+
+    git reads an unconfigured remote name as a **path**: ``git fetch origin`` with no remote
+    called ``origin`` fetches from a directory of that name, and ``git push`` to it runs that
+    repository's hooks. A command that means "the remote" asks this first (#1223).
+    """
+    result = run_argv(["git", "config", "--get", f"remote.{remote}.url"], cwd=cwd, **_kw(_run))
+    output = result.stdout.strip()
+    return output if result.ok and output else None
 
 
 def fetch(remote: str, ref: str, *, cwd: str | None = None, _run=None) -> CommandResult:

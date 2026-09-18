@@ -782,6 +782,14 @@ one-file check, comparing against the same base, would have agreed. With `--writ
 the branch must also still be at the pull request head the lesson was written for; if it
 moved, the landing reports `failed` and pushes nothing (#1219).
 
+The ref is resolved with `git show-ref --verify`, which matches that exact ref or nothing:
+`git rev-parse` still falls back through `refs/tags/` and `refs/heads/` for a full name that
+does not exist, so a local branch literally named `refs/remotes/origin/main` would answer for
+a missing tracking ref (measured). And `--remote` must name a **configured** remote: git
+reads an unknown name as a path, so with no `origin` remote a repository committed at
+`<checkout>/origin` would have been fetched from and pushed to, running its hooks. The
+landing reports `failed` (`no remote named 'origin' is configured`) instead (#1223).
+
 An artifact path that is absolute or climbs out of the checkout (`../x`, `/etc/x`, `C:\x`,
 `~/x`) is refused, not normalised — this command's whole job is to push to a shared branch.
 The refusal is tested on the path as written **and** on the path after backslashes become
@@ -1274,7 +1282,7 @@ Two independent checks compose into one verdict:
 The comparison itself is pure (`keel.branchscope.verify`): given the head/merge-base/base-tip
 SHAs, the commit distance, and the worktree facts, it returns an `ok`/`stale`/`contaminated`
 verdict with a per-check breakdown. The CLI gathers the live facts via the thin `git`/`gh`
-wrappers (`merge-base`, `rev-parse refs/remotes/origin/<base>`, `rev-list --count`,
+wrappers (`merge-base`, `show-ref --verify refs/remotes/origin/<base>`, `rev-list --count`,
 `worktree list --porcelain`), fail-soft — a fact that cannot be resolved becomes `None` and the pure layer
 skips that check rather than hard-blocking.
 

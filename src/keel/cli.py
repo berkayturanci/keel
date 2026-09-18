@@ -1360,7 +1360,10 @@ def _ship_base_ref(base_branch: str, root: str) -> str:
     keel; a fetch here would put a network call inside a diff.
     """
     remote_ref = _remote_base_ref(base_branch)
-    return remote_ref if git.rev_parse(remote_ref, cwd=root) else f"refs/heads/{base_branch}"
+    # Asked of the exact ref: a missing tracking ref lets `rev-parse` answer with a local
+    # branch literally named `refs/remotes/origin/<base>` (#1223). When the exact ref
+    # exists, git's own lookup finds it first, so the name is safe to hand to `diff`.
+    return remote_ref if git.resolve_ref(remote_ref, cwd=root) else f"refs/heads/{base_branch}"
 
 
 def _cmd_ship(args: argparse.Namespace) -> int:
@@ -2059,6 +2062,11 @@ def _land_learning_attempt(args, plan: dict, *, expect_head: str | None = None) 
     # fetching the base instead would build the lesson on a remote-tracking ref that
     # names the wrong branch entirely, or a stale copy of the right one.
     target = plan.get("onto") or plan["base_branch"]
+    # **A configured remote, or nothing.** git reads an unconfigured name as a path, so with
+    # no remote called `origin` the fetch below read a directory of that name in the
+    # checkout — and the push ran that repository's hooks (#1223).
+    if git.remote_url(remote, cwd=root) is None:
+        return _land_result("failed", f"no remote named {remote!r} is configured", None, None)
     fetched = git.fetch(remote, target, cwd=root)
     if not fetched.ok:
         return _land_result(
@@ -2067,7 +2075,9 @@ def _land_learning_attempt(args, plan: dict, *, expect_head: str | None = None) 
             None,
             None,
         )
-    base_sha = git.rev_parse(plan["remote_ref"], cwd=root)
+    # The exact ref the fetch just wrote: `rev-parse` falls back through `refs/tags/` and
+    # `refs/heads/` for a full name that is missing, `show-ref --verify` does not (#1223).
+    base_sha = git.resolve_ref(plan["remote_ref"], cwd=root)
     if base_sha is None:
         return _land_result("failed", f"cannot resolve {plan['remote_ref']}", None, None)
     # **The pull request's head, or nothing is built.** `--onto` names a branch, and a
@@ -4536,8 +4546,10 @@ def _gather_branch_facts(args: argparse.Namespace, base_branch: str) -> dict[str
             # the ancestry question against a ref that may be days behind while the summary
             # still printed `origin/<base>` — a pass reported for an origin nobody observed.
             # Resolved here, not hoisted: a caller supplying `--base-tip-sha` wants no live
-            # call, and hoisting turned that documented short-circuit into one `rev-parse`.
-            base_tip_sha = git.rev_parse(_remote_base_ref(base_branch), cwd=args.root)
+            # call, and hoisting turned that documented short-circuit into one lookup.
+            # Exact, not `rev-parse`: a missing tracking ref would let a local branch
+            # literally named `refs/remotes/origin/<base>` answer for it (#1223).
+            base_tip_sha = git.resolve_ref(_remote_base_ref(base_branch), cwd=args.root)
         if merge_base_sha is None and head_sha is not None and base_tip_sha is not None:
             merge_base_sha = git.merge_base(head_sha, base_tip_sha, cwd=args.root)
         if base_distance is None and merge_base_sha is not None and base_tip_sha is not None:

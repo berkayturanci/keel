@@ -1196,11 +1196,11 @@ class TestOneBaseRef(unittest.TestCase):
     """
 
     def test_it_prefers_the_remote_ref_and_falls_back_to_the_local_branch(self):
-        with patch("keel.git.rev_parse", return_value="abc1234"):
+        with patch("keel.git.resolve_ref", return_value="abc1234"):
             self.assertEqual(cli._ship_base_ref("main", "."), "refs/remotes/origin/main")
         # An offline or freshly-initialised checkout has no remote-tracking ref; the
         # configured branch keeps it fail-soft rather than diffing against nothing.
-        with patch("keel.git.rev_parse", return_value=None):
+        with patch("keel.git.resolve_ref", return_value=None):
             self.assertEqual(cli._ship_base_ref("main", "."), "refs/heads/main")
 
     def test_a_branch_or_tag_named_like_the_remote_ref_is_not_what_it_diffs_against(self):
@@ -1232,6 +1232,29 @@ class TestOneBaseRef(unittest.TestCase):
             self.assertEqual(fallback, "refs/heads/main")
             self.assertEqual(git.rev_parse(fallback, cwd=str(wt)), real)
 
+    def test_a_missing_tracking_ref_is_not_answered_by_a_branch_named_like_it(self):
+        """A full name is exact only while the ref exists (#1223), measured on real git.
+
+        With `refs/remotes/origin/main` gone, `rev-parse refs/remotes/origin/main` falls
+        back to `refs/heads/refs/remotes/origin/main` — a local branch of that literal
+        name. The base ref is chosen by the exact ref, so it falls back to the branch.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            _, wt = _land_repo(Path(tmp))
+            real = _git_stdout(wt, "rev-parse", "refs/heads/main")
+            (wt / "planted.py").write_text("x = 1\n", encoding="utf-8")
+            _run_git(wt, "add", "planted.py")
+            _run_git(wt, "commit", "-qm", "planted")
+            planted = _git_stdout(wt, "rev-parse", "HEAD")
+            _run_git(wt, "update-ref", "-d", "refs/remotes/origin/main")
+            _run_git(wt, "branch", "refs/remotes/origin/main", planted)
+            # git's own fallback, which is why the exact lookup exists:
+            self.assertEqual(git.rev_parse("refs/remotes/origin/main", cwd=str(wt)), planted)
+            self.assertIsNone(git.resolve_ref("refs/remotes/origin/main", cwd=str(wt)))
+            base = cli._ship_base_ref("main", str(wt))
+            self.assertEqual(base, "refs/heads/main")
+            self.assertEqual(git.rev_parse(base, cwd=str(wt)), real)
+
     def test_ship_and_run_gates_ask_for_the_same_ref(self):
         import tempfile
 
@@ -1248,7 +1271,7 @@ class TestOneBaseRef(unittest.TestCase):
             with (
                 tempfile.TemporaryDirectory() as d,
                 patch("keel.git.changed_files", return_value=[]),
-                patch("keel.git.rev_parse", return_value="abc1234"),
+                patch("keel.git.resolve_ref", return_value="abc1234"),
                 patch("keel.git.diff", side_effect=record(command)),
             ):
                 run([command, _write_config("'true'"), "--root", d])
@@ -1273,7 +1296,7 @@ class TestOneBaseRef(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as d,
             patch("keel.git.changed_files", return_value=[]),
-            patch("keel.git.rev_parse", return_value="abc1234"),
+            patch("keel.git.resolve_ref", return_value="abc1234"),
             patch("keel.git.diff", side_effect=_diff),
         ):
             run(["run-gates", _write_config("'true'"), "--root", d])
@@ -1484,14 +1507,14 @@ class TestShip(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             with (
-                patch("keel.git.rev_parse", return_value="a" * 40) as rev_parse,
+                patch("keel.git.resolve_ref", return_value="a" * 40) as resolve_ref,
                 patch("keel.git.changed_files", return_value=["src/keel/cli.py"]) as changed,
                 patch("keel.git.diff", return_value=""),
             ):
                 rc, out, _ = run(["ship", _write_config("'true'"), "--root", d, "--json"])
 
         self.assertEqual(rc, 0)
-        rev_parse.assert_called_once_with("refs/remotes/origin/main", cwd=d)
+        resolve_ref.assert_called_once_with("refs/remotes/origin/main", cwd=d)
         changed.assert_called_once_with("refs/remotes/origin/main", "HEAD", cwd=d)
         payload = json.loads(out)
         self.assertEqual(payload["result"]["changed_files"], ["src/keel/cli.py"])
@@ -6709,7 +6732,7 @@ class TestVerifyBranch(unittest.TestCase):
             if argv[0] == "gh":
                 body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/x"}})
                 return _proc(body)
-            if argv[:2] == ["git", "rev-parse"]:
+            if argv[:2] in (["git", "rev-parse"], ["git", "show-ref"]):
                 return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
                 return _proc(SHA_TIP + "\n")
@@ -6749,7 +6772,7 @@ class TestVerifyBranch(unittest.TestCase):
             if argv[0] == "gh":
                 body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/x"}})
                 return _proc(body)
-            if argv[:2] == ["git", "rev-parse"]:
+            if argv[:2] in (["git", "rev-parse"], ["git", "show-ref"]):
                 return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
                 return _proc(SHA_TIP + "\n")
@@ -6783,7 +6806,7 @@ class TestVerifyBranch(unittest.TestCase):
             if argv[0] == "gh":
                 body = json.dumps({"head": {"sha": SHA_HEAD, "ref": "feature/absent"}})
                 return _proc(body)
-            if argv[:2] == ["git", "rev-parse"]:
+            if argv[:2] in (["git", "rev-parse"], ["git", "show-ref"]):
                 return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
                 return _proc(SHA_TIP + "\n")
@@ -6817,7 +6840,7 @@ class TestVerifyBranch(unittest.TestCase):
         def fake_run(argv, **kwargs):
             if argv[0] == "gh":
                 return _proc(json.dumps({"head": {"sha": SHA_HEAD}}))
-            if argv[:2] == ["git", "rev-parse"]:
+            if argv[:2] in (["git", "rev-parse"], ["git", "show-ref"]):
                 return _proc(SHA_TIP + "\n")
             if argv[:2] == ["git", "merge-base"]:
                 return _proc(SHA_TIP + "\n")
@@ -6961,13 +6984,14 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
         """
         asked: list[str] = []
 
-        def _rev_parse(ref, **kwargs):
+        def _resolve_ref(ref, **kwargs):
             asked.append(ref)
             # The shape that matters: the remote ref is gone, the local branch is not.
             return None if ref.startswith("refs/remotes/origin/") else "local1234"
 
         with (
-            patch("keel.git.rev_parse", side_effect=_rev_parse),
+            patch("keel.git.resolve_ref", side_effect=_resolve_ref),
+            patch("keel.git.rev_parse", side_effect=AssertionError("rev-parse is not exact")),
             patch("keel.git.merge_base", return_value=None),
             patch("keel.git.rev_count", return_value=None),
             patch("keel.cli._gh_json", return_value={"head": {"sha": "h", "ref": "r"}}),
@@ -7011,7 +7035,7 @@ class TestVerifyBranchFactGathering(unittest.TestCase):
         # head_ref stays None → the `head_ref is not None` guard is False and the
         # worktree lookup is skipped without calling git for it.
         def fake_run(argv, **kwargs):
-            if argv[:2] == ["git", "rev-parse"]:
+            if argv[:2] in (["git", "rev-parse"], ["git", "show-ref"]):
                 return _proc(SHA_TIP + "\n")
             raise AssertionError(f"unexpected {argv}")
 
@@ -16445,6 +16469,39 @@ class TestCaptureLand(unittest.TestCase):
             self.assertIn("fix.txt", listing)
             self.assertIn(".keel/learning/moved.md", listing)
 
+    def test_an_unconfigured_remote_is_not_read_as_a_path(self):
+        """git reads a remote name it does not know as a directory (#1223).
+
+        With no remote called `origin`, a repository committed at `<checkout>/origin` was
+        fetched from and pushed to — and a push runs that repository's hooks.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            _run_git(wt, "remote", "rename", "origin", "upstream")
+            planted = wt / "origin"
+            subprocess.run(["git", "clone", "-q", "--bare", str(origin), str(planted)], check=True)
+            before = _git_stdout(planted, "rev-parse", "refs/heads/main")
+            artifact = self._write_lesson(wt, "pathremote.md")
+            rc, out, _ = run(
+                [
+                    "capture-land",
+                    self._config(wt),
+                    "--root",
+                    str(wt),
+                    "--pr",
+                    "25",
+                    "--artifact",
+                    artifact,
+                    "--json",
+                ]
+            )
+            payload = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(payload["status"], "failed")
+            self.assertIn("no remote named 'origin' is configured", payload["detail"])
+            self.assertEqual(_git_stdout(planted, "rev-parse", "refs/heads/main"), before)
+            self.assertEqual(_origin_commits(origin), 1)
+
     def test_a_tag_named_like_the_remote_ref_is_not_what_the_lesson_is_built_on(self):
         """`origin/main` is a short name, and git resolves a tag of that name first.
 
@@ -16806,7 +16863,7 @@ class TestCaptureLand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "g.md")
-            with patch.object(git, "rev_parse", lambda *a, **k: None):
+            with patch.object(git, "resolve_ref", lambda *a, **k: None):
                 rc, out, _ = run(
                     [
                         "capture-land",
