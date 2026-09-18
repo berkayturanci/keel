@@ -188,9 +188,10 @@ def _tdd_order_outcome(
 ) -> tuple[GateOutcome, tdd.OrderResult]:
     """Evaluate the pure ``tdd-order`` gate: git through the seam, the decision in core.
 
-    The only I/O is one :func:`keel.git.commit_log` read; parsing the log, matching the
-    paths and deciding the verdict all live in :mod:`keel.tdd`, which is why the gate is
-    unit-tested offline against commit lists instead of against a repository.
+    The only I/O is two git reads — :func:`_ship_base_ref`'s exact lookup of the base ref,
+    then one :func:`keel.git.commit_log`; parsing the log, matching the paths and deciding
+    the verdict all live in :mod:`keel.tdd`, which is why the gate is unit-tested offline
+    against commit lists instead of against a repository.
 
     **The range starts at the base ref every other gate diffs against** —
     :func:`_ship_base_ref`, not the bare local branch. keel cuts its worktrees from

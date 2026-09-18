@@ -996,8 +996,9 @@ call and one commit each:
 | `implementation` | the change that turns them green, without weakening a test | the change | must end **green** |
 
 At **s8** the run then carries one extra gate, `tdd-order`. It is `on_fail: block`, and it
-is a **pure function of the commit list and the path policy** — keel reads the branch
-through a single `git log` and decides in `keel.tdd`, with no other I/O. It passes when:
+is a **pure function of the commit list and the path policy** — keel looks up the base ref,
+reads the branch through a single `git log`, and decides in `keel.tdd`, with no other I/O.
+It passes when:
 
 1. the branch history is readable at all (an unreadable one blocks — it is not an empty branch);
 2. the first non-merge commit touches at least one path, and **only** test paths;
