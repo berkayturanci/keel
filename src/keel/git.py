@@ -34,15 +34,14 @@ def remote_tracking_ref(remote: str, branch: str) -> str:
 def resolve_ref(ref: str, *, cwd: str | None = None, _run=None) -> str | None:
     """The object a fully spelled ``ref`` names, or ``None`` when that exact ref is absent.
 
-    ``show-ref --verify`` takes the name as the complete ref and looks nowhere else, where
-    :func:`rev_parse` would try ``refs/tags/<ref>`` and ``refs/heads/<ref>`` after it (#1223).
+    ``show-ref --verify`` takes the name as the complete ref, with no fallback: when that ref
+    is missing it answers nothing, where :func:`rev_parse` goes on to try ``refs/tags/<ref>``
+    and ``refs/heads/<ref>`` (#1223).
 
-    The answer is whatever object the ref holds, and that is not always a commit. git's own
-    writers keep one there — ``update-ref`` refuses a non-commit under ``refs/heads/``, and a
-    fetch writes the branch's commit under ``refs/remotes/`` — but a ref set by hand can hold
-    any object: ``update-ref`` accepts an annotated tag under ``refs/remotes/``, and a symbolic
-    ref under ``refs/heads/`` can point at one (both measured). A caller that needs a commit
-    must still get one; the landing's ``commit-tree`` refuses a parent that is not (#1225).
+    The answer is whatever object the ref names. That is usually a commit, but git does not
+    guarantee it: a symbolic ref, a ref set by hand, or a fetched branch that is itself one of
+    those can name an annotated tag (each measured). A caller that needs a commit must still
+    get one; the landing's ``commit-tree`` refuses a parent that is not (#1225).
     """
     result = run_argv(["git", "show-ref", "--verify", "--hash", ref], cwd=cwd, **_kw(_run))
     output = result.stdout.strip()
