@@ -232,7 +232,7 @@ window.KEEL = {
     ["knobs", "Runnable commands, risk globs, docs paths, CI workflow mapping, local agent roles, runtime capabilities."],
     ["knobs.team", "The whole team as values: who implements (per issue role, model and reasoning effort), the mandatory gate reviewer from a different vendor, the reviewer seats per risk tier — or <code>jury</code>, when the cross-vendor panel <b>is</b> the review — who applies the findings, and named benches selected with <code>--team</code>."],
     ["knobs.implement_mode", "<code>default</code> or <code>tdd</code>. Test-first splits s4 into a test-only commit and the implementation, and adds the blocking <code>tdd-order</code> gate at s8."],
-    ["knobs.loop", "A bounded, gate-verified s4 loop: up to <code>max_iterations</code> implement passes, each judged by the command gates, until they pass. <code>--loop</code> turns it on for one run."],
+    ["knobs.loop", "A bounded, gate-verified s4 loop: up to <code>max_iterations</code> implement passes, each judged by the command gates, ending at the first green run; a budget spent while still red blocks the issue. With <code>tdd</code> it wraps the implementation phase only. <code>--loop</code> turns it on for one run."],
     ["extensions", "Add-only hooks — your Lego — snapped into named backbone slots."],
     ["policy_pack", "Durable project data: labels, lifecycle, risk rules, test groups, docs policy, health providers, review rubric."],
   ],
