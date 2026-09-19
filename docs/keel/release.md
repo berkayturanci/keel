@@ -104,7 +104,8 @@ Before tagging a release:
   Historical version mentions (e.g. "Since **1.6.5**" prose) are deliberately left untouched.
 
   The site's hardcoded fallback strings (`website/index.html`, `docs.html`, `coverage.html`,
-  `content.js` — used before `app.js`'s runtime GitHub-releases fetch resolves) **are** covered,
+  `content.js` — used before `app.js`'s runtime GitHub-releases fetch resolves; each page's CSP
+  must allow that fetch, which `tests/test_website_csp.py` checks since #1230) **are** covered,
   as of 1.11.0. Two gaps produced one symptom. `docs.html`, `coverage.html` and `content.js`
   were never wired into the script — this runbook named them as a manual step, and the step
   was missed, leaving them at `v1.6.5` for four releases and then `v1.8.2` for three more.

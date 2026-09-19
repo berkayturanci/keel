@@ -6,6 +6,14 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The site's Content Security Policy no longer blocks the site's own version refresh** (#1230).
+  - **What broke.** `app.js` has kept the displayed version fresh between deploys since #307, by asking `api.github.com` for the latest release and falling back to `pypi.org`. #540 then added a CSP to every page with `connect-src 'self' https://cloudflareinsights.com`. From that day the browser refused both requests on every page view: four console errors per visit, and a refresh that `docs/keel/release.md` still describes had not run for two months.
+  - **Why nobody noticed.** Nothing visible broke, because the build-time stamps are release surfaces and are always current. Nothing compared the policy with what the pages load either. The blocked requests were found in a browser console while verifying the 1.23.1 release.
+  - **The fix.** `index.html`, `docs.html` and `coverage.html`, the three pages that load `app.js`, now allow those two hosts. `404.html` and the article keep the narrower policy.
+  - **Checked in a real browser.** Both requests answer 200, the refresh resolves, no violation is reported on load, and a request to any other host is still refused.
+  - **The guard.** `tests/test_website_csp.py` derives what each page needs from the page and the local scripts it loads: `fetch` targets, script sources, stylesheets and images. It requires the page's own policy to allow each one. It names the six refusals on the old policy, and it requires every `fetch` in a site script to be a literal URL so the check can see it.
+
 ## [1.23.1] - 2026-09-19
 
 ### Added
