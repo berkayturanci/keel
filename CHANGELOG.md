@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.23.1] - 2026-09-19
+
 ### Added
 - **The site shows the gate-verified loop and test-first mode in use** (#1215). keel-ship.dev described `knobs.loop` / `--loop` and `knobs.implement_mode: tdd` / `--tdd` in prose only, so turning either on meant leaving the site for `docs/keel/configuration.md`. The Configuration article now carries a test-first example with the `policy_pack.test_groups` the `tdd-order` gate reads, what that gate checks, and a loop example with its iteration contract; it names the Ralph loop the loop is shaped after and the two ways it differs (the gate run, not the agent, decides when the work is done, and every iteration is a named commit). The Configuration table gains a `knobs.loop` row, the sample `project.yaml` a `loop:` block, and `llms.txt` names test-first mode.
 
