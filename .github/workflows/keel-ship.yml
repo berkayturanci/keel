@@ -155,10 +155,18 @@ jobs:
     # without a `workflow_dispatch` payload that expression is `null`, and
     # GitHub coerces both `null` and `''` to 0 — so `null != ''` is **false**
     # and this job was silently skipped on every event but `pull_request`.
+    #
+    # A comment counts only while its pull request is open (#1241). A closed one
+    # cannot merge, so there is nothing to re-evaluate — and with no verdicts and
+    # no attribution label the run can only fail. A comment run is attributed to
+    # the default branch's head, so that failure landed on `main`: six red checks
+    # on one healthy commit after Dependabot closed five superseded pull requests,
+    # each with a comment. Reopening one fires `pull_request` (`reopened` is a
+    # default type), which re-evaluates it.
     if: >-
       ${{ !cancelled() && (
         github.event_name == 'pull_request' ||
-        (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.issue.state == 'open') ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
       ) }}
     steps:

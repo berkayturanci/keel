@@ -315,6 +315,13 @@ let it pass. Subscribing to `pull_request_review` instead reads tidier and fires
 never: across the last twelve merged pull requests here, all 33 verdict markers
 were issue comments and none were reviews.
 
+Only a comment on an **open** pull request counts. A closed one cannot merge, so
+the gate has nothing to re-evaluate and — with no verdicts to find — could only
+fail; and since a comment run is attributed to the default branch's head, that
+failure used to land on `main`'s latest commit every time a bot closed its own
+pull request with a comment. Reopening a pull request fires `pull_request` with
+`reopened`, which re-evaluates it, so nothing is skipped that could still merge.
+
 One consequence worth knowing before you try to verify this: like `schedule`,
 `issue_comment` always runs the workflow file from the **default branch**, never
 the pull request's copy. (`workflow_dispatch` is not in that group — it runs the

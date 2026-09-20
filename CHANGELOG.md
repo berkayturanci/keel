@@ -7,6 +7,11 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A comment on a closed pull request no longer fails the evidence job on `main`'s head** (#1241).
+  - **What broke.** `keel-ship.yml` re-runs the evidence gate on `issue_comment`, because a verdict is an issue comment. It did so for closed pull requests too. A closed pull request has no verdicts to find and often no attribution label, so that run could only fail — and a comment run is attributed to the default branch's head, so the red check landed on `main`.
+  - **Measured.** After Dependabot closed five superseded pull requests, each with its usual comment, `main`'s healthy head carried six failed `keel evidence (verify)` checks; 22 of the last 100 `keel-ship` runs were comment-triggered failures.
+  - **The fix.** The job's comment arm now requires `github.event.issue.state == 'open'`. Nothing that could still merge is skipped: reopening a pull request fires `pull_request` with `reopened`, which re-evaluates it.
+  - **The guard.** The job's `if:` was only text-asserted. `tests/test_evidence_gate_workflow.py` now evaluates it per event shape, with GitHub's precedence and loose equality (`null != ''` is false there), including the closed-pull-request case and a check that `reopened` is still a subscribed type.
 - **The site's Content Security Policy no longer blocks the site's own version refresh** (#1230).
   - **What broke.** `app.js` has kept the displayed version fresh between deploys since #307, by asking `api.github.com` for the latest release and falling back to `pypi.org`. #540 then added a CSP to every page with `connect-src 'self' https://cloudflareinsights.com`. From that day the browser refused both requests on every page view: four console errors per visit, and a refresh that `docs/keel/release.md` still describes had not run for two months.
   - **Why nobody noticed.** Nothing visible broke, because the build-time stamps are release surfaces and are always current. Nothing compared the policy with what the pages load either. The blocked requests were found in a browser console while verifying the 1.23.1 release.
