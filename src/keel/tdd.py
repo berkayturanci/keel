@@ -165,12 +165,7 @@ def is_test_path(path: str, globs: Sequence[str]) -> bool:
     ``fnmatch`` semantics, the same matcher :mod:`keel.classify` uses for
     ``tier3_globs`` and ``docs_gate_paths``, so one project writes one kind of glob.
     """
-    # ⚡ Bolt Optimization: Unroll any() generator for fnmatch to avoid generator overhead
-    # (~25% execution time reduction)
-    for glob in globs:
-        if fnmatch.fnmatch(path, glob):
-            return True
-    return False
+    return any(fnmatch.fnmatch(path, glob) for glob in globs)
 
 
 #: ``--name-status`` letters this module reasons about. Only ``D`` is load-bearing: every

@@ -89,3 +89,8 @@ line is hot — a tight loop over thousands of items, called repeatedly. Do not 
 code that runs a handful of times per command, and especially not in
 `src/keel/evidence.py`, which decides whether a PR may merge: churn there needs to buy
 something. keel#789 proposed exactly that and was closed. See keel#791.
+
+## 2026-09-19 - Do not unroll fnmatch without hot loop evidence
+
+**Learning:** Unrolling `any(fnmatch.fnmatch(...))` provides absolute savings around 100-200ns per call. In paths like `is_test_path` in `src/keel/tdd.py`, which are only called ~10-20 times per PR evaluation, the total saving is ~1-2µs. This is dwarfed by subprocess/I/O costs (e.g. `git log` at ~17,000µs). Replacing simple, readable generator expressions with explicit unrolled loops must be justified by being on an actual hot path.
+**Action:** Always check the absolute number of calls per run in the actual codebase (not just synthetic benchmarks) before proposing loop unrolling optimizations. If the absolute time saved per run is in the low microseconds, abandon the change.
