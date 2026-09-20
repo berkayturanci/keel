@@ -78,9 +78,11 @@ that event always runs from the default branch, so those cancelled `keel evidenc
 job checks land on the default branch's tip. They are visible in the Actions and commit UI
 and are read by nothing that gates a pull request.
 
-What no longer lands there is a *failure*: the evidence job ignores a comment on a closed
-pull request (`github.event.issue.state == 'open'`), which could only fail and did so on
-`main`'s head.
+What no longer lands there is a *failure* from a closed pull request, which could only fail
+and did so on `main`'s head. The job's `if:` drops a reply to an already-closed pull request
+(`github.event.issue.state == 'open'`), and its first step asks the API for the state as it
+is *now* — a bot that comments and then closes leaves `open` in the payload — standing the
+rest of the job down on `CLOSED` or `MERGED`. See [evidence.md](evidence.md).
 
 **The authoritative verdict is the one from the run that read the pull request last** — not
 the run that finished last, and not the run for any particular event. Each run stamps the

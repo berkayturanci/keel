@@ -319,8 +319,19 @@ Only a comment on an **open** pull request counts. A closed one cannot merge, so
 the gate has nothing to re-evaluate and — with no verdicts to find — could only
 fail; and since a comment run is attributed to the default branch's head, that
 failure used to land on `main`'s latest commit every time a bot closed its own
-pull request with a comment. Reopening a pull request fires `pull_request` with
-`reopened`, which re-evaluates it, so nothing is skipped that could still merge.
+pull request with a comment.
+
+"Open" is decided twice, because the obvious place to look is wrong for the case
+that matters. The job's `if:` reads `github.event.issue.state`, which stops a reply
+to an already-closed pull request before a runner starts. But the payload holds the
+state at the moment the comment was *written*, and Dependabot writes "…is up-to-date
+now" two to five seconds before it closes (`gh pr close --comment` orders things the
+same way) — so for exactly those comments the payload says `open`. The job's first
+step therefore asks the API again, and the rest of the job stands down on `CLOSED`
+or `MERGED`. Anything it cannot read — an API error, an empty answer — runs the gate
+as before, and a job that stands down publishes nothing, so it can never turn the
+required check green. Reopening a pull request fires `pull_request` with `reopened`,
+which re-evaluates it, so nothing is skipped that could still merge.
 
 One consequence worth knowing before you try to verify this: like `schedule`,
 `issue_comment` always runs the workflow file from the **default branch**, never

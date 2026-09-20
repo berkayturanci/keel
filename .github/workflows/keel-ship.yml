@@ -160,9 +160,14 @@ jobs:
     # cannot merge, so there is nothing to re-evaluate — and with no verdicts and
     # no attribution label the run can only fail. A comment run is attributed to
     # the default branch's head, so that failure landed on `main`: six red checks
-    # on one healthy commit after Dependabot closed five superseded pull requests,
-    # each with a comment. Reopening one fires `pull_request` (`reopened` is a
+    # on one healthy commit. Reopening fires `pull_request` (`reopened` is a
     # default type), which re-evaluates it.
+    #
+    # The `state` clause here is the cheap half: it stops a reply to an
+    # already-closed pull request before a runner starts. It is *not* enough on
+    # its own — the payload holds the state when the comment was written, and
+    # five of those six comments were written seconds before the close. The
+    # first step below asks again.
     if: >-
       ${{ !cancelled() && (
         github.event_name == 'pull_request' ||
@@ -170,15 +175,48 @@ jobs:
         (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
       ) }}
     steps:
+      - name: Is there still a merge to gate?
+        id: pr
+        if: ${{ github.event_name == 'issue_comment' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          # Asked of the API, now — not read from the payload. Dependabot writes
+          # "…is up-to-date now" and closes the pull request two to five seconds
+          # later, and `gh pr close --comment` orders things the same way, so for
+          # exactly those comments the payload says `open`. By the time a runner
+          # has started the close has landed.
+          #
+          # Skipping has to be earned: only a clear CLOSED or MERGED stands the job
+          # down. An API error, an empty answer or an unknown word runs the gate as
+          # before. And a skipped job publishes nothing, so it can never turn the
+          # required check green.
+          state="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state --jq .state 2>/dev/null || true)"
+          case "$state" in
+            CLOSED|MERGED)
+              echo "gate=skip" >> "$GITHUB_OUTPUT"
+              echo "::notice title=Nothing to gate::Pull request #$PR is $state, so this comment has no merge to gate."
+              ;;
+            *)
+              echo "gate=run" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+      # `steps.pr.outputs.gate` is empty when the step above did not run (a push or a
+      # dispatch), and '' != 'skip', so every other event proceeds exactly as before.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: ${{ steps.pr.outputs.gate != 'skip' }}
         with:
           fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        if: ${{ steps.pr.outputs.gate != 'skip' }}
         with:
           python-version: "3.12"
       - name: Install keel
+        if: ${{ steps.pr.outputs.gate != 'skip' }}
         run: python -m pip install --upgrade pip && pip install -e .
       - name: Verify posted ship evidence
+        if: ${{ steps.pr.outputs.gate != 'skip' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
