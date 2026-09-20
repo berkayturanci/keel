@@ -85,7 +85,7 @@ jobs:
       # formatter turns every PR red the day ruff changes its style, for
       # reasons that have nothing to do with the change under review.
       - name: Install the pinned formatter
-        run: python -m pip install --upgrade pip && pip install "ruff==0.16.7"
+        run: python -m pip install --upgrade pip && pip install "ruff==0.16.8"
       - name: Format
         run: ruff format --check .
 
