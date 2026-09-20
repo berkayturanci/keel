@@ -117,7 +117,7 @@ def _tags_for(repo, sha):
         request.add_header("Authorization", f"Bearer {token}")
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.load(response)
+            payload = json.loads(response.read(50 * 1024 * 1024).decode("utf-8"))
     except (urllib.error.URLError, OSError, json.JSONDecodeError):
         # Being unable to look is not evidence the pin is wrong.
         return None
