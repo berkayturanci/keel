@@ -18,7 +18,12 @@ per-arm for that reason.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -971,7 +976,7 @@ class TestACommentOnAClosedPullRequestGatesNothing(unittest.TestCase):
             with self.subTest(state=state):
                 self.assertFalse(self._runs(_comment(state, on_pull_request=False)))
 
-    def test_pushes_and_dispatches_are_untouched(self):
+    def test_pull_request_events_and_dispatches_are_untouched(self):
         self.assertTrue(self._runs(_event("pull_request", pull_request={"number": 7})))
         self.assertTrue(self._runs(_event("workflow_dispatch", inputs={"pr": "7"})))
         self.assertFalse(self._runs(_event("workflow_dispatch", inputs={"pr": ""})))
@@ -995,6 +1000,121 @@ class TestACommentOnAClosedPullRequestGatesNothing(unittest.TestCase):
         types = (triggers["pull_request"] or {}).get("types")
         if types is not None:
             self.assertIn("reopened", types)
+
+
+POSIX_SHELL = sys.platform != "win32" and shutil.which("bash") is not None
+
+#: Stands in for `gh`: prints what the test scripted and exits as told, so the
+#: step's own shell runs against every answer the API can give it.
+STUB_GH = """#!/bin/sh
+printf '%s\\n' "$@" > "$GH_ARGV"
+[ -n "$GH_PRINTS" ] && printf '%s\\n' "$GH_PRINTS"
+exit "${GH_EXITS:-0}"
+"""
+
+
+class TestTheLiveStateDecidesNotThePayload(unittest.TestCase):
+    """The payload says what the pull request was when the comment was *written* (#1241).
+
+    Dependabot writes "…is up-to-date now" and closes two to five seconds later;
+    ``gh pr close --comment`` does the same. So for exactly the comments that
+    turned ``main`` red, ``github.event.issue.state`` reads ``open`` — a guard on
+    it alone skips a reply to an already-closed pull request and nothing else,
+    which a review of the first attempt measured on #1232–#1236. By the time a
+    runner has started, the close has landed: the job has to ask again.
+    """
+
+    def _steps(self) -> list[dict]:
+        return _workflow()["jobs"]["evidence"]["steps"]
+
+    def _state_step(self) -> dict:
+        return self._steps()[0]
+
+    def test_the_state_is_read_first_and_only_for_a_comment(self):
+        step = self._state_step()
+        self.assertEqual(step.get("id"), "pr", "later steps read steps.pr.outputs.gate")
+        self.assertTrue(_evaluate(step["if"], _comment("open")))
+        self.assertFalse(_evaluate(step["if"], _event("pull_request", pull_request={"number": 7})))
+        self.assertFalse(_evaluate(step["if"], _event("workflow_dispatch", inputs={"pr": "7"})))
+
+    def test_it_asks_the_api_rather_than_the_payload(self):
+        step = self._state_step()
+        self.assertIn("gh pr view", step["run"])
+        self.assertNotIn("github.event.issue.state", step["run"])
+        self.assertIn("github.event.issue.number", step["env"]["PR"])
+        self.assertIn("GH_TOKEN", step["env"])
+
+    def test_every_later_step_stands_down_when_there_is_nothing_to_gate(self):
+        later = self._steps()[1:]
+        self.assertGreaterEqual(len(later), 4, "the job lost a step; re-read this test")
+        for step in later:
+            label = step.get("name") or step.get("uses")
+            for gate, runs in (("skip", False), ("run", True), ("", True)):
+                with self.subTest(step=label, gate=gate):
+                    self.assertIn("if", step, f"{label!r} runs for a closed pull request")
+                    context = {"steps": {"pr": {"outputs": {"gate": gate}}}}
+                    self.assertEqual(bool(_evaluate(step["if"], context)), runs)
+
+    def _run_state_step(
+        self, prints: str, exits: int = 0
+    ) -> tuple[subprocess.CompletedProcess, str, list[str]]:
+        workdir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, workdir, True)
+        binaries = workdir / "bin"
+        binaries.mkdir()
+        stub = binaries / "gh"
+        stub.write_text(STUB_GH, encoding="utf-8")
+        stub.chmod(0o755)
+        output, argv = workdir / "output", workdir / "argv"
+        output.touch()
+        env = {
+            **os.environ,
+            "PATH": f"{binaries}{os.pathsep}{os.environ.get('PATH', '')}",
+            "GH_PRINTS": prints,
+            "GH_EXITS": str(exits),
+            "GH_ARGV": str(argv),
+            "GITHUB_OUTPUT": str(output),
+            "GITHUB_REPOSITORY": "o/r",
+            "PR": "7",
+        }
+        # The flags Actions runs a `run:` step with, so `set -e` and pipefail bite here too.
+        completed = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", self._state_step()["run"]],
+            cwd=workdir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        asked = argv.read_text(encoding="utf-8").split() if argv.exists() else []
+        return completed, output.read_text(encoding="utf-8"), asked
+
+    @unittest.skipUnless(POSIX_SHELL, "needs bash on a POSIX platform")
+    def test_a_closed_or_merged_pull_request_is_skipped(self):
+        for state in ("CLOSED", "MERGED"):
+            with self.subTest(state=state):
+                completed, output, asked = self._run_state_step(state)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(output.strip(), "gate=skip")
+                self.assertIn("7", asked, "it asked about some other pull request")
+                self.assertIn("::notice", completed.stdout, "a skipped gate must say why")
+
+    @unittest.skipUnless(POSIX_SHELL, "needs bash on a POSIX platform")
+    def test_an_open_pull_request_is_gated(self):
+        completed, output, _ = self._run_state_step("OPEN")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(output.strip(), "gate=run")
+
+    @unittest.skipUnless(POSIX_SHELL, "needs bash on a POSIX platform")
+    def test_a_state_that_cannot_be_read_still_runs_the_gate(self):
+        """Skipping is the exception that has to be earned. An API error, an empty
+        answer or a word this step has never seen all leave the gate running, as it
+        did before — never the other way round."""
+        for prints, exits in (("", 1), ("", 0), ("HTTP 502", 1), ("DRAFT", 0)):
+            with self.subTest(prints=prints, exits=exits):
+                completed, output, _ = self._run_state_step(prints, exits)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(output.strip(), "gate=run")
 
 
 if __name__ == "__main__":  # pragma: no cover - manual entry point
