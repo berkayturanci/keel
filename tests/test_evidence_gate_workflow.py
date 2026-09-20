@@ -805,5 +805,197 @@ class TestTheDocsSayWhichRunIsAuthoritative(unittest.TestCase):
         self.assertIn("default branch's tip", section)
 
 
+_IF_TOKEN = re.compile(
+    r"\s*(?:(?P<op>&&|\|\||==|!=|!|\(|\))|'(?P<text>(?:[^']|'')*)'|(?P<name>[A-Za-z_][\w.]*(?:\(\))?))"
+)
+
+
+def _number(value: object) -> float:
+    """GitHub's loose-equality coercion: null and '' are 0, an object is NaN."""
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return float("nan")
+    return float("nan")
+
+
+def _loosely_equal(left: object, right: object) -> bool:
+    if isinstance(left, str) and isinstance(right, str):
+        return left.casefold() == right.casefold()
+    if type(left) is type(right):
+        return left == right
+    return _number(left) == _number(right)
+
+
+def _evaluate(expression: str, context: dict, *, cancelled: bool = False) -> object:
+    """Evaluate the slice of the Actions expression language a job ``if:`` uses.
+
+    ``!``, ``==``/``!=``, ``&&``, ``||`` and parentheses, in GitHub's precedence,
+    over dotted context paths, quoted literals and ``cancelled()``. A missing path
+    is ``null``; ``&&`` and ``||`` return an operand, as they do there; equality
+    across types coerces to a number. That last rule is the one this file already
+    paid for once — ``null != ''`` is *false* — so an evaluator without it would
+    agree with a broken condition.
+    """
+    body = expression.strip()
+    if body.startswith("${{"):
+        body = body[3:-2]
+    tokens: list[tuple[str, str]] = []
+    position = 0
+    while position < len(body):
+        if body[position:].strip() == "":
+            break
+        match = _IF_TOKEN.match(body, position)
+        assert match, f"cannot read the condition at: {body[position:]!r}"
+        kind = match.lastgroup
+        assert kind is not None
+        tokens.append((kind, match.group(kind)))
+        position = match.end()
+    cursor = 0
+
+    def peek() -> tuple[str, str] | None:
+        return tokens[cursor] if cursor < len(tokens) else None
+
+    def take() -> tuple[str, str]:
+        nonlocal cursor
+        cursor += 1
+        return tokens[cursor - 1]
+
+    def truthy(value: object) -> bool:
+        return value not in (None, False, "", 0)
+
+    def primary() -> object:
+        kind, text = take()
+        if (kind, text) == ("op", "("):
+            value = either()
+            assert take() == ("op", ")"), "unbalanced parenthesis in the condition"
+            return value
+        if kind == "text":
+            return text.replace("''", "'")
+        assert kind == "name", f"unexpected {text!r} in the condition"
+        if text == "cancelled()":
+            return cancelled
+        if text in ("true", "false", "null"):
+            return {"true": True, "false": False, "null": None}[text]
+        node: object = context
+        for part in text.split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+        return node
+
+    def unary() -> object:
+        if peek() == ("op", "!"):
+            take()
+            return not truthy(unary())
+        return primary()
+
+    def equality() -> object:
+        value = unary()
+        while peek() in (("op", "=="), ("op", "!=")):
+            _, operator = take()
+            same = _loosely_equal(value, unary())
+            value = same if operator == "==" else not same
+        return value
+
+    def both() -> object:
+        value = equality()
+        while peek() == ("op", "&&"):
+            take()
+            right = equality()
+            value = right if truthy(value) else value
+        return value
+
+    def either() -> object:
+        value = both()
+        while peek() == ("op", "||"):
+            take()
+            right = both()
+            value = value if truthy(value) else right
+        return value
+
+    result = either()
+    assert cursor == len(tokens), f"trailing tokens in the condition: {tokens[cursor:]}"
+    return truthy(result)
+
+
+def _comment(state: str, *, on_pull_request: bool = True) -> dict:
+    issue: dict[str, object] = {"number": 7, "state": state}
+    if on_pull_request:
+        issue["pull_request"] = {"url": "https://api.github.com/repos/o/r/pulls/7"}
+    return _event("issue_comment", issue=issue)
+
+
+class TestACommentOnAClosedPullRequestGatesNothing(unittest.TestCase):
+    """A closed pull request cannot merge, so its comments have nothing to re-evaluate (#1241).
+
+    The job ran anyway. With no verdicts and no attribution label it could only
+    fail — and an ``issue_comment`` run is attributed to the default branch's
+    head, so the red check landed on ``main``: six of them on one healthy commit
+    after Dependabot closed five superseded pull requests, each with a comment.
+
+    These *evaluate* the job's ``if:`` for each event shape. The assertions this
+    file had on that condition were ``assertIn`` on its text, which an added
+    clause in the wrong arm, or a negated one, passes unchanged.
+    """
+
+    def _runs(self, context: dict, *, job: str = "evidence", cancelled: bool = False) -> bool:
+        return bool(_evaluate(_workflow()["jobs"][job]["if"], context, cancelled=cancelled))
+
+    def test_the_evaluator_reproduces_the_coercion_this_file_was_written_about(self):
+        """`null != ''` is false on GitHub. An evaluator that says true proves nothing."""
+        context = _event("pull_request", pull_request={"number": 7})
+        self.assertFalse(_evaluate("${{ github.event.inputs.pr != '' }}", context))
+        self.assertTrue(_evaluate("${{ github.event.inputs.pr == '' }}", context))
+        self.assertTrue(_evaluate("${{ github.event.issue.pull_request }}", _comment("open")))
+        self.assertFalse(_evaluate("${{ !cancelled() && 'x' }}", context, cancelled=True))
+
+    def test_a_comment_on_an_open_pull_request_still_runs_the_gate(self):
+        self.assertTrue(
+            self._runs(_comment("open")), "a posted verdict would never complete the check"
+        )
+
+    def test_a_comment_on_a_closed_pull_request_does_not(self):
+        self.assertFalse(
+            self._runs(_comment("closed")),
+            "a comment on a closed pull request runs the gate, which can only fail, on main's head",
+        )
+
+    def test_a_comment_on_a_plain_issue_does_not(self):
+        for state in ("open", "closed"):
+            with self.subTest(state=state):
+                self.assertFalse(self._runs(_comment(state, on_pull_request=False)))
+
+    def test_pushes_and_dispatches_are_untouched(self):
+        self.assertTrue(self._runs(_event("pull_request", pull_request={"number": 7})))
+        self.assertTrue(self._runs(_event("workflow_dispatch", inputs={"pr": "7"})))
+        self.assertFalse(self._runs(_event("workflow_dispatch", inputs={"pr": ""})))
+
+    def test_a_cancelled_run_gates_nothing_either(self):
+        self.assertFalse(self._runs(_comment("open"), cancelled=True))
+
+    def test_the_assessment_job_never_runs_for_a_comment(self):
+        for state in ("open", "closed"):
+            with self.subTest(state=state):
+                self.assertFalse(self._runs(_comment(state), job="ship"))
+        self.assertTrue(self._runs(_event("pull_request", pull_request={"number": 7}), job="ship"))
+
+    def test_a_reopened_pull_request_is_re_evaluated_by_its_own_event(self):
+        """What makes skipping closed pull requests free: reopening one fires
+        ``pull_request`` with ``reopened``, which the default types include. A
+        ``types:`` list that drops it would leave a reopened pull request with
+        whatever check it had when it was closed."""
+        workflow = _workflow()
+        triggers = workflow.get("on") or workflow.get(True)
+        types = (triggers["pull_request"] or {}).get("types")
+        if types is not None:
+            self.assertIn("reopened", types)
+
+
 if __name__ == "__main__":  # pragma: no cover - manual entry point
     unittest.main()
