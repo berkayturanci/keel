@@ -31,10 +31,12 @@
 ## 2026-07-12 - Early returns and loop optimizations over `any()`
 **Learning:** Using sequential `any()` generator expressions forces iteration to spin up generators and iterate over data that may not even need evaluating if an earlier condition is met. By unrolling `any()` checks into explicit early return `if` and `for` loops, evaluations can be short-circuited dramatically faster (up to ~90x speedup in isolated hot path cases where a short-circuit occurs early).
 **Action:** When validating multiple cascading criteria, implement manual short-circuiting via sequential `if` and `for` loops with early returns rather than joining multiple generator expressions.
+**Read 2026-08-17 (below) before acting on this.** It sets the bar this entry lacks: the µs saved per real run, counted at the real call site — not a percentage on a synthetic loop.
 
 ## 2026-07-16 - Unrolling any() with pre-computation
 **Learning:** In Python, replacing an `any()` generator expression with a standard `for` loop and an early return avoids generator setup/teardown overhead. When dealing with repeated string operations (like `.lower()`) inside the loop, pre-computing the target string outside the loop further speeds up execution.
 **Action:** Always consider unrolling `any()` generators in hot paths, and hoist loop-invariant transformations to avoid redundant processing.
+**Read 2026-08-17 (below) before acting on this.** It sets the bar this entry lacks: the µs saved per real run, counted at the real call site — not a percentage on a synthetic loop.
 
 ## 2026-07-20 - Fast Substring Checks with explicit `or`
 **Learning:** When checking a string for the presence of a small, fixed set of substrings in Python hot paths, using a direct sequence of `in` checks linked by `or` (e.g., `"a" in s or "b" in s`) avoids generator setup overhead and is significantly faster than using an `any()` generator expression.
@@ -42,6 +44,7 @@
 ## 2026-07-21 - Unroll any() generator in intake.py
 **Learning:** In Python hot paths, unrolling chained `any()` generator expressions into explicit sequential `if` and `for` loops with early returns can bypass generator overhead and significantly improve performance by properly short-circuiting.
 **Action:** Unroll `any()` generator loops in hot paths to explicit loops.
+**Read 2026-08-17 (below) before acting on this.** It sets the bar this entry lacks: the µs saved per real run, counted at the real call site — not a percentage on a synthetic loop.
 
 ## 2026-07-30 - Fast list filtering check via length comparison
 **Learning:** In Python, when filtering a list using a list comprehension with a predicate, checking if elements were filtered using `any()` on the same predicate is redundant and slow. Comparing the lengths of the filtered and original lists (`len(filtered) < len(original)`) is significantly faster (approx ~2.8x speedup) as it avoids redundant predicate evaluation and generator overhead.
@@ -89,3 +92,14 @@ line is hot — a tight loop over thousands of items, called repeatedly. Do not 
 code that runs a handful of times per command, and especially not in
 `src/keel/evidence.py`, which decides whether a PR may merge: churn there needs to buy
 something. keel#789 proposed exactly that and was closed. See keel#791.
+
+**Closed for this reason so far.** Add a line here instead of writing a new entry, and
+search this list for the function before proposing an unroll — the same one-line change
+to `tdd.is_test_path` was opened twice, two days apart, and closed twice:
+
+- keel#789 — `src/keel/evidence.py`: 0.30 µs per evidence run (measured above).
+- keel#1214 and keel#1237 — `tdd.is_test_path`. Per call the unroll saves 108–195 ns
+  (32–45 %), so the percentage in the PR was honest. But the function is reached only
+  from `tdd.check_order`, once per `tdd-order` gate: counted on three merged branches
+  (keel#1206, keel#1220, keel#1228) it ran 5–19 times, so the saving is 0.5–2 µs per
+  run, beside a `git log` subprocess of ≈ 17 000 µs in the same gate.
