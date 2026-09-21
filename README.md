@@ -61,10 +61,11 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   workflow preferences in `policy_pack` data instead of packaged command prose.
 - **Security presets** — declarative `policy_pack.presets: ["bandit", "gitleaks", "semgrep", "trivy"]`
   automatically slot SAST, secret scanning, and vulnerability auditing into the pipeline.
-- **Opt-in `jury` gate** — runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent
-  reviewer on the diff when installed; a fail-soft no-op otherwise. Core resolves the mode from
-  the panel that actually ran: a cross-vendor gate needs ≥2 distinct vendors, so a short panel
-  downgrades to advisory instead of blocking on a jury that never convened.
+- **Opt-in `jury` gate** — add `jury` to your project's `gates:` list (off by default). Once
+  listed, it runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent reviewer on
+  the diff when the `jury` binary is installed, or is a fail-soft no-op otherwise. Core resolves the
+  mode from the panel that actually ran: a cross-vendor gate needs ≥2 distinct vendors, so a short
+  panel downgrades to advisory instead of blocking on a jury that never convened.
 - **…or the panel *is* the review** — set `knobs.team.review.by_tier."3": jury` and s7 dispatches
   ai-jury **once** instead of running host reviewers beside it. `keel review --from-jury
   <report.json>` turns each panelist's ballot into a head-pinned `keel.review-verdict.v1` with the
