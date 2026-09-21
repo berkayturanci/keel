@@ -94,6 +94,17 @@ jobs:
           echo "SOURCE_DATE_EPOCH=${epoch}" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=${epoch} ($(date -u -d "@${epoch}" +%FT%TZ))"
 
+      # PyPI's readme_renderer cannot resolve relative links or a relative <img
+      # src>, so the in-repo README's doc links 404 and the hero image breaks on
+      # the project page. Rewrite them to absolute GitHub URLs in the working tree
+      # only — never committed, so GitHub keeps rendering the relative README and
+      # tests/test_docs_links.py still resolves it on disk. This runs BEFORE the
+      # build so the rewrite reaches both the sdist and the wheel long description,
+      # and it is deterministic + idempotent, so the reproducible-build rebuild
+      # below reads the same bytes and the digests still match.
+      - name: Absolutize README links for the PyPI long description
+        run: python scripts/absolutize_readme.py README.md
+
       - name: Build package distributions
         run: python -m build --no-isolation --sdist --wheel --outdir dist/
 
