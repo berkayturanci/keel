@@ -446,6 +446,43 @@ class TestAnalyticsDocMatchesReality(unittest.TestCase):
             "the Analytics section's page count no longer matches the files",
         )
 
+    #: The token both sites shared until 2026-09-21. It belongs to a Cloudflare site
+    #: configured for `berkayturanci.github.io`, from when the pages lived there.
+    SHARED_UNTIL_2026_09 = "f9a978b9ccc64ff49460fbcee8f722ef"
+    TOKEN = re.compile(r"""data-cf-beacon='\{"token": "([0-9a-f]{32})"\}'""")
+
+    def _tokens(self) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for f in sorted(SITE.glob("*.html")):
+            text = f.read_text(encoding="utf-8")
+            if self.BEACON not in text:
+                continue
+            tokens = self.TOKEN.findall(text)
+            self.assertEqual(len(tokens), 1, f"{f.name} must carry exactly one beacon token")
+            found[f.name] = tokens[0]
+        return found
+
+    def test_every_page_reports_into_one_site_and_it_is_this_sites_own(self):
+        """A Cloudflare token accepts a beacon from any host, so a wrong one fails
+        silently: the endpoint answers 204 and the page views land in somebody else's
+        dashboard. Measured on 2026-09-21 — keel-ship.dev, ai-jury.dev and two github.io
+        project pages were all reporting into one site named after the old host. A
+        half-finished swap would split this site's numbers across two dashboards just as
+        quietly, so every page must agree, and none may still use the shared token."""
+        tokens = self._tokens()
+        self.assertTrue(tokens, "no page carries a beacon token at all")
+        self.assertEqual(len(set(tokens.values())), 1, f"pages disagree on the token: {tokens}")
+        for page, token in tokens.items():
+            with self.subTest(page=page):
+                self.assertNotEqual(
+                    token,
+                    self.SHARED_UNTIL_2026_09,
+                    "this page still reports into the dashboard the sibling project shared",
+                )
+
+    def test_the_analytics_section_does_not_claim_a_shared_token(self):
+        self.assertNotIn("share one beacon token", self._analytics_section())
+
 
 class TestIndexNow(unittest.TestCase):
     """The IndexNow key must agree in three places or submissions bounce.
