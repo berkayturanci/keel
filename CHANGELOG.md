@@ -7,6 +7,7 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Security
+- **`keel gc` cannot delete outside the repository through a symlinked `.keel/scratch`** (#1247). The shipped ignore entry `scratch/` matches directories only, so a committed `.keel/scratch` symlink is staged by `git add -A`; `keel gc --scratch` then followed it and recursively deleted the link's target. `clean_scratch` now refuses a symlinked scratch (reported as degraded, never aborting), unlinks a symlinked child instead of recursing, and `ensure_runtime_gitignore` will not write keel's ignore lines through a symlinked `.keel/.gitignore`. `tests/test_workspace_symlink_containment.py`.
 - **Inspection commands no longer execute a program from the checkout they inspect** (#1247). `keel doctor` — documented read-only — resolved the make gate's interpreter by running the project's `scripts/find_python.sh`, and the provider probe behind `keel doctor --providers`, `keel plan` and `keel swarm-plan` ran `<delegate_profiles.*.command> --version`. Both commands come from the inspected project's `.keel/project.yaml`, so pointing keel at a cloned repo or a fork's pull-request branch executed a program that repo shipped. Doctor now resolves the interpreter from `PY` or PATH `python3` and never runs the resolver; the probe refuses a `command` that is a relative path (a PATH name or an absolute path still probes). `tests/test_providerprobe_untrusted_command.py` and `tests/test_doctor.py` pin both.
 
 ### Changed

@@ -113,6 +113,10 @@ def ensure_runtime_gitignore(keel_directory: str | Path) -> bool:
     if not directory.is_dir():
         return False
     gitignore = directory / GITIGNORE_NAME
+    if gitignore.is_symlink():
+        # A committed `.keel/.gitignore` symlink would otherwise have keel's ignore lines
+        # written through it to the link's target, anywhere on disk (#1247).
+        return False
     if not gitignore.exists():
         gitignore.write_text(runtime_gitignore_body(), encoding="utf-8")
         return True
@@ -219,7 +223,9 @@ def scratch_dir(root: str | Path = ".", *, create: bool = True) -> Path:
 def scratch_entries(root: str | Path = ".") -> list[str]:
     """Sorted top-level names currently under ``.keel/scratch`` (``[]`` if none)."""
     scratch = keel_dir(root) / SCRATCH_DIRNAME
-    if not scratch.is_dir():
+    # A symlinked `.keel/scratch` points its contents somewhere else on disk; do not list (or,
+    # in `clean_scratch`, delete) through it (#1247).
+    if scratch.is_symlink() or not scratch.is_dir():
         return []
     return sorted(p.name for p in scratch.iterdir())
 
@@ -230,14 +236,21 @@ def clean_scratch(root: str | Path = ".") -> list[str]:
     Scratch is transient by definition, so this empties its contents while
     keeping the directory node intact. A no-op (``[]``) when scratch does not exist.
     """
-    entries = scratch_entries(root)
     scratch = keel_dir(root) / SCRATCH_DIRNAME
+    if scratch.is_symlink():
+        # Refuse rather than delete through the link's target (#1247). gc catches this and
+        # reports it as degraded instead of aborting.
+        raise OSError(f"{scratch} is a symlink; refusing to clean it")
+    entries = scratch_entries(root)
     if scratch.is_dir():
         for child in scratch.iterdir():
-            if child.is_dir():
-                shutil.rmtree(child)
-            else:
+            # A symlinked child is unlinked (the link, not its target); only a real directory
+            # is recursed. `shutil.rmtree` refuses a symlink, and `is_dir()` follows one, so
+            # the symlink test has to come first.
+            if child.is_symlink() or not child.is_dir():
                 child.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(child)
     return entries
 
 
