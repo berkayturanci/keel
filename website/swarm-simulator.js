@@ -379,7 +379,7 @@
         var cmd = "keel swarm-plan .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',') + " && keel swarm-run .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',');
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(cmd).then(function () {
-            copyBtn.textContent = "Copied! ✓";
+            copyBtn.innerHTML = 'Copied! <span aria-hidden="true">✓</span>';
             copyBtn.setAttribute("aria-label", "Copied to clipboard");
             announceCopied();
             clearTimeout(copyResetTimer);
