@@ -1,7 +1,7 @@
 /* ============================================================
    keel — Interactive In-Browser Swarm DAG Simulator
    Real-time conflict DAG partitioning, isolated worktrees,
-   multi-model delegation, AI Jury consensus, and landing funnel.
+   multi-model delegation, cross-vendor review, and landing funnel.
    Zero backend dependencies — runs 100% client-side.
    ============================================================ */
 

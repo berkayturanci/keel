@@ -66,7 +66,7 @@ window.KEEL = {
       cmd: "keel:swarm",
       one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
       detail:
-        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/swarm/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), unifies reviews under the AI Jury consensus panel, and executes dual-mode batch landing under the merge lock with self-healing conflict rollback.",
+        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/swarm/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — the cross-vendor AI Jury panel on tier-3 — and holds every branch behind a per-branch review-evidence check before dual-mode batch landing under the merge lock with self-healing conflict rollback.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
@@ -189,7 +189,7 @@ window.KEEL = {
     ["keel validate <cfg>", "validate a config (and its extensions) against the schema"],
     ["keel plan <cfg> [--live --json]", "render the backbone + the full structured command contract; --live runs the s0 consent preflight"],
     ["keel swarm-plan <cfg> --issues 12,15", "cluster backlog issues into disjoint execution waves and compute batch vs funnel landing plan"],
-    ["keel swarm-status <cfg>", "real-time multi-cluster execution snapshot, worker health, and DAG progress"],
+    ["keel swarm-status <cfg>", "multi-cluster status snapshot — each cluster's lead, difficulty band, and running/passed/failed state"],
     ["keel swarm-run <cfg> --issues 12,15", "orchestrate parallel workers in isolated worktrees with dynamic rebalancing"],
     ["keel swarm-land <cfg> --wave 1", "dual-mode batch landing under merge lock with self-healing conflict rollback"],
     ["keel-visual swarm", "live 2D DAG graph and 3D spatial worktree topology dashboard"],
@@ -258,7 +258,7 @@ window.KEEL = {
   faq: [
     ["Do projects ever fork the backbone?", "No — that's the whole point. The ordered step machine and its invariants live in keel-core, which is installed and pinned, never copied. Projects only ever touch Layer 2 (values in project.yaml) and Layer 3 (add-only extensions). Changing the backbone is a keel-core change."],
     ["What does a command actually read?", "Every command is project-neutral. It never hardcodes a branch, build/lint command, agent, glob, timezone or window — it references the knob by name and asks the keel CLI for the value, so the same /keel:ship behaves differently in each repo purely from that repo's .keel/project.yaml."],
-    ["What's the jury gate?", "An opt-in review gate that runs the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> multi-agent reviewer on the diff when it's installed, and is a fail-soft no-op otherwise. It snaps into the s7 review step."],
+    ["What's the jury gate?", "An opt-in review gate: add <code>jury</code> to your project's <code>gates:</code> list (off by default), and it runs the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> multi-agent reviewer on the diff when the <code>jury</code> binary is installed — a fail-soft no-op otherwise. It snaps into the s7 review step."],
     ["Who implements, reviews and fixes — and can I change it?", "<code>knobs.team</code> states the whole team as values: the implementer per issue role (with model and reasoning effort), one mandatory gate reviewer from a <i>different</i> vendor, the reviewer seats for each risk tier, and the seat that applies the findings in the s9 fix loop. <code>keel plan</code> / <code>keel ship --json</code> render it as one resolved <code>assignment</code>, so every host runs the same team, and <code>keel validate</code> refuses a policy keel cannot execute — an unknown provider, a reasoning effort a vendor has no spelling for, or a gate reviewer that is the implementer. <code>--team &lt;profile&gt;</code> and <code>--effort</code> pick a named bench for one run."],
     ["Can the jury panel be the review itself, not an extra gate?", "Yes — set a tier's seats to the string <code>jury</code> (<code>knobs.team.review.by_tier.\"3\": jury</code>) and s7 dispatches the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> panel <b>once</b> instead of running host readers beside it. <code>keel review --from-jury &lt;report.json&gt;</code> then turns the panel's report into the run's public evidence: one head-pinned review verdict per panelist ballot, carrying the vendor and model that produced it, plus the panel's consensus record — in one call, so everything is pinned to the same head SHA. The panel's <i>verified</i> findings are what the fix loop receives. Adopt it deliberately: on a panel tier no per-run flag can take the panel back off."],
     ["Can keel write the tests first?", "Yes. <code>knobs.implement_mode: tdd</code> (or <code>--tdd</code> for one run) splits s4 into two phases — a test-only commit carrying the issue's acceptance criteria, then the implementation — and s8 gains the pure, blocking <code>tdd-order</code> gate, which checks that commit order against the project's <code>test_groups</code> paths. So “tests first” is verified, not asserted."],
@@ -415,7 +415,7 @@ window.KEEL = {
         "<li><b>Adaptive Atomic Funnel</b>: Overlapping clusters trigger a self-healing git rebase onto the newly merged base branch, re-running gates before completing the merge. Conflicts trigger an immediate safe rollback (<code>git rebase --abort</code>).</li>" +
         "</ul>" +
         "<h3>4. Live 2D & 3D Spatial Dashboard</h3>" +
-        "<p><code>keel-visual swarm</code> renders real-time interactive DAG topological graphs and 3D spatial node networks in the terminal or browser, tracking worker progress, cluster state, and landing queues live.</p>",
+        "<p><code>keel-visual swarm</code> renders interactive DAG topological graphs and 3D spatial node networks in the terminal or browser, showing each cluster's running/passed/failed state and the landing queues live.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/swarm.md",
     },
     {

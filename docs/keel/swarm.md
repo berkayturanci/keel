@@ -201,14 +201,16 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
    slot, `--role`, and `--effort`/`--team` for the bench the cluster was staffed from — so
    the child reproduces the parent's resolution instead of quietly deriving a different
    team from config alone. `keel ship` accepts all five.
-3. **Dynamic Rebalancing**: If a worker modifies files outside its predicted scope that overlap with another
-   active cluster, the rebalancer detects the drift, halts conflicting execution in the current wave,
-   and reschedules the cluster to the next wave tier.
+3. **Rebalancing on failure**: when a cluster's issue fails, `rebalance_swarm_plan` drops the
+   clusters carrying that issue from the remaining waves, so a failed prerequisite does not drag
+   later waves down; the independent, disjoint clusters proceed uninterrupted. (There is no runtime
+   scope audit — clusters are kept off each other's files by plan-time overlap partitioning and
+   per-worktree isolation, not by watching what a worker writes.)
 4. **Cleanup**: On completion or error, worktrees are pruned cleanly without leaving orphaned locks.
 
 ### Live Status Dashboard (`keel swarm-status`)
-Inspect active workers, their lead and difficulty band, current execution steps, and cluster
-health in real time:
+Inspect the swarm's clusters — each one's lead, difficulty band, and current status
+(`running` / `passed` / `failed`) — from the persisted run state:
 
 ```bash
 keel swarm-status .keel/project.yaml --root .
@@ -273,8 +275,8 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
   issue pills, role badges, and conflict connection lines.
 - **3D Multi-Wave Spatial Topology**: WebGL/HTML5 Canvas renderer projecting stacked wave layers in 3D
   space with interactive orbit rotation, zooming, and depth slicing.
-- **Live Worker Matrix**: Real-time worker execution cards with active step indicators, role icons,
-  and log summaries.
+- **Live Worker Matrix**: Worker cards showing each cluster's `running` / `passed` / `failed` state,
+  role icons, and log summaries.
 
 ---
 
@@ -317,7 +319,7 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 
 | Risk / Failure Scenario | Detection Mechanism | Fail-Soft Mitigation |
 | :--- | :--- | :--- |
-| **Scope Divergence during Implementation** | `keel swarm-run` post-step file audit | Dynamic rebalancing: cluster is halted in current wave and re-queued to next wave. |
+| **A cluster changes files another cluster also touches** | Plan-time static file-overlap partitioning (disjoint trees only share a wave) + isolated per-cluster worktrees | Overlapping clusters are sequenced into later waves and funnel-landed (rebase, abort-on-conflict); a failed cluster is dropped from the remaining waves. |
 | **Rebase Conflict during Funnel Landing** | `git rebase` non-zero exit code | Automatic `git rebase --abort`; `main` remains untouched; worker marked `failed_rebase`. |
 | **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock with timeout retry; guarantees single-writer landing. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |

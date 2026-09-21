@@ -221,7 +221,7 @@
           <div class="invs">
             <div class="inv"><b>One backbone, every agent</b><span>Install once; /keel:&lt;command&gt; runs as native Claude commands and as one shared skill set every other agent reads (Codex, Antigravity, Gemini).</span></div>
             <div class="inv"><b>Project Lego + policy packs</b><span>Snap gates and steps into named hooks (guard, tester, pre-merge, …); keep labels, path policy, health sources, and workflow preferences in policy_pack data — not packaged command prose.</span></div>
-            <div class="inv"><b>Opt-in jury gate</b><span>Runs the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> multi-agent reviewer on the diff when installed; a fail-soft no-op otherwise.</span></div>
+            <div class="inv"><b>Opt-in jury gate</b><span>Add <code>jury</code> to your <code>gates:</code> (off by default); then it runs the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> multi-agent reviewer on the diff when the binary is installed, else a fail-soft no-op.</span></div>
             <div class="inv"><b>Safe merges by construction</b><span>A core-owned <code style="font-family:var(--font-mono)">keel merge</code> path — resource claim, window re-check, live CI rollup, and PR evidence verification before the merge — plus the timezone-aware night no-merge window, mkdir merge lock, risk-tier → reviewer count, hotfix bypass with an audit line, and vendor+model attribution.</span></div>
           </div>
         </section>
@@ -301,7 +301,7 @@
             </div>
             <div class="inv">
               <b>Real-Time 2D DAG &amp; 3D Spatial Visualizer</b>
-              <span>Run <code style="font-family:var(--font-mono)">keel-visual swarm</code> in terminal or browser to inspect the live dependency DAG graph, active worktree clusters, worker health, and landing queues in real time.</span>
+              <span>Run <code style="font-family:var(--font-mono)">keel-visual swarm</code> in terminal or browser to inspect the live dependency DAG graph, active worktree clusters, each cluster's running/passed/failed state, and landing queues.</span>
             </div>
           </div>
 
@@ -309,7 +309,7 @@
           <div class="cli-grid">
             <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; --issues 12,15</code><span>Compute the dependency DAG, partition into parallel execution waves, and determine batch vs funnel landing strategy. <a href="docs.html#swarm">Swarm docs →</a></span></div>
             <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span>Execute parallel cluster workers in isolated worktrees, tracking each worker's status and rebalancing the plan when one fails.</span></div>
-            <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect live cluster status, active worker progress, and DAG wave execution state.</span></div>
+            <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect each cluster's running/passed/failed status, its lead and difficulty band, and its wave.</span></div>
             <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --wave 1</code><span>Land completed cluster batches under the merge lock with self-healing conflict rollback.</span></div>
             <div class="cli-row"><code>keel-visual swarm</code><span>Open the real-time interactive 2D DAG and 3D spatial node topology dashboard.</span></div>
           </div>
