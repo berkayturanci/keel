@@ -12050,6 +12050,29 @@ class TestInit(unittest.TestCase):
             vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
             self.assertEqual(vrc, 0)
 
+    def test_ask_returns_the_default_when_stdin_is_closed(self):
+        # A --wizard run with no interactive input (piped, closed stdin, CI) used to crash
+        # with an unhandled EOFError; _ask now takes the default, as an empty answer would.
+        from unittest.mock import patch
+
+        with patch("builtins.input", side_effect=EOFError):
+            self.assertEqual(cli._ask("Base branch", "develop"), "develop")
+
+    def test_init_scaffolds_the_detected_base_branch(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
+            git = Path(d) / ".git"
+            git.mkdir()
+            (git / "HEAD").write_text("ref: refs/heads/develop\n", encoding="utf-8")
+            rc, _, _ = run(["init", "--root", d])
+            self.assertEqual(rc, 0)
+            import yaml
+
+            text = (Path(d) / ".keel" / "project.yaml").read_text(encoding="utf-8")
+            self.assertEqual(yaml.safe_load(text)["base_branch"], "develop")
+
     def test_refuses_existing_without_force(self):
         import tempfile
 

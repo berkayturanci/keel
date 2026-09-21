@@ -288,6 +288,7 @@ def wizard(
     *,
     repo: str = "my-repo",
     owner: str | None = None,
+    base_default: str = "main",
     catalog: wizard_core.Catalog | None = None,
     notify: Callable[[str], None] | None = None,
 ) -> str:
@@ -309,7 +310,7 @@ def wizard(
     """
     t = _TEMPLATES.get(stack, _TEMPLATES["generic"])
     report = _ignore if notify is None else notify
-    base = ask("Base branch", "main")
+    base = ask("Base branch", base_default)
     tz, win = merge_window_answers(ask, report)
     mode = ask("Consent mode (explicit, standing, agent)", "explicit") or "explicit"
     build = ask("Build/test command", t["build"])

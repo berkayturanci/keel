@@ -233,6 +233,19 @@ class TestWizard(unittest.TestCase):
         with self.assertRaises(ValueError):
             scaffold.wizard("python", _answering({"Consent mode": "maybe"}), repo="demo")
 
+    def test_base_branch_defaults_to_the_detected_branch(self):
+        # An operator who presses Enter at "Base branch" gets the branch the caller detected,
+        # not a hardcoded "main" — so a develop/master checkout scaffolds its own base (#1247).
+        import yaml
+
+        text = scaffold.wizard(
+            "generic",
+            _answering({"Configure a merge window": "n"}),
+            repo="demo",
+            base_default="develop",
+        )
+        self.assertEqual(cfg.parse_config(yaml.safe_load(text)).base_branch, "develop")
+
 
 class TestWizardMergeWindowPair(unittest.TestCase):
     """`timezone` + `merge_window` are one all-or-nothing decision in the wizard (#1082).

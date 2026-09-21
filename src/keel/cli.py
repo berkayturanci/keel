@@ -6164,8 +6164,14 @@ def _cmd_project_commands(args: argparse.Namespace) -> int:
     return 0
 
 
-def _ask(prompt: str, default: str) -> str:  # pragma: no cover - interactive I/O
-    raw = input(f"{prompt} [{default}]: " if default else f"{prompt}: ").strip()
+def _ask(prompt: str, default: str) -> str:
+    try:
+        raw = input(f"{prompt} [{default}]: " if default else f"{prompt}: ").strip()
+    except EOFError:
+        # No interactive input (stdin closed/piped, or a CI runner): take the default, exactly
+        # as an empty answer would. A `--wizard` run with no TTY then produces the all-defaults
+        # config instead of crashing with an unhandled EOFError (#1247).
+        return default
     return raw or default
 
 
@@ -6211,11 +6217,19 @@ def _cmd_init(args: argparse.Namespace) -> int:
             stack = scaffold.detect_stack(root)
             print(f"keel init wizard — detected stack: {stack} (Enter accepts each default)")
             text = scaffold.wizard(
-                stack, _ask, repo=repo, owner=owner, catalog=_wizard_catalog(), notify=_warn
+                stack,
+                _ask,
+                repo=repo,
+                owner=owner,
+                base_default=scaffold.detect_base_branch(root),
+                catalog=_wizard_catalog(),
+                notify=_warn,
             )
         else:
             stack = scaffold.detect_stack(root)
-            text = scaffold.default_config(stack, repo=repo, owner=owner)
+            text = scaffold.default_config(
+                stack, repo=repo, owner=owner, base_branch=scaffold.detect_base_branch(root)
+            )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -6248,15 +6262,22 @@ def _derive_owner_repo(root: Path) -> tuple[str | None, str]:
 def _render_scaffolded_config(root: Path, *, wizard: bool) -> tuple[str, str]:
     stack = scaffold.detect_stack(root)
     owner, repo = _derive_owner_repo(root)
+    base_branch = scaffold.detect_base_branch(root)
     if wizard:
         print(f"keel setup wizard — detected stack: {stack} (Enter accepts each default)")
         return (
             scaffold.wizard(
-                stack, _ask, repo=repo, owner=owner, catalog=_wizard_catalog(), notify=_warn
+                stack,
+                _ask,
+                repo=repo,
+                owner=owner,
+                base_default=base_branch,
+                catalog=_wizard_catalog(),
+                notify=_warn,
             ),
             stack,
         )
-    return scaffold.default_config(stack, repo=repo, owner=owner), stack
+    return scaffold.default_config(stack, repo=repo, owner=owner, base_branch=base_branch), stack
 
 
 def _report_install(surface: str, installed: list[str], skipped: list[str]) -> None:
