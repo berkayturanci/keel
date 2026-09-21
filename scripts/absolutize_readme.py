@@ -42,9 +42,7 @@ _MD_IMAGE = re.compile(r"!\[([^\]]*)\]\((?!https?://)([^)]+)\)")
 # where target is not absolute, a same-page #anchor, or a mailto:. The text may be
 # plain OR a nested image — the badge-in-link pattern `[![alt](badge)](LICENSE)` —
 # so the alternation keeps the whole label intact while only the outer target moves.
-_MD_LINK = re.compile(
-    r"(?<!!)\[(!\[[^\]]*\]\([^)]*\)|[^\]]*)\]\((?!https?://|#|mailto:)([^)]+)\)"
-)
+_MD_LINK = re.compile(r"(?<!!)\[(!\[[^\]]*\]\([^)]*\)|[^\]]*)\]\((?!https?://|#|mailto:)([^)]+)\)")
 # HTML src="…" / srcset="…" with a relative value (the hero <picture>/<img>).
 _HTML_SRC = re.compile(r'\b(src|srcset)="(?!https?://)([^"]+)"')
 
@@ -68,9 +66,7 @@ def absolutize(text: str) -> str:
             continue
         # Images first, so a relative `![](…)` is not also seen as a link.
         line = _MD_IMAGE.sub(lambda m: f"![{m.group(1)}]({_RAW}{m.group(2)})", line)
-        line = _MD_LINK.sub(
-            lambda m: f"[{m.group(1)}]({_link_host(m.group(2))}{m.group(2)})", line
-        )
+        line = _MD_LINK.sub(lambda m: f"[{m.group(1)}]({_link_host(m.group(2))}{m.group(2)})", line)
         line = _HTML_SRC.sub(lambda m: f'{m.group(1)}="{_RAW}{m.group(2)}"', line)
         out.append(line)
     return "".join(out)

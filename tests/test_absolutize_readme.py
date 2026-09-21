@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -89,10 +90,7 @@ class TransformProperties(unittest.TestCase):
             self.assertEqual(absolutize(src), src, f"fence {fence!r} not respected")
 
     def test_it_is_idempotent(self):
-        src = (
-            '<img src="docs/assets/hero.svg">\n'
-            "[a](docs/a.md) [b](#anchor) [c](https://x.com)\n"
-        )
+        src = '<img src="docs/assets/hero.svg">\n[a](docs/a.md) [b](#anchor) [c](https://x.com)\n'
         once = absolutize(src)
         self.assertEqual(absolutize(once), once)
 
@@ -146,6 +144,20 @@ class PublishWorkflowWiring(unittest.TestCase):
             "absolutize_readme.py must run before the dist build so the rewritten "
             "README reaches the sdist and wheel long-description",
         )
+
+
+class MainEntrypoint(unittest.TestCase):
+    def test_main_rewrites_the_named_file_in_place(self):
+        # Exercises the file read/write wrapper `publish.yml` actually calls.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "README.md"
+            path.write_text('[x](docs/y.md)\n<img src="docs/z.svg">\n', encoding="utf-8")
+            rc = absolutize_readme.main(["absolutize_readme.py", str(path)])
+            self.assertEqual(rc, 0)
+            self.assertEqual(
+                path.read_text(encoding="utf-8"),
+                f'[x]({_BLOB}docs/y.md)\n<img src="{_RAW}docs/z.svg">\n',
+            )
 
 
 if __name__ == "__main__":
