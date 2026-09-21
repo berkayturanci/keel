@@ -15753,12 +15753,14 @@ class TestCoveredHeadsWalk(unittest.TestCase):
             _write_config_with_ledger("'true'", extra_policy_pack_lines=lines)
         )
 
-    def _walk(self, history, *, head="TIP", sink=True):
+    def _walk(self, history, *, head="TIP", sink=True, head_repo="o/r"):
         def facts(owner_repo, sha, *, cwd):
             return history.get(sha)
 
         with patch.object(cli, "_commit_facts", side_effect=facts):
-            return cli._covered_heads(self._config(sink=sink), "o/r", 7, head, cwd=".")
+            return cli._covered_heads(
+                self._config(sink=sink), "o/r", 7, head, cwd=".", head_repo=head_repo
+            )
 
     def _capture(self, sha, parent, path=".keel/learning/a.md"):
         return {
@@ -15818,7 +15820,9 @@ class TestCoveredHeadsWalk(unittest.TestCase):
         self.assertEqual(facts["statuses"], ["renamed"])
         # And the walk refuses it, end to end through the reader.
         with patch.object(cli, "_gh_json", return_value=payload):
-            self.assertEqual(cli._covered_heads(self._config(), "o/r", 7, "TIP", cwd="."), ())
+            self.assertEqual(
+                cli._covered_heads(self._config(), "o/r", 7, "TIP", cwd=".", head_repo="o/r"), ()
+            )
 
     def test_an_unreadable_or_malformed_commit_reads_as_nothing_usable(self):
         # Unreadable is `None`, and a shape the API did not document yields `None` fields
@@ -15888,6 +15892,19 @@ class TestCoveredHeadsWalk(unittest.TestCase):
         # become a way past a pin.
         history = {"TIP": self._capture("TIP", "REVIEWED")}
         self.assertEqual(self._walk(history, sink=False), ())
+
+    def test_a_fork_head_is_refused_the_exemption(self):
+        # The same capture-commit history that covers a reviewed head in the base repo
+        # (test_one_capture_commit_covers_the_head_it_was_built_on) must cover nothing when
+        # the head lives in a fork: only keel's own capture-land, pushing to the base repo,
+        # is the mechanism this exemption serves, and a fork author owns their head branch,
+        # so an unreviewed capture commit there could otherwise ride a pin onto it (#1247).
+        history = {"TIP": self._capture("TIP", "REVIEWED"), "REVIEWED": self._code("REVIEWED", "B")}
+        self.assertEqual(self._walk(history, head_repo="attacker/r"), ())
+        # A deleted-fork PR (no head repo at all) is refused for the same reason.
+        self.assertEqual(self._walk(history, head_repo=None), ())
+        # And the base repo itself still walks, so the guard did not break the mechanism.
+        self.assertEqual(self._walk(history, head_repo="o/r"), ("REVIEWED",))
 
     def test_no_head_covers_nothing(self):
         self.assertEqual(self._walk({}, head=None), ())

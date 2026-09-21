@@ -5514,6 +5514,7 @@ def _covered_heads(
     head_sha: str | None,
     *,
     cwd: str,
+    head_repo: str | None,
 ) -> tuple[str, ...]:
     """Heads that ``head_sha`` answers for because only capture commits separate them.
 
@@ -5530,7 +5531,17 @@ def _covered_heads(
     Empty unless this project lands learnings into the repository at all. The exemption
     exists for that mechanism; a project with no in-repo sink has no capture commits to
     exempt, and granting it anyway would turn a marker and a path into a way past a pin.
+
+    Empty, too, unless the head lives in the base repository (``head_repo == owner_repo``).
+    The exemption is for keel's own in-repo capture-land, and that only pushes the capture
+    commit onto a branch in the base repo (`_land_learning_attempt` pushes to the configured
+    remote). A pull request opened from a fork owns its head branch, so its author could push
+    ``H = <reviewed P> + a commit carrying the capture marker over a sink-path file`` and ride
+    P's verdicts onto a head no reviewer saw. Confining the walk to the base repo means only a
+    pusher already trusted to merge could have added the covering commit (#1247).
     """
+    if head_repo != owner_repo:
+        return ()
     if not head_sha or not capture.learning_sink_in_worktree(config):
         return ()
     sink = capture.land_sink_root(config, pr_number=pr_number, base_branch=config.base_branch or "")
@@ -5602,6 +5613,14 @@ def _load_evidence_artifacts(
         head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
         head_sha = head.get("sha") if isinstance(head.get("sha"), str) else None
         head_ref = head.get("ref") if isinstance(head.get("ref"), str) else None
+        # The repository the head branch lives in ("owner/repo"), null for a deleted fork.
+        # A fork's differs from the base, which bars it from the capture-commit exemption.
+        head_repo_obj = head.get("repo") if isinstance(head.get("repo"), dict) else {}
+        head_repo = (
+            head_repo_obj.get("full_name")
+            if isinstance(head_repo_obj.get("full_name"), str)
+            else None
+        )
         pr_labels = _label_names(pr.get("labels"))
         changed_files = _pr_changed_files(owner_repo, args.pr, cwd=args.root)
         patches = _pr_patches(owner_repo, args.pr, cwd=args.root)
@@ -5617,7 +5636,9 @@ def _load_evidence_artifacts(
             issue_comments = _gh_json_list(
                 ["repos", owner_repo, "issues", str(issue_number), "comments"], cwd=args.root
             )
-        covered_heads = _covered_heads(config, owner_repo, args.pr, head_sha, cwd=args.root)
+        covered_heads = _covered_heads(
+            config, owner_repo, args.pr, head_sha, cwd=args.root, head_repo=head_repo
+        )
     elif issue_number is None:
         issue_number = _linked_issue_from_body(pr_body)
     return {
