@@ -2982,8 +2982,8 @@ wave tier partitioning, **difficulty scoring and per-cluster staffing** across a
 issues without mutating git or spawning workers.
 
 The issues are named by flag, not as positionals: `--issues` takes one comma-separated list and
-`--issue` is repeatable. Planning is pure — it reads no repository state — so `swarm-plan` has no
-`--root`.
+`--issue` is repeatable. Planning is pure — it reads no repository state — so `swarm-plan` accepts `--root` only for
+interface parity with the other swarm commands and does not use it.
 
 ```bash
 keel swarm-plan .keel/project.yaml --issues 714,715,716,717 --tree
@@ -2991,7 +2991,7 @@ keel swarm-plan .keel/project.yaml --issue 714 --issue 715 --json
 keel swarm-plan .keel/project.yaml --issues 714,715 --team night-shift --effort high --json
 ```
 
-Use `--tree` to render an interactive ASCII DAG execution diagram directly in your terminal.
+Use `--tree` to print the plan as an ASCII tree in your terminal.
 
 Every cluster in `--json` carries two extra records (#1017):
 
@@ -3054,8 +3054,8 @@ keel swarm-land .keel/project.yaml --root . --wave 1
 keel swarm-land .keel/project.yaml --root . --wave 1 --live
 ```
 
-The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the wave's diff
-map and picks batch or funnel, so there is no `--mode` flag to get wrong. `--wave` selects the
+The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's
+predicted scopes for the wave and picks batch or funnel, so there is no `--mode` flag to get wrong. `--wave` selects the
 wave (default `1`); without `--live` the command reports what it would land.
 
 - **Direct Batch Mode**: Orthogonal disjoint diff trees are merged one after another with
@@ -3084,8 +3084,8 @@ wave (default `1`); without `--live` the command reports what it would land.
   held cluster exits non-zero, so automation cannot read "refused to land
   unreviewed code" as success. The gate also runs in **dry runs** — the checks
   are read-only — so a preview reports `would hold: <reason>` per cluster
-  instead of promising a landing that a live run would refuse; a dry run still
-  exits 0, because predicting correctly is not a failure. The explicit opt-out is `knobs.swarm_review_evidence:
+  instead of promising a landing that a live run would refuse. A dry run that
+  would hold any cluster exits non-zero, so a preview cannot be read as all-clear. The explicit opt-out is `knobs.swarm_review_evidence:
   false`, which `swarm-land` announces loudly — the exception lives in config, never in a
   driver's judgement call.
 

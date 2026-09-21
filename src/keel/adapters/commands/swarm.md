@@ -131,7 +131,7 @@ When an execution wave completes, land all passing clusters onto `main`:
 keel swarm-land .keel/project.yaml --root . --wave <n> --live
 ```
 
-- The landing mode is **derived from the wave's diff map**, not passed on the command line.
+- The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
 - **Orthogonal Batch Landing**: Disjoint diff trees are merged into main with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
 - **Adaptive Funnel Landing**: If overlapping file trees exist, each cluster is rebased onto the updated main and then merged; an unresolvable conflict aborts the rebase (fail-soft) and marks the cluster failed.
 

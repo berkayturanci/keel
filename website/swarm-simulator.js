@@ -32,7 +32,7 @@
     },
     conflict: {
       name: "Adjacent Conflict Self-Healing",
-      description: "2 workers touching overlapping routes healed automatically by AST-aware rebase funnel.",
+      description: "2 workers touching overlapping routes, healed by the marker-based adjacent-conflict resolver in the rebase funnel.",
       issues: [
         { id: 760, title: "OAuth 2.0 PKCE Auth Provider", files: ["auth/routes.py"], model: "claude-opus-5", vendor: "Anthropic", wave: 1 },
         { id: 761, title: "Passkey & WebAuthn Handler", files: ["auth/routes.py"], model: "gemini-3-pro", vendor: "Google", wave: 1, hasConflict: true },

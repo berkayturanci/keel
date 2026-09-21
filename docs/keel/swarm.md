@@ -150,8 +150,8 @@ knobs:
 ```
 
 ### Scope Prediction Heuristics
-- **Explicit Labels & Roles**: Issues with `role:docs` or `role:frontend` map to deterministic globs
-  (e.g. `docs/**`, `website/**`).
+- **Explicit Labels & Roles**: A recognised role maps to a deterministic glob — `docs` to
+  `docs/*`, `website` to `website/*`.
 - **Title / Body Keyword Parsing**: Mentions of files (`src/keel/*.py`, `tests/test_*.py`) or modules
   automatically expand the predicted scope list.
 - **Disjointness Matrix**: If two issues touch non-overlapping directory trees or orthogonal subsystems,
@@ -159,28 +159,25 @@ knobs:
 - **Topological Wave Partitioning**: Disjoint clusters are scheduled in Wave 1. Dependent or conflicting
   clusters are placed in subsequent waves (Wave 2, Wave 3...).
 
-### ASCII DAG Tree Visualizer
-The `--tree` flag renders a full terminal diagram:
+### ASCII plan tree
+The `--tree` flag prints the plan as a terminal tree:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                   KEEL SWARM EXECUTION PLAN                 │
-│                 Swarm ID: swarm-2026-08-15                  │
-└─────────────────────────────────────────────────────────────┘
+╭──────────────────────────────────────────────────────────────╮
+│ 🐝 Keel Swarm Plan — swarm-20260815-091500                   │
+│ Issues: 3   │ Waves: 2   │ Direct Landing Waves: 1           │
+╰──────────────────────────────────────────────────────────────╯
 
-  WAVE 1 [Direct Orthogonal Batch Landing]
-  ├── CLUSTER: cluster-1 [Role: docs]
-  │   ├── Issue #714: Author comprehensive architecture proposal
-  │   └── Scopes: docs/proposals/keel-swarm.md, docs/keel/comparison.md
-  └── CLUSTER: cluster-2 [Role: core]
-      ├── Issue #715: Implement static dependency analysis
-      └── Scopes: src/keel/swarm.py, tests/test_swarm.py
+⚡ Wave 1 [batch] — Direct Batch Landing
+├── 📦 Cluster cluster-1 (#714) [docs]
+│   └── Scope: docs/proposals/keel-swarm.md, docs/keel/comparison.md
+└── 📦 Cluster cluster-2 (#715) [core]
+    └── Scope: src/keel/swarm.py, tests/test_swarm.py
 
-  WAVE 2 [Adaptive Sequential Funnel]
-  └── CLUSTER: cluster-3 [Role: visual]
-      ├── Issue #721: Enhance keel-visual with 2D DAG & 3D topology
-      ├── Dependencies: #715
-      └── Scopes: keel-visual/src/**, keel-visual/tests/**
+⏳ Wave 2 [funnel] — Sequential Funnel
+└── 📦 Cluster cluster-3 (#721) [visual]
+    ├── Scope: keel-visual/src/..., keel-visual/tests/...
+    └── ⛓️ Depends on: #715
 ```
 
 ---
@@ -195,7 +192,7 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 ```
 
 ### Worktree Lifecycle & Isolation
-1. **Creation**: Dedicated worktrees are branched from `origin/main` onto
+1. **Creation**: Dedicated worktrees are branched from the local `main` onto
    `swarm/<swarm_id>/<cluster_id>`.
 2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
    named, to execute steps `s0` through `s9`. The lead appends the cluster's team to every
@@ -232,7 +229,7 @@ keel swarm-land .keel/project.yaml --root . --wave 1 --live
 
 ### Landing Modes:
 1. **Direct Orthogonal Batch Landing (`batch`)**:
-   - Activated when all clusters in the wave have verified disjoint diff trees.
+   - Activated when the plan's predicted scopes for the wave's clusters are disjoint.
    - Each cluster branch is merged into `main` with `git merge --no-ff`, one after another under
      the atomic `merge_lock`.
    - No rebase is needed because the trees do not overlap.
@@ -329,8 +326,8 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | :--- | :--- | :--- |
 | **A cluster changes files another cluster also touches** | Plan-time static file-overlap partitioning (disjoint trees only share a wave) + isolated per-cluster worktrees | Overlapping clusters are sequenced into later waves and funnel-landed (rebase, abort-on-conflict); a failed cluster is dropped from the remaining waves. |
 | **Rebase Conflict during Funnel Landing** | `git rebase` non-zero exit code | Automatic `git rebase --abort`; `main` remains untouched; worker marked `failed` (`details: rebase conflict: …`). |
-| **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock with timeout retry; guarantees single-writer landing. |
+| **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock; a second writer raises `LockError` rather than retrying, so landing is single-writer by refusal. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |
-| **Stale State Discovery** | SHA-256 fingerprint validation | Fallback to reconstructed safe plan; corrupt JSON files fail soft to empty state. |
+| **Missing or corrupt run state** | `load_swarm_state` JSON/shape errors | Fails soft to no state rather than raising; `swarm-land` rebuilds the plan from `--issues`, so a lost state file costs the board, not the landing. |
 | **A cluster scored lighter than it turns out to be** | The lead's own progress against the plan | The lead reports through its worker record and the CTO re-plans; a lead never re-staffs itself, so the run's team stays the one the plan published. |
 | **`--team` names a bench that is not configured** | `assignment.warnings` at plan time | The run falls back to the configured policy and says so; the name is never silently ignored. |

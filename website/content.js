@@ -66,7 +66,7 @@ window.KEEL = {
       cmd: "keel:swarm",
       one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
       detail:
-        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before dual-mode batch landing under the merge lock with self-healing conflict rollback.",
+        "Clusters backlog issues into disjoint execution waves based on static file-overlap of predicted scopes. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before dual-mode batch landing under the merge lock with self-healing conflict rollback.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
@@ -398,7 +398,7 @@ window.KEEL = {
       body:
         "<p><b>Keel Swarm</b> is Keel's high-concurrency multi-agent orchestration subsystem. While <code>/keel:ship</code> drives a single issue linearly, <code>/keel:swarm</code> clusters a list or backlog of issues into disjoint execution waves and executes them across isolated git worktrees in parallel.</p>" +
         "<h3>1. Static Dependency DAG & Wave Partitioning</h3>" +
-        "<p>Swarm computes file-overlap conflict graphs and explicit issue dependencies (<code>blocks #N</code> / <code>depends on #N</code>) without executing code. Orthogonal clusters are scheduled in parallel in <b>Wave 1</b>, while dependent or overlapping clusters are sequenced into subsequent waves (<code>Wave 2</code>, <code>Wave 3</code>).</p>" +
+        "<p>Swarm computes file-overlap conflict graphs from each issue's predicted scope, without executing code; a cluster's dependencies are derived from that overlap. Orthogonal clusters are scheduled in parallel in <b>Wave 1</b>, while dependent or overlapping clusters are sequenced into subsequent waves (<code>Wave 2</code>, <code>Wave 3</code>).</p>" +
         "<h3>2. Cross-Model Routing & Per-Cluster Review</h3>" +
         "<p>Different clusters can be assigned to different models and agent vendors concurrently via <code>knobs.team.implement.by_role</code> and <code>knobs.delegate_profiles</code>:</p>" +
         "<ul>" +
