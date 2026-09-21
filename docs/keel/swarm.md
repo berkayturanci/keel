@@ -283,11 +283,12 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 Swarm does not run a jury of its own. Review and learning happen inside each cluster's own
 `keel ship` run, and swarm gates landing on the result:
 
-- **Per-cluster review**: each cluster runs the project's configured review. When a cluster is
-  tier-3 and the project sets `knobs.team.review.by_tier."3": jury`, that review is ai-jury's
-  cross-vendor panel; otherwise it is the host reviewers. Before a branch may land, swarm applies a
-  **review-evidence check** against its head-pinned `keel.review-verdict.v1` records — the same
-  evidence gate a single `keel ship` uses. It is a per-branch gate, not a swarm-wide vote.
+- **Per-cluster review**: each cluster runs the project's configured review. When the project hands
+  that cluster's tier to the panel (`knobs.team.review.by_tier."<n>": jury`, typically tier-3), the
+  review is ai-jury's cross-vendor panel; otherwise it is the host reviewers (plus the `jury` gate,
+  if the project lists one in `gates:`). Before a branch may land, swarm applies a **review-evidence
+  check** against its head-pinned `keel.review-verdict.v1` records — the same evidence gate a single
+  `keel ship` uses. It is a per-branch gate, not a swarm-wide vote.
 - **Compound learning**: each `keel ship` records a `compound-learning:` marker on its run ledger
   and PR (`pr=<N> status=<applied|deferred|skipped:reason>`), so the lesson rides with the merge.
   Swarm surfaces those per-cluster markers in its recap; it does not synthesize a shared knowledge

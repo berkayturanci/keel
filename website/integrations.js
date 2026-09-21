@@ -226,7 +226,7 @@
       name: "Multi-Vendor AI Jury",
       category: "skills",
       badge: "Cross-Vendor Review",
-      desc: "Cross-vendor review panel (Anthropic + OpenAI + Google); keel can dispatch it as the tier-3 review and gate the merge on its pinned ballots.",
+      desc: "Cross-vendor review panel (e.g. Anthropic + OpenAI + Google); keel can dispatch it as the tier-3 review and gate the merge on its pinned ballots.",
       cmd: "keel ship .keel/project.yaml --jury",
       logo: "logos/jury.svg"
     },
