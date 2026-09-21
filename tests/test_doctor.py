@@ -765,46 +765,53 @@ class TestDoctorPythonToolchain(unittest.TestCase):
         self.assertEqual(facts["version"], "3.12.4")
         self.assertEqual(calls[0]["argv"][0], "/opt/py312/bin/python")
 
-    def test_an_empty_py_is_not_an_override(self):
-        fake_run, calls = _fake_run(_ok("/opt/py313/bin/python\n"), PROBE_OK)
+    def test_an_exported_py_wins_over_the_resolver_even_when_present(self):
+        fake_run, calls = _fake_run(PROBE_OK)
         with tempfile.TemporaryDirectory() as d:
             _write_resolver(d)
             facts = cli._doctor_python_toolchain(
-                d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={"PY": "  "}
+                d,
+                _config("make test"),
+                _run=fake_run,
+                _which=lambda _: None,
+                _env={"PY": " /opt/py312/bin/python "},
             )
-        self.assertEqual(facts["source"], "scripts/find_python.sh")
-        self.assertEqual(facts["interpreter"], "/opt/py313/bin/python")
+        self.assertEqual(facts["source"], "PY (environment)")
+        self.assertEqual(facts["interpreter"], "/opt/py312/bin/python")
 
-    def test_a_make_gate_asks_the_resolver(self):
-        fake_run, calls = _fake_run(_ok("/opt/py313/bin/python\n"), PROBE_OK)
+    def test_doctor_never_executes_the_resolver_from_the_checkout(self):
+        # #1247: doctor is read-only. The make gate resolves its interpreter through
+        # scripts/find_python.sh at gate time, but that script comes from the inspected
+        # checkout, so a diagnostic must not run it. Doctor reports a PATH baseline and
+        # names where the real resolution happens; no subprocess touches the resolver.
+        fake_run, calls = _fake_run(PROBE_OK)
         with tempfile.TemporaryDirectory() as d:
             resolver = _write_resolver(d)
             facts = cli._doctor_python_toolchain(
-                d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={}
+                d,
+                _config("make test"),
+                _run=fake_run,
+                _which=lambda _: "/usr/bin/python3",
+                _env={},
             )
-        self.assertEqual(calls[0]["argv"], ["/bin/sh", str(resolver)])
-        self.assertEqual(facts["interpreter"], "/opt/py313/bin/python")
-        self.assertEqual(facts["source"], "scripts/find_python.sh")
+        for call in calls:
+            self.assertNotIn(str(resolver), call["argv"])
+            self.assertNotEqual(call["argv"][:1], ["/bin/sh"])
+        self.assertEqual(facts["interpreter"], "/usr/bin/python3")
+        self.assertIn("find_python.sh", facts["source"])
+        self.assertIn("not run by doctor", facts["source"])
+        self.assertTrue(facts["yaml"])
 
-    def test_a_resolver_that_finds_nothing_warns_with_its_message(self):
-        fake_run, _ = _fake_run(_failed("find_python: no Python >= 3.11 with PyYAML found"))
+    def test_a_make_gate_with_a_resolver_but_no_path_python_reports_no_baseline(self):
+        fake_run, calls = _fake_run()
         with tempfile.TemporaryDirectory() as d:
             _write_resolver(d)
             facts = cli._doctor_python_toolchain(
                 d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={}
             )
         self.assertIsNone(facts["interpreter"])
-        self.assertIn("no Python >= 3.11", facts["reason"])
-        self.assertFalse(facts["yaml"])
-
-    def test_a_silent_resolver_is_not_an_interpreter(self):
-        fake_run, _ = _fake_run(_ok("   \n"))
-        with tempfile.TemporaryDirectory() as d:
-            _write_resolver(d)
-            facts = cli._doctor_python_toolchain(
-                d, _config("make test"), _run=fake_run, _which=lambda _: None, _env={}
-            )
-        self.assertIsNone(facts["interpreter"])
+        self.assertEqual(calls, [])
+        self.assertIn("find_python.sh", facts["source"])
 
     def test_a_project_without_the_resolver_falls_back_to_python3(self):
         # Someone else's `make test` runs whatever their Makefile picks — `python3`.
