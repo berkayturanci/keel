@@ -223,11 +223,15 @@ Release maintainers should follow [`docs/keel/release.md`](docs/keel/release.md)
 
 ## Quickstart
 
+**Prerequisites:** Python **3.11+**, `git`, and — for a live run (`keel ship --live`) — an
+authenticated `gh` (`gh auth login`). A dry run needs only Python and git.
+
 ```bash
-keel setup --root .                                  # add keel config + adapters to a project
-keel setup --root . --wizard                         # …and pick the team interactively
-keel validate projects/example-flutter.yaml          # validate a config against the schema
-keel plan      projects/example-flutter.yaml          # show the backbone plan for a project
+keel setup --root .                          # add keel config + adapters to this project
+keel setup --root . --wizard                 # …and pick the team interactively
+keel validate .keel/project.yaml --root .    # validate the config setup just wrote
+keel plan     .keel/project.yaml --root .    # show the backbone plan for this project
+keel doctor   .keel/project.yaml --root .    # check versions, adapters and prerequisites
 keel version
 ```
 
@@ -241,18 +245,21 @@ run. See [`docs/keel/onboarding.md`](docs/keel/onboarding.md). `keel plan` rende
 gates/extensions slotted in — exactly what a dry-run executes:
 
 ```
-keel plan — example-flutter
+keel plan — my-project
   base_branch: main   core_version: ^1.0
   backbone:
+     s0  config
      s4  implement  [agent]
-     ...
+     s7  review  [agent]
      s8  test
            - gate: build
-           - gate: lint
-           - gate: design-parity
     s10  merge
-           - gate: design-parity-gate
+    s11  capture
+    s12  close
 ```
+
+A project adds its own gates and extensions under each step; the plan above is a
+generic project with the default `build` gate.
 
 ## Invocation (`/keel:<command>`)
 

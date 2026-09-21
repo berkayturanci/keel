@@ -35,14 +35,14 @@ if [ -n "$DRY_RUN" ]; then
     exit 0
 fi
 
-# Detect Python 3.10+
+# Detect Python 3.11+ (every keel release requires >=3.11)
 PYTHON=""
-for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
+for candidate in python3.14 python3.13 python3.12 python3.11 python3 python; do
     if command -v "$candidate" >/dev/null 2>&1; then
         version=$("$candidate" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)
         major=$(echo "$version" | cut -d. -f1)
         minor=$(echo "$version" | cut -d. -f2)
-        if [ "$major" = "3" ] && [ "$minor" -ge 10 ] 2>/dev/null; then
+        if [ "$major" = "3" ] && [ "$minor" -ge 11 ] 2>/dev/null; then
             PYTHON="$candidate"
             break
         fi
@@ -50,7 +50,7 @@ for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
 done
 
 if [ -z "$PYTHON" ]; then
-    printf "${RED}Error: Keel requires Python 3.10 or newer.${RESET}\n"
+    printf "${RED}Error: Keel requires Python 3.11 or newer.${RESET}\n"
     printf "Please install Python from https://python.org or your system package manager.\n"
     exit 1
 fi

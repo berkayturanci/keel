@@ -272,8 +272,8 @@
       name: "VS Code & Cursor Extension",
       category: "platforms",
       badge: "Editor Extension",
-      desc: "Status bar merge window indicator and command palette integration for VS Code and Cursor.",
-      cmd: "code --install-extension berkayturanci.keel-vscode",
+      desc: "Status bar merge-window indicator and command-palette integration. Not yet on the VS Code Marketplace or Open VSX \u2014 build it from editors/vscode/.",
+      cmd: "cd editors/vscode && npm install && npx @vscode/vsce package",
       logo: "logos/vscode.svg"
     },
     {

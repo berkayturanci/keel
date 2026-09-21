@@ -22,10 +22,10 @@ Keel provides official companion extensions for **Visual Studio Code** and **Cur
 
 ## Installation
 
-```bash
-# Visual Studio Code
-code --install-extension berkayturanci.keel-vscode
+The extension is **not published to the VS Code Marketplace or Open VSX yet**, so there is
+no `--install-extension <id>` command to run. Build and install it from source instead:
 
-# Cursor AI Editor
-cursor --install-extension berkayturanci.keel-vscode
+```bash
+cd editors/vscode && npm install && npx @vscode/vsce package
+code --install-extension keel-vscode-*.vsix     # or: cursor --install-extension keel-vscode-*.vsix
 ```

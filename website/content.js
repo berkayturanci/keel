@@ -323,7 +323,7 @@ window.KEEL = {
       group: "Start here", title: "Quickstart", slug: "quickstart",
       summary: "validate, plan, then dry-run ship to see tier, window, gates and the decision.",
       body:
-        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Quickstart CLI commands'><code>keel validate projects/example-flutter.yaml   <span class='cm'># validate a config against the schema</span>\nkeel plan     projects/example-flutter.yaml   <span class='cm'># show the backbone plan for a project</span>\nkeel version</code></pre>" +
+        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Quickstart CLI commands'><code>keel setup    --root .                  <span class='cm'># add keel config + adapters to this project</span>\nkeel validate .keel/project.yaml --root . <span class='cm'># validate the config setup just wrote</span>\nkeel plan     .keel/project.yaml --root . <span class='cm'># show the backbone plan for this project</span>\nkeel version</code></pre>" +
         "<p><code>keel plan</code> renders the fixed backbone with each project's gates / extensions slotted in — exactly what a dry-run executes.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md",
     },

@@ -28,11 +28,8 @@ Turn coding agents into work owners directly inside **VS Code** and **Cursor**.
 
 ## Installation
 
-Install from the **VS Code Marketplace** or **Open VSX Registry**:
+Not yet published to the VS Code Marketplace or Open VSX. Build and install from source:
 ```bash
-code --install-extension berkayturanci.keel-vscode
-```
-or inside **Cursor**:
-```bash
-cursor --install-extension berkayturanci.keel-vscode
+npm install && npx @vscode/vsce package
+code --install-extension keel-vscode-*.vsix     # or cursor --install-extension …
 ```
