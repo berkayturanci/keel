@@ -44,13 +44,16 @@ class TestARelativeCommandIsNeverExecuted(unittest.TestCase):
         for bad in ("scripts/x", "./x", "../x", "tools/agent.sh", r".\x", "C:evil", r"C:evil\x"):
             with self.subTest(command=bad):
                 self.assertTrue(providerprobe._repo_relative(bad))
-        for ok in ("claude", "cursor-agent", "/usr/local/bin/claude", "", None):
+        for ok in ("claude", "cursor-agent", "", None):
             with self.subTest(command=ok):
                 self.assertFalse(providerprobe._repo_relative(ok))
-        # A Windows absolute path is safe only where the platform reads it as absolute; the
-        # invariant is "bare name or absolute", evaluated on the running platform.
-        win_abs = r"C:\abs\claude.exe"
-        self.assertEqual(providerprobe._repo_relative(win_abs), not os.path.isabs(win_abs))
+        # A path is safe to probe only where the running platform reads it as absolute; the
+        # invariant is "bare name, or absolute here". `os.path.isabs` is platform-specific — a
+        # POSIX `/usr/...` is not absolute on Windows (rooted but drive-less), and Python 3.13
+        # dropped even the leading-slash special case — so assert the invariant, not a guess.
+        for path in (r"C:\abs\claude.exe", "/usr/local/bin/claude", "/opt/tools/claude"):
+            with self.subTest(command=path):
+                self.assertEqual(providerprobe._repo_relative(path), not os.path.isabs(path))
 
     def test_cli_probe_refuses_a_relative_command_without_running_it(self):
         run, calls = _recording_run()
@@ -72,12 +75,12 @@ class TestARelativeCommandIsNeverExecuted(unittest.TestCase):
 
     def test_cli_probe_still_runs_an_absolute_command(self):
         # An absolute path is an explicit operator choice; an attacker cannot predict a
-        # victim's checkout location, so absolute paths are not the in-tree threat.
+        # victim's checkout location, so absolute paths are not the in-tree threat. Use a path
+        # that is absolute on the running platform (Windows needs a drive letter).
+        abs_cmd = r"C:\tools\claude.exe" if os.name == "nt" else "/opt/tools/claude"
         run, calls = _recording_run()
-        providerprobe._probe_cli(
-            _cli("/opt/tools/claude"), which=lambda _c: "/opt/tools/claude", run=run
-        )
-        self.assertEqual(calls[0], ["/opt/tools/claude", "--version"])
+        providerprobe._probe_cli(_cli(abs_cmd), which=lambda _c: abs_cmd, run=run)
+        self.assertEqual(calls[0], [abs_cmd, "--version"])
 
     def test_a_relative_command_never_reaches_the_models_call_either(self):
         # `_cli_models` runs `<command> models`; the guard in `_probe_cli` returns before
