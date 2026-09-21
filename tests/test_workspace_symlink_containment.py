@@ -9,15 +9,14 @@ gitignore self-heal appends keel's ignore lines to whatever the link points at.
 from __future__ import annotations
 
 import os
-import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest import mock
+from unittest import TestCase, main, mock, skipIf
 
 from keel import workspace
 
 
-class TestContainmentGuardsAreCovableWithoutSymlinks(unittest.TestCase):
+class TestContainmentGuardsAreCovableWithoutSymlinks(TestCase):
     """Platform-independent coverage of the guards (symlink tests skip on Windows)."""
 
     def test_escapes_root_detects_an_outside_path(self):
@@ -43,8 +42,8 @@ class TestContainmentGuardsAreCovableWithoutSymlinks(unittest.TestCase):
             self.assertEqual(workspace.scratch_entries(root), [])
 
 
-@unittest.skipIf(os.name == "nt", "POSIX symlink semantics")
-class TestScratchSymlinkContainment(unittest.TestCase):
+@skipIf(os.name == "nt", "POSIX symlink semantics")
+class TestScratchSymlinkContainment(TestCase):
     def _root_with_scratch_link(self, target: Path) -> Path:
         d = TemporaryDirectory()
         self.addCleanup(d.cleanup)
@@ -113,8 +112,8 @@ class TestScratchSymlinkContainment(unittest.TestCase):
         self.assertEqual(list(scratch.iterdir()), [])
 
 
-@unittest.skipIf(os.name == "nt", "POSIX symlink semantics")
-class TestGitignoreSymlinkContainment(unittest.TestCase):
+@skipIf(os.name == "nt", "POSIX symlink semantics")
+class TestGitignoreSymlinkContainment(TestCase):
     def test_a_symlinked_gitignore_is_not_written_through(self):
         with TemporaryDirectory() as outside:
             victim = Path(outside) / "target"
@@ -139,4 +138,4 @@ class TestGitignoreSymlinkContainment(unittest.TestCase):
 
 
 if __name__ == "__main__":  # pragma: no cover
-    unittest.main()
+    main()
