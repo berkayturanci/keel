@@ -230,8 +230,9 @@ keel swarm-land .keel/project.yaml --root . --wave 1 --live
 ### Landing Modes:
 1. **Direct Orthogonal Batch Landing (`batch`)**:
    - Activated when all clusters in the wave have verified disjoint diff trees.
-   - All cluster branches are fast-forwarded or merged into `main` in parallel.
-   - Zero rebase overhead and maximum throughput.
+   - Each cluster branch is merged into `main` with `git merge --no-ff`, one after another under
+     the atomic `merge_lock`.
+   - No rebase is needed because the trees do not overlap.
 2. **Adaptive Atomic Funnel Landing (`funnel`)**:
    - Activated when clusters share base dependencies or have overlapping file touches.
    - Clusters are merged sequentially. Before each merge, the cluster branch is rebased onto the newly
@@ -263,20 +264,23 @@ runs no CI of its own — with the gate off, clusters land unverified. See
 Swarm integrates directly with the companion package `keel-visual` to provide rich spatial observability:
 
 ```bash
-# Generate static HTML report
+# Generate a static HTML report
 keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
 
-# Start live localhost dashboard
+# Serve that rendered report on localhost (a snapshot — re-run to refresh)
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
 
 ### Visual Features:
-- **2D DAG Cluster Partition View**: Interactive HTML/SVG graph displaying wave tiers, cluster cards,
-  issue pills, role badges, and conflict connection lines.
-- **3D Multi-Wave Spatial Topology**: WebGL/HTML5 Canvas renderer projecting stacked wave layers in 3D
-  space with interactive orbit rotation, zooming, and depth slicing.
-- **Live Worker Matrix**: Worker cards showing each cluster's `running` / `passed` / `failed` state,
+- **2D DAG Cluster Partition View**: Interactive graph displaying wave tiers, cluster cards, issue
+  pills, and role badges.
+- **Pseudo-3D Multi-Wave Topology**: An HTML5 Canvas renderer projecting the stacked wave layers as
+  a pseudo-3D scene, with drag-to-rotate and scroll-to-zoom.
+- **Worker Matrix**: Worker cards showing each cluster's `running` / `passed` / `failed` state,
   role icons, and log summaries.
+
+The rendered page is a snapshot of the run state at render time; re-run `keel-visual swarm` to
+refresh it. (The continuously polling board is the *ship* dashboard, `keel activity`.)
 
 ---
 
@@ -320,7 +324,7 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | Risk / Failure Scenario | Detection Mechanism | Fail-Soft Mitigation |
 | :--- | :--- | :--- |
 | **A cluster changes files another cluster also touches** | Plan-time static file-overlap partitioning (disjoint trees only share a wave) + isolated per-cluster worktrees | Overlapping clusters are sequenced into later waves and funnel-landed (rebase, abort-on-conflict); a failed cluster is dropped from the remaining waves. |
-| **Rebase Conflict during Funnel Landing** | `git rebase` non-zero exit code | Automatic `git rebase --abort`; `main` remains untouched; worker marked `failed_rebase`. |
+| **Rebase Conflict during Funnel Landing** | `git rebase` non-zero exit code | Automatic `git rebase --abort`; `main` remains untouched; worker marked `failed` (`details: rebase conflict: …`). |
 | **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock with timeout retry; guarantees single-writer landing. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |
 | **Stale State Discovery** | SHA-256 fingerprint validation | Fallback to reconstructed safe plan; corrupt JSON files fail soft to empty state. |

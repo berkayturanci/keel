@@ -32,7 +32,8 @@ Reflects live branch and line test coverage dynamically updated on every push vi
 ---
 
 ### 4. AI Jury Consensus
-Indicates that pull requests and changes are validated by 3-agent multi-vendor AI Jury consensus.
+Indicates that pull requests are validated by keel's cross-vendor ai-jury review consensus (the
+panel's composition and size are set by config, not fixed at three).
 
 ```markdown
 [![AI Jury](https://img.shields.io/badge/ai--jury-consensus%20verified-6366f1?logo=scales&logoColor=white)](https://github.com/berkayturanci/ai-jury)

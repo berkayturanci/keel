@@ -237,7 +237,7 @@ Keel Swarm anchors multi-agent parallelism inside deterministic engineering inva
 - **Physical Git Worktree Isolation**: Workers develop inside dedicated `.keel/workspaces/swarm-<id>/` sandboxes.
 - **Dual-Mode Landing Engine**: Merges 100% disjoint trees via Direct Orthogonal Batch Landing while routing overlapping trees through the atomic `merge_lock` with automated rebase and `s9 fixloop` conflict self-healing.
 - **Commit-Bound Evidence & Multi-Vendor Jury**: Every PR carries an immutable, commit-SHA-locked evidence record and cross-vendor panel verdict.
-- **Full-Spectrum Observability**: Live terminal ASCII DAG diagrams (`keel swarm-plan --tree`, `keel swarm-status`) paired with `keel-visual` 2D/3D WebGL swarm galaxy scenes.
+- **Full-Spectrum Observability**: Terminal ASCII DAG diagrams (`keel swarm-plan --tree`, `keel swarm-status`) paired with `keel-visual`'s 2D / pseudo-3D swarm scenes (rendered snapshots).
 
 ---
 

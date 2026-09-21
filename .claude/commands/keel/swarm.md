@@ -31,8 +31,8 @@ Never silently skip a step because the runtime, agent, or prompt feels obvious.
 
 Run a high-concurrency multi-agent swarm: partition dependent and independent backlog issues
 into topologically ordered execution waves, execute disjoint clusters in parallel isolated
-git worktrees, and land batches cleanly via orthogonal fast-forward merges or adaptive
-self-healing funnel rebases.
+git worktrees, and land batches under the merge lock with `git merge --no-ff` (disjoint trees)
+or adaptive self-healing funnel rebases (overlapping ones).
 
 ## Who does what — CTO, team lead, worker
 
@@ -132,12 +132,12 @@ keel swarm-land .keel/project.yaml --root . --wave <n> --live
 ```
 
 - The landing mode is **derived from the wave's diff map**, not passed on the command line.
-- **Orthogonal Batch Landing**: Disjoint diff trees are fast-forwarded or batch-merged concurrently under atomic `merge_lock`.
-- **Adaptive Funnel Landing**: If overlapping file trees exist, sequential cherry-pick/rebase is executed with fail-soft self-healing.
+- **Orthogonal Batch Landing**: Disjoint diff trees are merged into main with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **Adaptive Funnel Landing**: If overlapping file trees exist, each cluster is rebased onto the updated main and then merged; an unresolvable conflict aborts the rebase (fail-soft) and marks the cluster failed.
 
-## Step 4 — Real-time visual tracking & live terminal dash
+## Step 4 — Visual tracking & terminal dashboard
 
-Render the spatial DAG cluster graphs and 3D wave topology for the active swarm:
+Render the spatial DAG cluster graphs and pseudo-3D wave topology for the swarm (a rendered snapshot):
 
 ```bash
 keel swarm-status .keel/project.yaml --root .
@@ -161,4 +161,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=c0691d2c4c7bd09f5fe291a03f45d2b22c25a7b1514af59c92f86edb8539cc94 generated_sha256=c0691d2c4c7bd09f5fe291a03f45d2b22c25a7b1514af59c92f86edb8539cc94 -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=23d774e40b90ad5632df73e287f129681fbdd33fb0af82af860e5d70660db143 generated_sha256=23d774e40b90ad5632df73e287f129681fbdd33fb0af82af860e5d70660db143 -->

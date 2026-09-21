@@ -192,7 +192,7 @@ window.KEEL = {
     ["keel swarm-status <cfg>", "multi-cluster status snapshot — each cluster's lead, difficulty band, and running/passed/failed state"],
     ["keel swarm-run <cfg> --issues 12,15", "orchestrate parallel workers in isolated worktrees, rebalancing the plan when a cluster fails"],
     ["keel swarm-land <cfg> --wave 1", "dual-mode batch landing under merge lock with self-healing conflict rollback"],
-    ["keel-visual swarm", "live 2D DAG graph and 3D spatial worktree topology dashboard"],
+    ["keel-visual swarm", "2D DAG and pseudo-3D spatial worktree topology, rendered as a snapshot"],
     ["keel run-gates <cfg>", "run the project's build / lint / command gates"],
     ["keel window <cfg>", "is the merge window open right now?"],
     ["keel ship <cfg>", "full dry assessment: tier, window, gates, decision"],
@@ -258,7 +258,7 @@ window.KEEL = {
   faq: [
     ["Do projects ever fork the backbone?", "No — that's the whole point. The ordered step machine and its invariants live in keel-core, which is installed and pinned, never copied. Projects only ever touch Layer 2 (values in project.yaml) and Layer 3 (add-only extensions). Changing the backbone is a keel-core change."],
     ["What does a command actually read?", "Every command is project-neutral. It never hardcodes a branch, build/lint command, agent, glob, timezone or window — it references the knob by name and asks the keel CLI for the value, so the same /keel:ship behaves differently in each repo purely from that repo's .keel/project.yaml."],
-    ["What's the jury gate?", "An opt-in review gate: add <code>jury</code> to your project's <code>gates:</code> list (off by default), and it runs the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> multi-agent reviewer on the diff when the <code>jury</code> binary is installed — a fail-soft no-op otherwise. It snaps into the s7 review step."],
+    ["What's the jury gate?", "An opt-in review gate: add <code>jury</code> to your project's <code>gates:</code> list (off by default), and it runs the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> multi-agent reviewer on the diff when the <code>jury</code> binary is installed — a fail-soft no-op otherwise. It runs at the gate phase (s8), beside build and lint."],
     ["Who implements, reviews and fixes — and can I change it?", "<code>knobs.team</code> states the whole team as values: the implementer per issue role (with model and reasoning effort), one mandatory gate reviewer from a <i>different</i> vendor, the reviewer seats for each risk tier, and the seat that applies the findings in the s9 fix loop. <code>keel plan</code> / <code>keel ship --json</code> render it as one resolved <code>assignment</code>, so every host runs the same team, and <code>keel validate</code> refuses a policy keel cannot execute — an unknown provider, a reasoning effort a vendor has no spelling for, or a gate reviewer that is the implementer. <code>--team &lt;profile&gt;</code> and <code>--effort</code> pick a named bench for one run."],
     ["Can the jury panel be the review itself, not an extra gate?", "Yes — set a tier's seats to the string <code>jury</code> (<code>knobs.team.review.by_tier.\"3\": jury</code>) and s7 dispatches the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> panel <b>once</b> instead of running host readers beside it. <code>keel review --from-jury &lt;report.json&gt;</code> then turns the panel's report into the run's public evidence: one head-pinned review verdict per panelist ballot, carrying the vendor and model that produced it, plus the panel's consensus record — in one call, so everything is pinned to the same head SHA. The panel's <i>verified</i> findings are what the fix loop receives. Adopt it deliberately: on a panel tier no per-run flag can take the panel back off."],
     ["Can keel write the tests first?", "Yes. <code>knobs.implement_mode: tdd</code> (or <code>--tdd</code> for one run) splits s4 into two phases — a test-only commit carrying the issue's acceptance criteria, then the implementation — and s8 gains the pure, blocking <code>tdd-order</code> gate, which checks that commit order against the project's <code>test_groups</code> paths. So “tests first” is verified, not asserted."],
@@ -411,11 +411,11 @@ window.KEEL = {
         "<h3>3. Dual-Mode Landing</h3>" +
         "<p>Swarm supports two landing strategies under the single-writer <code>merge_lock</code>:</p>" +
         "<ul>" +
-        "<li><b>Direct Orthogonal Batch Landing</b>: Disjoint branches with zero file collisions are squashed directly into the base branch without intermediate rebases.</li>" +
+        "<li><b>Direct Orthogonal Batch Landing</b>: Disjoint branches with zero file collisions are merged into the base branch with <code>git merge --no-ff</code>, sequentially under the merge lock, with no rebases.</li>" +
         "<li><b>Adaptive Atomic Funnel</b>: Overlapping clusters trigger a self-healing git rebase onto the newly merged base branch, re-running gates before completing the merge. Conflicts trigger an immediate safe rollback (<code>git rebase --abort</code>).</li>" +
         "</ul>" +
-        "<h3>4. Live 2D & 3D Spatial Dashboard</h3>" +
-        "<p><code>keel-visual swarm</code> renders interactive DAG topological graphs and 3D spatial node networks in the terminal or browser, showing each cluster's running/passed/failed state and the landing queues live.</p>",
+        "<h3>4. 2D & Pseudo-3D Spatial Snapshot</h3>" +
+        "<p><code>keel-visual swarm</code> renders interactive DAG topological graphs and a pseudo-3D spatial node view in the terminal or browser, showing each cluster's running/passed/failed state and the landing queues. It is a rendered snapshot — re-run to refresh.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/swarm.md",
     },
     {

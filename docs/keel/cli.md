@@ -3011,9 +3011,9 @@ wave it lands in.
 
 ## `keel swarm-status <project.yaml> [--root DIR] [--swarm-id ID] [--json]`
 
-Inspect live worker progress, wave execution status, and cluster health across active or recent
-multi-agent swarm runs. Each row names the worker's **lead** and the difficulty **band** it was
-staffed from, so the board answers *who is running this, and why that provider*:
+Inspect each cluster's status (`running` / `passed` / `failed`) and the wave it is in, across
+active or recent multi-agent swarm runs. Each row names the worker's **lead** and the difficulty
+**band** it was staffed from, so the board answers *who is running this, and why that provider*:
 
 ```bash
 keel swarm-status .keel/project.yaml --root .
@@ -3041,8 +3041,8 @@ dropped rather than passed — it would be read as a flag by the child — and t
 recorded in `assignment.warnings`.
 
 Issues are named by `--issues` / `--issue`, as for `swarm-plan`. Rebalancing across waves is
-decided by the plan, not by a flag: when runtime file-modification divergence is detected the
-conflicting worker is partitioned to a later wave.
+decided by the plan, not by a flag: when a cluster's issue fails, `rebalance_swarm_plan` drops the
+clusters carrying that issue from the remaining waves (there is no runtime file-divergence audit).
 
 ## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--swarm-id ID] [--live] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
