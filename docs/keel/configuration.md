@@ -218,7 +218,7 @@ knobs:
     review:
       by_tier:
         "1": [{ provider: claude }]
-        "2": [{ provider: claude }, { provider: grok-via-openai-compatible }]
+        "2": [{ provider: claude }, { provider: "subagent:grok" }]
         "3": jury                          # the panel is the review (see the caveat below)
     jury:
       mode: gating
@@ -230,11 +230,11 @@ knobs:
       easy: { implement: { provider: ollama, model: qwen2.5-coder } }
       hard:
         lead: { provider: claude, model: opus }
-        implement: { provider: codex, effort: high }
+        implement: { provider: anthropic-api, model: claude-opus-5, effort: high }
         review: jury
     profiles:                              # operator-selectable benches (--team <name>)
       night-shift:
-        implement: { provider: codex, effort: medium }
+        implement: { provider: anthropic-api, model: claude-opus-5, effort: medium }
         review: [{ provider: agy, model: gemini-3.8-pro }]
 ```
 

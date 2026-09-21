@@ -386,13 +386,13 @@ knobs:
     local_vllm:
       vendor: openai-compatible
       endpoint: http://127.0.0.1:8000/v1/chat/completions
-      api_key_env: LOCAL_LLM_KEY   # Can be dummy value in env
+      api_key_env: VLLM_API_KEY   # a dummy value is fine for a local server
       model: Qwen/Qwen2.5-Coder-32B-Instruct
 
     lmstudio:
       vendor: openai-compatible
       endpoint: http://localhost:1234/v1/chat/completions
-      api_key_env: LM_STUDIO_KEY
+      api_key_env: KEEL_DELEGATE_KEY_LMSTUDIO   # project-specific keys use this prefix
       model: local-model
 ```
 *(No `KEEL_ALLOW_REMOTE_ENDPOINT` needed for loopback endpoints)*
