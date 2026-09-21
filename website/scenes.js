@@ -482,7 +482,7 @@
         w1.classList.add("done");
         w2.classList.remove("muted"); w2.classList.add("work");
         fills[2].lane.classList.remove("muted");
-        fills[2].out.textContent = "rebasing"; fills[2].fill.style.width = "40%";
+        fills[2].out.textContent = "merging"; fills[2].fill.style.width = "40%";
         capt.textContent = "Wave 2: merging the dependent cluster under the lock…";
       });
 

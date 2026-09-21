@@ -3055,7 +3055,8 @@ keel swarm-land .keel/project.yaml --root . --wave 1 --live
 ```
 
 The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's
-predicted scopes for the wave and picks batch or funnel, so there is no `--mode` flag to get wrong. `--wave` selects the
+predicted scopes for the wave and, for any planned wave, always resolves to direct batch — so there
+is no `--mode` flag to get wrong. `--wave` selects the
 wave (default `1`); without `--live` the command reports what it would land.
 
 - **Direct Batch Mode**: Orthogonal disjoint diff trees are merged one after another with

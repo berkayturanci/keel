@@ -1,7 +1,7 @@
 /* ============================================================
    keel — Interactive In-Browser Swarm DAG Simulator
    Real-time conflict DAG partitioning, isolated worktrees,
-   multi-model delegation, cross-vendor review, and landing funnel.
+   multi-model delegation, cross-vendor review, and batch landing.
    Zero backend dependencies — runs 100% client-side.
    ============================================================ */
 
@@ -31,11 +31,11 @@
       ]
     },
     conflict: {
-      name: "Adjacent Conflict Self-Healing",
-      description: "2 workers touching overlapping routes, healed by the marker-based adjacent-conflict resolver in the rebase funnel.",
+      name: "Overlapping Scopes → Sequenced Waves",
+      description: "2 workers predicted to touch the same file are never scheduled together — the planner sequences the second into a later wave.",
       issues: [
         { id: 760, title: "OAuth 2.0 PKCE Auth Provider", files: ["auth/routes.py"], model: "claude-opus-5", vendor: "Anthropic", wave: 1 },
-        { id: 761, title: "Passkey & WebAuthn Handler", files: ["auth/routes.py"], model: "gemini-3-pro", vendor: "Google", wave: 1, hasConflict: true },
+        { id: 761, title: "Passkey & WebAuthn Handler", files: ["auth/routes.py"], model: "gemini-3-pro", vendor: "Google", wave: 2, dependsOn: [760] },
         { id: 762, title: "Zero-Trust Session Audit Log", files: ["audit/session.py"], model: "codex", vendor: "OpenAI", wave: 2, dependsOn: [760] }
       ]
     }
@@ -146,11 +146,7 @@
         }
       } else if (st.status === "landing") {
         state.lock = "LOCKED (" + issue.id + ")";
-        if (issue.hasConflict) {
-          st.log = "Conflict detected in " + issue.files[0] + " · marker-based resolver healed the rebase ✓";
-        } else {
-          st.log = "Direct orthogonal batch landing into main...";
-        }
+        st.log = "Merging into the base branch with git merge --no-ff...";
         st.status = "merged";
       } else if (st.status === "merged") {
         state.lock = "UNLOCKED";

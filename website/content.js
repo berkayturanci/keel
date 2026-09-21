@@ -409,7 +409,7 @@ window.KEEL = {
         "</ul>" +
         "<p>Each cluster is reviewed inside its own <b>keel ship</b> run — on tier-3 work that can be the cross-vendor <b>AI Jury</b> panel (e.g. Anthropic + OpenAI + Google) — and no branch lands until it clears the review-evidence gate, whichever model authored it.</p>" +
         "<h3>3. Single-Writer Batch Landing</h3>" +
-        "<p>Swarm supports two landing strategies under the single-writer <code>merge_lock</code>:</p>" +
+        "<p>Swarm lands every wave the same way under the single-writer <code>merge_lock</code>:</p>" +
         "<ul>" +
         "<li><b>Direct Orthogonal Batch Landing</b>: Disjoint branches with zero file collisions are merged into the base branch with <code>git merge --no-ff</code>, sequentially under the merge lock, with no rebases.</li>" +
         "<li><b>Why one mode</b>: the planner only puts mutually disjoint clusters in a wave, so landing never needs a rebase. <code>swarm_landing.py</code> also implements an adaptive rebase funnel (marker-resolver healing, hold-and-rewind), but no <code>swarm-land</code> invocation selects it — it is reachable only from the library.</li>" +
