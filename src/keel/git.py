@@ -60,6 +60,28 @@ def remote_url(remote: str, *, cwd: str | None = None, _run=None) -> str | None:
     return output if result.ok and output else None
 
 
+def owner_repo_from_url(url: str | None) -> tuple[str, str] | None:
+    """``(owner, repo)`` parsed from a git remote URL, or ``None`` when it holds no such pair.
+
+    Handles the three shapes git hands out — scp-style ``git@host:owner/repo.git``, and
+    ``https://host/owner/repo(.git)`` / ``ssh://git@host/owner/repo(.git)`` — by taking the
+    last two path segments after dropping a single trailing ``.git``. Host-agnostic on
+    purpose: GitHub, a GHE host and a self-hosted forge all read the same, and the result only
+    fills ``owner``/``repo`` in a scaffolded config for the operator to see and correct.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return None
+    text = url.strip()
+    if text.endswith(".git"):
+        text = text[:-4]
+    scp = re.match(r"^[^/@]+@[^:/]+:(?P<path>.+)$", text)  # git@host:owner/repo
+    path = scp.group("path") if scp else re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+", "", text)
+    parts = [segment for segment in path.split("/") if segment]
+    if len(parts) < 2:
+        return None
+    return parts[-2], parts[-1]
+
+
 def fetch(remote: str, ref: str, *, cwd: str | None = None, _run=None) -> CommandResult:
     """Fetch one branch of ``remote`` into :func:`remote_tracking_ref`.
 

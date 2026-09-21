@@ -158,6 +158,26 @@ class TestDefaultConfig(unittest.TestCase):
     def test_unknown_stack_falls_back_generic(self):
         self.assertIn("gates: [build]", scaffold.default_config("cobol"))
 
+    def test_owner_is_written_when_given_and_omitted_when_not(self):
+        import yaml
+
+        with_owner = scaffold.default_config("python", repo="widgets", owner="acme")
+        self.assertIn('owner: "acme"', with_owner)
+        parsed = cfg.parse_config(yaml.safe_load(with_owner), source="<owner>")
+        self.assertEqual((parsed.owner, parsed.repo), ("acme", "widgets"))
+        # Omitted (never written blank) when there is no owner, and the config still validates.
+        without = scaffold.default_config("python", repo="widgets")
+        self.assertNotIn("owner:", without)
+        cfg.parse_config(yaml.safe_load(without), source="<no-owner>")
+
+    def test_owner_threads_through_auto_detect_and_wizard(self):
+        with tempfile.TemporaryDirectory() as d:
+            text, meta = scaffold.auto_detect_config(d, repo="widgets", owner="acme")
+            self.assertIn('owner: "acme"', text)
+            self.assertEqual(meta["owner"], "acme")
+        wiz = scaffold.wizard("python", _scripted([]), repo="widgets", owner="acme")
+        self.assertIn('owner: "acme"', wiz)
+
 
 def _scripted(answers):
     """An ``ask`` seam replaying ``answers`` in order, then accepting every default."""

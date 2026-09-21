@@ -115,6 +115,7 @@ def auto_detect_config(
     root: str | Path,
     *,
     repo: str = "my-repo",
+    owner: str | None = None,
 ) -> tuple[str, dict]:
     """Inspect the repository stack and base branch, returning (yaml_text, metadata)."""
     root = Path(root)
@@ -125,12 +126,14 @@ def auto_detect_config(
         "stack": stack,
         "platform": t["platform"],
         "base_branch": base_branch,
+        "owner": owner,
         "build_cmd": t["build"],
         "lint_cmd": t["lint"],
         "tier3_globs": t["globs"],
     }
     text = render_config(
         repo=repo,
+        owner=owner,
         base_branch=base_branch,
         platform=t["platform"],
         build_cmd=t["build"],
@@ -144,6 +147,7 @@ def auto_detect_config(
 def render_config(
     *,
     repo: str = "my-repo",
+    owner: str | None = None,
     base_branch: str = "main",
     platform: str = "generic",
     build_cmd: str = "make test",
@@ -178,6 +182,10 @@ def render_config(
         "extends: keel",
         'core_version: "^1.0"',
         f"repo: {_yaml_scalar(repo)}",
+        # `owner` completes the `owner/repo` a live evidence/merge run needs; omitted (not
+        # written blank) when no git remote named one, so `keel validate` still passes and the
+        # operator fills it in (#1247).
+        *([f"owner: {_yaml_scalar(owner)}"] if owner else []),
         f"base_branch: {_yaml_scalar(base_branch)}",
         f"platform: {_yaml_scalar(platform)}",
         f"consent_mode: {_yaml_scalar(consent_mode)}",
@@ -254,11 +262,14 @@ def _render_sequence(items: list[Any], indent: int) -> list[str]:
     return lines
 
 
-def default_config(stack: str, *, repo: str = "my-repo", base_branch: str = "main") -> str:
+def default_config(
+    stack: str, *, repo: str = "my-repo", owner: str | None = None, base_branch: str = "main"
+) -> str:
     """Render the default ``project.yaml`` for ``stack`` (non-interactive)."""
     t = _TEMPLATES.get(stack, _TEMPLATES["generic"])
     return render_config(
         repo=repo,
+        owner=owner,
         base_branch=base_branch,
         platform=t["platform"],
         build_cmd=t["build"],
@@ -276,6 +287,7 @@ def wizard(
     ask: Callable[[str, str], str],
     *,
     repo: str = "my-repo",
+    owner: str | None = None,
     catalog: wizard_core.Catalog | None = None,
     notify: Callable[[str], None] | None = None,
 ) -> str:
@@ -304,6 +316,7 @@ def wizard(
     lint = ask("Lint command (blank to skip)", t["lint"] or "")
     return render_config(
         repo=repo,
+        owner=owner,
         base_branch=base,
         platform=t["platform"],
         build_cmd=build,

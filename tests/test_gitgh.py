@@ -213,6 +213,27 @@ class TestGit(unittest.TestCase):
         self.assertIsNone(git.remote_url("origin", _run=_Recorder(code=1)))
         self.assertIsNone(git.remote_url("origin", _run=_Recorder(out="\n")))
 
+    def test_owner_repo_from_url_parses_the_three_shapes(self):
+        for url, expected in (
+            ("git@github.com:acme/widgets.git", ("acme", "widgets")),
+            ("git@github.com:acme/widgets", ("acme", "widgets")),
+            ("https://github.com/acme/widgets.git", ("acme", "widgets")),
+            ("https://github.com/acme/widgets", ("acme", "widgets")),
+            ("ssh://git@github.com/acme/widgets.git", ("acme", "widgets")),
+            ("https://ghe.corp.example.com/team/repo.git", ("team", "repo")),
+            ("https://user@github.com/acme/widgets", ("acme", "widgets")),
+            # a nested group path (GitLab) keeps only the trailing owner/repo
+            ("https://gitlab.com/group/sub/widgets.git", ("sub", "widgets")),
+            ("  git@github.com:acme/widgets.git  ", ("acme", "widgets")),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(git.owner_repo_from_url(url), expected)
+
+    def test_owner_repo_from_url_is_none_when_no_pair(self):
+        for url in (None, "", "   ", "not a url", "https://github.com/acme", "git@host:repo"):
+            with self.subTest(url=url):
+                self.assertIsNone(git.owner_repo_from_url(url))
+
     def test_remote_tracking_ref_is_spelled_in_full(self):
         # `origin/main` resolves `refs/tags/origin/main` and `refs/heads/origin/main` first.
         self.assertEqual(git.remote_tracking_ref("origin", "main"), "refs/remotes/origin/main")

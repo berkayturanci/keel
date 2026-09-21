@@ -12020,6 +12020,36 @@ class TestInit(unittest.TestCase):
             vrc, _, _ = run(["validate", str(written)])
             self.assertEqual(vrc, 0)
 
+    def test_derive_owner_repo_reads_the_origin_remote_else_falls_back(self):
+        from unittest.mock import patch
+
+        root = Path("/tmp/some-checkout")
+        with patch.object(cli.git, "remote_url", return_value="git@github.com:acme/widgets.git"):
+            self.assertEqual(cli._derive_owner_repo(root), ("acme", "widgets"))
+        # No remote, or a URL that names no pair: owner is None and repo is the directory name.
+        with patch.object(cli.git, "remote_url", return_value=None):
+            self.assertEqual(cli._derive_owner_repo(root), (None, "some-checkout"))
+        with patch.object(cli.git, "remote_url", return_value="https://github.com/acme"):
+            self.assertEqual(cli._derive_owner_repo(root), (None, "some-checkout"))
+
+    def test_init_writes_owner_and_repo_from_the_remote(self):
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "pyproject.toml").write_text("x", encoding="utf-8")
+            url = "https://github.com/acme/widgets.git"
+            with patch.object(cli.git, "remote_url", return_value=url):
+                rc, out, _ = run(["init", "--root", d])
+            self.assertEqual(rc, 0)
+            import yaml
+
+            written = (Path(d) / ".keel" / "project.yaml").read_text(encoding="utf-8")
+            config = yaml.safe_load(written)
+            self.assertEqual((config["owner"], config["repo"]), ("acme", "widgets"))
+            vrc, _, _ = run(["validate", str(Path(d) / ".keel" / "project.yaml")])
+            self.assertEqual(vrc, 0)
+
     def test_refuses_existing_without_force(self):
         import tempfile
 
