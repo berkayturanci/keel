@@ -3060,7 +3060,7 @@ wave (default `1`); without `--live` the command reports what it would land.
 
 - **Direct Batch Mode**: Orthogonal disjoint diff trees are merged one after another with
   `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- **Adaptive Funnel Mode**: Overlapping trees land sequentially with automatic fail-soft rebase healing.
+- **Adaptive Funnel Mode**: implemented in `swarm_landing.py` (rebase onto the moved base, marker-resolver healing, hold-and-rewind) but selected only when a caller supplies a PR diff map — **no `keel swarm-land` invocation reaches it today**, because a planned wave's clusters are always disjoint.
 - **Review evidence (#828)**: before a live landing, every cluster branch's open PR must pass
   the same pre-merge review-evidence verification `keel merge` enforces — armed gate label,
   tier-derived verdict count, verdicts pinned to the PR head. A cluster that does not verify is

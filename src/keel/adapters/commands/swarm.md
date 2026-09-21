@@ -1,5 +1,5 @@
 ---
-description: Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land orthogonal batches with self-healing rebase.
+description: Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land them under a single-writer merge lock.
 argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
@@ -31,8 +31,8 @@ Never silently skip a step because the runtime, agent, or prompt feels obvious.
 
 Run a high-concurrency multi-agent swarm: partition dependent and independent backlog issues
 into topologically ordered execution waves, execute disjoint clusters in parallel isolated
-git worktrees, and land batches under the merge lock with `git merge --no-ff` (disjoint trees)
-or adaptive self-healing funnel rebases (overlapping ones).
+git worktrees, and land them under a single-writer merge lock with sequential
+`git merge --no-ff`.
 
 ## Who does what — CTO, team lead, worker
 
@@ -123,7 +123,7 @@ keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
 - Track live worker states with `keel swarm-status` — the board's `Lead` and `Band` columns
   are how the operator sees which lead owns which cluster and why it drew its provider.
 
-## Step 3 — Orthogonal batch landing & drift self-healing
+## Step 3 — Batch landing under the merge lock
 
 When an execution wave completes, land all passing clusters onto `main`:
 
@@ -133,7 +133,7 @@ keel swarm-land .keel/project.yaml --root . --wave <n> --live
 
 - The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
 - **Orthogonal Batch Landing**: Disjoint diff trees are merged into main with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- **Adaptive Funnel Landing**: If overlapping file trees exist, each cluster is rebased onto the updated main and then merged; an unresolvable conflict aborts the rebase (fail-soft) and marks the cluster failed.
+- Every planned wave is internally disjoint, so landing always runs in direct-batch mode; the library's adaptive rebase funnel is not selected by this command.
 
 ## Step 4 — Visual tracking & terminal dashboard
 
@@ -156,7 +156,7 @@ Compile the overall multi-agent swarm outcome:
 - Per cluster: its difficulty band and score, its lead, and the implementer/reviewer seats
   that ran it — plus any `assignment.warnings` that were raised and what was done about them.
 - Worker success/failure breakdown.
-- Landing mode used (Direct Batch vs Adaptive Funnel) and rebase self-healing stats.
+- Landing outcome per cluster: merged, or `merge failed` / held with its reason.
 - Per-cluster review outcome (the configured review, or the ai-jury panel on tier-3) and each cluster's `compound-learning:` ledger marker.
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`

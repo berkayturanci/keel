@@ -3,8 +3,8 @@
 **keel-swarm** is an additive, high-concurrency orchestration layer designed to coordinate
 multiple AI developer agents working in parallel across complex backlogs. It transforms a list of
 GitHub issues into a topologically ordered execution graph, partitions issues into conflict-free
-clusters, executes them in isolated git worktrees, and lands them cleanly through orthogonal batch
-merges or self-healing funnel rebases.
+clusters, executes them in isolated git worktrees, and lands them under a single-writer merge
+lock with sequential `git merge --no-ff`.
 
 ---
 
@@ -21,7 +21,8 @@ Keel Swarm is built on three core pillars:
    `src/keel/swarm_landing.py`).
 3. **Deterministic Conflict Resolution**: Rather than naively merging branches or relying on LLMs
    to resolve arbitrary git merge conflicts, Swarm statically models predicted scopes, enforces
-   worktree isolation, and applies dual-mode landing (Direct Batch vs Adaptive Funnel).
+   worktree isolation, and keeps every wave's clusters mutually disjoint so landing never has to
+   resolve a conflict in the first place.
 4. **One Resolver For Who Runs What**: Swarm does not have its own idea of who implements.
    Every cluster is staffed by `keel.team.resolve_assignment` — the same function `keel ship`
    and `keel plan` call — with that cluster's role, risk tier and difficulty band. A cluster's
@@ -58,7 +59,7 @@ an operator sees the chain at a glance.
                         ▼                                   ▼
               ┌───────────────────┐               ┌───────────────────┐
               │      Wave 1       │               │      Wave 2       │
-              │  (Direct Batch)   │               │ (Adaptive Funnel) │
+              │  (Direct Batch)   │               │  (Direct Batch)   │
               └─────────┬─────────┘               └─────────┬─────────┘
                         │                                   │
        ┌────────────────┴────────────────┐                  │
@@ -79,7 +80,7 @@ an operator sees the chain at a glance.
                         │                                   │
                         ▼                                   ▼
               ┌───────────────────┐               ┌───────────────────┐
-              │    origin/main    │ ◄─────────────┤ Rebase & Funnel   │
+              │    base branch    │ ◄─────────────┤  keel swarm-land  │
               │   (Wave 1 Done)   │               │   (Wave 2 Done)   │
               └───────────────────┘               └───────────────────┘
 ```
@@ -164,21 +165,27 @@ The `--tree` flag prints the plan as a terminal tree:
 
 ```
 ╭──────────────────────────────────────────────────────────────╮
-│ 🐝 Keel Swarm Plan — swarm-20260815-091500                   │
-│ Issues: 3   │ Waves: 2   │ Direct Landing Waves: 1           │
+│ 🐝 Keel Swarm Plan — swarm-20260815-091500                  │
+│ Issues: 3   │ Waves: 1   │ Direct Landing Waves: 1  │
 ╰──────────────────────────────────────────────────────────────╯
 
-⚡ Wave 1 [batch] — Direct Batch Landing
-├── 📦 Cluster cluster-1 (#714) [docs]
-│   └── Scope: docs/proposals/keel-swarm.md, docs/keel/comparison.md
-└── 📦 Cluster cluster-2 (#715) [core]
-    └── Scope: src/keel/swarm.py, tests/test_swarm.py
-
-⏳ Wave 2 [funnel] — Sequential Funnel
-└── 📦 Cluster cluster-3 (#721) [visual]
-    ├── Scope: keel-visual/src/..., keel-visual/tests/...
-    └── ⛓️ Depends on: #715
+⚡ Wave 1 [orthogonal_parallel] — Direct Batch Landing
+├── 📦 Cluster cluster-1-714 (#714) [docs]
+│   ├── Scope: docs/proposals/keel-swarm.md, docs/keel/comparison.md
+│   ├── Difficulty: standard (score 3, tier 2, 2 file(s), depth 0)
+│   └── Team: lead claude → implementer claude, review claude, claude
+├── 📦 Cluster cluster-1-715 (#715) [core]
+│   ├── Scope: src/keel/swarm.py, tests/test_swarm.py
+│   ├── Difficulty: standard (score 3, tier 2, 2 file(s), depth 0)
+│   └── Team: lead claude → implementer claude, review claude, claude
+└── 📦 Cluster cluster-1-721 (#721) [visual]
+    ├── Scope: keel-visual/src/app.py, keel-visual/tests/test_app.py
+    ├── Difficulty: standard (score 3, tier 2, 2 file(s), depth 0)
+    └── Team: lead claude → implementer claude, review claude, claude
 ```
+
+(The three issues above touch disjoint trees, so they share one wave. Issues whose predicted
+scopes overlap are pushed into later waves instead — each wave stays internally disjoint.)
 
 ---
 
@@ -195,7 +202,7 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 1. **Creation**: Dedicated worktrees are branched from the local `main` onto
    `swarm/<swarm_id>/<cluster_id>`.
 2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
-   named, to execute steps `s0` through `s9`. The lead appends the cluster's team to every
+   named, to execute the full `s0`–`s12` backbone. The lead appends the cluster's team to every
    child ship — `--delegate <implementer>`, one `--review-delegate` per staffed reviewer
    slot, `--role`, and `--effort`/`--team` for the bench the cluster was staffed from — so
    the child reproduces the parent's resolution instead of quietly deriving a different
@@ -218,28 +225,31 @@ keel swarm-status .keel/project.yaml --root .
 
 ---
 
-## 4. Dual-Mode Landing & Drift Self-Healing (`keel swarm-land`)
+## 4. Landing (`keel swarm-land`)
 
-Landing is coordinated by `src/keel/swarm_landing.py` protected by the atomic `merge_lock`
-(`.keel/state/merge.lock`):
+Landing is coordinated by `src/keel/swarm_landing.py` under the atomic `merge_lock`
+(`.keel/state/locks/merge-<sha12>.lock`):
 
 ```bash
 keel swarm-land .keel/project.yaml --root . --wave 1 --live
 ```
 
-### Landing Modes:
-1. **Direct Orthogonal Batch Landing (`batch`)**:
-   - Activated when the plan's predicted scopes for the wave's clusters are disjoint.
-   - Each cluster branch is merged into `main` with `git merge --no-ff`, one after another under
-     the atomic `merge_lock`.
-   - No rebase is needed because the trees do not overlap.
-2. **Adaptive Atomic Funnel Landing (`funnel`)**:
-   - Activated when clusters share base dependencies or have overlapping file touches.
-   - Clusters are merged sequentially. Before each merge, the cluster branch is rebased onto the newly
-     updated `main`.
-   - **Self-Healing Rebase**: If `git rebase` succeeds cleanly, the merge proceeds. If an unresolvable
-     conflict occurs, `git rebase --abort` is immediately executed, leaving `main` and the worktree clean,
-     while recording a structured failure report.
+### What landing actually does
+
+Each cluster branch is merged into the configured base branch with `git merge --no-ff`, **one
+after another** inside the lock. A merge that conflicts is `git merge --abort`ed, the base is left
+untouched, and the cluster is reported `merge failed`.
+
+**Every wave lands in direct-batch mode today.** `build_swarm_plan` only admits an issue to a wave
+it conflicts with nothing in, so a wave's clusters are always mutually disjoint; the CLI also passes
+no PR diff map, so `evaluate_wave_landing_mode` returns `direct_batch` (`orthogonal_diff_trees`, or
+`single_cluster` for a wave of one) every time.
+
+`swarm_landing.py` *does* implement an adaptive funnel — rebase each overlapping cluster onto the
+moved base, heal adjacent conflicts with the deterministic marker resolver, hold anything the
+resolver touched for re-review, and rewind a held branch. That path is reachable only by a library
+caller that supplies `pr_diff_map`; **no `keel swarm-land` invocation selects it.** It is described
+in [cli.md](cli.md) for callers who drive the library directly.
 
 ### Review Evidence Gate (`knobs.swarm_review_evidence`)
 
@@ -312,9 +322,9 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | **Declared Org Chart (CTO/lead/worker)** | **Yes (`knobs.team`, one resolver)** | Role prompts | Conversational | SOP roles | Single agent |
 | **Fixed Backbone Machine** | **Yes (`s0`–`s12` immutable)** | No | No | No | No |
 | **Isolated Git Worktrees** | **Yes (`.keel/worktrees/`)** | No (shared workspace) | No | No (file overwrite) | Docker container |
-| **Dual-Mode Batch Landing** | **Yes (Direct + Funnel)** | No | No | No | PR per run |
+| **Batch landing under one writer lock** | **Yes (sequential `merge --no-ff`)** | No | No | No | PR per run |
 | **Atomic Single-Host Lock** | **Yes (`merge_lock`)** | No | No | No | No |
-| **Drift Self-Healing Rebase** | **Yes (fail-soft abort)** | No | No | No | Manual |
+| **Fail-soft conflict handling** | **Yes (`merge --abort`, cluster reported failed)** | No | No | No | Manual |
 | **Per-Branch Review-Evidence Gate** | **Yes (cross-vendor panel per cluster, when configured)** | No | Conversational | No | Single Agent |
 | **2D DAG & pseudo-3D snapshot** | **Yes (`keel-visual`, rendered)** | Basic Tree | Plotly / None | Static Diagrams | Web Terminal |
 
@@ -324,10 +334,10 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 
 | Risk / Failure Scenario | Detection Mechanism | Fail-Soft Mitigation |
 | :--- | :--- | :--- |
-| **A cluster changes files another cluster also touches** | Plan-time static file-overlap partitioning (disjoint trees only share a wave) + isolated per-cluster worktrees | Overlapping clusters are sequenced into later waves and funnel-landed (rebase, abort-on-conflict); a failed cluster is dropped from the remaining waves. |
-| **Rebase Conflict during Funnel Landing** | `git rebase` non-zero exit code | Automatic `git rebase --abort`; `main` remains untouched; worker marked `failed` (`details: rebase conflict: …`). |
+| **A cluster changes files another cluster also touches** | Plan-time static file-overlap partitioning (disjoint trees only share a wave) + isolated per-cluster worktrees | Overlapping clusters are sequenced into later waves; a failed cluster is dropped from the remaining waves. |
+| **Merge conflict during landing** | `git merge` non-zero exit code | Automatic `git merge --abort`; the base branch remains untouched; the cluster is reported `merge failed`. |
 | **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock; a second writer raises `LockError` rather than retrying, so landing is single-writer by refusal. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |
-| **Missing or corrupt run state** | `load_swarm_state` JSON/shape errors | Fails soft to no state rather than raising; `swarm-land` rebuilds the plan from `--issues`, so a lost state file costs the board, not the landing. |
+| **Missing or unreadable run state** | `load_swarm_state` JSON/Value/Key errors | Fails soft to no state rather than raising; `swarm-land` rebuilds the plan from `--issues`, so a lost state file costs the board, not the landing. |
 | **A cluster scored lighter than it turns out to be** | The lead's own progress against the plan | The lead reports through its worker record and the CTO re-plans; a lead never re-staffs itself, so the run's team stays the one the plan published. |
 | **`--team` names a bench that is not configured** | `assignment.warnings` at plan time | The run falls back to the configured policy and says so; the name is never silently ignored. |

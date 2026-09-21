@@ -58,7 +58,7 @@ and optional project-owned learning decisions.
 | Closes the issue / PR loop | yes | partial | no | partial | no |
 | Supports multi-issue work blocks | yes | partial | no | queue-only | yes (unconstrained) |
 | Conflict-free DAG clustering | yes (Keel Swarm) | no | no | no | ❌ |
-| Direct batch landing & self-healing | yes (Keel Swarm) | no | no | partial | ❌ |
+| Single-writer batch landing | yes (Keel Swarm) | no | no | partial | ❌ |
 | Supports resume/checkpoint/reconcile | yes | partial | no | partial queue state | partial |
 | Captures post-merge learning | yes, policy-gated | no | partial repo memory | no | no |
 | Project policy extensibility | yes | partial | partial | yes | partial |
@@ -221,7 +221,7 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 | **AutoGen / Magentic-One** | conversational group chat | OSS | GroupChat / Lead orchestrator | ❌ None | ❌ None |
 | **OpenAI Swarm** | lightweight client-side handoffs | MIT | Stateless agent routines + handoffs | ❌ None | ❌ None |
 | **MetaGPT / ChatDev** | simulated software company | MIT | SOP-driven conversational roles | ❌ None | ❌ None |
-| **Keel Swarm** | **deterministic backbone swarm** | Apache-2.0 | **DAG conflict clustering + git worktree fan-out** | ✅ **Physical worktree isolation** | ✅ **100% test gates + dual-mode batch landing** |
+| **Keel Swarm** | **deterministic backbone swarm** | Apache-2.0 | **DAG conflict clustering + git worktree fan-out** | ✅ **Physical worktree isolation** | ✅ **100% test gates + single-writer batch landing** |
 
 Sources: [gurusup.com/blog/best-multi-agent-frameworks-2026](https://gurusup.com/blog/best-multi-agent-frameworks-2026), [medium.com/.../magentic-one-autogen-langgraph-crewai-or-openai-swarm](https://medium.com/data-science-in-your-pocket/magentic-one-autogen-langgraph-crewai-or-openai-swarm-which-multi-ai-agent-framework-is-best-6629d8bd9509)
 
@@ -235,7 +235,7 @@ General swarm frameworks operate on unstructured conversational abstractions wit
 Keel Swarm anchors multi-agent parallelism inside deterministic engineering invariants:
 - **Static DAG Dependency Clustering**: Pre-analyzes issue blast radiuses to schedule orthogonal tasks in parallel waves while serializing dependent tasks.
 - **Physical Git Worktree Isolation**: Workers develop inside dedicated `.keel/worktrees/<swarm_id>/<cluster_id>/` sandboxes.
-- **Dual-Mode Landing Engine**: Merges 100% disjoint trees via Direct Orthogonal Batch Landing while routing overlapping trees through the atomic `merge_lock` with an automated rebase and a deterministic marker-based conflict resolver whose output is held for re-review rather than landed.
+- **Single-Writer Batch Landing**: Merges each cluster branch into the base with `git merge --no-ff`, sequentially under the atomic `merge_lock`; a conflicting merge is aborted and the cluster reported failed. (An adaptive rebase funnel with a marker-based resolver exists in the library but is not selected by the CLI.)
 - **Commit-Bound Evidence & Multi-Vendor Jury**: Every PR carries an immutable, commit-SHA-locked evidence record — including the cross-vendor panel's verdict when the project configures the panel.
 - **Full-Spectrum Observability**: A terminal ASCII plan tree (`keel swarm-plan --tree`) and a status table (`keel swarm-status`), paired with `keel-visual`'s 2D / pseudo-3D swarm scenes (rendered snapshots).
 

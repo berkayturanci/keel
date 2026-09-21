@@ -131,7 +131,7 @@
       category: "assistants",
       badge: "Autonomous Agent",
       desc: "Lightweight autonomous agent runner dispatched across parallel Swarm isolated worktrees.",
-      cmd: "keel swarm-run .keel/project.yaml --delegate hermes",
+      cmd: "keel swarm-run .keel/project.yaml --issues 12,15 --delegate hermes",
       note: "Needs a <code>knobs.delegate_profiles.hermes</code> entry naming the agent's binary — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/hermes.png"
     },

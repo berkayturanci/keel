@@ -2062,8 +2062,8 @@ keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--iss
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Repo root for git, the swarm state and the merge lock. |
 | `--wave N` | int | `1` | Which execution wave to land. |
-| `--issues N,N` / `--issue N` | comma list / repeatable int | plan's own set | Issue set the wave was planned from. |
-| `--swarm-id ID` | string | derived | Reuse an existing swarm's plan/state. |
+| `--issues N,N` / `--issue N` | comma list / repeatable int | none (required) | Issue set the wave is re-planned from; no plan is persisted, so omitting both leaves nothing to land. |
+| `--swarm-id ID` | string | derived | Reuse an existing swarm's state and branch names; the plan itself is always rebuilt from the issue flags. |
 | `--live` | flag | off | Actually merge. Without it the command reports what it would land, including `would hold: <reason>` per cluster. |
 | `--json` | flag | off | Structured landing result. |
 

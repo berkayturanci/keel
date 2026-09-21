@@ -137,7 +137,7 @@ window.KEEL_ARGS = {
   ]
  },
  "swarm": {
-  "desc": "Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land orthogonal batches with self-healing rebase.",
+  "desc": "Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land them under a single-writer merge lock.",
   "hint": "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]",
   "flags": [
    "issue numbers...",

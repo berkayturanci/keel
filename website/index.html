@@ -296,21 +296,21 @@
               <span>Each cluster is reviewed inside its own <code>keel ship</code> run — on tier-3 work that can be the cross-vendor AI Jury panel (e.g. Anthropic + OpenAI + Google). No branch lands until it clears the review-evidence gate, whichever model authored it.</span>
             </div>
             <div class="inv">
-              <b>Dual-Mode Batch Landing</b>
-              <span>Under the single-writer <code>merge_lock</code>, <b>Direct Orthogonal Batch Landing</b> merges disjoint branches into main with <code>git merge --no-ff</code>, while <b>Adaptive Atomic Funnel</b> rebases overlapping clusters and rolls back safely on conflict.</span>
+              <b>Single-Writer Batch Landing</b>
+              <span>Under the single-writer <code>merge_lock</code>, each cluster branch is merged into the base with <code>git merge --no-ff</code>, one after another. A conflicting merge is aborted and the cluster reported failed — the base branch is never left half-landed.</span>
             </div>
             <div class="inv">
               <b>2D DAG &amp; Pseudo-3D Spatial Visualizer</b>
-              <span>Run <code style="font-family:var(--font-mono)">keel-visual swarm</code> to render an HTML page showing the dependency DAG, the worktree clusters, each cluster's running/passed/failed state, and landing queues — a rendered snapshot you re-run to refresh.</span>
+              <span>Run <code style="font-family:var(--font-mono)">keel-visual swarm</code> to render an HTML page showing the dependency DAG, the worktree clusters, each cluster's running/passed/failed state, and the run's landing mode — a rendered snapshot you re-run to refresh.</span>
             </div>
           </div>
 
           <p class="view-kicker" style="margin:2rem 0 .8rem">Swarm CLI commands</p>
           <div class="cli-grid">
-            <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; --issues 12,15</code><span>Compute the dependency DAG, partition into parallel execution waves, and determine batch vs funnel landing strategy. <a href="docs.html#swarm">Swarm docs →</a></span></div>
+            <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; --issues 12,15</code><span>Compute the conflict graph from predicted scopes and partition the backlog into conflict-free execution waves. <a href="docs.html#swarm">Swarm docs →</a></span></div>
             <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span>Execute parallel cluster workers in isolated worktrees, tracking each worker's status and rebalancing the plan when one fails.</span></div>
             <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect each cluster's running/passed/failed status, its lead, and its difficulty band.</span></div>
-            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --wave 1</code><span>Land completed cluster batches under the merge lock with self-healing conflict rollback.</span></div>
+            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --wave 1</code><span>Land a completed wave's cluster branches under the merge lock, sequentially, aborting any conflicting merge.</span></div>
             <div class="cli-row"><code>keel-visual swarm</code><span>Render the interactive 2D DAG and pseudo-3D spatial node topology as a snapshot (static HTML or served on localhost).</span></div>
           </div>
         </section>

@@ -66,7 +66,7 @@ window.KEEL = {
       cmd: "keel:swarm",
       one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
       detail:
-        "Clusters backlog issues into disjoint execution waves based on static file-overlap of predicted scopes. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before dual-mode batch landing under the merge lock with self-healing conflict rollback.",
+        "Clusters backlog issues into disjoint execution waves based on static file-overlap of predicted scopes. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before sequential git merge --no-ff landing under the merge lock.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
@@ -188,10 +188,10 @@ window.KEEL = {
     ["keel init [--wizard]", "scaffold .keel/project.yaml (detects the stack)"],
     ["keel validate <cfg>", "validate a config (and its extensions) against the schema"],
     ["keel plan <cfg> [--live --json]", "render the backbone + the full structured command contract; --live runs the s0 consent preflight"],
-    ["keel swarm-plan <cfg> --issues 12,15", "cluster backlog issues into disjoint execution waves and compute batch vs funnel landing plan"],
+    ["keel swarm-plan <cfg> --issues 12,15", "cluster backlog issues into conflict-free execution waves from their predicted scopes"],
     ["keel swarm-status <cfg>", "multi-cluster status snapshot — each cluster's lead, difficulty band, and running/passed/failed state"],
     ["keel swarm-run <cfg> --issues 12,15", "orchestrate parallel workers in isolated worktrees, rebalancing the plan when a cluster fails"],
-    ["keel swarm-land <cfg> --wave 1", "dual-mode batch landing under merge lock with self-healing conflict rollback"],
+    ["keel swarm-land <cfg> --wave 1", "merge a wave's cluster branches sequentially under the merge lock, aborting on conflict"],
     ["keel-visual swarm", "2D DAG and pseudo-3D spatial worktree topology, rendered as a snapshot"],
     ["keel run-gates <cfg>", "run the project's build / lint / command gates"],
     ["keel window <cfg>", "is the merge window open right now?"],
@@ -394,7 +394,7 @@ window.KEEL = {
     },
     {
       group: "Architecture", title: "Keel Swarm (Multi-Agent Concurrency & Cross-Model Topology)", slug: "swarm",
-      summary: "High-concurrency multi-agent orchestration — static DAG clustering, isolated git worktrees, cross-model routing, and dual-mode batch landing.",
+      summary: "High-concurrency multi-agent orchestration — static DAG clustering, isolated git worktrees, cross-model routing, and single-writer batch landing.",
       body:
         "<p><b>Keel Swarm</b> is Keel's high-concurrency multi-agent orchestration subsystem. While <code>/keel:ship</code> drives a single issue linearly, <code>/keel:swarm</code> clusters a list or backlog of issues into disjoint execution waves and executes them across isolated git worktrees in parallel.</p>" +
         "<h3>1. Static Dependency DAG & Wave Partitioning</h3>" +
@@ -408,14 +408,14 @@ window.KEEL = {
         "<li><b>Local / Offline Worktrees</b>: Local Ollama / vLLM (<code>ollama:qwen2.5-coder</code>)</li>" +
         "</ul>" +
         "<p>Each cluster is reviewed inside its own <b>keel ship</b> run — on tier-3 work that can be the cross-vendor <b>AI Jury</b> panel (e.g. Anthropic + OpenAI + Google) — and no branch lands until it clears the review-evidence gate, whichever model authored it.</p>" +
-        "<h3>3. Dual-Mode Landing</h3>" +
+        "<h3>3. Single-Writer Batch Landing</h3>" +
         "<p>Swarm supports two landing strategies under the single-writer <code>merge_lock</code>:</p>" +
         "<ul>" +
         "<li><b>Direct Orthogonal Batch Landing</b>: Disjoint branches with zero file collisions are merged into the base branch with <code>git merge --no-ff</code>, sequentially under the merge lock, with no rebases.</li>" +
-        "<li><b>Adaptive Atomic Funnel</b>: Overlapping clusters are rebased onto the newly merged base branch, then merged. A clean rebase lands; a resolver-healed one is held for re-review; an unresolvable conflict triggers an immediate safe rollback (<code>git rebase --abort</code>).</li>" +
+        "<li><b>Why one mode</b>: the planner only puts mutually disjoint clusters in a wave, so landing never needs a rebase. <code>swarm_landing.py</code> also implements an adaptive rebase funnel (marker-resolver healing, hold-and-rewind), but no <code>swarm-land</code> invocation selects it — it is reachable only from the library.</li>" +
         "</ul>" +
         "<h3>4. 2D & Pseudo-3D Spatial Snapshot</h3>" +
-        "<p><code>keel-visual swarm</code> renders an interactive DAG topological graph and a pseudo-3D spatial node view as an HTML page, showing each cluster's running/passed/failed state and the landing queues. It is a rendered snapshot — re-run to refresh.</p>",
+        "<p><code>keel-visual swarm</code> renders an interactive DAG topological graph and a pseudo-3D spatial node view as an HTML page, showing the plan's waves, each cluster's running/passed/failed state, and the run's landing mode. It is a rendered snapshot — re-run to refresh.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/swarm.md",
     },
     {
