@@ -12,8 +12,35 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from keel import workspace
+
+
+class TestContainmentGuardsAreCovableWithoutSymlinks(unittest.TestCase):
+    """Platform-independent coverage of the guards (symlink tests skip on Windows)."""
+
+    def test_escapes_root_detects_an_outside_path(self):
+        with TemporaryDirectory() as root, TemporaryDirectory() as outside:
+            self.assertTrue(workspace._escapes_root(Path(outside) / "x", root))
+            inside = Path(root) / ".keel" / "scratch"
+            self.assertFalse(workspace._escapes_root(inside, root))
+
+    def test_clean_scratch_refuses_a_symlink_leaf(self):
+        with TemporaryDirectory() as root, mock.patch.object(Path, "is_symlink", return_value=True):
+            with self.assertRaises(OSError):
+                workspace.clean_scratch(root)
+
+    def test_gitignore_refuses_a_symlink_leaf(self):
+        with TemporaryDirectory() as d:
+            keel = Path(d) / ".keel"
+            keel.mkdir()
+            with mock.patch.object(Path, "is_symlink", return_value=True):
+                self.assertFalse(workspace.ensure_runtime_gitignore(keel))
+
+    def test_scratch_entries_refuses_a_symlink_leaf(self):
+        with TemporaryDirectory() as root, mock.patch.object(Path, "is_symlink", return_value=True):
+            self.assertEqual(workspace.scratch_entries(root), [])
 
 
 @unittest.skipIf(os.name == "nt", "POSIX symlink semantics")
@@ -57,6 +84,22 @@ class TestScratchSymlinkContainment(unittest.TestCase):
             self.assertEqual(list(scratch.iterdir()), [])  # scratch emptied
             self.assertIn("link", removed)
 
+    def test_a_symlinked_keel_dir_is_also_caught(self):
+        # `.keel` itself committed as a symlink: the leaf `scratch.is_symlink()` is False, but
+        # resolving the path shows it escapes the repo (agy round 1).
+        with TemporaryDirectory() as outside:
+            (Path(outside) / "scratch").mkdir()
+            victim = Path(outside) / "scratch" / "precious.txt"
+            victim.write_text("keep me", encoding="utf-8")
+            d = TemporaryDirectory()
+            self.addCleanup(d.cleanup)
+            root = Path(d.name)
+            (root / ".keel").symlink_to(Path(outside), target_is_directory=True)
+            with self.assertRaises(OSError):
+                workspace.clean_scratch(root)
+            self.assertTrue(victim.exists(), "gc deleted through a symlinked .keel")
+            self.assertEqual(workspace.scratch_entries(root), [])
+
     def test_ordinary_scratch_still_cleans(self):
         d = TemporaryDirectory()
         self.addCleanup(d.cleanup)
@@ -84,6 +127,15 @@ class TestGitignoreSymlinkContainment(unittest.TestCase):
             changed = workspace.ensure_runtime_gitignore(keel)
             self.assertFalse(changed)
             self.assertEqual(victim.read_text(encoding="utf-8"), "original\n")
+
+    def test_a_symlinked_keel_dir_blocks_the_gitignore_write(self):
+        with TemporaryDirectory() as outside:
+            d = TemporaryDirectory()
+            self.addCleanup(d.cleanup)
+            keel = Path(d.name) / ".keel"
+            keel.symlink_to(Path(outside), target_is_directory=True)
+            self.assertFalse(workspace.ensure_runtime_gitignore(keel))
+            self.assertFalse((Path(outside) / ".gitignore").exists())
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -113,9 +113,10 @@ def ensure_runtime_gitignore(keel_directory: str | Path) -> bool:
     if not directory.is_dir():
         return False
     gitignore = directory / GITIGNORE_NAME
-    if gitignore.is_symlink():
-        # A committed `.keel/.gitignore` symlink would otherwise have keel's ignore lines
-        # written through it to the link's target, anywhere on disk (#1247).
+    if gitignore.is_symlink() or directory.is_symlink():
+        # A committed `.keel/.gitignore` symlink — or a symlinked `.keel` above it — would
+        # otherwise have keel's ignore lines written through it to the link's target, anywhere
+        # on disk (#1247).
         return False
     if not gitignore.exists():
         gitignore.write_text(runtime_gitignore_body(), encoding="utf-8")
@@ -220,12 +221,27 @@ def scratch_dir(root: str | Path = ".", *, create: bool = True) -> Path:
     return scratch
 
 
+def _escapes_root(path: Path, root: str | Path) -> bool:
+    """Does ``path`` resolve outside the project root? (#1247)
+
+    ``Path.is_symlink`` only inspects the final segment, so a symlinked *parent* — a checkout
+    that committed ``.keel`` itself as a symlink — slips past a leaf check while ``is_dir``
+    still follows it. Resolving the whole path and requiring it under the resolved root catches
+    a symlink anywhere in the chain.
+    """
+    try:
+        path.resolve().relative_to(Path(root).resolve())
+        return False
+    except (ValueError, OSError):
+        return True
+
+
 def scratch_entries(root: str | Path = ".") -> list[str]:
     """Sorted top-level names currently under ``.keel/scratch`` (``[]`` if none)."""
     scratch = keel_dir(root) / SCRATCH_DIRNAME
-    # A symlinked `.keel/scratch` points its contents somewhere else on disk; do not list (or,
-    # in `clean_scratch`, delete) through it (#1247).
-    if scratch.is_symlink() or not scratch.is_dir():
+    # A symlinked `.keel/scratch` (or a symlinked `.keel` above it) points its contents
+    # somewhere else on disk; do not list (or, in `clean_scratch`, delete) through it (#1247).
+    if scratch.is_symlink() or _escapes_root(scratch, root) or not scratch.is_dir():
         return []
     return sorted(p.name for p in scratch.iterdir())
 
@@ -237,10 +253,11 @@ def clean_scratch(root: str | Path = ".") -> list[str]:
     keeping the directory node intact. A no-op (``[]``) when scratch does not exist.
     """
     scratch = keel_dir(root) / SCRATCH_DIRNAME
-    if scratch.is_symlink():
-        # Refuse rather than delete through the link's target (#1247). gc catches this and
-        # reports it as degraded instead of aborting.
-        raise OSError(f"{scratch} is a symlink; refusing to clean it")
+    if scratch.is_symlink() or _escapes_root(scratch, root):
+        # Refuse rather than delete through the link's target (#1247) — whether the link is
+        # `.keel/scratch` itself or a symlinked `.keel` above it. gc catches this and reports
+        # it as degraded instead of aborting.
+        raise OSError(f"{scratch} is a symlink or escapes the project root; refusing to clean it")
     entries = scratch_entries(root)
     if scratch.is_dir():
         for child in scratch.iterdir():
