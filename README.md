@@ -249,10 +249,16 @@ keel plan — my-project
   base_branch: main   core_version: ^1.0
   backbone:
      s0  config
+     s1  select
+     s2  branch
+     s3  guard
      s4  implement  [agent]
+     s5  classify  [agent]
+     s6  ci
      s7  review  [agent]
      s8  test
            - gate: build
+     s9  fixloop
     s10  merge
     s11  capture
     s12  close
