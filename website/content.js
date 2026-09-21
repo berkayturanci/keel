@@ -66,7 +66,7 @@ window.KEEL = {
       cmd: "keel:swarm",
       one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
       detail:
-        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/swarm/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — the cross-vendor AI Jury panel on tier-3 — and holds every branch behind a per-branch review-evidence check before dual-mode batch landing under the merge lock with self-healing conflict rollback.",
+        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/swarm/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before dual-mode batch landing under the merge lock with self-healing conflict rollback.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
@@ -190,7 +190,7 @@ window.KEEL = {
     ["keel plan <cfg> [--live --json]", "render the backbone + the full structured command contract; --live runs the s0 consent preflight"],
     ["keel swarm-plan <cfg> --issues 12,15", "cluster backlog issues into disjoint execution waves and compute batch vs funnel landing plan"],
     ["keel swarm-status <cfg>", "multi-cluster status snapshot — each cluster's lead, difficulty band, and running/passed/failed state"],
-    ["keel swarm-run <cfg> --issues 12,15", "orchestrate parallel workers in isolated worktrees with dynamic rebalancing"],
+    ["keel swarm-run <cfg> --issues 12,15", "orchestrate parallel workers in isolated worktrees, rebalancing the plan when a cluster fails"],
     ["keel swarm-land <cfg> --wave 1", "dual-mode batch landing under merge lock with self-healing conflict rollback"],
     ["keel-visual swarm", "live 2D DAG graph and 3D spatial worktree topology dashboard"],
     ["keel run-gates <cfg>", "run the project's build / lint / command gates"],

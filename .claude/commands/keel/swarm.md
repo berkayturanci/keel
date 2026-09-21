@@ -119,7 +119,7 @@ keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
   `assignment.warnings`; the child resolves its role from the issue's own labels.
 - A lead never re-scores its cluster and never re-staffs it. If the work turns out heavier
   than the band said, it reports that through the worker record and the CTO re-plans.
-- If runtime file modification divergence is detected, dynamic rebalancing partitions overlapping branches to the next wave tier.
+- When a cluster's issue fails, `rebalance_swarm_plan` drops the clusters carrying that issue from the remaining waves; there is no runtime file-divergence detection — clusters are kept apart by plan-time overlap partitioning and per-worktree isolation.
 - Track live worker states with `keel swarm-status` — the board's `Lead` and `Band` columns
   are how the operator sees which lead owns which cluster and why it drew its provider.
 
@@ -149,7 +149,7 @@ When `--visual` was requested, launch the localhost visualizer dashboard:
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
 
-## Step 5 — Synthesis & swarm recap report
+## Step 5 — Swarm recap report
 
 Compile the overall multi-agent swarm outcome:
 - Total issues planned, clustered, and executed.
@@ -161,4 +161,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=518afa57069a7bd82083489ab9fbd3d05a9f75ce9fbcc5dc7f3dfd25493ba897 generated_sha256=518afa57069a7bd82083489ab9fbd3d05a9f75ce9fbcc5dc7f3dfd25493ba897 -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=c0691d2c4c7bd09f5fe291a03f45d2b22c25a7b1514af59c92f86edb8539cc94 generated_sha256=c0691d2c4c7bd09f5fe291a03f45d2b22c25a7b1514af59c92f86edb8539cc94 -->
