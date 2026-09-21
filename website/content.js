@@ -59,7 +59,7 @@ window.KEEL = {
       cmd: "keel:ship",
       one: "Drive a GitHub issue end-to-end through the whole backbone.",
       detail:
-        "Select → branch → implement → CI → review → test → merge → close → capture. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides. <b>--tdd</b> (<code>knobs.implement_mode: tdd</code>) selects the test-first s4 profile: a test-only commit carrying the issue's acceptance criteria, then the implementation, verified at s8 by the blocking <code>tdd-order</code> gate. <b>--loop</b> (<code>knobs.loop</code>) iterates s4 with the gates as the judge, up to <code>max_iterations</code>. <b>--team</b> and <b>--effort</b> staff the run from a named <code>knobs.team</code> bench.",
+        "Select → branch → implement → CI → review → test → merge → capture → close. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides. <b>--tdd</b> (<code>knobs.implement_mode: tdd</code>) selects the test-first s4 profile: a test-only commit carrying the issue's acceptance criteria, then the implementation, verified at s8 by the blocking <code>tdd-order</code> gate. <b>--loop</b> (<code>knobs.loop</code>) iterates s4 with the gates as the judge, up to <code>max_iterations</code>. <b>--team</b> and <b>--effort</b> staff the run from a named <code>knobs.team</code> bench.",
     },
     {
       slug: "swarm", name: "/keel:swarm", group: "Flagship", flagship: true, featured: true, scene: "swarm",
@@ -225,7 +225,7 @@ window.KEEL = {
 
   /* ---- Config field reference ------------------------------------ */
   config: [
-    ["core", "Pinned keel-core version range (e.g. ^0.6) — installed, never copied."],
+    ["core", "Pinned keel-core version range (e.g. ^1.0) — installed, never copied."],
     ["base_branch", "The branch work is cut from and merged back into."],
     ["timezone · merge_window", "Timezone-aware HH:MM–HH:MM window; merges only happen inside it."],
     ["gates", "Built-in build / lint / test gates run at the s8 test step."],
@@ -294,7 +294,7 @@ window.KEEL = {
       group: "Start here", title: "What keel is", slug: "what-keel-is",
       summary: "A project-neutral, multi-agent workflow core: one fixed backbone, projects set values and snap in Lego.",
       body:
-        "<p><b>keel</b> closes the <b>vision-to-production gap</b> in agentic AI. While most coding agents stop at opening a PR, keel is a project-neutral, multi-agent <b>workflow backbone</b> that drives a unit of work from backlog to production: branch → implement → CI → review → test → merge → close → capture. Projects never fork the backbone; they set per-project <b>values</b> in <code>project.yaml</code> and snap their own <b>Lego pieces</b> into named extension slots.</p>" +
+        "<p><b>keel</b> closes the <b>vision-to-production gap</b> in agentic AI. While most coding agents stop at opening a PR, keel is a project-neutral, multi-agent <b>workflow backbone</b> that drives a unit of work from backlog to production: branch → implement → CI → review → test → merge → capture → close. Projects never fork the backbone; they set per-project <b>values</b> in <code>project.yaml</code> and snap their own <b>Lego pieces</b> into named extension slots.</p>" +
         "<p>The keel is a ship's backbone — the fixed spine every project builds on. The flagship command is <code>/keel:ship</code>; keel is where ships are built.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md",
     },
