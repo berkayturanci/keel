@@ -28,6 +28,7 @@ It performs **no** network calls of its own and ships a single runtime dependenc
 
 Be aware that:
 
+- **Inspection commands do not run a project's code.** `keel doctor` (documented read-only) does not execute `scripts/find_python.sh` from the inspected checkout, and the provider probe behind `keel doctor --providers` / `plan` / `swarm-plan` refuses a `delegate_profiles.*.command` that is a *relative* path — it would resolve against the working tree. Configure a PATH command or an absolute path. A gate command you configured is still yours to run (below).
 - **Gate commands run your shell.** `run-gates` / `ship` execute the `build`/`lint`/command
   Lego you put in your config. Review a config before running it on a sensitive repository,
   exactly as you would a Makefile or CI script.

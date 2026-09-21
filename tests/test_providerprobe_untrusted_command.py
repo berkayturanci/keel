@@ -11,6 +11,7 @@ the untrusted working tree.
 
 from __future__ import annotations
 
+import os
 import unittest
 
 from keel import providerprobe, runner
@@ -38,12 +39,18 @@ def _cli(command):
 
 class TestARelativeCommandIsNeverExecuted(unittest.TestCase):
     def test_repo_relative_detects_only_in_tree_paths(self):
-        for bad in ("scripts/x", "./x", "../x", "tools/agent.sh", r".\x"):
+        # A Windows drive-relative `C:evil` (isabs False, no separator) still resolves
+        # against the current drive's cwd, so it must be caught too.
+        for bad in ("scripts/x", "./x", "../x", "tools/agent.sh", r".\x", "C:evil", r"C:evil\x"):
             with self.subTest(command=bad):
                 self.assertTrue(providerprobe._repo_relative(bad))
         for ok in ("claude", "cursor-agent", "/usr/local/bin/claude", "", None):
             with self.subTest(command=ok):
                 self.assertFalse(providerprobe._repo_relative(ok))
+        # A Windows absolute path is safe only where the platform reads it as absolute; the
+        # invariant is "bare name or absolute", evaluated on the running platform.
+        win_abs = r"C:\abs\claude.exe"
+        self.assertEqual(providerprobe._repo_relative(win_abs), not os.path.isabs(win_abs))
 
     def test_cli_probe_refuses_a_relative_command_without_running_it(self):
         run, calls = _recording_run()

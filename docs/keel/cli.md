@@ -1991,9 +1991,12 @@ The checks are:
 - **`state_paths`** — existence/validity of the configured ledger + checkpoint paths.
   Advisory: a missing path is fine (reported as empty history); an invalid path is a `warn`.
 - **`python_toolchain`** — the interpreter `knobs.build_gate_cmd` will actually run on, its
-  version, and whether PyYAML imports there. A `make` gate is resolved the way the Makefile
-  resolves it (an exported `PY`, then this repo's `scripts/find_python.sh`, then `python3`
-  on PATH); any other gate runs in this process, so the answer is `sys.executable`. Below
+  version, and whether PyYAML imports there. For a `make` gate doctor reports an exported
+  `PY`, else `python3` on PATH. It does **not** execute the project's `scripts/find_python.sh`
+  (the make gate resolves its own interpreter through that script at gate time): doctor is
+  read-only, and the script comes from the inspected checkout, so a diagnostic must not run
+  it (#1247). When the resolver is present the reported source names it and says it was not
+  run. Any other gate runs in this process, so the answer is `sys.executable`. Below
   `requires-python` (3.11) or without PyYAML is a `warn` that names the interpreter — a
   `make test` that dies with a hundred syntax errors is a 3.9 on PATH, not a regression in
   the tree.

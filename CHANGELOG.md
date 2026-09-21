@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **Inspection commands no longer execute a program from the checkout they inspect** (#1247). `keel doctor` — documented read-only — resolved the make gate's interpreter by running the project's `scripts/find_python.sh`, and the provider probe behind `keel doctor --providers`, `keel plan` and `keel swarm-plan` ran `<delegate_profiles.*.command> --version`. Both commands come from the inspected project's `.keel/project.yaml`, so pointing keel at a cloned repo or a fork's pull-request branch executed a program that repo shipped. Doctor now resolves the interpreter from `PY` or PATH `python3` and never runs the resolver; the probe refuses a `command` that is a relative path (a PATH name or an absolute path still probes). `tests/test_providerprobe_untrusted_command.py` and `tests/test_doctor.py` pin both.
+
 ### Changed
 - **keel-ship.dev reports into an analytics site of its own** (#1245).
   - **Before.** All five pages carried a Cloudflare Web Analytics token created in June for `berkayturanci.github.io`. The sibling project's site and two github.io project pages carried it too, so one dashboard mixed four properties. Nothing was lost — a token records a beacon from any host — but visits and Core Web Vitals could only be read per site through a Host filter.

@@ -6438,24 +6438,25 @@ def _doctor_python_toolchain(
     override = env.get("PY", "").strip()
     if override:
         return _probe_python(override, "PY (environment)", _run=_run)
+    fallback = which("python3")
     resolver = Path(root) / "scripts" / "find_python.sh"
-    if not resolver.is_file():
-        fallback = which("python3")
+    if resolver.is_file():
+        # `doctor` is read-only (docs/keel/cli.md). The make gate resolves its interpreter
+        # through this script at gate time, but the script comes from the inspected checkout
+        # — a clone, a fork's pull-request branch could ship a hostile one — so a diagnostic
+        # must not run it (#1247). Report a PATH baseline and name where the real resolution
+        # happens, rather than executing a project-supplied program for a version check.
+        source = "scripts/find_python.sh (not run by doctor; PATH python3 shown)"
         if not fallback:
-            return _no_interpreter("python3 on PATH", "no python3 on PATH for the make build gate")
-        return _probe_python(fallback, "python3 on PATH", _run=_run)
-    # Through `sh` rather than executed directly: a `.sh` is not a program on
-    # every platform, and the resolver is a POSIX script by design.
-    result = run_argv(
-        ["/bin/sh", str(resolver)], cwd=root, timeout=_PYTHON_PROBE_TIMEOUT_S, **_kw(_run)
-    )
-    lines = result.stdout.strip().splitlines()
-    if not result.ok or not lines:
-        return _no_interpreter(
-            "scripts/find_python.sh",
-            f"scripts/find_python.sh resolved none: {_short(result.output)}",
-        )
-    return _probe_python(lines[-1].strip(), "scripts/find_python.sh", _run=_run)
+            return _no_interpreter(
+                "scripts/find_python.sh (not run by doctor)",
+                "the make gate resolves python via scripts/find_python.sh, which doctor does "
+                "not execute; no python3 on PATH as a baseline",
+            )
+        return _probe_python(fallback, source, _run=_run)
+    if not fallback:
+        return _no_interpreter("python3 on PATH", "no python3 on PATH for the make build gate")
+    return _probe_python(fallback, "python3 on PATH", _run=_run)
 
 
 def _doctor_policy_labels(

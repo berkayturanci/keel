@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping
@@ -106,6 +107,29 @@ def _probe(
     return _probe_cli(provider, which=which, run=run)
 
 
+#: A Windows drive prefix (``C:``). ``C:evil`` is *drive-relative* — ``os.path.isabs`` is
+#: False and it holds no separator, yet ``CreateProcess`` resolves it against the current
+#: directory on that drive, i.e. the checkout when that is cwd.
+_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
+
+
+def _repo_relative(command: str | None) -> bool:
+    """Does ``command`` name a path that could resolve inside the working tree? (#1247)
+
+    A probe runs ``<command> --version`` (and ``<command> models``) to report whether a
+    coding-agent CLI is reachable, and for a profile or registry seat that command is read
+    from the project's own ``.keel/project.yaml``. When keel inspects a project it did not
+    write — a clone, a fork's pull-request branch — a relative path there resolves against the
+    checkout, so probing it would execute a program the untrusted project ships. Only a bare
+    name (resolved through ``PATH`` alone) and an absolute path (an explicit operator choice an
+    attacker cannot predict) are safe to probe; a separator or a Windows drive prefix that is
+    not absolute is refused.
+    """
+    if not command or os.path.isabs(command):
+        return False
+    return "/" in command or "\\" in command or bool(_DRIVE_PREFIX.match(command))
+
+
 def _probe_cli(
     provider: Provider,
     *,
@@ -119,6 +143,14 @@ def _probe_cli(
     implementer and fail at s4, which is the expensive place to find out.
     """
     command = provider.command
+    if _repo_relative(command):
+        # Refuse before any execution: a relative path resolves against the inspected
+        # checkout, and a probe is a read-only readiness check (#1247).
+        return (
+            False,
+            f"{command} names a path inside the project; not probed — configure a PATH command",
+            (),
+        )
     found, reason, _ = _probe_command_only(command, which=which)
     if not found:
         return False, reason, ()
