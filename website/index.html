@@ -292,8 +292,8 @@
               <span>Assign different clusters to different models and vendors simultaneously: <b>Claude 3.7 Sonnet</b> on core architecture, <b>Gemini 2.5 Flash / Antigravity</b> on frontend/visualizers, <b>OpenAI GPT-4o / Codex</b> on tests and documentation, and <b>Local Ollama / vLLM</b> for offline nodes.</span>
             </div>
             <div class="inv">
-              <b>Unified Multi-Vendor AI Jury Panel</b>
-              <span>Regardless of which AI model authors a PR, every cluster is evaluated by an independent 3-vendor jury panel (Anthropic + OpenAI + Google) for unanimous review consensus before merging.</span>
+              <b>Per-Cluster Review, Evidence-Gated</b>
+              <span>Each cluster is reviewed inside its own <code>keel ship</code> run — on tier-3 work that can be the cross-vendor AI Jury panel (Anthropic + OpenAI + Google). No branch lands until it clears the review-evidence gate, whichever model authored it.</span>
             </div>
             <div class="inv">
               <b>Dual-Mode Batch Landing</b>
@@ -308,7 +308,7 @@
           <p class="view-kicker" style="margin:2rem 0 .8rem">Swarm CLI commands</p>
           <div class="cli-grid">
             <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; --issues 12,15</code><span>Compute the dependency DAG, partition into parallel execution waves, and determine batch vs funnel landing strategy. <a href="docs.html#swarm">Swarm docs →</a></span></div>
-            <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span>Execute parallel cluster workers in isolated worktrees with dynamic rebalancing and heartbeat health monitoring.</span></div>
+            <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span>Execute parallel cluster workers in isolated worktrees, tracking each worker's status and rebalancing the plan when one fails.</span></div>
             <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect live cluster status, active worker progress, and DAG wave execution state.</span></div>
             <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --wave 1</code><span>Land completed cluster batches under the merge lock with self-healing conflict rollback.</span></div>
             <div class="cli-row"><code>keel-visual swarm</code><span>Open the real-time interactive 2D DAG and 3D spatial node topology dashboard.</span></div>

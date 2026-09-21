@@ -128,7 +128,7 @@
         if (st.progress >= 100) {
           st.progress = 100;
           st.status = "jury";
-          st.log = "PR opened · AI Jury 3-vendor deliberation...";
+          st.log = "PR opened · cross-vendor review running...";
         } else {
           st.log = "Coding & running local test gates (" + st.progress + "%)...";
         }
@@ -142,7 +142,7 @@
         } else if (!st.juryVotes.google) {
           st.juryVotes.google = "PASS";
           st.status = "landing";
-          st.log = "AI Jury Consensus: UNANIMOUS PASS ✓";
+          st.log = "Review gate: PASS ✓";
         }
       } else if (st.status === "landing") {
         state.lock = "LOCKED (" + issue.id + ")";

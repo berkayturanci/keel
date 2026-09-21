@@ -407,7 +407,7 @@ window.KEEL = {
         "<li><b>Documentation / Scripts</b>: OpenAI GPT-4o / Codex (<code>codex</code> / <code>openai-api:</code>)</li>" +
         "<li><b>Local / Offline Worktrees</b>: Local Ollama / vLLM (<code>ollama:qwen2.5-coder</code>)</li>" +
         "</ul>" +
-        "<p>Regardless of which model authored the PR, every cluster goes through the cross-vendor <b>AI Jury</b> panel (Anthropic + OpenAI + Google) for unanimous review consensus before merging.</p>" +
+        "<p>Each cluster is reviewed inside its own <b>keel ship</b> run — on tier-3 work that can be the cross-vendor <b>AI Jury</b> panel (Anthropic + OpenAI + Google) — and no branch lands until it clears the review-evidence gate, whichever model authored it.</p>" +
         "<h3>3. Dual-Mode Landing</h3>" +
         "<p>Swarm supports two landing strategies under the single-writer <code>merge_lock</code>:</p>" +
         "<ul>" +

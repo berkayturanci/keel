@@ -160,8 +160,8 @@ Compile the overall multi-agent swarm outcome:
   that ran it — plus any `assignment.warnings` that were raised and what was done about them.
 - Worker success/failure breakdown.
 - Landing mode used (Direct Batch vs Adaptive Funnel) and rebase self-healing stats.
-- Final multi-agent jury deliberation consensus and compound learning synthesis.
+- Per-cluster review outcome (the configured review, or the ai-jury panel on tier-3) and each cluster's `compound-learning:` ledger marker.
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.23.1 source_sha256=98c145b2deac422004958fe48286f3b0bffb49c7905dd856a0df4f0a4e248b67 generated_sha256=2eb1103256b181cc6d4723b064f05fc0c27c994e98fc9c7d7f70116e84cb82b2 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.23.1 source_sha256=518afa57069a7bd82083489ab9fbd3d05a9f75ce9fbcc5dc7f3dfd25493ba897 generated_sha256=fa138247993d67b675f2872b2fbdb951f3fd0536e3801d8071966016660b28cf -->

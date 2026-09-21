@@ -278,14 +278,20 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 
 ---
 
-## 6. AI Jury & Compound Learning Synthesis
+## 6. Review Evidence & Compound Learning
 
-Swarm coordinates AI Jury deliberation and Compound Learning across all parallel workers:
+Swarm does not run a jury of its own. Review and learning happen inside each cluster's own
+`keel ship` run, and swarm gates landing on the result:
 
-- **AI Jury Deliberation**: Each cluster run produces a multi-agent review panel outcome. Swarm aggregates
-  all individual verdicts into an overall unanimous consensus verdict before authorizing wave landing.
-- **Compound Learning Synthesis**: Post-merge learning artifacts (`.keel/knowledge/`) from all parallel workers
-  are synthesized into today's collective memory without duplication or knowledge overwrite.
+- **Per-cluster review**: each cluster runs the project's configured review. When a cluster is
+  tier-3 and the project sets `knobs.team.review.by_tier."3": jury`, that review is ai-jury's
+  cross-vendor panel; otherwise it is the host reviewers. Before a branch may land, swarm applies a
+  **review-evidence check** against its head-pinned `keel.review-verdict.v1` records — the same
+  evidence gate a single `keel ship` uses. It is a per-branch gate, not a swarm-wide vote.
+- **Compound learning**: each `keel ship` records a `compound-learning:` marker on its run ledger
+  and PR (`pr=<N> status=<applied|deferred|skipped:reason>`), so the lesson rides with the merge.
+  Swarm surfaces those per-cluster markers in its recap; it does not synthesize a shared knowledge
+  store.
 
 ---
 
