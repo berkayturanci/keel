@@ -147,7 +147,7 @@
       } else if (st.status === "landing") {
         state.lock = "LOCKED (" + issue.id + ")";
         if (issue.hasConflict) {
-          st.log = "Conflict detected in " + issue.files[0] + " · AST self-healing rebase applied ✓";
+          st.log = "Conflict detected in " + issue.files[0] + " · marker-based resolver healed the rebase ✓";
         } else {
           st.log = "Direct orthogonal batch landing into main...";
         }

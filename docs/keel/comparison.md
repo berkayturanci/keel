@@ -234,9 +234,9 @@ General swarm frameworks operate on unstructured conversational abstractions wit
 **How Keel Swarm Solves This**:
 Keel Swarm anchors multi-agent parallelism inside deterministic engineering invariants:
 - **Static DAG Dependency Clustering**: Pre-analyzes issue blast radiuses to schedule orthogonal tasks in parallel waves while serializing dependent tasks.
-- **Physical Git Worktree Isolation**: Workers develop inside dedicated `.keel/workspaces/swarm-<id>/` sandboxes.
-- **Dual-Mode Landing Engine**: Merges 100% disjoint trees via Direct Orthogonal Batch Landing while routing overlapping trees through the atomic `merge_lock` with automated rebase and `s9 fixloop` conflict self-healing.
-- **Commit-Bound Evidence & Multi-Vendor Jury**: Every PR carries an immutable, commit-SHA-locked evidence record and cross-vendor panel verdict.
+- **Physical Git Worktree Isolation**: Workers develop inside dedicated `.keel/worktrees/<swarm_id>/<cluster_id>/` sandboxes.
+- **Dual-Mode Landing Engine**: Merges 100% disjoint trees via Direct Orthogonal Batch Landing while routing overlapping trees through the atomic `merge_lock` with an automated rebase and a deterministic marker-based conflict resolver whose output is held for re-review rather than landed.
+- **Commit-Bound Evidence & Multi-Vendor Jury**: Every PR carries an immutable, commit-SHA-locked evidence record — including the cross-vendor panel's verdict when the project configures the panel.
 - **Full-Spectrum Observability**: Terminal ASCII DAG diagrams (`keel swarm-plan --tree`, `keel swarm-status`) paired with `keel-visual`'s 2D / pseudo-3D swarm scenes (rendered snapshots).
 
 ---
@@ -427,7 +427,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | Tool | Agent-agnostic | Merge queue | Merge window/freeze | AI review | Multi-agent debate | Policy/gate aggregation | Project config | Open source |
 |---|---|---|---|---|---|---|---|---|
 | **keel** | ✅ (CLI adapters) | ❌ (one-at-a-time + lock) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (review→debate→verify→synth) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
-| **keel-swarm** | ✅ (CLI adapters) | ✅ (Orthogonal Batch + Funnel) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (multi-wave consensus) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
+| **keel-swarm** | ✅ (CLI adapters) | ✅ (Orthogonal Batch + Funnel) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (per cluster, via ai-jury) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
 | **Mergify** | ❌ | ✅ | ✅ (schedule + pause/freeze) | ❌ | ❌ | ◑ (conditions) | ◑ (config.yml) | Prop. (OSS repo exists) |
 | **GitHub merge queue** | ❌ | ✅ | ❌ (workarounds only) | ❌ | ❌ | ◑ (required checks) | ◑ | Prop. |
 | **bors-ng** | ❌ | ✅ (batch+bisect) | ❌ | ❌ | ❌ | ◑ | ◑ | OSS (Apache-2.0, deprecated) |

@@ -66,7 +66,7 @@ window.KEEL = {
       cmd: "keel:swarm",
       one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
       detail:
-        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/swarm/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before dual-mode batch landing under the merge lock with self-healing conflict rollback.",
+        "Clusters backlog issues into disjoint execution waves based on static file-overlap and explicit DAG dependencies. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before dual-mode batch landing under the merge lock with self-healing conflict rollback.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
@@ -412,10 +412,10 @@ window.KEEL = {
         "<p>Swarm supports two landing strategies under the single-writer <code>merge_lock</code>:</p>" +
         "<ul>" +
         "<li><b>Direct Orthogonal Batch Landing</b>: Disjoint branches with zero file collisions are merged into the base branch with <code>git merge --no-ff</code>, sequentially under the merge lock, with no rebases.</li>" +
-        "<li><b>Adaptive Atomic Funnel</b>: Overlapping clusters trigger a self-healing git rebase onto the newly merged base branch, re-running gates before completing the merge. Conflicts trigger an immediate safe rollback (<code>git rebase --abort</code>).</li>" +
+        "<li><b>Adaptive Atomic Funnel</b>: Overlapping clusters are rebased onto the newly merged base branch, then merged. A clean rebase lands; a resolver-healed one is held for re-review; an unresolvable conflict triggers an immediate safe rollback (<code>git rebase --abort</code>).</li>" +
         "</ul>" +
         "<h3>4. 2D & Pseudo-3D Spatial Snapshot</h3>" +
-        "<p><code>keel-visual swarm</code> renders interactive DAG topological graphs and a pseudo-3D spatial node view in the terminal or browser, showing each cluster's running/passed/failed state and the landing queues. It is a rendered snapshot — re-run to refresh.</p>",
+        "<p><code>keel-visual swarm</code> renders an interactive DAG topological graph and a pseudo-3D spatial node view as an HTML page, showing each cluster's running/passed/failed state and the landing queues. It is a rendered snapshot — re-run to refresh.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/swarm.md",
     },
     {

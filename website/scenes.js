@@ -467,7 +467,7 @@
       stage.appendChild(cap); var capt = cap.querySelector("span:last-child");
 
       at(600, function () {
-        capt.textContent = "Wave 1 running in parallel worktrees (.keel/worktrees/swarm/)…";
+        capt.textContent = "Wave 1 running in parallel worktrees (.keel/worktrees/<swarm_id>/)…";
         fills[0].fill.style.width = "70%";
         fills[1].fill.style.width = "70%";
       });

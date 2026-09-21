@@ -92,7 +92,7 @@ actually dispatch rather than the default one.
 
 ## Step 2 — Launch one lead per cluster
 
-Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/swarm/`:
+Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/<swarm_id>/<cluster_id>/`:
 
 ```bash
 keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
@@ -161,4 +161,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=plugin command=swarm keel_version=1.23.1 source_sha256=23d774e40b90ad5632df73e287f129681fbdd33fb0af82af860e5d70660db143 generated_sha256=23d774e40b90ad5632df73e287f129681fbdd33fb0af82af860e5d70660db143 -->
+<!-- keel-generated: surface=plugin command=swarm keel_version=1.23.1 source_sha256=9b31e458dc92695e1e8a6c818be8583ec00c36f675239711abdd9462270d4fa8 generated_sha256=9b31e458dc92695e1e8a6c818be8583ec00c36f675239711abdd9462270d4fa8 -->

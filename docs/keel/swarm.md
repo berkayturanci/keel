@@ -187,14 +187,16 @@ The `--tree` flag renders a full terminal diagram:
 
 ## 3. Isolated Multi-Worktree Runtime (`keel swarm-run`)
 
-Parallel execution runs across isolated git worktrees created under `.keel/worktrees/swarm/<cluster_id>/`:
+Parallel execution runs across isolated git worktrees created under
+`.keel/worktrees/<swarm_id>/<cluster_id>/` (the swarm id is `swarm-YYYYMMDD-HHMMSS`):
 
 ```bash
 keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 ```
 
 ### Worktree Lifecycle & Isolation
-1. **Creation**: Dedicated worktrees are branched from `origin/main` (e.g. `swarm/cluster-1`).
+1. **Creation**: Dedicated worktrees are branched from `origin/main` onto
+   `swarm/<swarm_id>/<cluster_id>`.
 2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
    named, to execute steps `s0` through `s9`. The lead appends the cluster's team to every
    child ship — `--delegate <implementer>`, one `--review-delegate` per staffed reviewer
@@ -208,9 +210,10 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
    per-worktree isolation, not by watching what a worker writes.)
 4. **Cleanup**: On completion or error, worktrees are pruned cleanly without leaving orphaned locks.
 
-### Live Status Dashboard (`keel swarm-status`)
-Inspect the swarm's clusters — each one's lead, difficulty band, and current status
-(`running` / `passed` / `failed`) — from the persisted run state:
+### Status board (`keel swarm-status`)
+Print the swarm's clusters — each one's lead, difficulty band, role, step and status
+(`running` / `passed` / `failed`) — from the persisted run state. It is a one-shot render of
+that state, not a live feed; re-run it to refresh:
 
 ```bash
 keel swarm-status .keel/project.yaml --root .
@@ -277,10 +280,11 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 - **Pseudo-3D Multi-Wave Topology**: An HTML5 Canvas renderer projecting the stacked wave layers as
   a pseudo-3D scene, with drag-to-rotate and scroll-to-zoom.
 - **Worker Matrix**: Worker cards showing each cluster's `running` / `passed` / `failed` state,
-  role icons, and log summaries.
+  its role badge, and the recorded `details` string.
 
 The rendered page is a snapshot of the run state at render time; re-run `keel-visual swarm` to
-refresh it. (The continuously polling board is the *ship* dashboard, `keel activity`.)
+refresh it. (The continuously polling board is `keel-visual serve`, which renders *ship* runs —
+a different view from this one.)
 
 ---
 
@@ -314,8 +318,8 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | **Dual-Mode Batch Landing** | **Yes (Direct + Funnel)** | No | No | No | PR per run |
 | **Atomic Single-Host Lock** | **Yes (`merge_lock`)** | No | No | No | No |
 | **Drift Self-Healing Rebase** | **Yes (fail-soft abort)** | No | No | No | Manual |
-| **Multi-Agent AI Jury Gate** | **Yes (Cross-Vendor)** | No | Conversational | No | Single Agent |
-| **2D DAG & 3D Spatial Viz** | **Yes (`keel-visual`)** | Basic Tree | Plotly / None | Static Diagrams | Web Terminal |
+| **Per-Branch Review-Evidence Gate** | **Yes (cross-vendor panel per cluster, when configured)** | No | Conversational | No | Single Agent |
+| **2D DAG & pseudo-3D snapshot** | **Yes (`keel-visual`, rendered)** | Basic Tree | Plotly / None | Static Diagrams | Web Terminal |
 
 ---
 

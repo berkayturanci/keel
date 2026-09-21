@@ -3011,7 +3011,7 @@ wave it lands in.
 
 ## `keel swarm-status <project.yaml> [--root DIR] [--swarm-id ID] [--json]`
 
-Inspect each cluster's status (`running` / `passed` / `failed`) and the wave it is in, across
+Inspect each cluster's status (`running` / `passed` / `failed`) across
 active or recent multi-agent swarm runs. Each row names the worker's **lead** and the difficulty
 **band** it was staffed from, so the board answers *who is running this, and why that provider*:
 
@@ -3022,7 +3022,8 @@ keel swarm-status .keel/project.yaml --root . --swarm-id swarm-2026-08-15 --json
 
 ## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
-Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/swarm/`:
+Launch parallel workers per cluster in dedicated git worktrees under
+`.keel/worktrees/<swarm_id>/<cluster_id>/`:
 
 ```bash
 keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
@@ -3057,7 +3058,8 @@ The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads 
 map and picks batch or funnel, so there is no `--mode` flag to get wrong. `--wave` selects the
 wave (default `1`); without `--live` the command reports what it would land.
 
-- **Direct Batch Mode**: Orthogonal disjoint diff trees land concurrently.
+- **Direct Batch Mode**: Orthogonal disjoint diff trees are merged one after another with
+  `git merge --no-ff`, sequentially under the atomic `merge_lock`.
 - **Adaptive Funnel Mode**: Overlapping trees land sequentially with automatic fail-soft rebase healing.
 - **Review evidence (#828)**: before a live landing, every cluster branch's open PR must pass
   the same pre-merge review-evidence verification `keel merge` enforces — armed gate label,
@@ -3089,7 +3091,8 @@ wave (default `1`); without `--live` the command reports what it would land.
 
 ## `keel-visual swarm <project.yaml> [--root DIR] [--swarm-id ID] [--out FILE] [--serve] [--port PORT] [--json]`
 
-Render interactive 2D DAG cluster partition graphs and 3D multi-wave spatial topologies:
+Render an interactive 2D DAG cluster-partition graph and a pseudo-3D multi-wave topology, as a
+rendered snapshot (re-run to refresh):
 
 ```bash
 keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html

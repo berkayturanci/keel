@@ -92,7 +92,7 @@ actually dispatch rather than the default one.
 
 ## Step 2 — Launch one lead per cluster
 
-Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/swarm/`:
+Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/<swarm_id>/<cluster_id>/`:
 
 ```bash
 keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
