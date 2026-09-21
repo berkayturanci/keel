@@ -70,10 +70,17 @@ by CI.
 
 All five pages load Cloudflare Web Analytics
 (`static.cloudflareinsights.com/beacon.min.js`), which is cookieless and needs no
-consent banner. There is no hostname guard, so a fork or a local preview also
-reports; filter by hostname in the Cloudflare dashboard rather than trusting the
-raw total — the sibling project's site reports into the same bucket too, because
-both sites currently share one beacon token.
+consent banner. They report into a Cloudflare site of this site's own
+(`keel-ship.dev`, since 2026-09-21); until then keel-ship.dev and the sibling
+project's site reported into one dashboard, created when both lived under
+github.io, which is where the history before that date stays.
+
+A Cloudflare token is not bound to the hostname it was created for: a beacon from
+any host that carries it is recorded, and the endpoint answers 204 either way. So
+a fork or a local preview that keeps the token also reports — filter by hostname
+in the dashboard rather than trusting the raw total — and a page left on a
+different token would go missing without any error. `tests/test_site_seo.py`
+requires every page to carry the same one.
 
 There is no Google Analytics on this site. An earlier revision of this file
 described a GA4 setup with Consent Mode; no page has ever carried a `gtag`

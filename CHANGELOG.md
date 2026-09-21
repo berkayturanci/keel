@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **keel-ship.dev reports into an analytics site of its own** (#1245).
+  - **Before.** All five pages carried a Cloudflare Web Analytics token created in June for `berkayturanci.github.io`. The sibling project's site and two github.io project pages carried it too, so one dashboard mixed four properties. Nothing was lost — a token records a beacon from any host — but visits and Core Web Vitals could only be read per site through a Host filter.
+  - **Now.** The pages carry the token of a Cloudflare site configured for `keel-ship.dev`. History before 2026-09-21 stays in the old dashboard.
+  - **The guard.** A wrong token fails silently, because the beacon endpoint answers 204 either way. `tests/test_site_seo.py` requires every page to carry exactly one token, all pages to agree, and none to carry the shared one.
+
 ### Fixed
 - **A comment on a closed pull request no longer fails the evidence job on `main`'s head** (#1241).
   - **What broke.** `keel-ship.yml` re-runs the evidence gate on `issue_comment`, because a verdict is an issue comment. It did so for closed pull requests too. A closed pull request has no verdicts to find and often no attribution label, so that run could only fail — and a comment run is attributed to the default branch's head, so the red check landed on `main`.
