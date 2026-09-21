@@ -127,7 +127,21 @@ def _is_allowed_api_key_env(name: str) -> bool:
 #: attacker-influenced config, so the switch that permits reaching a remote host must
 #: sit outside the surface an attacker would control. Ported from ai-jury's
 #: ``JURY_ALLOW_REMOTE_ENDPOINT`` (same reasoning, same default-closed posture).
+#:
+#: Its value is either a **boolean** (``1``/``true``/``yes``/``on`` — allow any remote
+#: host, the broad legacy form) or a **host allowlist** (a comma- or space-separated
+#: list of hostnames). With an allowlist, only the named hosts pass, so a config that
+#: points the key host at some other server is refused *even while the opt-in is set* —
+#: the coarse machine-wide boolean no longer lets one trusted remote authorise all of
+#: them (#1247).
 ALLOW_REMOTE_ENDPOINT_ENV = "KEEL_ALLOW_REMOTE_ENDPOINT"
+
+#: Values of :data:`ALLOW_REMOTE_ENDPOINT_ENV` that mean "allow any remote host". A single
+#: token matching one of these is the boolean opt-in; anything else non-empty is read as a
+#: host allowlist. The false-ish words are spelled out too so a ``=0``/``=false`` no longer
+#: enables the opt-in by mere string-truthiness.
+_REMOTE_OPT_IN_ANY = frozenset({"1", "true", "yes", "on"})
+_REMOTE_OPT_IN_OFF = frozenset({"0", "false", "no", "off"})
 
 #: How a ``cli`` profile's prompt reaches the command. ``stdin`` stays the default
 #: (positional-arg passing hangs some CLIs); ``arg`` is the opt-in for CLIs whose usage
@@ -713,6 +727,23 @@ def resolved_address_refusal(host: str, ip: Any, *, env=None) -> str | None:
     )
 
 
+def _remote_endpoint_status(env, host: str) -> str:
+    """How the operator's remote opt-in applies to ``host``.
+
+    ``KEEL_ALLOW_REMOTE_ENDPOINT`` is either a boolean (allow any remote host) or a host
+    allowlist; see :data:`ALLOW_REMOTE_ENDPOINT_ENV`. Returns one of ``permitted-any``,
+    ``permitted-listed``, ``refused-off`` (not set, blank, or a false-ish word) or
+    ``refused-unlisted`` (an allowlist is set and ``host`` is not on it).
+    """
+    raw = str(env.get(ALLOW_REMOTE_ENDPOINT_ENV) or "")
+    tokens = [token.strip().lower() for token in re.split(r"[,\s]+", raw) if token.strip()]
+    if not tokens or (len(tokens) == 1 and tokens[0] in _REMOTE_OPT_IN_OFF):
+        return "refused-off"
+    if len(tokens) == 1 and tokens[0] in _REMOTE_OPT_IN_ANY:
+        return "permitted-any"
+    return "permitted-listed" if host in tokens else "refused-unlisted"
+
+
 def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
     """Validate an ``openai-compatible`` endpoint URL. Empty list == acceptable.
 
@@ -728,7 +759,9 @@ def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
     * a malformed URL is a config error, not a stack trace out of ``keel validate``;
     * a **non-loopback** host is refused unless the operator sets
       :data:`ALLOW_REMOTE_ENDPOINT_ENV` in the environment. The opt-in is env-only on
-      purpose: an attacker who can edit config must not be able to grant it.
+      purpose: an attacker who can edit config must not be able to grant it. The opt-in
+      may name the allowed host(s) rather than a bare ``1``, so a config that then points
+      the endpoint elsewhere is refused even while the opt-in is set (#1247).
 
     Plaintext ``http://`` to a permitted remote host is allowed but noted in the
     message, since the prompt (and the diff in it) would cross the network in clear.
@@ -755,12 +788,20 @@ def endpoint_issues(endpoint: Any, *, where: str, env=None) -> list[str]:
             f"{where}: endpoint host {host or '(none)'!r} is a cloud-metadata or link-local "
             "address and is refused for security"
         ]
-    if not env.get(ALLOW_REMOTE_ENDPOINT_ENV):
+    remote = _remote_endpoint_status(env, host)
+    if remote == "refused-off":
         return [
             f"{where}: endpoint host {host or '(none)'!r} is not loopback; a remote "
             "model server (including internal and cloud-metadata addresses) is refused "
-            f"by default. Set {ALLOW_REMOTE_ENDPOINT_ENV}=1 in the environment — not in "
-            "this file — to allow a trusted remote endpoint"
+            f"by default. Set {ALLOW_REMOTE_ENDPOINT_ENV} in the environment — not in this "
+            "file — to a trusted host or comma-separated list of hosts (or to 1 for any "
+            "remote host)"
+        ]
+    if remote == "refused-unlisted":
+        return [
+            f"{where}: endpoint host {host or '(none)'!r} is not one of the hosts named in "
+            f"{ALLOW_REMOTE_ENDPOINT_ENV}; a config cannot redirect the endpoint to a host "
+            "the environment did not allow"
         ]
     # #866's second measure, which never shipped: with the remote opt-in set,
     # 10.0.0.5, 172.16.5.9 and 192.168.1.10 were all reachable from a

@@ -681,7 +681,10 @@ to a hardcoded URL, which is what makes their SSRF story trivial. A config-suppl
 turns `project.yaml` into a request-forgery primitive pointed wherever it says, so:
 
 - `localhost` / `127.0.0.1` / `[::1]` are allowed with no ceremony;
-- any other host is a `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set;
+- any other host is a `keel validate` error unless `KEEL_ALLOW_REMOTE_ENDPOINT` is set.
+  Set it to the allowed host — or a comma-separated list of them — and only those hosts
+  pass, so a config that later points the endpoint elsewhere is still refused; `=1` keeps
+  the older "any remote host" behaviour;
 - **cloud-metadata and link-local addresses are refused outright** — no opt-in reaches
   them. `169.254.169.254` and every alternate spelling of it (`2852039166`,
   `0251.0376.0251.0376`, `0xA9FEA9FE`) resolve to the same address before the check, so
@@ -778,7 +781,8 @@ profile's**, so a remote one of your own — the `XAI_API_KEY`-style case this r
 exists for — is refused until you export the opt-in:
 
 ```bash
-export KEEL_ALLOW_REMOTE_ENDPOINT=1     # any non-loopback endpoint, registry included
+export KEEL_ALLOW_REMOTE_ENDPOINT=api.example.com   # only this host (comma-separate for more)
+export KEEL_ALLOW_REMOTE_ENDPOINT=1     # or: any non-loopback endpoint, registry included
 export KEEL_ALLOW_INTERNAL_ENDPOINT=1   # additionally, for 10./172.16./192.168. hosts
 ```
 

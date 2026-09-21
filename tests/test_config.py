@@ -738,6 +738,56 @@ class TestOpenAICompatibleEndpointGuard(unittest.TestCase):
             with self.subTest(endpoint=endpoint):
                 self.assertIn("requires a non-empty 'endpoint'", self._issues(endpoint)[0])
 
+    def test_a_host_allowlist_scopes_the_opt_in(self):
+        # `KEEL_ALLOW_REMOTE_ENDPOINT` may name the allowed host(s) instead of a bare `1`.
+        # A config that then points the key host anywhere else is refused even though the
+        # opt-in is set — closing the coarse machine-wide boolean (#1247).
+        allow = {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "openrouter.ai"}
+        self.assertEqual(self._issues("https://openrouter.ai/api/v1/chat", allow), [])
+        refused = self._issues("https://evil.example.com/v1/chat", allow)
+        self.assertEqual(len(refused), 1)
+        self.assertIn("evil.example.com", refused[0])
+        self.assertIn(cfg.ALLOW_REMOTE_ENDPOINT_ENV, refused[0])
+
+    def test_a_host_allowlist_takes_several_hosts(self):
+        allow = {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "api.corp.example.com, openrouter.ai"}
+        self.assertEqual(self._issues("https://openrouter.ai/v1/chat", allow), [])
+        self.assertEqual(self._issues("https://api.corp.example.com/v1/chat", allow), [])
+        self.assertNotEqual(self._issues("https://openai.com/v1/chat", allow), [])
+
+    def test_the_host_match_is_case_insensitive_and_ignores_the_port(self):
+        allow = {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "OpenRouter.AI"}
+        self.assertEqual(self._issues("https://openrouter.ai:8443/v1/chat", allow), [])
+
+    def test_a_falsey_opt_in_is_treated_as_unset(self):
+        # A non-empty but false-ish value no longer enables the opt-in by mere truthiness.
+        for value in ("0", "false", "no", "off"):
+            with self.subTest(value=value):
+                issues = self._issues(
+                    "https://openrouter.ai/v1/chat", {cfg.ALLOW_REMOTE_ENDPOINT_ENV: value}
+                )
+                self.assertEqual(len(issues), 1)
+                self.assertIn("is not loopback", issues[0])
+
+    def test_the_allowlist_still_refuses_cloud_metadata(self):
+        # Naming a metadata host in the allowlist does not defeat the unconditional refusal.
+        issues = self._issues(
+            "http://169.254.169.254/latest/meta-data/",
+            {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "169.254.169.254"},
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertIn("cloud-metadata or link-local address", issues[0])
+
+    def test_an_allowlisted_private_host_still_needs_the_internal_opt_in(self):
+        # The allowlist controls the reach-out gate; a private host is still held to the
+        # separate reach-in opt-in (layered defense preserved).
+        allow = {cfg.ALLOW_REMOTE_ENDPOINT_ENV: "10.0.0.5"}
+        held = self._issues("http://10.0.0.5:8000/v1/chat", allow)
+        self.assertEqual(len(held), 1)
+        self.assertIn(cfg.ALLOW_INTERNAL_ENDPOINT_ENV, held[0])
+        both = {**allow, cfg.ALLOW_INTERNAL_ENDPOINT_ENV: "1"}
+        self.assertEqual(self._issues("http://10.0.0.5:8000/v1/chat", both), [])
+
 
 class TestOpenAICompatibleKeyEnv(unittest.TestCase):
     """`api_key_env` takes a NAME. A value here would be published (#666)."""
