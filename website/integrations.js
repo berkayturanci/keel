@@ -1,6 +1,6 @@
 /* ============================================================
    keel — Ecosystem & Integrations Catalog
-   Interactive catalog of 30 AI coding agents, LLM backends,
+   Interactive catalog of 29 AI coding agents, LLM backends,
    agent skills, and developer platforms supported out-of-the-box.
    Uses authentic brand logo assets and 100% real Keel CLI commands.
    Zero external dependencies — pure client-side vanilla JS.
@@ -143,7 +143,7 @@
       category: "backends",
       badge: "LLM Backend",
       desc: "Hosted Anthropic API for the implementer and reviewer roles. keel pins no model catalogue \u2014 keel doctor --providers reports what this machine can reach.",
-      cmd: "keel ship .keel/project.yaml --implementer anthropic-api:claude-opus-5",
+      cmd: "keel ship .keel/project.yaml --delegate anthropic-api:claude-opus-5",
       logo: "logos/anthropic.svg"
     },
     {
@@ -152,7 +152,7 @@
       category: "backends",
       badge: "LLM Backend",
       desc: "Hosted Gemini API with per-run token cost tracking; the Antigravity CLI reports its own model list to keel doctor --providers.",
-      cmd: "keel ship .keel/project.yaml --implementer agy:gemini-3.8-flash-high",
+      cmd: "keel ship .keel/project.yaml --delegate agy:gemini-3.8-flash-high",
       logo: "logos/googlegemini.svg"
     },
     {
@@ -161,7 +161,7 @@
       category: "backends",
       badge: "LLM Backend",
       desc: "Hosted OpenAI API across single-issue ships and jury panels; the model id is whichever the vendor currently serves.",
-      cmd: "keel ship .keel/project.yaml --implementer openai-api:<model-id>",
+      cmd: "keel ship .keel/project.yaml --delegate openai-api:<model-id>",
       logo: "logos/openai.svg"
     },
     {
@@ -170,7 +170,8 @@
       category: "backends",
       badge: "LLM Backend",
       desc: "High-reasoning, low-cost DeepSeek chat and reasoner models with exact token expenditure ledger.",
-      cmd: "keel ship .keel/project.yaml --implementer deepseek-reasoner",
+      cmd: "keel ship .keel/project.yaml --delegate deepseek",
+      note: "DeepSeek is not a built-in vendor. Needs a <code>knobs.delegate_profiles.deepseek</code> entry (<code>vendor: openai-compatible</code>) pointing at DeepSeek's API — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#2-openai-compatible-profiles' target='_blank' rel='noopener'>OpenAI-Compatible Profiles</a>.",
       logo: "logos/deepseek.svg"
     },
     {
@@ -248,7 +249,7 @@
       logo: "logos/precommit.svg"
     },
 
-    // --- 4. Platforms & Environments (6) ---
+    // --- 4. Platforms & Environments (5) ---
     {
       id: "github-actions",
       name: "Official GitHub Action",
@@ -266,15 +267,6 @@
       desc: "Instant macOS and Linux installation via homebrew tap (brew install keel).",
       cmd: "brew tap berkayturanci/keel && brew install keel",
       logo: "logos/homebrew.svg"
-    },
-    {
-      id: "vscode-ext",
-      name: "VS Code & Cursor Extension",
-      category: "platforms",
-      badge: "Editor Extension",
-      desc: "Status bar merge-window indicator and command-palette integration. Not yet on the VS Code Marketplace or Open VSX \u2014 build it from editors/vscode/.",
-      cmd: "cd editors/vscode && npm install && npx @vscode/vsce package",
-      logo: "logos/vscode.svg"
     },
     {
       id: "curl-installer",

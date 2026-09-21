@@ -126,7 +126,7 @@
         <button class="sb-item" data-view="what"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg></span> What it is</button>
         <button class="sb-item" data-view="backbone"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 12h3"/></svg></span> The backbone</button>
         <button class="sb-item" data-view="compare"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M5 8l-3 6h6zM19 8l-3 6h6zM5 8V6M19 8V6M5 6h14"/></svg></span> How it compares</button>
-        <button class="sb-item" data-view="integrations"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1"/><path d="M18 8h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-4"/><circle cx="8" cy="12" r="2"/></svg></span> Integrations <span class="badge">30+</span></button>
+        <button class="sb-item" data-view="integrations"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1"/><path d="M18 8h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-4"/><circle cx="8" cy="12" r="2"/></svg></span> Integrations <span class="badge">29+</span></button>
         <button class="sb-item" data-view="visual"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2-6 4 14 3-9 2 3h4"/></svg></span> Visual</button>
         <button class="sb-item" data-view="swarm"><span class="ic"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></span> Swarm</button>
 
@@ -307,10 +307,10 @@
 
           <p class="view-kicker" style="margin:2rem 0 .8rem">Swarm CLI commands</p>
           <div class="cli-grid">
-            <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; [issues...]</code><span>Compute the dependency DAG, partition into parallel execution waves, and determine batch vs funnel landing strategy. <a href="docs.html#swarm">Swarm docs →</a></span></div>
-            <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; [issues...]</code><span>Execute parallel cluster workers in isolated worktrees with dynamic rebalancing and heartbeat health monitoring.</span></div>
+            <div class="cli-row"><code>keel swarm-plan --issues 12,15</code><span>Compute the dependency DAG, partition into parallel execution waves, and determine batch vs funnel landing strategy. <a href="docs.html#swarm">Swarm docs →</a></span></div>
+            <div class="cli-row"><code>keel swarm-run --issues 12,15</code><span>Execute parallel cluster workers in isolated worktrees with dynamic rebalancing and heartbeat health monitoring.</span></div>
             <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect live cluster status, active worker progress, and DAG wave execution state.</span></div>
-            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; [cluster_ids...]</code><span>Land completed cluster batches under the merge lock with self-healing conflict rollback.</span></div>
+            <div class="cli-row"><code>keel swarm-land --wave 1</code><span>Land completed cluster batches under the merge lock with self-healing conflict rollback.</span></div>
             <div class="cli-row"><code>keel-visual swarm</code><span>Open the real-time interactive 2D DAG and 3D spatial node topology dashboard.</span></div>
           </div>
         </section>
@@ -326,20 +326,20 @@
           <!-- Controls: Category Filter Tabs + Search -->
           <div class="integ-toolbar">
             <div class="integ-pills" role="radiogroup" aria-label="Filter integrations by category">
-              <button type="button" class="integ-pill active" data-cat="all" role="radio" aria-checked="true">All <span class="integ-count-badge">30</span></button>
+              <button type="button" class="integ-pill active" data-cat="all" role="radio" aria-checked="true">All <span class="integ-count-badge">29</span></button>
               <button type="button" class="integ-pill" data-cat="assistants" role="radio" aria-checked="false">AI Assistants <span class="integ-count-badge">12</span></button>
               <button type="button" class="integ-pill" data-cat="backends" role="radio" aria-checked="false">LLM Backends <span class="integ-count-badge">6</span></button>
               <button type="button" class="integ-pill" data-cat="skills" role="radio" aria-checked="false">Skill Packs &amp; Tools <span class="integ-count-badge">6</span></button>
-              <button type="button" class="integ-pill" data-cat="platforms" role="radio" aria-checked="false">Platforms &amp; CI <span class="integ-count-badge">6</span></button>
+              <button type="button" class="integ-pill" data-cat="platforms" role="radio" aria-checked="false">Platforms &amp; CI <span class="integ-count-badge">5</span></button>
             </div>
             <div class="integ-search-wrap">
               <label for="integrations-search" class="sr-only">Search integrations</label>
-              <input type="search" id="integrations-search" class="integ-search" placeholder="Search 30+ integrations (e.g. Cursor, Claude, Ollama, Addy Osmani)...">
+              <input type="search" id="integrations-search" class="integ-search" placeholder="Search 29+ integrations (e.g. Cursor, Claude, Ollama, Addy Osmani)...">
             </div>
           </div>
 
           <div class="integ-status-bar">
-            <span id="integrations-count" class="integ-status-text">Showing 30 integrations</span>
+            <span id="integrations-count" class="integ-status-text">Showing 29 integrations</span>
           </div>
 
           <!-- Interactive Grid Container -->
@@ -442,7 +442,7 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
 
         <!-- Security -->
         <section class="view" id="view-security" data-view="security">
-          <div class="view-head"><p class="view-kicker">Security</p><h1>No telemetry, no surprises</h1><p>keel's deterministic core makes <strong>no network calls</strong> of its own and ships a single runtime dependency (PyYAML; on Windows it also installs <code>tzdata</code> for the standard-library timezone database). It collects and transmits <strong>no telemetry</strong> — the only outbound activity comes from the gate commands and agent CLIs <strong>you</strong> explicitly configure.</p></div>
+          <div class="view-head"><p class="view-kicker">Security</p><h1>No telemetry, no surprises</h1><p>keel's deterministic core makes <strong>no network calls</strong>, sends <strong>no telemetry</strong>, and ships a single runtime dependency (PyYAML; on Windows it also installs <code>tzdata</code> for the standard-library timezone database). The only outbound activity is deliberate and named: a live <code>ship</code>/<code>merge</code> reaches GitHub for the pull request's evidence, <code>keel doctor</code> checks PyPI for the latest release (skip it with <code>--offline</code>), and the gate commands and agent CLIs <strong>you</strong> configure reach out exactly as you set them.</p></div>
           <div class="invs">
             <div class="inv"><b>Gate commands run your shell</b><span><code style="font-family:var(--font-mono)">run-gates</code> / <code style="font-family:var(--font-mono)">ship</code> execute the build / lint / command Lego from your config. Review a config before running it on a sensitive repository — exactly as you would a Makefile or CI script.</span></div>
             <div class="inv"><b>Agent reach = agent auth</b><span>The /keel:&lt;command&gt; adapters drive coding agents that may receive diffs, push branches, comment and merge. Their reach is governed by your agent's own auth and permissions, not by keel.</span></div>

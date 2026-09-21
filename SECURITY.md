@@ -22,9 +22,12 @@ We aim to acknowledge within 48 hours when possible.
 ## Security Notes
 
 keel is a workflow core. The deterministic `keel` CLI (`validate`, `plan`, `run-gates`,
-`window`, `ship`, `init`, `install-adapter`) only reads your `.keel/project.yaml` +
-extensions and runs the **gate commands you configured** through a thin subprocess wrapper.
-It performs **no** network calls of its own and ships a single runtime dependency (PyYAML).
+`window`, `init`, `install-adapter`) only reads your `.keel/project.yaml` + extensions and
+runs the **gate commands you configured** through a thin subprocess wrapper, and ships a
+single runtime dependency (PyYAML). It sends **no telemetry**. The only outbound activity is
+deliberate and named: a live `ship` / `merge` reaches GitHub for the pull request's evidence,
+`keel doctor` checks PyPI for the latest release (skip it with `--offline`), and the gate and
+agent commands you configure reach out exactly as you set them.
 
 Be aware that:
 

@@ -28,9 +28,17 @@ In traditional PR workflows, an approval given on commit `A` remains valid even 
 is pushed.
 
 In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictly bound to the **exact `HEAD_SHA`**:
-* Structured verdict comments carry a machine-readable payload:
-  ```json
-  <!-- keel:evidence {"contract":"keel.review-verdict.v1","head_sha":"cfe06ca8...","verdict":"approve","reviewers":2,"tier":"TIER-2"} -->
+* A verdict comment is a plaintext block headed by the `keel.review-verdict.v1` marker,
+  carrying the head it is pinned to and the vendor and model that produced it:
+  ```
+  keel.review-verdict.v1
+  reviewer: claude-lead
+  head: 759b9570e26c9c910f1363896ccf4d8bab762058
+  vendor: anthropic
+  model: claude-opus-4-8
+
+  Verdict: APPROVE
+  Scope reviewed: …
   ```
 * If the head commit changes by even one byte, previous review evidence is automatically invalidated,
   and Keel halts the merge until the new commit is re-verified by the backbone.
@@ -192,7 +200,7 @@ or temporary gate waivers).
 Rather than offering an unmonitored backdoor, Keel makes exceptions **first-class and auditable**:
 * **`--deferral` / `keel:evidence-waived`**: An operator can explicitly waive specific requirements.
 * **Audit Record**: Every waiver requires an explicit `--operator` attribution and records a durable
-  entry in `.keel/ledger/` and GitHub issue timeline, creating a tamper-evident record.
+  entry in the `.keel/state/` run ledger and GitHub issue timeline, creating a tamper-evident record.
 
 ### 7. Header-Anchored Marker Classification
 What a comment *is* — a review verdict, a jury verdict, a closure comment, a ship-provenance stamp,
@@ -233,10 +241,13 @@ alternative is guessing, which is the failure mode.
 
 ## Offline Verification: `keel evidence-verify`
 
-Compliance auditors and CI pipelines can independently verify the evidence chain offline without network calls:
+Compliance auditors and CI pipelines can independently verify the evidence chain against the
+repository policy. With `--pr` the verifier fetches that pull request's verdict comments and
+reviews from GitHub; supply them as files instead (`--pr-comments-json`, `--pr-reviews-json`,
+`--pr-body-file`) for a check that makes no network calls of its own.
 
 ```bash
-# Verify a PR's evidence chain against the repository policy
+# Verify a PR's evidence chain against the repository policy (fetches the verdicts from GitHub)
 keel evidence-verify .keel/project.yaml --root . --pr 554 --head-sha cfe06ca8...
 ```
 
@@ -397,4 +408,4 @@ An exemption records that the requirement was unsatisfiable and keeps it anyway.
 | **Review Integrity** | Unchecked self-reviews or single model | Tier-based multi-agent / cross-vendor panels |
 | **Audit Trail** | Ephemeral chat logs | Durable commit markers + JSON ledger records |
 | **Exception Handling** | Undocumented force-pushes | Audited, operator-attributed deferral records |
-| **Compliance Readiness** | Manual auditing required | Automated offline verification (`verify-evidence`) |
+| **Compliance Readiness** | Manual auditing required | Automated offline verification (`evidence-verify`) |

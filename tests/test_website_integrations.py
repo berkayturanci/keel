@@ -32,7 +32,6 @@ class TestWebsiteIntegrations(unittest.TestCase):
         self.assertIn("Addy Osmani Agent Skills", content)
         self.assertIn("Official GitHub Action", content)
         self.assertIn("Homebrew Tap", content)
-        self.assertIn("VS Code & Cursor Extension", content)
 
         # Check categories present
         self.assertIn('"assistants"', content)

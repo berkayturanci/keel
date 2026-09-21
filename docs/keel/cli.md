@@ -47,7 +47,7 @@ Without `--root`, only the config schema is checked.
 
 ```bash
 keel validate projects/*.yaml                 # schema only
-keel validate .claude/project.yaml --root .   # schema + extensions (use in CI)
+keel validate .keel/project.yaml --root .   # schema + extensions (use in CI)
 ```
 
 ## `keel plan <project.yaml> [--root DIR] [--command COMMAND] [--tier 1|2|3] [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--declared-file PATH]... [--run-id ID] [--issue N] [--pull-request N] [--json]`
@@ -68,15 +68,15 @@ same record (s8, s10). Fail-soft and opt-in: a plain `keel plan` with no `--run-
 pure read.
 
 ```bash
-keel plan .claude/project.yaml
-keel plan .claude/project.yaml --json
-keel plan .claude/project.yaml --command morning --json
-keel plan .claude/project.yaml --command ship --live --json
-keel plan .claude/project.yaml --command ship --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
-keel plan .claude/project.yaml --command ship --live --consent-mode standing --json
-KEEL_CONSENT_MODE=agent keel plan .claude/project.yaml --command ship --live --json
-keel plan .claude/project.yaml --command ship --review-comments summary --reviewers 2 --jury-advisory --json
-keel plan .claude/project.yaml --command ship --issue-title "Add setup docs" --issue-body "$ISSUE_BODY" --issue-label enhancement --json
+keel plan .keel/project.yaml
+keel plan .keel/project.yaml --json
+keel plan .keel/project.yaml --command morning --json
+keel plan .keel/project.yaml --command ship --live --json
+keel plan .keel/project.yaml --command ship --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
+keel plan .keel/project.yaml --command ship --live --consent-mode standing --json
+KEEL_CONSENT_MODE=agent keel plan .keel/project.yaml --command ship --live --json
+keel plan .keel/project.yaml --command ship --review-comments summary --reviewers 2 --jury-advisory --json
+keel plan .keel/project.yaml --command ship --issue-title "Add setup docs" --issue-body "$ISSUE_BODY" --issue-label enhancement --json
 ```
 
 With `--json`, the output includes a structured command contract under `contract`: resolved
