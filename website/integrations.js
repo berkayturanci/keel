@@ -408,7 +408,7 @@
         var text = btn.getAttribute("data-copy");
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(function () {
-            btn.innerHTML = 'Copied! <span aria-hidden="true">✓</span>';
+            btn.textContent = "Copied! ✓";
             btn.setAttribute("aria-label", "Copied to clipboard");
             announceCopied();
             clearTimeout(copyTimer);
