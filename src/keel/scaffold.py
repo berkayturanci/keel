@@ -91,8 +91,8 @@ _TEMPLATES: dict[str, dict] = {
 
 # A rule line names its targets before a `:` or `::`. `test := x`, `test ::= x` and
 # `test ?= x` assign a variable instead, and a line starting with a tab is a recipe
-# (#1301 review).
-_MAKE_RULE = re.compile(r"^ *([^:#=\t][^:#=]*?)[ \t]*::?(?![:=])")
+# (#1301 review). Leading spaces are allowed: a rule inside `ifdef` may be indented.
+_MAKE_RULE = re.compile(r"^([^:#=\t][^:#=]*?)[ \t]*::?(?![:=])")
 # `pytest` or a `pytest-…` plugin (which depends on it) as a requirement or a table
 # key — never `flake8-pytest-style`, whose name only contains the word.
 _PYTEST_NAME = re.compile(r"(?i)pytest(?:[-.][\w.-]*)?")
@@ -125,7 +125,7 @@ def _makefile_has_target(root: Path, target: str) -> bool:
         if path.is_file():
             text = _read_text(path) or ""
             for line in text.splitlines():
-                rule = None if line.startswith("\t") else _MAKE_RULE.match(line)
+                rule = _MAKE_RULE.match(line)
                 if rule and target in rule.group(1).split():
                     return True
             return False

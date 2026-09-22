@@ -194,6 +194,10 @@ class PytestIsFoundWhereProjectsDeclareIt(_Project):
         )
         self.assert_pytest(False)
 
+    def test_the_word_inside_another_name_is_not_pytest_in_a_text_file_either(self):
+        self.write("requirements-dev.txt", "flake8-pytest-style\nruff\n")
+        self.assert_pytest(False)
+
     def test_a_commented_out_requirement_is_not_one(self):
         self.write("requirements.txt", "requests\n# pytest\n")
         self.assert_pytest(False)
