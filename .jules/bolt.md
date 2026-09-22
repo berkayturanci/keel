@@ -103,3 +103,7 @@ to `tdd.is_test_path` was opened twice, two days apart, and closed twice:
   from `tdd.check_order`, once per `tdd-order` gate: counted on three merged branches
   (keel#1206, keel#1220, keel#1228) it ran 5–19 times, so the saving is 0.5–2 µs per
   run, beside a `git log` subprocess of ≈ 17 000 µs in the same gate.
+
+## 2026-09-08 - Combining regexes with | is slower on non-matching strings
+**Learning:** While earlier journal entries (2026-08-10) suggest combining multiple regex patterns with `|` is faster because it bypasses `any()` generator overhead, this only holds true for inputs that *match* early or are small. On long text strings where there is *no* match, `any()` over multiple small, simple regexes is actually much faster than one large alternation regex that forces the engine to try every branch at every position. Furthermore, combining regexes can erase valuable inline comments next to individual patterns.
+**Action:** Do not arbitrarily condense multiple simple regexes into a single `|` pattern, especially for functions like `rate_limited` or `vendor_timed_out` where the common case is no match, and inputs can be large text payloads. The `any(marker.search(...))` approach is optimal for this distribution.
