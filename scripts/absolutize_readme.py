@@ -48,12 +48,12 @@ _RAW = f"https://raw.githubusercontent.com/{_OWNER_REPO}/main/"
 # This is the same rule `tests/test_docs_links.py` calls external.
 _REL = r"(?![a-zA-Z][a-zA-Z0-9+.\-]*:|//|#)"
 
-# A fenced code block boundary: ``` or ~~~ at the start of a (possibly indented)
-# line. The marker is captured because a `~~~` line inside a ``` block does not
-# close it — tracking only "in a fence or not" let the wrong marker flip the
-# state and leave the rest of the file relative (the class #1218 fixed in
-# `test_docs_links`).
-_FENCE = re.compile(r"^[ \t]*(```|~~~)")
+# A fenced code block boundary. The marker is captured whole, because CommonMark
+# §4.5 makes closing a fence stricter than opening one: a closer uses the same
+# character, is **at least as long**, and carries no info string. Matching a fixed
+# three characters broke both ways — a `~~~` line inside a ``` block closed it, and
+# a ````markdown block showing ``` examples closed on its own content.
+_FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})([^\n]*)$")
 # Markdown image: ![alt](target) where target is not already absolute.
 _MD_IMAGE = re.compile(rf"!\[([^\]]*)\]\({_REL}([^)]+)\)")
 # Markdown link: [text](target), not an image itself (negative lookbehind for !),
@@ -62,8 +62,15 @@ _MD_IMAGE = re.compile(rf"!\[([^\]]*)\]\({_REL}([^)]+)\)")
 # whole label intact while only the outer target moves.
 _MD_LINK = re.compile(rf"(?<!!)\[(!\[[^\]]*\]\([^)]*\)|[^\]]*)\]\({_REL}([^)]+)\)")
 # Reference-style definition: `[label]: docs/x "optional title"`, up to three
-# leading spaces (CommonMark). The tail is preserved verbatim.
-_MD_REFDEF = re.compile(rf"^([ \t]{{0,3}}\[[^\]]+\]:[ \t]+){_REL}(\S+)(.*)$")
+# leading spaces. CommonMark §4.7 allows **only** an optional quoted title after the
+# destination; anything else makes the line ordinary paragraph text. Accepting an
+# arbitrary tail turned every GFM footnote (`[^1]: Keel is a tool`) and every
+# `[NOTE]: remember to …` line into a definition and rewrote its first word into a
+# blob URL. A `[^…]` label is a footnote, never a definition.
+_MD_REFDEF = re.compile(
+    rf"^([ \t]{{0,3}}\[(?!\^)[^\]]+\]:[ \t]+){_REL}(\S+)"
+    r"((?:[ \t]+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?[ \t]*)$"
+)
 # HTML src="…" with a relative value (the hero <picture>/<img>).
 _HTML_SRC = re.compile(rf'\bsrc="{_REL}([^"]+)"')
 # HTML srcset="…". Deliberately **not** guarded at the attribute level: a srcset is
@@ -73,7 +80,10 @@ _HTML_SRC = re.compile(rf'\bsrc="{_REL}([^"]+)"')
 # own instead.
 _HTML_SRCSET = re.compile(r'\bsrcset="([^"]+)"')
 # HTML href="…" with a relative value (<a href="docs/…">).
-_HTML_HREF = re.compile(rf'\bhref="{_REL}([^"]+)"')
+# `\bhref=` also matched `data-href=` (a hyphen is not a word character), and `blob/`
+# is the wrong host for a `<link rel="stylesheet">` or an SVG `<image href>` — those
+# want raw bytes, not a GitHub page — so the tag is named rather than assumed.
+_HTML_HREF = re.compile(rf'(<a\b[^>]*?(?<![-\w])href="){_REL}([^"]+)"')
 
 
 def _link_host(target: str) -> str:
@@ -93,7 +103,11 @@ def _absolutize_srcset(value: str) -> str:
         if not stripped:
             out.append(candidate)
             continue
-        url, _, descriptor = stripped.partition(" ")
+        # The HTML standard separates a candidate's URL from its descriptor with any
+        # ASCII whitespace, so splitting on one space glued a tab-separated descriptor
+        # onto the URL.
+        parts = stripped.split(None, 1)
+        url, descriptor = parts[0], (parts[1] if len(parts) > 1 else "")
         if re.match(_REL + r".", url) is None:
             out.append(candidate)
             continue
@@ -105,18 +119,19 @@ def _absolutize_srcset(value: str) -> str:
 def absolutize(text: str) -> str:
     """Return *text* with relative README links/images made absolute (pure)."""
     out: list[str] = []
-    fence_marker: str | None = None
+    fence: str | None = None  # the opening marker, or None outside a block
     for line in text.splitlines(keepends=True):
-        fence = _FENCE.match(line)
-        if fence:
-            marker = fence.group(1)
-            if fence_marker is None:
-                fence_marker = marker
-            elif marker == fence_marker:
-                fence_marker = None
+        boundary = _FENCE.match(line.rstrip("\r\n"))
+        if boundary is not None:
+            marker, info = boundary.group(1), boundary.group(2)
+            if fence is None:
+                # An opening fence may carry an info string (```python).
+                fence = marker
+            elif marker[0] == fence[0] and len(marker) >= len(fence) and not info.strip():
+                fence = None
             out.append(line)
             continue
-        if fence_marker is not None:
+        if fence is not None:
             out.append(line)
             continue
         # Images first, so a relative `![](…)` is not also seen as a link.
@@ -127,7 +142,7 @@ def absolutize(text: str) -> str:
         )
         line = _HTML_SRC.sub(lambda m: f'src="{_RAW}{m.group(1)}"', line)
         line = _HTML_SRCSET.sub(lambda m: f'srcset="{_absolutize_srcset(m.group(1))}"', line)
-        line = _HTML_HREF.sub(lambda m: f'href="{_link_host(m.group(1))}{m.group(1)}"', line)
+        line = _HTML_HREF.sub(lambda m: f'{m.group(1)}{_link_host(m.group(2))}{m.group(2)}"', line)
         out.append(line)
     return "".join(out)
 

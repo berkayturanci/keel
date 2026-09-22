@@ -280,5 +280,95 @@ class TheRealReadmeGuardSeesTheNewForms(unittest.TestCase):
         self.assertEqual(bad, [], f"a scheme was prefixed as if it were a path: {bad}")
 
 
+class FormsThatOnlyLOOKLikeTheOnesWeRewrite(unittest.TestCase):
+    """#1261 round 1, agy gate. Each new rule widened what the script matches, and
+    each widening reached something it should not. Matching more is not the same as
+    matching right."""
+
+    def test_a_footnote_is_not_a_reference_definition(self):
+        """`[^1]: Keel is a tool` is a GFM footnote. Reading an arbitrary tail after
+        the destination made it one, and rewrote `Keel` into a blob URL."""
+        for line in ("[^1]: Keel is a tool\n", "[^note]: see the docs directory\n"):
+            with self.subTest(line=line):
+                self.assertEqual(absolutize(line), line)
+
+    def test_a_footnote_shaped_like_a_definition_is_still_a_footnote(self):
+        """The case the `[^…]` exclusion is actually for. Prose after the first word
+        is already refused by the strict tail, so an ordinary footnote never reaches
+        the exclusion — but `[^1]: docs/a.md "A title"` is a *valid* footnote whose
+        body happens to have the shape of a destination and a title, and GFM resolves
+        a `[^…]` label as a footnote definition, never a link one."""
+        line = '[^1]: docs/a.md "A title"\n'
+        self.assertEqual(absolutize(line), line)
+
+    def test_a_label_followed_by_prose_is_not_a_reference_definition(self):
+        """CommonMark §4.7: only an optional quoted title may follow the destination.
+        Anything else and the line is ordinary paragraph text."""
+        for line in ("[NOTE]: remember to update docs/x\n", "[TODO]: fix docs/y later\n"):
+            with self.subTest(line=line):
+                self.assertEqual(absolutize(line), line)
+
+    def test_a_reference_definition_with_each_title_form_is_still_rewritten(self):
+        """The counterweight: refusing prose must not refuse the real thing."""
+        for tail in ('"A title"', "'A title'", "(A title)"):
+            with self.subTest(tail=tail):
+                self.assertEqual(
+                    absolutize(f"[label]: docs/a.md {tail}\n"),
+                    f"[label]: {_BLOB}docs/a.md {tail}\n",
+                )
+
+    def test_a_longer_fence_is_not_closed_by_a_shorter_one(self):
+        """A ````markdown block exists to show ``` examples. Treating any three-char
+        run as a boundary closed it on its own content and rewrote the example."""
+        text = "````markdown\n```\n[x](docs/a.md)\n```\n````\n[y](docs/b.md)\n"
+        expected = f"````markdown\n```\n[x](docs/a.md)\n```\n````\n[y]({_BLOB}docs/b.md)\n"
+        self.assertEqual(absolutize(text), expected)
+
+    def test_a_line_with_an_info_string_does_not_close_a_block(self):
+        """CommonMark §4.5: a closing fence carries no info string."""
+        text = "```\n```foo\n[x](docs/a.md)\n```\n"
+        self.assertEqual(absolutize(text), text)
+
+    def test_an_opening_fence_may_carry_an_info_string(self):
+        """The counterweight: ```python must still open a block."""
+        text = "```python\n[x](docs/a.md)\n```\n"
+        self.assertEqual(absolutize(text), text)
+
+    def test_a_data_attribute_ending_in_href_is_not_an_href(self):
+        """`\\bhref=` matched `data-href=`, because a hyphen is not a word character."""
+        for line in ('<div data-href="docs/x"></div>\n', '<div x-href="docs/x"></div>\n'):
+            with self.subTest(line=line):
+                self.assertEqual(absolutize(line), line)
+
+    def test_an_href_outside_an_anchor_is_left_alone(self):
+        """`blob/` is a GitHub *page*. A stylesheet or an SVG `<image>` wants bytes,
+        so those are not this script's to rewrite."""
+        for line in (
+            '<link rel="stylesheet" href="docs/a.css">\n',
+            '<image href="docs/a.svg"/>\n',
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(absolutize(line), line)
+
+    def test_a_tab_separated_srcset_descriptor_is_not_glued_to_the_url(self):
+        """The HTML standard allows any ASCII whitespace between a candidate's URL
+        and its descriptor; splitting on one space made `a.svg\\t1x` the URL."""
+        self.assertEqual(
+            absolutize('<img srcset="docs/a.svg\t1x">\n'),
+            f'<img srcset="{_RAW}docs/a.svg 1x">\n',
+        )
+
+    def test_these_forms_are_idempotent_too(self):
+        text = (
+            "[^1]: Keel is a tool\n"
+            "[NOTE]: remember to update\n"
+            '<div data-href="docs/x"></div>\n'
+            "````markdown\n```\n[x](docs/a.md)\n```\n````\n"
+            '<img srcset="docs/a.svg\t1x">\n'
+        )
+        once = absolutize(text)
+        self.assertEqual(absolutize(once), once)
+
+
 if __name__ == "__main__":
     unittest.main()
