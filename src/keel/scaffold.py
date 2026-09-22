@@ -93,11 +93,12 @@ _TEMPLATES: dict[str, dict] = {
 # `test ?= x` assign a variable instead, and a line starting with a tab is a recipe
 # (#1301 review). Leading spaces are allowed: a rule inside `ifdef` may be indented.
 _MAKE_RULE = re.compile(r"^([^:#=\t][^:#=]*?)[ \t]*::?(?![:=])")
-# `pytest` or a `pytest-…` plugin (which depends on it) as a requirement or a table
-# key — never `flake8-pytest-style`, whose name only contains the word.
-_PYTEST_NAME = re.compile(r"(?i)pytest(?:[-.][\w.-]*)?")
-_PYTEST_REQUIREMENT = re.compile(r"(?i)^\s*pytest(?:[-.][\w.-]*)?\s*(?:[\[(<>=!~;@,]|$)")
-_PYTEST_WORD = re.compile(r"(?i)(?<![\w.-])pytest(?!\w)")
+# `pytest` or a `pytest-…` / `pytest_…` plugin (which depends on it; PEP 503 makes the
+# two spellings one name) as a requirement or a table key — never
+# `flake8-pytest-style`, whose name only contains the word.
+_PYTEST_NAME = re.compile(r"(?i)pytest(?:[-_.][\w.-]*)?")
+_PYTEST_REQUIREMENT = re.compile(r"(?i)^\s*pytest(?:[-_.][\w.-]*)?\s*(?:[\[(<>=!~;@,]|$)")
+_PYTEST_WORD = re.compile(r"(?i)(?<![\w.-])pytest(?![a-z0-9])")
 
 
 def _read_text(path: Path) -> str | None:
@@ -134,7 +135,11 @@ def _makefile_has_target(root: Path, target: str) -> bool:
 
 def _toml_names_pytest(node: object) -> bool:
     """Whether a parsed TOML tree names pytest: a ``[tool.pytest…]`` table, a Poetry or
-    Pipfile ``pytest = "…"`` key, or a PEP 508 requirement string anywhere in it."""
+    Pipfile ``pytest = "…"`` key, or a PEP 508 requirement string anywhere in it.
+
+    Deliberately not bounded by table: Hatch, PDM, Rye, uv and Flit each keep
+    dependencies somewhere else, and a string that parses as a pytest requirement
+    almost always belongs to a project that runs pytest."""
     if isinstance(node, dict):
         return any(
             _PYTEST_NAME.fullmatch(str(key)) or _toml_names_pytest(value)
@@ -165,8 +170,9 @@ def _uses_pytest(root: Path) -> bool:
         return True
     if any(_toml_names_pytest(_read_toml(root / n)) for n in ("pyproject.toml", "Pipfile")):
         return True
-    texts = [root / n for n in ("setup.cfg", "tox.ini", "setup.py")]
-    for pattern in ("*requirements*.txt", "*requirements*.in", "requirements/*.txt"):
+    texts = [root / n for n in ("setup.cfg", "tox.ini", "setup.py", "noxfile.py")]
+    patterns = ("*requirements*.txt", "*requirements*.in")
+    for pattern in (*patterns, "requirements/**/*.txt", "requirements/**/*.in"):
         texts += sorted(root.glob(pattern))
     return any(_text_names_pytest(_read_text(path) or "") for path in texts)
 
@@ -186,6 +192,11 @@ def _unittest_command(root: Path, py: str) -> str:
     ``tests/`` directory without an ``__init__.py`` — the most common layout — and
     exits 5 (#1301 review). Such a directory is named with ``-s``; a package, or no
     tests directory, keeps the plain command.
+
+    Two layouts stay out of reach of any ``unittest`` command: tests in a
+    subdirectory that is not a package (``tests/unit/`` without ``__init__.py``),
+    which discovery never enters, and a ``src/`` layout whose package is not
+    installed — the gate runs after the project's own install, as pytest's would.
     """
     for directory in ("tests", "test"):
         if (root / directory).is_dir() and not (root / directory / "__init__.py").is_file():

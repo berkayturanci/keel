@@ -171,6 +171,29 @@ class PytestIsFoundWhereProjectsDeclareIt(_Project):
                 self.write(name, "pytest-cov>=5\n")
                 self.assert_pytest()
 
+    def test_the_underscore_spelling_of_a_plugin(self):
+        """PEP 503: `pytest_cov` and `pytest-cov` are one requirement (#1301 lead, round 2)."""
+        for name, text in (
+            ("requirements.txt", "pytest_cov\n"),
+            ("pyproject.toml", '[project]\nname = "x"\ndependencies = ["pytest_cov"]\n'),
+            ("Pipfile", '[dev-packages]\npytest_cov = "*"\n'),
+        ):
+            with self.subTest(name):
+                self.reset()
+                self.write(name, text)
+                self.assert_pytest()
+
+    def test_nested_requirements_and_a_noxfile(self):
+        for name, text in (
+            ("requirements/dev.in", "pytest\n"),
+            ("requirements/test/base.txt", "pytest>=8\n"),
+            ("noxfile.py", 'def tests(session):\n    session.install("pytest")\n'),
+        ):
+            with self.subTest(name):
+                self.reset()
+                self.write(name, text)
+                self.assert_pytest()
+
     def test_a_conftest_under_test(self):
         self.write("test/conftest.py", "")
         self.assert_pytest()
