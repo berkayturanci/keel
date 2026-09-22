@@ -103,7 +103,9 @@ def render_pr_body(
     # found three whose tests passed with the fix removed, all three offering coverage as
     # evidence (#1289). The unit is the behaviour, not the git hunk: #871's guarded and
     # unguarded arms shared one hunk, so a per-hunk claim passed while half the fix was
-    # unpinned.
+    # unpinned. No caller supplies `fix_evidence` yet — `contracts.build_command_contract`
+    # does not pass it — so from `keel ship --json` this is always the prompt, and the
+    # implementer replaces it. The parameter exists so a future caller can.
     lines.extend(["", "## Fix evidence"])
     evidence = [item for item in fix_evidence or () if isinstance(item, str) and item.strip()]
     if evidence:

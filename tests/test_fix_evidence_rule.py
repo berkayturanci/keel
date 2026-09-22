@@ -71,14 +71,57 @@ class TheStrictCopiesAgree(unittest.TestCase):
         for path in (AGENTS, SHIP):
             text = _flat(path)
             with self.subTest(file=path.name):
-                self.assertIn("each arm of a conditional", text, f"{path.name}: unit drifted")
-                self.assertIn("not each git hunk", text, f"{path.name}: unit drifted")
+                self.assertTrue("each arm of a conditional" in text, f"{path.name}: unit drifted")
+                self.assertTrue("not each git hunk" in text, f"{path.name}: unit drifted")
+
+    def test_both_strict_copies_refuse_N_A_on_the_same_triggers(self):
+        """The trigger set, not just the category list. `#1268` carries no label today, so a
+        label-only refusal would let `Closes #1268` + `N/A — pure refactor` through — which is
+        how #877 was closed."""
+        for path in (AGENTS, SHIP):
+            text = _flat(path)
+            with self.subTest(file=path.name):
+                self.assertTrue("`fix(`/`sec(`" in text, f"{path.name}: title trigger dropped")
+                self.assertTrue("or unlabelled" in text, f"{path.name}: unlabelled trigger dropped")
 
     def test_both_strict_copies_require_the_failure_to_be_an_assertion(self):
         """A solo revert that raises or hangs is not a test failing."""
         for path in (AGENTS, SHIP):
             with self.subTest(file=path.name):
-                self.assertIn("as an assertion", _flat(path), f"{path.name}: failure kind drifted")
+                msg = f"{path.name}: failure kind drifted"
+                self.assertTrue("as an assertion" in _flat(path), msg)
+
+
+class TheReviewersAreAskedTheQuestion(unittest.TestCase):
+    """Where the enforcement actually lives.
+
+    A rule in a document that nothing verifies is the weakest of the three options open
+    to a project — a CI check, a reviewer's rubric, or prose. keel has the middle one:
+    `policy_pack.review.additions` reaches every review as
+    `review_merge_contract.reviewers.project_additions` (`src/keel/ship.py`). Putting the
+    question there is what makes it asked rather than merely written, so it is pinned.
+    """
+
+    def test_the_rubric_asks_what_fails_without_the_fix(self):
+        import yaml  # noqa: PLC0415 - test-only, keeps the module importable without it
+
+        policy = yaml.safe_load((REPO_ROOT / "projects" / "keel.yaml").read_text("utf-8"))
+        additions = " ".join(policy["policy_pack"]["review"]["additions"])
+        flat = re.sub(r"\s+", " ", additions)
+
+        self.assertIn("what fails without it", flat)
+        self.assertIn("each arm of a conditional", flat)
+        self.assertIn("not each git hunk", flat)
+        self.assertIn("as an assertion", flat)
+
+    def test_the_rubric_also_asks_the_question_a_revert_cannot_answer(self):
+        import yaml  # noqa: PLC0415 - test-only
+
+        policy = yaml.safe_load((REPO_ROOT / "projects" / "keel.yaml").read_text("utf-8"))
+        flat = re.sub(r"\s+", " ", " ".join(policy["policy_pack"]["review"]["additions"]))
+
+        self.assertIn("necessary, not sufficient", flat)
+        self.assertIn("the fix changes the outcome", flat)
 
 
 class TheContributorCopiesDoNotGate(unittest.TestCase):

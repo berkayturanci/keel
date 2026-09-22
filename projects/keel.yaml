@@ -248,5 +248,22 @@ policy_pack:
   reports:
     session: "docs/session-reports/"
   review:
-    additions: ["Reject consumer-specific policy in packaged command bodies."]
+    # Reviewer rubric, not a PR form field. The question below is the one that
+    # distinguishes a test which *guards* a fix from one that merely runs through it,
+    # and an audit of 14 closed fixes found three where nobody asked it (#1289).
+    # Coverage cannot answer it: `fail_under = 100` is enforced, so "maintained 100%
+    # coverage" is true of every merged PR before it is written.
+    additions:
+      - "Reject consumer-specific policy in packaged command bodies."
+      - >-
+        For a fix: ask what fails without it. For each behaviour the change touches —
+        each arm of a conditional, each call site, not each git hunk — is there a test
+        that fails as an assertion when that one change is reverted? #871's guarded and
+        unguarded arms shared a single hunk, so a per-hunk answer passed while half the
+        fix was unpinned. Treat "maintained 100% coverage" as no answer at all.
+      - >-
+        A passing revert check is necessary, not sufficient. Ask whether the fixture is
+        one where the fix changes the outcome: #873's test fails without its fix and
+        still could not see the regression that fix shipped (#1268), because both of its
+        waves carried the same issue number.
     required_sections: ["Testing", "Docs Impact"]

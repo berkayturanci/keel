@@ -690,8 +690,13 @@ class PrBodyFixEvidence(unittest.TestCase):
         self.assertNotIn("Not stated yet.", body)
 
     def test_the_section_sits_between_testing_and_docs_impact(self):
+        """Asserts presence before order on purpose: `str.index` on a missing heading
+        raises `ValueError`, and by this rule's own standard an error is not a test
+        failing."""
         body = artifacts.render_pr_body(issue_number=7, testing=["make test"], docs_impact="none")
 
+        for heading in ("## Testing", "## Fix evidence", "## Docs Impact"):
+            self.assertIn(heading, body)
         self.assertLess(body.index("## Testing"), body.index("## Fix evidence"))
         self.assertLess(body.index("## Fix evidence"), body.index("## Docs Impact"))
 

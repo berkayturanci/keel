@@ -425,7 +425,7 @@ Markdown verbatim when available.
 `keel ship --json` exposes the rendered bodies under `result.artifact_bodies`:
 
 - `pr_body`: canonical PR description with Summary, Context / Root Cause, Changes Made,
-  Testing, Docs Impact, and a closing or reference line
+  Testing, Fix evidence, Docs Impact, and a closing or reference line
 - `issue_update`: stable issue progress/update comment with `keel.issue-update.v1`
 - `review_verdict_template`: marker-based reviewer verdict carrying
   `keel.review-verdict.v1`, `reviewer: <id>`, and `head: <sha>` when available, plus
@@ -1198,7 +1198,7 @@ the step not applicable with a reason. Mutating commands must make required side
 observable through GitHub, git, or the configured report path before moving forward.
 
 For `ship` (in either profile), this means a PR body is not valid when it contains only a closing
-reference. It must include Context, Changes Made, Testing, Docs Impact, and the closing issue
+reference. It must include Context, Changes Made, Testing, Fix evidence, Docs Impact, and the closing issue
 reference. If review or jury ran, the orchestrator must post the final reviewer verdicts and
 the single jury summary/verdict to the GitHub PR. A local transcript or chat-only note is not
 merge evidence.

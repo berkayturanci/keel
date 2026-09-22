@@ -349,6 +349,10 @@ class TestInstallAll(unittest.TestCase):
                     self.assertIn("Context", text)
                     self.assertIn("Changes Made", text)
                     self.assertIn("Testing", text)
+                    # #1289: a fix states what fails without it; the section is mandatory
+                    # in the generated surfaces because that is where agent PR bodies are
+                    # composed, and the audit's false closures were all agent-authored.
+                    self.assertIn("Fix evidence", text)
                     self.assertIn("Docs Impact", text)
                     self.assertIn(
                         "keel evidence-verify .keel/project.yaml --root . --pr <PR> "

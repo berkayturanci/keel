@@ -38,17 +38,21 @@ The rules you will hit most often. Details follow below.
   point.
   `N/A — <docs | pure refactor | dependency bump | packaging>` is available, but **not** to a
   PR whose title is `fix(`/`sec(` or that closes an issue labelled `type:bug`/`bug` **or
-  carrying no label at all** — #877 was closed by a genuine refactor, and #1268 is unlabelled
-  today. Such a PR names a behaviour and a test, or says `Relates to #N` and leaves the issue
+  unlabelled** — #877 was closed by a genuine refactor, and #1268 carries no label today. Such a PR names a behaviour and a test, or says `Relates to #N` and leaves the issue
   open.
   A passing revert check is necessary, not sufficient: #873's fix passes one and still shipped
   the regression now filed as #1268, because its fixture used the same issue in both waves, so
   the fix and the bug agreed. The fixture has to be one where the fix changes the outcome.
-  Written here as well as in `CONTRIBUTING.md` for the same reason the bot-branch rule is —
-  agents open most of the pull requests here, and every closure the audit found wanting was
-  agent-authored. The version in `CONTRIBUTING.md` is deliberately weaker: a human contributor
-  should not have to revert-and-test to be allowed to fix a bug. You can, so you do. See
-  #1289.
+  A scope with no test surface (`fix(website)`, `fix(ci)`, `fix(release)`) answers with the
+  unpinned list and the reason — never with an invented test name.
+  **The reviewers ask both questions on every pull request**: they are in
+  `policy_pack.review.additions`, which reaches each review as
+  `review_merge_contract.reviewers.project_additions`. That is where the enforcement lives; a
+  rule only written down is the weakest of the three options a project has.
+  `CONTRIBUTING.md` states the same thing for human contributors and deliberately does **not**
+  gate on it: every closure the audit behind #1289 found wanting was agent-authored, and a
+  mandatory field nobody understands is what produced the coverage sentence in the first
+  place.
 - **Stdlib-first.** Exactly one runtime dependency on Linux/macOS: **PyYAML**. Do not add
   another runtime dep without an explicit, discussed reason — `jsonschema_min` is a
   hand-rolled validator precisely to avoid pulling `jsonschema`. The sole platform
