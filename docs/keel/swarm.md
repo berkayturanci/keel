@@ -59,8 +59,9 @@ Keel Swarm is built on three core pillars:
    decision logic are 100% pure and deterministic (`src/keel/swarm.py`). Every **subprocess and git**
    mutation is confined to thin fail-soft runtime wrappers (`src/keel/swarm_runtime.py`,
    `src/keel/swarm_landing.py`) — but the filesystem is not: `resolve_swarm_state_dir` and
-   `save_swarm_state` in `swarm.py` `mkdir` and write `.keel/state/swarm/<swarm_id>.json` (atomically,
-   after #872). The separation the heading claims holds for the process boundary, not for disk.
+   `save_swarm_state` in `swarm.py` `mkdir` and write `.keel/state/swarm/<swarm_id>.json` (atomically
+   since [#932](https://github.com/berkayturanci/keel/issues/932); the `#872` in the code comment
+   beside it names an unrelated `gh api` fix). The separation the heading claims holds for the process boundary, not for disk.
 3. **Deterministic Conflict Resolution**: Rather than naively merging branches or relying on LLMs
    to resolve arbitrary git merge conflicts, Swarm statically models predicted scopes, enforces
    worktree isolation, and keeps every wave's clusters mutually disjoint so landing never has to
@@ -194,13 +195,17 @@ knobs:
 
 ### Scope Prediction Heuristics
 - **Title / Body Path Parsing**: a path written in the title or body expands the predicted scope —
-  `touch src/keel/*.py` yields `src/keel/*`. It is path matching, not language awareness: a module
-  name (`keel.swarm`) yields nothing, and neither does `tests/test_*.py`, whose `test_*` segment the
-  extractor does not accept. Check what a scope actually resolved to with `swarm-plan --tree` rather
+  `touch src/keel/*.py` yields `src/keel/*`. It is path matching, not language awareness, and it cuts
+  both ways: `tests/test_*.py` yields nothing, because the extractor does not accept the `test_*`
+  segment — while a **backticked** module name is taken as a file. A bare `keel.swarm` yields nothing,
+  but `` `keel.swarm` `` — how anyone writes a module in an issue — becomes the phantom path
+  `keel.swarm`, which conflicts with nothing and so declares the issue disjoint from everything, and
+  suppresses the label fallback below. Check what a scope actually resolved to with `swarm-plan --tree` rather
   than assuming a mention was understood.
-- **Label / Role Fallback**: only when the text predicted *nothing*, a substring match over the role
-  **and every label** maps `docs`/`website`/`cli`/`visual` to one directory glob — and that glob is
-  the same for every issue in the run, which is why a shared label serialises the whole plan
+- **Label / Role Fallback**: only when the text and `--declared-file` predicted *nothing*, a
+  substring match over the role **and every label** maps `docs`/`website`/`visual` to a directory
+  glob and `cli` to the single file `src/keel/cli.py`. Whatever it maps to is the same for every
+  issue in the run, which is why a shared label serialises the whole plan
   ([#1274](https://github.com/berkayturanci/keel/issues/1274)).
 - **Disjointness Matrix**: If two issues touch non-overlapping directory trees or orthogonal subsystems,
   they are marked disjoint ($D_{ij} = 1$). If scopes intersect, a conflict edge is created ($C_{ij} = 1$).
@@ -262,12 +267,20 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
    builds. What is not a no-op is the discarded wave: `run_swarm_orchestration` iterates the wave
    list by index, so when the failing cluster was alone in its wave the list shrinks underneath the
    index and **the next, unrelated wave is skipped entirely** — its clusters finish the run as
-   `queued`, reported alongside a `partial_failure` that does not mention them. Reproduced with three
-   conflicting issues: issue 1 fails, the run ships `[1, 3]`, and `cluster-2-2` is never attempted.
-   [#873](https://github.com/berkayturanci/keel/issues/873) was closed as fixing exactly this and did
-   not. Tracked as [#1268](https://github.com/berkayturanci/keel/issues/1268); the `queued` stranding
-   is the same bug, not the separate one [#1277](https://github.com/berkayturanci/keel/issues/1277)
-   originally described.
+   `queued` — reported as `partial_failure`, or as `failed` when nothing else passed, and in neither
+   case are they mentioned. Reproduced with three conflicting issues: issue 1 fails, the run ships
+   `[1, 3]`, and `cluster-2-2` is never attempted. Being alone in its wave is sufficient but not
+   necessary — a two-cluster wave whose clusters both fail skips the next one too.
+
+   The positional loop came from [#893](https://github.com/berkayturanci/keel/pull/893), closing
+   [#873](https://github.com/berkayturanci/keel/issues/873), which asked for exactly that: before it
+   the loop iterated the original, immutable tuple and could skip nothing. So the skip is a
+   regression introduced by a correct fix, and iterating by identity again is the obvious direction.
+   Its test uses issue 101 in both waves
+   (`tests/test_swarm_runtime.py:272-273`), so it never sees an unrelated next wave. Tracked as
+   [#1268](https://github.com/berkayturanci/keel/issues/1268); the `queued` stranding is the same
+   bug, not the separate one [#1277](https://github.com/berkayturanci/keel/issues/1277) originally
+   described.
 
    (There is also no runtime scope audit — clusters are kept off each other's files by plan-time
    overlap partitioning and per-worktree isolation, not by watching what a worker writes.)
