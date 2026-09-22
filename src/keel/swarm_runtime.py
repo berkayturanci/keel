@@ -12,6 +12,7 @@ import datetime
 import shutil
 import subprocess  # nosec B404
 import sys
+import traceback
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -282,6 +283,11 @@ def run_swarm_orchestration(
                     # as `running` in the state file (#1271).
                     cluster = future_to_cluster[future]
                     c_id = cluster.cluster_id
+                    # The traceback goes to stderr: the failure may be keel's own bug,
+                    # and the one-line reason alone would hide where it came from.
+                    sys.stderr.write(
+                        f"swarm worker {c_id} raised:\n" + "".join(traceback.format_exception(exc))
+                    )
                     worker_res = {
                         "issue": cluster.issues[0] if cluster.issues else 0,
                         "role": cluster.role,

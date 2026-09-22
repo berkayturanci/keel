@@ -244,18 +244,23 @@ class TestSwarmOrchestration(unittest.TestCase):
                     raise RuntimeError("boom in 302")
                 return CommandResult(ok=True, code=0, output="passed")
 
+            err = io.StringIO()
             try:
-                result = run_swarm_orchestration(
-                    plan,
-                    ".keel/project.yaml",
-                    root=tmpdir,
-                    dry_run=False,
-                    max_workers=2,
-                    runner=mock_runner,
-                    create_worktrees=True,
-                )
+                with redirect_stderr(err):
+                    result = run_swarm_orchestration(
+                        plan,
+                        ".keel/project.yaml",
+                        root=tmpdir,
+                        dry_run=False,
+                        max_workers=2,
+                        runner=mock_runner,
+                        create_worktrees=True,
+                    )
             except RuntimeError as exc:
                 self.fail(f"a worker's exception ended the run: {exc}")
+            # The traceback is kept: the failure may be keel's own bug.
+            self.assertIn("Traceback", err.getvalue())
+            self.assertIn("RuntimeError: boom in 302", err.getvalue())
 
             self.assertEqual((result.passed_count, result.failed_count), (1, 1))
             self.assertEqual(result.status, "partial_failure")
