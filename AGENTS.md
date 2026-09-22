@@ -26,17 +26,29 @@ The rules you will hit most often. Details follow below.
 - **Coverage bar is non-negotiable.** The pure core is held at **100 % line + branch**;
   the CI gate is `fail_under = 100` (`pyproject.toml`). New core code ships with tests
   that keep it at 100 %.
-- **Coverage is not fix evidence.** Because `fail_under = 100` is enforced, "maintained 100 %
-  coverage" is true of every merged PR before it is written — it describes the repository, not
-  the test. When you fix something, state instead, **for each source hunk**, a test that fails
-  when that hunk alone is reverted; list any hunk you cannot pin, with the reason. A whole-fix
-  revert is not enough — two past closures stated a true revert result while half the fix sat
-  unguarded. `N/A — <docs | pure refactor | dependency bump | packaging>` is available, but
-  **not** to a PR closing a `type:bug` issue: use `Relates to #N` and leave it open. And a
-  passing revert check is necessary, not sufficient — the fixture has to be one where the fix
-  changes the outcome (#1268 passed one and still shipped a regression). Written here as well
-  as in `CONTRIBUTING.md` for the same reason the bot-branch rule is: agents open these pull
-  requests. See step 7 there and #1289.
+- **Coverage is not fix evidence — a revert is.** Because `fail_under = 100` is enforced,
+  "Maintained 100% line + branch test coverage across the repository." is true of every merged
+  pull request before anyone writes it; it describes the repo, not the test. When you fix
+  something, state instead — **for each behaviour the fix changes**, meaning each arm of a
+  conditional and each call site, not each git hunk — a test that **fails as an assertion**
+  when that one change is reverted. Both distinctions were earned: #871's guarded and
+  unguarded arms sit in a *single* hunk, so a per-hunk claim passes while half the fix is
+  unpinned; and a solo revert that raises `NameError` or hangs is not a test failing. List any
+  behaviour you cannot pin, with the reason — that is a normal outcome and naming it is the
+  point.
+  `N/A — <docs | pure refactor | dependency bump | packaging>` is available, but **not** to a
+  PR whose title is `fix(`/`sec(` or that closes an issue labelled `type:bug`/`bug` **or
+  carrying no label at all** — #877 was closed by a genuine refactor, and #1268 is unlabelled
+  today. Such a PR names a behaviour and a test, or says `Relates to #N` and leaves the issue
+  open.
+  A passing revert check is necessary, not sufficient: #873's fix passes one and still shipped
+  the regression now filed as #1268, because its fixture used the same issue in both waves, so
+  the fix and the bug agreed. The fixture has to be one where the fix changes the outcome.
+  Written here as well as in `CONTRIBUTING.md` for the same reason the bot-branch rule is —
+  agents open most of the pull requests here, and every closure the audit found wanting was
+  agent-authored. The version in `CONTRIBUTING.md` is deliberately weaker: a human contributor
+  should not have to revert-and-test to be allowed to fix a bug. You can, so you do. See
+  #1289.
 - **Stdlib-first.** Exactly one runtime dependency on Linux/macOS: **PyYAML**. Do not add
   another runtime dep without an explicit, discussed reason — `jsonschema_min` is a
   hand-rolled validator precisely to avoid pulling `jsonschema`. The sole platform

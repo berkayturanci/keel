@@ -69,6 +69,7 @@ def render_pr_body(
     issue_intake: dict[str, Any] | None = None,
     changed_files: list[str] | tuple[str, ...] | None = (),
     testing: list[str] | tuple[str, ...] = (),
+    fix_evidence: list[str] | tuple[str, ...] | None = (),
     docs_impact: str | None = None,
 ) -> str:
     """Render the canonical PR body used by ship implementers."""
@@ -96,6 +97,25 @@ def render_pr_body(
     lines.extend(f"- {item.strip()}" for item in tests) if tests else lines.append(
         "- Not run yet; update this section before marking the PR ready."
     )
+    # A fix's own section, rendered as a prompt rather than a claim. Coverage cannot say
+    # whether a test *guards* a change — `fail_under = 100` is enforced, so "maintained 100%
+    # coverage" is true of every merged PR before it is written. An audit of 14 closed fixes
+    # found three whose tests passed with the fix removed, all three offering coverage as
+    # evidence (#1289). The unit is the behaviour, not the git hunk: #871's guarded and
+    # unguarded arms shared one hunk, so a per-hunk claim passed while half the fix was
+    # unpinned.
+    lines.extend(["", "## Fix evidence"])
+    evidence = [item for item in fix_evidence or () if isinstance(item, str) and item.strip()]
+    if evidence:
+        lines.extend(f"- {item.strip()}" for item in evidence)
+    else:
+        lines.append(
+            "- Not stated yet. For each behaviour this change touches — each arm of a "
+            "conditional, each call site — name a test that fails as an assertion when that "
+            "one change is reverted, and list any behaviour left unpinned with the reason. "
+            "`N/A — <docs | pure refactor | dependency bump | packaging>` if there is nothing "
+            "to revert-test."
+        )
     lines.extend(
         [
             "",

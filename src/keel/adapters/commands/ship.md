@@ -545,9 +545,18 @@ Every implementer (delegated or not) receives the same brief plus:
   When `keel ship --json` exposes `result.artifact_bodies.pr_body`, use that rendered
   body as the PR-body shape and fill in the concrete implementation/testing details before
   opening or updating the PR. The PR body MUST NOT be only a closing reference. It must
-  include at least: `Context / Root Cause`, `Changes Made`, `Testing`, `Docs Impact`, and
-  a final `Closes #<N>` reference. If any section is not applicable, write
+  include at least: `Context / Root Cause`, `Changes Made`, `Testing`, `Fix evidence`,
+  `Docs Impact`, and a final `Closes #<N>` reference. If any section is not applicable, write
   `N/A — <reason>` inside that section instead of omitting it.
+  **`Fix evidence` is where a fix proves its test guards it.** For each behaviour the change
+  touches — each arm of a conditional, each call site, not each git hunk — name a test that
+  fails *as an assertion* when that one change is reverted, and list any behaviour you could
+  not pin with the reason. A whole-fix revert is not enough: two past closures would have
+  passed one while half the fix sat unguarded. "Maintained 100 % coverage" is never evidence
+  here — `fail_under = 100` is enforced, so it is true before you write it.
+  `N/A — <docs | pure refactor | dependency bump | packaging>` is available, but **not** when the
+  title is `fix(`/`sec(` or the issue is labelled `type:bug`/`bug` or unlabelled. See
+  `AGENTS.md` and #1289.
 - A pre-push scope self-check: `git diff base_branch...HEAD --name-only`, revert anything
   outside the issue's scope.
 - The vendor's `Co-Authored-By:` trailer on every commit.

@@ -664,5 +664,37 @@ class TestShipProvenanceRenderer(unittest.TestCase):
         self.assertEqual(self._body(), self._body())
 
 
+class PrBodyFixEvidence(unittest.TestCase):
+    """The `Fix evidence` section (#1289).
+
+    Two behaviours, pinned separately on purpose: the section is always rendered, and the
+    prompt is replaced when the caller supplies evidence. Reverting either one alone fails
+    exactly one of these — which is the rule this section exists to state.
+    """
+
+    def test_the_section_is_rendered_even_when_no_evidence_is_supplied(self):
+        body = artifacts.render_pr_body(issue_number=7)
+
+        self.assertIn("## Fix evidence", body)
+        self.assertIn("Not stated yet.", body)
+        self.assertIn("each arm of a conditional, each call site", body)
+
+    def test_supplied_evidence_replaces_the_prompt(self):
+        body = artifacts.render_pr_body(
+            issue_number=7,
+            fix_evidence=["Reverting the guard fails test_guard.", "  ", "N/A — packaging."],
+        )
+
+        self.assertIn("- Reverting the guard fails test_guard.", body)
+        self.assertIn("- N/A — packaging.", body)
+        self.assertNotIn("Not stated yet.", body)
+
+    def test_the_section_sits_between_testing_and_docs_impact(self):
+        body = artifacts.render_pr_body(issue_number=7, testing=["make test"], docs_impact="none")
+
+        self.assertLess(body.index("## Testing"), body.index("## Fix evidence"))
+        self.assertLess(body.index("## Fix evidence"), body.index("## Docs Impact"))
+
+
 if __name__ == "__main__":
     unittest.main()
