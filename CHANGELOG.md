@@ -9,7 +9,7 @@ All notable changes to keel are documented here. The format follows
 ## [1.24.1] - 2026-09-22
 
 ### Fixed
-- **Four things a first-time visitor meets were wrong** (launch audit).
+- **Four things a first-time visitor meets were wrong** (launch audit, #1296).
   - **The README Quickstart ran `keel setup` twice.** It listed `keel setup --root .` and then `keel setup --root . --wizard` "…and pick the team interactively"; pasted in order, the second prints `config : using existing .keel/project.yaml` and never reaches the team step. The wizard is now shown as the alternative it is, with the note that on an already-configured project `--force` re-runs it **and overwrites `.keel/project.yaml`** (measured: it does).
   - **"Ask a Question" led to a 404.** The issue chooser linked to GitHub Discussions, which this repository does not have enabled. It now links to the docs and to the private security-report policy.
   - **The integrations catalogue said keel exposes an MCP server.** It does not: keel *consumes* MCP, selecting a GitHub MCP server as its transport when an authenticated `gh` is absent (`docs/keel/github-transport.md`). The card's command was `keel ship --transport mcp`, which records the detected transport rather than choosing one; it now shows `keel capabilities`, which reports the transport keel selected and why. The Devin and GitHub Copilot cards implied an integration keel does not ship; each now says keel gates the pull request whoever wrote it, like the cards that already say "keel ships no profile for it".
