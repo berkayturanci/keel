@@ -9,6 +9,10 @@ All notable changes to keel are documented here. The format follows
 ### Changed
 - **Questions have a home: GitHub Discussions is enabled** (#1296 follow-up). #1296 removed the issue chooser's "Ask a Question" link because it pointed at Discussions while Discussions was disabled, which sent every visitor who clicked it to a 404. Discussions is now enabled, and the chooser links to its Q&A category, alongside the docs and the private security-report policy.
 
+### Fixed
+- **`swarm-land` holds a wave when the merge lock is taken, instead of a traceback** (#1272). `merge_lock` raises when it is not granted — a concurrent `keel merge` is the expected case — and the raise escaped `land_wave_clusters`, so `--json` printed nothing and the exit code came from an exception. Every cleared cluster is now held with the lock named as the reason, written to the run state, and the wave's result is returned like any other; nothing is merged.
+- **`swarm-status` survives a state file of the wrong shape** (#1273). JSON that parsed but was not what keel writes — a worker that is not an object, `"workers": null`, a top-level list, a field of the wrong type — raised out of the recovery tool (and `swarm-land`). It now reads as unreadable, and `swarm-status` says which file, rather than reporting that no run exists. Swarm stays experimental.
+
 ## [1.24.1] - 2026-09-22
 
 ### Fixed

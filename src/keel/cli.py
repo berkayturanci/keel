@@ -7273,6 +7273,14 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
                 swarm_id = files[0].stem
 
     state = swarm.load_swarm_state(swarm_id, root=args.root) if swarm_id else None
+    state_file = Path(args.root) / ".keel" / "state" / "swarm" / f"{swarm_id}.json"
+    if swarm_id and state is None and state_file.exists():
+        # A run that exists but cannot be read is not "no run": say which file, so the
+        # recovery tool does not tell an operator nothing is in flight (#1273).
+        print(
+            f"warning: swarm state {state_file} is not the shape keel writes; inspect or remove it",
+            file=sys.stderr,
+        )
 
     if args.json:
         print(json.dumps(state.to_dict() if state else {}, indent=2))

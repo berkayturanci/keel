@@ -1778,5 +1778,109 @@ class TestSwarmLandCLI(unittest.TestCase):
                 self.assertIn("partial_failure", buf.getvalue())
 
 
+class AContendedMergeLockHoldsTheWave(unittest.TestCase):
+    """#1272: `merge_lock` raises when it is not granted, and the raise escaped
+    `land_wave_clusters` as a traceback — no result, no `--json`, no exit contract —
+    in exactly the case the lock exists to make orderly."""
+
+    def _land(self, tmpdir: str, calls: list[list[str]]):
+        from keel.lock import LockError, merge_lock, resource_path
+
+        s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+        s2 = IssueScope(issue=102, title="B", predicted_files=("docs/b.md",))
+        plan = build_swarm_plan([s1, s2], swarm_id="swarm-contended")
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            return CommandResult(ok=True, code=0, output="")
+
+        lock_dir = resource_path(Path(tmpdir).resolve() / ".keel" / "state" / "locks", "merge")
+        with merge_lock(lock_dir):
+            try:
+                result = land_wave_clusters(
+                    plan,
+                    wave_index=1,
+                    project_yaml=".keel/project.yaml",
+                    root=tmpdir,
+                    dry_run=False,
+                    runner=runner,
+                    evidence_checker=None,
+                    base_branch="main",
+                )
+            except LockError as exc:
+                self.fail(f"LockError escaped land_wave_clusters: {exc}")
+        return plan, result
+
+    def test_every_cluster_is_held_and_nothing_is_merged(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            calls: list[list[str]] = []
+            plan, result = self._land(tmpdir, calls)
+
+            wave = [c.cluster_id for c in plan.waves[0].clusters]
+            self.assertEqual(sorted(c for c, _ in result.held_clusters), sorted(wave))
+            self.assertTrue(all("merge lock" in why for _, why in result.held_clusters))
+            self.assertEqual(result.landed_clusters, ())
+            self.assertEqual(result.status, "failed")
+            self.assertFalse(any(c[:2] in (["git", "merge"], ["git", "checkout"]) for c in calls))
+            json.dumps(result.to_dict())
+
+    def test_the_held_reason_is_written_to_the_run_state(self):
+        """swarm-status reads the state file; the hold must be there, not only in the
+        return value."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            s2 = IssueScope(issue=102, title="B", predicted_files=("docs/b.md",))
+            ids = [
+                c.cluster_id
+                for c in build_swarm_plan([s1, s2], swarm_id="swarm-contended").waves[0].clusters
+            ]
+            workers = tuple(
+                SwarmWorkerStatus(
+                    cluster_id=i,
+                    issue=0,
+                    role="core",
+                    agent="a",
+                    model="m",
+                    step="s8",
+                    status="passed",
+                    updated_at="",
+                    details="",
+                )
+                for i in ids
+            )
+            save_swarm_state(
+                SwarmRunState(
+                    swarm_id="swarm-contended",
+                    total_workers=len(ids),
+                    active_wave=1,
+                    workers=workers,
+                ),
+                root=tmpdir,
+            )
+            self._land(tmpdir, [])
+            state = load_swarm_state("swarm-contended", root=tmpdir)
+            assert state is not None
+            self.assertEqual({w.status for w in state.workers}, {"held"})
+            self.assertEqual({w.details for w in state.workers}, {"merge lock held"})
+
+    def test_the_lock_is_free_again_for_the_next_run(self):
+        """The counterweight: a granted lock lands as before."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            plan = build_swarm_plan([s1], swarm_id="swarm-free")
+            result = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                runner=lambda cmd, cwd: CommandResult(ok=True, code=0, output=""),
+                evidence_checker=None,
+                base_branch="main",
+            )
+            self.assertEqual(result.held_clusters, ())
+            self.assertEqual(len(result.landed_clusters), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,11 +6,12 @@ under atomic merge locks, and automatically rebasing / healing drifted sequentia
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from .lock import merge_lock, resource_path
+from .lock import LockError, merge_lock, resource_path
 from .swarm import (
     SwarmLandingResult,
     SwarmPlan,
@@ -438,7 +439,27 @@ def land_wave_clusters(
     if state and held:
         save_swarm_state(state, root=root_path)
 
-    with merge_lock(lock_path):
+    # A lock that is not granted — a concurrent `keel merge` is the expected case —
+    # holds every cleared cluster and returns a result like any other wave, so the
+    # `--json` contract and the exit code hold instead of a LockError traceback (#1272).
+    lock = contextlib.ExitStack()
+    try:
+        lock.enter_context(merge_lock(lock_path))
+    except LockError as exc:
+        for c in cleared:
+            held.append(
+                (
+                    c.cluster_id,
+                    f"{exc}: another merge is landing, so nothing was merged; "
+                    "run swarm-land again once it finishes",
+                )
+            )
+            if state:
+                state = update_worker_state(
+                    state, c.cluster_id, step="s10", status="held", details="merge lock held"
+                )
+        cleared = []
+    with lock:
         for c in cleared:
             branch_name = f"swarm/{plan.swarm_id}/{c.cluster_id}"
             # Applies to both arms: the evidence check ran outside the lock,

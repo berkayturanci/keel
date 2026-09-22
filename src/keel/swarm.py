@@ -1053,6 +1053,14 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
         return None
     try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
+        # JSON that parses but has the wrong shape — a hand edit, a torn write — is
+        # as unreadable as JSON that does not parse; it must not kill swarm-status,
+        # the recovery tool (#1273).
+        if not isinstance(data, dict):
+            return None
+        raw_workers = data.get("workers", [])
+        if not isinstance(raw_workers, list) or not all(isinstance(w, dict) for w in raw_workers):
+            return None
         workers = tuple(
             SwarmWorkerStatus(
                 cluster_id=str(w.get("cluster_id", "")),
@@ -1067,7 +1075,7 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
                 lead=str(w.get("lead", "")),
                 difficulty=str(w.get("difficulty", "")),
             )
-            for w in data.get("workers", [])
+            for w in raw_workers
         )
         return SwarmRunState(
             swarm_id=str(data.get("swarm_id", swarm_id)),
@@ -1077,7 +1085,7 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
             started_at=str(data.get("started_at", "")),
             completed_at=data.get("completed_at"),
         )
-    except (json.JSONDecodeError, ValueError, KeyError):
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError):
         return None
 
 
