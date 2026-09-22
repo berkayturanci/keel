@@ -1,6 +1,6 @@
 ---
 description: On-demand dependency security + licence audit across the project's ecosystems; classify security vs. routine, append findings to today's tracking issue, and route fixes to keel:ship.
-argument-hint: "[<ecosystem>|all] [--severity low|moderate|high|critical] [--open-issues] [--dry-run]"
+argument-hint: "[<ecosystem>|all] [--severity low|moderate|high|critical] [--security-only] [--open-issues] [--dry-run]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit
 ---
 
@@ -176,4 +176,4 @@ review). Never bump a dependency and merge directly from here. Under `--dry-run`
   and skipped.
 - Fail-soft · deterministic for identical inputs.
 
-<!-- keel-generated: surface=plugin command=deps-audit keel_version=1.23.1 source_sha256=003dcd1caa647d870bbe2eb0107ab090b473200b5586327141bcd3342dff705c generated_sha256=003dcd1caa647d870bbe2eb0107ab090b473200b5586327141bcd3342dff705c -->
+<!-- keel-generated: surface=plugin command=deps-audit keel_version=1.23.1 source_sha256=e6fd37831f437e39ba9417ea0468bd1bc298c90b537e71f64c11477f1bac678a generated_sha256=e6fd37831f437e39ba9417ea0468bd1bc298c90b537e71f64c11477f1bac678a -->

@@ -35,6 +35,10 @@ _BLOCK_RE = re.compile(r"cmdExample:\s*\{(.*?)\n  \},", re.DOTALL)
 _ENTRY_RE = re.compile(r'"([a-z][a-z0-9-]*)":\s*"([^"]+)"')
 _HINT_RE = re.compile(r'^argument-hint:\s*"(.*)"\s*$', re.MULTILINE)
 _FLAG_RE = re.compile(r"--[a-z][a-z0-9-]*")
+# The adapters document their own flags as a bullet opening with the flag in
+# backticks — "- `--dry-run` — …". Anchoring on that shape keeps the CLI's own
+# flags, which the bodies also quote inside `keel …` command lines, out of it.
+_BULLET_RE = re.compile(r"^- `(--[a-z][a-z0-9-]*)", re.MULTILINE)
 
 
 def site_examples() -> dict[str, str]:
@@ -43,6 +47,14 @@ def site_examples() -> dict[str, str]:
     if block is None:  # pragma: no cover - guarded by the vacuity test below
         return {}
     return dict(_ENTRY_RE.findall(block.group(1)))
+
+
+def documented_flags(command: str) -> set[str]:
+    """The flags the adapter body describes as this command's own."""
+    source = COMMANDS_DIR / f"{command}.md"
+    if not source.exists():  # pragma: no cover - callers iterate real adapters
+        return set()
+    return set(_BULLET_RE.findall(source.read_text(encoding="utf-8")))
 
 
 def argument_hint(command: str) -> str | None:
@@ -103,5 +115,59 @@ class SiteCommandExamples(unittest.TestCase):
                 )
 
 
-if __name__ == "__main__":
+class HintsDeclareEveryDocumentedFlag(unittest.TestCase):
+    """The other half of the drift, and the one that cost a working feature.
+
+    `SiteCommandExamples` holds the *examples* to the hint. It cannot see a flag the
+    hint leaves out, because an example that used one would simply be reported as
+    unknown — which is how `/keel:deps-audit --security-only` was handled when it was
+    first found: the flag was real, documented in the body and implemented, and the
+    site example was moved off it rather than the hint corrected (#1282). The hint is
+    the usage line every host shows, so a flag absent from it is a feature no reader
+    is told exists.
+
+    This holds the hint to the body instead. Writing it surfaced a second live
+    instance, `/keel:ship --role`, which was in the body's flag list beside
+    `--delegate`, `--effort` and `--team` — all three declared — and wired at
+    `cli.py`, but missing from the usage line.
+    """
+
+    def setUp(self):
+        self.commands = sorted(p.stem for p in COMMANDS_DIR.glob("*.md"))
+
+    def test_the_adapter_set_is_found_and_not_empty(self):
+        """Vacuity: an empty or renamed directory would pass every check below."""
+        self.assertGreaterEqual(
+            len(self.commands), 10, f"no command adapters parsed from {COMMANDS_DIR}"
+        )
+
+    def test_the_bullet_shape_actually_matches_something(self):
+        """Vacuity: if the adapters' documentation convention changes, the regex
+        would find nothing and this file would go quietly blind."""
+        with_flags = [c for c in self.commands if documented_flags(c)]
+        self.assertGreaterEqual(
+            len(with_flags),
+            5,
+            "no adapter documents a flag as '- `--flag`'; the convention moved and "
+            "this check no longer reads anything",
+        )
+
+    def test_every_documented_flag_is_declared_in_the_hint(self):
+        for command in self.commands:
+            hint = argument_hint(command)
+            if hint is None:
+                continue
+            declared = set(_FLAG_RE.findall(hint))
+            undeclared = sorted(documented_flags(command) - declared)
+            with self.subTest(command=command):
+                self.assertEqual(
+                    undeclared,
+                    [],
+                    f"/keel:{command} documents {undeclared} in its body but its "
+                    f"argument-hint omits them, so no host shows them:\n"
+                    f"  hint: {hint}",
+                )
+
+
+if __name__ == "__main__":  # pragma: no cover
     unittest.main()

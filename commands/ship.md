@@ -1,6 +1,6 @@
 ---
 description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → capture → close), reading every project value from .keel/project.yaml via the keel CLI.
-argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <...> (repeatable, one per reviewer slot)] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--effort <low|medium|high>] [--team <profile>] [--jury|--no-jury|--jury-advisory] [--tdd] [--loop] [--hotfix] [--dry-run] [--wizard]"
+argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <...> (repeatable, one per reviewer slot)] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--role <label>] [--effort <low|medium|high>] [--team <profile>] [--jury|--no-jury|--jury-advisory] [--tdd] [--loop] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
@@ -1585,4 +1585,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.23.1 source_sha256=c4f0f30c3a8ab49d1cf17619795eff5e6ca370474c752cf19d102cae5d084506 generated_sha256=c4f0f30c3a8ab49d1cf17619795eff5e6ca370474c752cf19d102cae5d084506 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.23.1 source_sha256=b41cf4ed02d349623590307befddecc5dcd3cdd4214a8b7d93125c15b1a4b1ff generated_sha256=b41cf4ed02d349623590307befddecc5dcd3cdd4214a8b7d93125c15b1a4b1ff -->
