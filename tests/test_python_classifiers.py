@@ -24,12 +24,24 @@ def _declared() -> list[tuple[str, int]]:
     return sorted(((m.group(1), int(m.group(2))) for m in found if m), key=lambda v: v[1])
 
 
+# The jobs whose matrices are the test runs. Other jobs (format, external-promises,
+# release-lockfiles) pin one Python to run a tool, and a version named only there is
+# not tested — counting them let a version leave both matrices unnoticed (#1302 gate).
+_TEST_JOBS = ("test", "test-visual")
+
+
 def _tested() -> set[str]:
-    """Every `3.x` named on a matrix `python:` line of ci.yml."""
+    """Every `3.x` on a `python:` line inside a test job of ci.yml, comments dropped."""
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     versions: set[str] = set()
-    for line in text.splitlines():
-        if re.match(r"\s*python(-version)?:", line):
+    job = None
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        header = re.fullmatch(r"  ([\w-]+):", line)
+        if header or (line and not line.startswith(" ")):
+            job = header.group(1) if header else None
+            continue
+        if job in _TEST_JOBS and re.match(r"\s*python:", line):
             versions.update(re.findall(r"3\.\d+", line))
     return versions
 
@@ -42,6 +54,10 @@ class TheClassifiersAreClaimsCIBacks(unittest.TestCase):
         self.assertIsNotNone(floor)
         self.assertEqual(minors[0], int(floor.group(1)))
         self.assertEqual(minors, list(range(minors[0], minors[-1] + 1)))
+
+    def test_both_test_matrices_are_read(self):
+        """A parser that found no test job would make the check below vacuous."""
+        self.assertGreaterEqual(_tested(), {"3.11", "3.12", "3.13"})
 
     def test_every_classified_version_is_one_ci_runs(self):
         untested = {version for version, _ in _declared()} - _tested()
