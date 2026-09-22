@@ -38,7 +38,14 @@ _FLAG_RE = re.compile(r"--[a-z][a-z0-9-]*")
 # The adapters document their own flags as a bullet opening with the flag in
 # backticks — "- `--dry-run` — …". Anchoring on that shape keeps the CLI's own
 # flags, which the bodies also quote inside `keel …` command lines, out of it.
-_BULLET_RE = re.compile(r"^- `(--[a-z][a-z0-9-]*)", re.MULTILINE)
+#
+# One bullet can head several alternatives: "- `--jury` / `--no-jury` /
+# `--jury-advisory` — …". Reading only the first left `--no-jury` and
+# `--jury-advisory` unchecked, so the whole head of the bullet is read — up to the
+# em dash that opens the prose, which is where a quoted flag would be someone
+# else's.
+_BULLET_HEAD_RE = re.compile(r"^- (`--[a-z][a-z0-9-]*`[^\n]*)$", re.MULTILINE)
+_BACKTICKED_FLAG_RE = re.compile(r"`(--[a-z][a-z0-9-]*)")
 
 
 def site_examples() -> dict[str, str]:
@@ -54,7 +61,10 @@ def documented_flags(command: str) -> set[str]:
     source = COMMANDS_DIR / f"{command}.md"
     if not source.exists():  # pragma: no cover - callers iterate real adapters
         return set()
-    return set(_BULLET_RE.findall(source.read_text(encoding="utf-8")))
+    flags: set[str] = set()
+    for head in _BULLET_HEAD_RE.findall(source.read_text(encoding="utf-8")):
+        flags.update(_BACKTICKED_FLAG_RE.findall(head.split("\u2014")[0]))
+    return flags
 
 
 def argument_hint(command: str) -> str | None:
@@ -151,6 +161,15 @@ class HintsDeclareEveryDocumentedFlag(unittest.TestCase):
             "no adapter documents a flag as '- `--flag`'; the convention moved and "
             "this check no longer reads anything",
         )
+
+    def test_a_bullet_heading_several_alternatives_is_read_whole(self):
+        """Round 1 finding. `- ``--jury`` / ``--no-jury`` / ``--jury-advisory`` — …`
+        is one bullet documenting three flags; reading only the first left two of
+        them unchecked, so deleting either from the hint stayed green."""
+        flags = documented_flags("ship")
+        for flag in ("--jury", "--no-jury", "--jury-advisory", "--compound", "--profile"):
+            with self.subTest(flag=flag):
+                self.assertIn(flag, flags)
 
     def test_every_documented_flag_is_declared_in_the_hint(self):
         for command in self.commands:
