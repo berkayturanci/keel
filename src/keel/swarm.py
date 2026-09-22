@@ -1130,7 +1130,10 @@ def rebalance_swarm_plan(plan: SwarmPlan, failed_issue: int) -> SwarmPlan:
 
     Any subsequent wave clusters that depended on ``failed_issue`` will have
     the failed dependency omitted, while independent disjoint clusters
-    proceed without interruption.
+    proceed without interruption. The edge is inferred from file overlap, and
+    work that will not land no longer overlaps anything, so the edge goes; it
+    used to stay, and the plan asserted a dependency on an issue it no longer
+    held — in ``depends_on_issues``, ``conflict_map`` and ``issue_scopes`` (#1277).
     """
     new_waves = []
     for w in plan.waves:
@@ -1138,6 +1141,10 @@ def rebalance_swarm_plan(plan: SwarmPlan, failed_issue: int) -> SwarmPlan:
         for c in w.clusters:
             if failed_issue in c.issues:
                 continue
+            if failed_issue in c.depends_on_issues:
+                c = replace(
+                    c, depends_on_issues=tuple(i for i in c.depends_on_issues if i != failed_issue)
+                )
             new_clusters.append(c)
         if new_clusters:
             new_waves.append(
@@ -1153,8 +1160,12 @@ def rebalance_swarm_plan(plan: SwarmPlan, failed_issue: int) -> SwarmPlan:
         swarm_id=plan.swarm_id,
         total_issues=sum(len(c.issues) for w in new_waves for c in w.clusters),
         waves=tuple(new_waves),
-        conflict_map=plan.conflict_map,
-        issue_scopes=plan.issue_scopes,
+        conflict_map={
+            issue: tuple(other for other in others if other != failed_issue)
+            for issue, others in plan.conflict_map.items()
+            if issue != failed_issue
+        },
+        issue_scopes={i: scope for i, scope in plan.issue_scopes.items() if i != failed_issue},
     )
 
 

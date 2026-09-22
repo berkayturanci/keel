@@ -26,6 +26,9 @@ All notable changes to keel are documented here. The format follows
 - **One swarm worker that raises no longer ends the run** (#1271). `future.result()` re-raised a worker's exception unguarded — an assignment `ship_handoff_args` cannot read, an `OSError` making its worktree path — so the run ended in a traceback, the other workers' results were discarded, and the state file froze them as `running`, which `swarm-status` could not tell from alive. The raising worker is now a failed cluster with the exception named, the others finish and are recorded, its worktree is removed by its own `finally`, and the traceback still goes to stderr, since the failure may be keel's own bug. (An assignment `worker_seed` cannot read still fails the run before any worker starts, with nothing frozen.) Swarm stays experimental.
 - **A failed swarm wave no longer skips the next one** (#1268). `run_swarm_orchestration` walked waves by position, and a failure makes `rebalance_swarm_plan` drop that wave from the plan — so the counter then stepped past the next, unrelated wave, which never ran and stayed `queued` in the state. Measured on `main`: issues 1, 2 and 3 on one file, one wave each, issue 1 failing — the run executed 1 and 3. Waves are now followed by their index. (#1268 had been closed by a PR that only quoted its closing keyword; it was reopened.) Swarm stays experimental.
 
+### Fixed
+- **A swarm plan rebalanced around a failure no longer points at the failed issue** (#1277). `rebalance_swarm_plan` dropped the failed cluster but left the issue in every survivor's `depends_on_issues`, in `conflict_map` and in `issue_scopes`, so the plan asserted a dependency on work it no longer held — its docstring already promised the edge would go. The edge is inferred from file overlap, and work that will not land no longer overlaps anything, so it now goes everywhere; unrelated edges stay. Swarm stays experimental.
+
 ## [1.24.1] - 2026-09-22
 
 ### Fixed

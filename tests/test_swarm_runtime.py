@@ -422,6 +422,31 @@ class AFailedWaveDoesNotSkipTheNext(unittest.TestCase):
 
 
 class TestSwarmPureStateHelpers(unittest.TestCase):
+    def test_a_failed_issue_leaves_no_edge_behind(self):
+        """#1277: the dropped issue stayed in every survivor's depends_on_issues, in
+        conflict_map and in issue_scopes, so the plan asserted a dependency on work it
+        no longer held."""
+        scopes = [
+            IssueScope(issue=10, title="A", predicted_files=("src/a.py",)),
+            IssueScope(issue=11, title="B", predicted_files=("src/a.py",)),
+            IssueScope(issue=12, title="C", predicted_files=("src/c.py",)),
+            IssueScope(issue=13, title="D", predicted_files=("src/c.py",)),
+        ]
+        plan = build_swarm_plan(scopes, swarm_id="swarm-edges")
+        deps = {c.issues[0]: c.depends_on_issues for w in plan.waves for c in w.clusters}
+        self.assertIn(10, deps[11], "fixture: 11 must depend on 10 to begin with")
+        self.assertIn(12, deps[13], "fixture: 13 must depend on 12")
+
+        after = rebalance_swarm_plan(plan, failed_issue=10)
+        deps = {c.issues[0]: c.depends_on_issues for w in after.waves for c in w.clusters}
+        self.assertNotIn(10, deps)
+        self.assertNotIn(10, deps[11])
+        self.assertIn(12, deps[13], "an unrelated edge must survive")
+        self.assertNotIn(10, after.conflict_map)
+        self.assertFalse(any(10 in others for others in after.conflict_map.values()))
+        self.assertNotIn(10, after.issue_scopes)
+        self.assertIn(11, after.issue_scopes)
+
     def test_rebalance_and_update_worker_state(self):
         s1 = IssueScope(issue=1, title="A", predicted_files=("src/a.py",))
         s2 = IssueScope(issue=2, title="B", predicted_files=("src/a.py",))
