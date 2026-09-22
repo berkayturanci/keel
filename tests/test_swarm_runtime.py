@@ -385,6 +385,42 @@ class TestSwarmOrchestration(unittest.TestCase):
             self.assertEqual(len(result.wave_results), 1)
 
 
+class AFailedWaveDoesNotSkipTheNext(unittest.TestCase):
+    """#1268: the loop walked waves by position, and rebalancing after a failure drops
+    that wave from the plan — so the position counter then stepped past the next,
+    unrelated wave, which never ran and stayed `queued`. A distinct issue per wave:
+    reusing one issue in two waves hides the skip."""
+
+    def test_every_later_wave_still_runs(self):
+        scopes = [
+            IssueScope(issue=n, title=f"T{n}", predicted_files=("src/a.py",)) for n in (1, 2, 3)
+        ]
+        plan = build_swarm_plan(scopes, swarm_id="swarm-skip")
+        self.assertEqual([len(w.clusters) for w in plan.waves], [1, 1, 1], "fixture: one wave each")
+        ran: list[int] = []
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            issue = int(cmd[cmd.index("--issue") + 1])
+            ran.append(issue)
+            return CommandResult(ok=issue != 1, code=0 if issue != 1 else 1, output="")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = run_swarm_orchestration(
+                plan,
+                ".keel/project.yaml",
+                root=tmpdir,
+                dry_run=True,
+                runner=runner,
+                create_worktrees=False,
+            )
+            state = load_swarm_state("swarm-skip", root=tmpdir)
+
+        self.assertEqual(ran, [1, 2, 3], "a wave was skipped after the failure")
+        self.assertEqual((result.passed_count, result.failed_count), (2, 1))
+        assert state is not None
+        self.assertNotIn("queued", {w.status for w in state.workers})
+
+
 class TestSwarmPureStateHelpers(unittest.TestCase):
     def test_rebalance_and_update_worker_state(self):
         s1 = IssueScope(issue=1, title="A", predicted_files=("src/a.py",))

@@ -200,9 +200,16 @@ def run_swarm_orchestration(
     wave_results: list[dict[str, Any]] = []
     current_plan = plan
 
-    wave_idx = 0
-    while wave_idx < len(current_plan.waves):
-        wave = current_plan.waves[wave_idx]
+    # Waves are followed by their index, not by position: a failure makes
+    # rebalance_swarm_plan drop a wave, and a position counter over the shrunken
+    # plan then stepped past the next, unrelated wave without running it (#1268).
+    last_wave: int | None = None
+    while True:
+        remaining = [w for w in current_plan.waves if last_wave is None or w.wave_index > last_wave]
+        if not remaining:
+            break
+        wave = remaining[0]
+        last_wave = wave.wave_index
         state = SwarmRunState(
             swarm_id=state.swarm_id,
             total_workers=state.total_workers,
@@ -213,7 +220,6 @@ def run_swarm_orchestration(
 
         cluster_tasks = list(wave.clusters)
         if not cluster_tasks:
-            wave_idx += 1
             continue
 
         wave_record: dict[str, Any] = {
@@ -318,7 +324,6 @@ def run_swarm_orchestration(
                 save_swarm_state(state, root=root_path)
 
         wave_results.append(wave_record)
-        wave_idx += 1
 
     # Finalize state
     overall_status = (
