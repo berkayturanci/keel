@@ -1085,7 +1085,8 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
             started_at=str(data.get("started_at", "")),
             completed_at=data.get("completed_at"),
         )
-    except (json.JSONDecodeError, ValueError, KeyError, TypeError):
+    # OverflowError: `1e999` is valid JSON, parses to infinity, and `int()` refuses it.
+    except (json.JSONDecodeError, ValueError, KeyError, TypeError, OverflowError):
         return None
 
 

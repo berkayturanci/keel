@@ -403,6 +403,8 @@ class TestSwarmStateAndDashboard(unittest.TestCase):
             "not an object": "[1, 2, 3]",
             "a worker field of the wrong type": '{"workers": [{"issue": [1]}]}',
             "a null count": '{"total_workers": null, "workers": []}',
+            "an infinite count": '{"total_workers": 1e999, "workers": []}',
+            "an infinite issue": '{"workers": [{"issue": 1e999}]}',
         }
         for label, text in shapes.items():
             with self.subTest(label), tempfile.TemporaryDirectory() as tmpdir:

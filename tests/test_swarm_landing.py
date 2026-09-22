@@ -1880,6 +1880,14 @@ class AContendedMergeLockHoldsTheWave(unittest.TestCase):
             )
             self.assertEqual(result.held_clusters, ())
             self.assertEqual(len(result.landed_clusters), 1)
+            # The contract, not the mechanism: once the call returns the lock is free.
+            # (CPython finalises an unclosed generator on return, so a leak there
+            # would not show; this pins what callers rely on.)
+            from keel.lock import merge_lock, resource_path
+
+            lock_dir = resource_path(Path(tmpdir).resolve() / ".keel" / "state" / "locks", "merge")
+            with merge_lock(lock_dir):
+                pass
 
 
 if __name__ == "__main__":

@@ -1002,16 +1002,25 @@ def _resolve_swarm_data(args: argparse.Namespace) -> dict[str, Any]:
 
     from keel import swarm as core_swarm
 
+    # A state file of the wrong shape — a hand edit, a torn write — draws what it can
+    # and skips the rest; it must not kill the view (#1273). A worker that is not an
+    # object, or whose issue is not a whole number, is left out.
+    if not isinstance(state_dict, dict):
+        state_dict = {}
+    workers = state_dict.get("workers")
     scopes: list[core_swarm.IssueScope] = []
-    if "workers" in state_dict:
-        for w in state_dict["workers"]:
-            scopes.append(
-                core_swarm.IssueScope(
-                    issue=w.get("issue", 1),
-                    title=f"Worker {w.get('issue', 1)}",
-                    role=w.get("role", "core"),
-                )
+    for w in workers if isinstance(workers, list) else []:
+        if not isinstance(w, dict):
+            continue
+        try:
+            issue = int(w.get("issue", 1))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        scopes.append(
+            core_swarm.IssueScope(
+                issue=issue, title=f"Worker {issue}", role=str(w.get("role", "core"))
             )
+        )
 
     plan = core_swarm.build_swarm_plan(scopes, swarm_id=swarm_id or "swarm-empty")
 

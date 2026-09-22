@@ -151,6 +151,29 @@ class TestSwarmVisual(unittest.TestCase):
             code_no_json = main(["swarm", "--root", tmpdir, "--json"])
             self.assertEqual(code_no_json, 0)
 
+    def test_a_state_file_of_the_wrong_shape_does_not_kill_the_view(self):
+        """#1273: keel-visual read the state file itself and raised on JSON of the
+        wrong shape; it now draws what it can and skips the rest."""
+        shapes = {
+            "a worker that is not an object": '{"workers": [[]]}',
+            "null workers": '{"workers": null}',
+            "not an object": "[1, 2, 3]",
+            "an issue that is not a number": '{"workers": [{"issue": "x"}, {"issue": 1e999}]}',
+        }
+        for label, text in shapes.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmpdir:
+                state_dir = Path(tmpdir) / ".keel" / "state" / "swarm"
+                state_dir.mkdir(parents=True)
+                (state_dir / "odd.json").write_text(text, encoding="utf-8")
+                out = io.StringIO()
+                try:
+                    with redirect_stdout(out):
+                        code = main(["swarm", ".keel/project.yaml", "--root", tmpdir, "--json"])
+                except Exception as exc:  # noqa: BLE001 - the defect is that it raises
+                    self.fail(f"{type(exc).__name__} escaped: {exc}")
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(out.getvalue())["swarm_id"], "odd")
+
     def test_cmd_swarm_serve_mocked(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             mock_httpd = MagicMock()
