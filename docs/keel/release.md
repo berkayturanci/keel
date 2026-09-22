@@ -14,7 +14,7 @@ This runbook keeps keel's PyPI release path repeatable and auditable.
 - Console script: `keel`
 - Python package import: `keel`
 - Runtime dependency: `PyYAML>=6`
-- Supported Python versions: 3.11, 3.12, 3.13
+- Supported Python versions: 3.11, 3.12, 3.13, 3.14
 
 The bare `keel` distribution name is already used by an unrelated PyPI project, so this
 project intentionally publishes as `keel-workflow`.
