@@ -12,8 +12,9 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 commit or a pull request**, and the reason is deeper than a missing flag: `keel ship` the CLI
 subcommand is a *dry ship assessment* — it reports tier, window, gates and a decision, and never
 commits, pushes or opens a PR in any mode. In keel's design the **agent** does the implementation
-by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit. On
-top of that, `--live` is never forwarded to those children at all (#1269).
+by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit.
+`swarm-run --live` is refused outright: its workers would run `keel ship --live`, whose
+operator-consent gate swarm cannot satisfy for a child (#1269, #1281).
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N

@@ -15,8 +15,9 @@ Use this skill when the user asks to run the keel command `swarm` (e.g. `keel sw
 commit or a pull request**, and the reason is deeper than a missing flag: `keel ship` the CLI
 subcommand is a *dry ship assessment* — it reports tier, window, gates and a decision, and never
 commits, pushes or opens a PR in any mode. In keel's design the **agent** does the implementation
-by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit. On
-top of that, `--live` is never forwarded to those children at all (#1269).
+by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit.
+`swarm-run --live` is refused outright: its workers would run `keel ship --live`, whose
+operator-consent gate swarm cannot satisfy for a child (#1269, #1281).
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
@@ -203,4 +204,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.24.1 source_sha256=851eb531332a437898b2a16cedb8847272a55bc0f11d19af9697d43f5c8f4ad8 generated_sha256=4fa21f71b9cf55c5f738dfb1ad0948623767dad1b2c49b38a89aac4ff9912d80 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.24.1 source_sha256=1a93127df43792f0690f95a399c0b143e999a3229f3e08388585cda0f7db2812 generated_sha256=3800b67327c0019c80cf02defd01af8ae21d16540e33bb749fb689600765c622 -->

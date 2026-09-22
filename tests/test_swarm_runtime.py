@@ -380,6 +380,28 @@ class TestSwarmRunCLI(unittest.TestCase):
             if os.path.exists(path):
                 os.unlink(path)
 
+    def test_a_live_swarm_run_is_refused_before_anything_starts(self):
+        """#1304 lead: with `--live` forwarded, every worker stops at `keel ship
+        --live`'s operator-consent gate, which swarm-run cannot satisfy for a child —
+        so a live run is refused up front, with the reason, instead of failing every
+        cluster and leaving `swarm/<id>` branches behind."""
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("keel.swarm_runtime.run_swarm_orchestration") as orchestrate,
+        ):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(
+                    ["swarm-run", ".keel/project.yaml", "--root", tmpdir, "--issues", "7", "--live"]
+                )
+
+        self.assertEqual(code, 1)
+        self.assertIn("swarm-run --live is refused", err.getvalue())
+        self.assertIn("operator consent", err.getvalue())
+        self.assertIn("issues/1281", err.getvalue())
+        orchestrate.assert_not_called()
+        self.assertEqual(out.getvalue(), "")
+
     def test_swarm_run_cli_dry_run_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             # Run dry run with mock runner

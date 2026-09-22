@@ -7300,6 +7300,20 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    if args.live:
+        # Its workers now get `--live` (#1269), and `keel ship --live` stops at the
+        # operator-consent gate, which swarm-run has no way to satisfy for a child.
+        # A live run would fail every worker and leave `swarm/<id>/…` branches
+        # behind, so it is refused before anything starts, with the reason.
+        print(
+            "swarm-run --live is refused: each worker would run `keel ship --live`, which "
+            "needs operator consent that swarm-run cannot hand down, and `keel ship` never "
+            "commits or opens a pull request in any mode. Run it without --live to plan and "
+            "assess. Tracked on https://github.com/berkayturanci/keel/issues/1281.",
+            file=sys.stderr,
+        )
+        return 1
+
     issue_nums: list[int] = []
     if args.issues:
         for part in args.issues.split(","):
