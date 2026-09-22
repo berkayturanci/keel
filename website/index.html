@@ -190,7 +190,7 @@
             <div class="kpis reveal" data-d="1">
               <div class="kpi"><b>13<span class="u"> steps</span></b><span>fixed backbone</span></div>
               <div class="kpi"><b>17<span class="u"> cmds</span></b><span>/keel:&lt;command&gt;</span></div>
-              <div class="kpi"><b>Swarm<span class="u"> DAG</span></b><span>multi-agent waves</span></div>
+              <div class="kpi"><b>Swarm<span class="u"> DAG</span></b><span>multi-agent waves (experimental)</span></div>
               <div class="kpi"><b>100<span class="u">%</span></b><span>line + branch</span></div>
               <div class="kpi"><b>1<span class="u"> dep</span></b><span>stdlib-first</span></div>
             </div>
@@ -272,7 +272,8 @@
           <div class="view-head">
             <p class="view-kicker green">Multi-agent concurrency</p>
             <h1>Keel Swarm — parallel waves &amp; cross-model topology</h1>
-            <p><strong>Keel Swarm</strong> scales work ownership from single-issue execution to high-concurrency multi-agent orchestration. It clusters backlogs into topological dependency waves, runs parallel workers in isolated worktrees, routes across diverse AI models, and lands batches safely under the merge lock.</p>
+            <p class="warn-note"><strong>⚠️ Experimental — this subsystem does not land work.</strong> The planning commands run. A live run cannot produce a commit or a pull request: <code>keel ship</code>, the CLI subcommand swarm's workers spawn, is a dry assessment that never commits or opens a PR, and <code>--live</code> is not forwarded to it either (<a href="https://github.com/berkayturanci/keel/issues/1269">#1269</a>). Scope cannot be given per issue, so a multi-issue plan returns one flat wave (<a href="https://github.com/berkayturanci/keel/issues/1274">#1274</a>). Audit epic: <a href="https://github.com/berkayturanci/keel/issues/1281">#1281</a>. Use <code>/keel:ship</code> for work you need merged — the description below is the design, not a supported workflow.</p>
+          <p><strong>Keel Swarm</strong> scales work ownership from single-issue execution to high-concurrency multi-agent orchestration. It clusters backlogs into topological dependency waves, runs parallel workers in isolated worktrees, routes across diverse AI models, and lands batches safely under the merge lock.</p>
           </div>
 
           <!-- Interactive Swarm Simulator -->

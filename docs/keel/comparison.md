@@ -57,8 +57,8 @@ and optional project-owned learning decisions.
 | Owns merge window + lock | yes | no | no | partial queue controls | ❌ |
 | Closes the issue / PR loop | yes | partial | no | partial | no |
 | Supports multi-issue work blocks | yes | partial | no | queue-only | yes (unconstrained) |
-| Conflict-free DAG clustering | yes (Keel Swarm) | no | no | no | ❌ |
-| Single-writer batch landing | yes (Keel Swarm) | no | no | partial | ❌ |
+| Conflict-free DAG clustering | experimental (Keel Swarm, [#1281](https://github.com/berkayturanci/keel/issues/1281)) | no | no | no | ❌ |
+| Single-writer batch landing | experimental (Keel Swarm, [#1281](https://github.com/berkayturanci/keel/issues/1281)) | no | no | partial | ❌ |
 | Supports resume/checkpoint/reconcile | yes | partial | no | partial queue state | partial |
 | Captures post-merge learning | yes, policy-gated | no | partial repo memory | no | no |
 | Project policy extensibility | yes | partial | partial | yes | partial |
@@ -221,7 +221,7 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 | **AutoGen / Magentic-One** | conversational group chat | OSS | GroupChat / Lead orchestrator | ❌ None | ❌ None |
 | **OpenAI Swarm** | lightweight client-side handoffs | MIT | Stateless agent routines + handoffs | ❌ None | ❌ None |
 | **MetaGPT / ChatDev** | simulated software company | MIT | SOP-driven conversational roles | ❌ None | ❌ None |
-| **Keel Swarm** | **deterministic backbone swarm** | Apache-2.0 | **DAG conflict clustering + git worktree fan-out** | ✅ **Physical worktree isolation** | ✅ **100% test gates + single-writer batch landing** |
+| **Keel Swarm** (experimental — [#1281](https://github.com/berkayturanci/keel/issues/1281)) | **deterministic backbone swarm** | Apache-2.0 | **DAG conflict clustering + git worktree fan-out** | ✅ **Physical worktree isolation** | ✅ **100% test gates + single-writer batch landing** |
 
 Sources: [gurusup.com/blog/best-multi-agent-frameworks-2026](https://gurusup.com/blog/best-multi-agent-frameworks-2026), [medium.com/.../magentic-one-autogen-langgraph-crewai-or-openai-swarm](https://medium.com/data-science-in-your-pocket/magentic-one-autogen-langgraph-crewai-or-openai-swarm-which-multi-ai-agent-framework-is-best-6629d8bd9509)
 

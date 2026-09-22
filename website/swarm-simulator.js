@@ -267,8 +267,8 @@
       '  </div>',
       '  <div class="sim-footer">',
       '    <div class="sim-cli-cta">',
-      '      <span class="cta-label">Run in your repo:</span>',
-      '      <code>keel swarm-plan .keel/project.yaml --issues ' + issueList.map(function (i) { return i.id; }).join(',') + ' && keel swarm-run .keel/project.yaml --issues ' + issueList.map(function (i) { return i.id; }).join(',') + '</code>',
+      '      <span class="cta-label">Plan it in your repo (experimental — a live run lands nothing, see #1281):</span>',
+      '      <code>keel swarm-plan .keel/project.yaml --issues ' + issueList.map(function (i) { return i.id; }).join(',') + ' --tree' + '</code>',
       '      <button type="button" class="sim-copy-btn" id="sim-copy-cli" title="Copy CLI Command" aria-label="Copy CLI command">Copy</button>',
       '    </div>',
       '  </div>',
@@ -376,7 +376,7 @@
       var copyResetTimer = null;
       copyBtn.onclick = function () {
         var preset = getActivePreset();
-        var cmd = "keel swarm-plan .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',') + " && keel swarm-run .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',');
+        var cmd = "keel swarm-plan .keel/project.yaml --issues " + preset.issues.map(function (i) { return i.id; }).join(',') + " --tree";
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(cmd).then(function () {
             copyBtn.textContent = "Copied! ✓";

@@ -2046,6 +2046,9 @@ keel install-legacy-wrappers all --force
 
 ## `keel swarm-land`
 
+> **Experimental subsystem** — the evidence contract below is real and enforced, but nothing
+> reaches it from a live swarm run yet. See [#1281](https://github.com/berkayturanci/keel/issues/1281).
+
 Land the passing cluster branches of a completed execution wave into the project's base
 branch under the atomic `merge_lock`. Documented here — ahead of the other `swarm-*`
 commands — because it is the surface that carries the `knobs.swarm_review_evidence`

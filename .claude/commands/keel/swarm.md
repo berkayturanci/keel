@@ -6,19 +6,28 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:swarm
 
-## ⚠️ Experimental — stop and say so before running this live
+## ⚠️ Experimental — do not use this to land work
 
-Planning works. A live run does not land anything, and two defects stop it before it starts:
+`keel swarm-plan`, `--plan-only` and `--tree` run and render a plan. **A live run cannot produce a
+commit or a pull request**, and the reason is deeper than a missing flag: `keel ship` the CLI
+subcommand is a *dry ship assessment* — it reports tier, window, gates and a decision and spawns
+nothing. In keel's design the **agent** does the implementation by following `/keel:ship`; swarm's
+workers spawn the CLI instead, so a worker cannot commit in any mode. On top of that, `--live` is
+never forwarded to those children at all (#1269).
 
-- `swarm-run --live` never forwards `--live` to the child `keel ship`, so every worker runs in
-  dry-run and the swarm produces **no commits and no pull requests** (#1269).
-- The CLI cannot express per-issue scope, so the clustering engine has nothing real to cluster on
-  (#1274).
+Planning does not see real scope either: `--issue-title`, `--issue-body` and `--declared-file` are
+single values shared by every issue, so a multi-issue plan clusters synthetic globs into one wave
+(#1274), and `keel-visual swarm` always renders a flat DAG (#1275, #1280).
 
-So: `--plan-only`, `--tree` and `--visual` are safe and useful — run them freely. For anything the
-user expects to be **merged**, tell them swarm cannot do it yet and offer `/keel:ship` per issue
-instead. Do not work around #1269 by hand-driving the children; that produces an unreviewed,
-unledgered merge. The remaining findings are tracked under the audit epic #1281.
+So: run `--plan-only`, `--tree` and `--visual` freely — they are read-only, and they will not
+mislead you as long as you read the plan as "what I passed", not "per-issue scope". For anything
+the user expects to be **merged**, say plainly that swarm cannot do it and run `/keel:ship` per
+issue instead.
+
+Do not hand-drive the children to work around this. `swarm-land` would hold the clusters anyway —
+no open PR, an unarmed gate, missing evidence, or a head that does not match the reviewed one — and
+you would be skipping the per-issue ledger and the backbone that `/keel:ship` gives you. The rest
+is tracked under the audit epic #1281.
 
 ## Live progress — stamp this run (required)
 
@@ -175,4 +184,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=43e41b311661ff3cf2809a5d3e3b988e45cb8e0f69827484c5f8840e0c1fa09f generated_sha256=43e41b311661ff3cf2809a5d3e3b988e45cb8e0f69827484c5f8840e0c1fa09f -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=84914b45883783aba65dbd9b7eeaa7c043418eadd45e328727f7d973da84c8ef generated_sha256=84914b45883783aba65dbd9b7eeaa7c043418eadd45e328727f7d973da84c8ef -->

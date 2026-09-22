@@ -16,6 +16,9 @@ Highlights that the project's work units are verified on the fixed 13-step backb
 ### 2. Keel Swarm Multi-Agent Orchestrator
 Highlights that parallel backlog waves are clustered and landed via Keel Swarm DAG orchestration.
 
+> **Swarm is experimental and does not land work yet** — see [#1281](https://github.com/berkayturanci/keel/issues/1281). This badge describes the
+> design; do not put it on a repository as a claim that swarm ran there.
+
 ```markdown
 [![Keel Swarm](https://img.shields.io/badge/keel--swarm-DAG%20orchestrated-38bdf8?logo=buffer&logoColor=white)](https://github.com/berkayturanci/keel)
 ```

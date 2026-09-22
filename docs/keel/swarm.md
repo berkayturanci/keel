@@ -1,21 +1,35 @@
 # Keel Swarm — High-Concurrency Multi-Agent Orchestration
 
-> ## ⚠️ Experimental — the live path does not work end to end
+> ## ⚠️ Experimental — this subsystem does not land work
 >
-> Planning runs: `swarm-plan`, `--plan-only`, `--tree` and `keel-visual swarm` all do what this
-> document describes. **A live run does not.** Two defects stop it before any work lands:
+> The planning commands run. **A live run cannot produce a commit or a pull request**, and the
+> reason is deeper than a missing flag:
 >
-> - `swarm-run --live` never forwards `--live` to the child `keel ship`, so every worker runs in
->   dry-run and a live swarm produces **no commits and no pull requests**
->   ([#1269](https://github.com/berkayturanci/keel/issues/1269)).
-> - The CLI cannot express per-issue scope, so the clustering engine has nothing real to cluster
->   on and the dependency graph is inert in practice
->   ([#1274](https://github.com/berkayturanci/keel/issues/1274)).
+> - `keel ship` — the *CLI subcommand*, registered as `dry ship assessment (tier, window, gates,
+>   decision)` — never commits, pushes or opens a pull request; `_cmd_ship` spawns no process at
+>   all. In keel's design the implementation is done by the **agent** following `/keel:ship`, and
+>   the CLI reports on it. Swarm's workers spawn that CLI as a subprocess, so a worker cannot
+>   produce a commit in any mode.
+> - On top of that, `swarm-run --live` never forwards `--live` to the child
+>   ([#1269](https://github.com/berkayturanci/keel/issues/1269)): the child argv only gains
+>   `--dry-run` when the run is dry, and nothing ever adds `--live`.
 >
-> Fifteen further findings — worktree lifecycle, rebalancing, error handling, landing hygiene —
-> are tracked under the audit epic
-> [#1281](https://github.com/berkayturanci/keel/issues/1281). Everything below describes the
-> design and the code that exists; read it as architecture, not as a supported workflow.
+> Planning runs, but not on real scope. `--issue-title`, `--issue-body` and `--declared-file` are
+> single values shared by **every** issue, so a multi-issue plan clusters synthetic per-issue globs
+> and returns one `orthogonal_parallel` wave
+> ([#1274](https://github.com/berkayturanci/keel/issues/1274)); passing one `--declared-file`
+> instead makes every issue overlap and serialises them. `keel-visual swarm` rebuilds its scopes
+> without predicted files, so its DAG is always one flat wave
+> ([#1275](https://github.com/berkayturanci/keel/issues/1275),
+> [#1280](https://github.com/berkayturanci/keel/issues/1280)).
+>
+> Landing is guarded, which is the one part that works as written: `swarm-land` holds any cluster
+> with no open PR, an unarmed gate, missing evidence, or a local head that differs from the
+> reviewed PR head. Nothing merges unreviewed.
+>
+> The rest is tracked under the audit epic
+> [#1281](https://github.com/berkayturanci/keel/issues/1281). Everything below describes the design
+> and the code that exists; read it as architecture, not as a supported workflow.
 >
 > **Use [`/keel:ship`](../../src/keel/adapters/commands/ship.md) for work you need landed.**
 

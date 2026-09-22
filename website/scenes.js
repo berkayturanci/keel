@@ -489,7 +489,7 @@
       at(3800, function () {
         fills[2].fill.style.width = "100%"; fills[2].out.textContent = "merged"; fills[2].lane.classList.add("done");
         w2.classList.remove("work"); w2.classList.add("done");
-        cap.classList.add("ok"); capt.textContent = "✓ Swarm complete: 3 clusters landed · 0 conflicts · review gate passed";
+        cap.classList.add("ok"); capt.textContent = "Swarm (experimental): 3 clusters landed · 0 conflicts · review gate passed — a simulation of the design, see #1281";
       });
 
       at(6000, loop);
