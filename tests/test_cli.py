@@ -2,6 +2,7 @@
 
 import atexit
 import contextlib
+import errno
 import io
 import itertools
 import json
@@ -15731,18 +15732,24 @@ _LAND_SINK_LINES = [
 ]
 
 
-#: Settings written into every repository `_land_repo` builds. Both switch off work git
-#: would otherwise start *in the background and outlive the command that triggered it*:
-#: `gc.auto` from the receiving end of a push, `maintenance.auto` after a fetch or clone.
-#: Neither has anything to do with what these tests assert — a one-commit repository is
-#: nowhere near either threshold — and either one can put an entry back into `origin.git`
-#: after the push returns, which is the race #1283 tracks. `_git_tmpdir` keeps the
-#: resulting teardown failure from failing a job; these keep the race from happening.
+#: Settings written into every repository `_land_repo` builds, to stop git starting work
+#: that *outlives the command which triggered it*. Measured on git 2.54, not assumed:
+#: a `git commit`, a `git fetch` and the receiving end of a push each spawn
+#: `git maintenance run --auto --quiet --detach`, and `maintenance.auto=false` in the
+#: repository being written to stops that spawn. A `git clone` spawns nothing. `gc.auto=0`
+#: is belt-and-braces for older git, where the same hook is `git gc --auto`.
+#:
+#: What is **not** established is that this detached maintenance is what produced #1283.
+#: Its `ENOTEMPTY` is on `origin.git` itself — a new top-level entry — and listing the bare
+#: repo right after a push never showed one. So this removes the one mechanism that is known
+#: to run unsupervised here; it is not a demonstrated cause, and `_git_tmpdir` is what
+#: actually keeps the flake from failing a job.
 #:
 #: They are written into each repository rather than passed as `-c` on the commands,
-#: because the process that would start the background work is not the one being run:
-#: a push is served by `git-receive-pack` *inside the bare repo*, which reads that
-#: repo's own config and never sees the pushing client's `-c` flags.
+#: because the process that would start the background work is not the one being run: a
+#: push is served by `git-receive-pack` *inside the bare repo*, and `GIT_TRACE=1` shows the
+#: spawn line unsetting `GIT_CONFIG_PARAMETERS`, so the pushing client's `-c` flags never
+#: reach it.
 _GIT_NO_BACKGROUND = (("gc.auto", "0"), ("maintenance.auto", "false"))
 
 
@@ -15763,11 +15770,11 @@ def _git_tmpdir() -> tempfile.TemporaryDirectory:
 
     `TemporaryDirectory` removes the tree by scanning it and then calling `rmdir`. If
     anything writes into `origin.git` between those two steps the `rmdir` raises
-    `OSError: [Errno 39] Directory not empty`, and because it happens in teardown it
-    surfaces as a test **error**: a job fails for a reason unrelated to the change under
-    review (#1283, twice in one session on Linux CI, never in an assertion). Cleanup is
-    best-effort here — the tree sits under the OS temp root and is reclaimed either way,
-    so an unremoved directory is not worth a red build.
+    `ENOTEMPTY` — errno 39 on Linux, where #1283 was seen; 66 on macOS, 41 on Windows —
+    and because it happens in teardown it surfaces as a test **error**: a job fails for a
+    reason unrelated to the change under review (twice in one session, never in an
+    assertion). Cleanup is best-effort here — the tree sits under the OS temp root and is
+    reclaimed either way, so an unremoved directory is not worth a red build.
     """
     return tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
 
@@ -15836,7 +15843,8 @@ class TestLandScratchDirTeardown(unittest.TestCase):
     """
 
     def _racy_dir(self):
-        """A directory whose last unlink puts a file back, as git's background work did."""
+        """A directory whose last unlink puts a file back — the shape of the race, not a
+        claim about which process produced it in CI."""
         fired = []
         real_unlink = os.unlink
 
@@ -15861,11 +15869,16 @@ class TestLandScratchDirTeardown(unittest.TestCase):
             holder.cleanup()  # the assertion is that this returns at all
 
     def test_a_plain_temporary_directory_does_raise_there(self):
-        """Vacuity: without this, the test above would pass on any factory at all."""
+        """Vacuity: without this, the test above would pass on any factory at all.
+
+        Pinned to `ENOTEMPTY` rather than any `OSError`, so a cleanup that started
+        failing for an unrelated reason could not keep this test green.
+        """
         holder = tempfile.TemporaryDirectory()
         self._prepare(holder)
-        with patch("os.unlink", new=self._racy_dir()), self.assertRaises(OSError):
+        with patch("os.unlink", new=self._racy_dir()), self.assertRaises(OSError) as caught:
             holder.cleanup()
+        self.assertEqual(errno.ENOTEMPTY, caught.exception.errno)
 
     def test_the_fixture_repositories_have_background_work_switched_off(self):
         """The other half of #1283: keep the race from happening, not just from failing."""
