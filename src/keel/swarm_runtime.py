@@ -145,8 +145,9 @@ def execute_cluster_worker(
         str(issue),
         "--json",
     ]
-    if dry_run:
-        cmd.append("--dry-run")
+    # `keel ship` gates every live-only path on `--live`; leaving out `--dry-run` does
+    # not turn it on, so a live swarm's children ran the dry assessment (#1269).
+    cmd.append("--dry-run" if dry_run else "--live")
     if extra_args:
         cmd.extend(extra_args)
 

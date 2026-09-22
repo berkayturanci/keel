@@ -13,7 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from keel.cli import main
+from keel.cli import build_parser, main
 from keel.runner import CommandResult
 from keel.swarm import (
     IssueScope,
@@ -153,7 +153,42 @@ class TestSwarmRuntimeHelpers(unittest.TestCase):
                 runner=mock_runner,
             )
 
-            self.assertEqual(calls[0][-1], "--json")
+            self.assertEqual(calls[0][-2:], ["--json", "--live"])
+
+    def _argv(self, *, dry_run: bool) -> list[str]:
+        calls: list[list[str]] = []
+
+        def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            return CommandResult(ok=True, code=0, output="{}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            execute_cluster_worker(
+                ".keel/project.yaml",
+                7,
+                Path(tmpdir),
+                Path(tmpdir) / "wt",
+                dry_run=dry_run,
+                runner=mock_runner,
+            )
+        return calls[0]
+
+    def test_a_live_worker_runs_a_live_child(self):
+        """#1269: leaving out `--dry-run` never meant `--live`; every live-only path in
+        `keel ship` is gated on `args.live`, so a live swarm ran dry assessments."""
+        argv = self._argv(dry_run=False)
+        self.assertIn("--live", argv)
+        self.assertNotIn("--dry-run", argv)
+        self.assertTrue(build_parser().parse_args(argv[3:]).live)
+
+    def test_a_dry_worker_stays_dry(self):
+        """The counterweight: a dry swarm never hands a child `--live`."""
+        argv = self._argv(dry_run=True)
+        self.assertIn("--dry-run", argv)
+        self.assertNotIn("--live", argv)
+        parsed = build_parser().parse_args(argv[3:])
+        self.assertFalse(parsed.live)
+        self.assertTrue(parsed.dry_run)
 
 
 class TestSwarmOrchestration(unittest.TestCase):
