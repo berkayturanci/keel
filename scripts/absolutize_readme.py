@@ -189,9 +189,11 @@ def absolutize(text: str) -> str:
         if in_anchor:
             head, close, tail = line.partition(">")
             if "<" in head:
-                # A tag's attribute list cannot contain `<`, so a new `<` before the
-                # `>` means the earlier `<a` was never a tag — prose like "wrap it in
-                # an <a tag" — and this line's `href` belongs to another element.
+                # A tag's attribute names and unquoted values cannot contain `<`, so a
+                # new `<` before the `>` means the earlier `<a` was never a tag — prose
+                # like "wrap it in an <a tag" — and this line's `href` belongs to
+                # another element. A quoted value may hold `<` (or `>`); an anchor
+                # with one before its `href` is left relative, as before #1294.
                 in_anchor = False
             else:
                 head = _CONTINUED_HREF.sub(

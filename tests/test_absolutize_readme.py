@@ -603,6 +603,31 @@ class TheCarriedAnchorStaysInItsTag(unittest.TestCase):
         self.assertEqual(absolutize(text), f'<a\n  class="hero"\n  href="{_BLOB}docs/a.md">x</a>\n')
 
 
+class EachBoundHoldsOnItsOwn(unittest.TestCase):
+    """#1300 lead, round 3: the `<` rule ends the carried state whenever the next
+    line opens a tag, so a fixture whose next line starts with `<` pins that rule
+    and nothing else. Here the `href` follows with no `<` before it, so only the
+    bound under test can stop it."""
+
+    def test_a_blank_line_ends_the_state(self):
+        text = '<a\n\n  href="docs/a.md">x</a>\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_a_fence_ends_the_state(self):
+        text = 'Mentioning <a\n```\ncode\n```\n  href="docs/a.md">x\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_an_anchor_in_a_code_span_opens_nothing(self):
+        text = 'Use `<a` tags\n  href="docs/a.md">x\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_the_guard_does_not_cross_a_blank_line(self):
+        self.assertEqual(relative_anchor_hrefs('<a\n\n  href="docs/a.md">x</a>\n'), [])
+
+    def test_the_guard_ignores_an_anchor_in_a_code_span(self):
+        self.assertEqual(relative_anchor_hrefs('Use `<a` tags\n  href="docs/a.md">x\n'), [])
+
+
 class ARootRelativeTargetResolvesFromTheRepositoryRoot(unittest.TestCase):
     """`/docs/a.md` gained a second slash (`…/main//docs/a.md`); on GitHub a leading
     `/` in a README resolves from the repository root, so it is dropped (#1300 review)."""
