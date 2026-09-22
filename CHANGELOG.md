@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-09-22
+
 ### Security
 - **A remote-endpoint opt-in can be scoped to specific hosts** (#1247). `KEEL_ALLOW_REMOTE_ENDPOINT` was a machine-wide boolean: once an operator set it to reach one trusted remote model server, any project's `openai-compatible` `endpoint` — including one from a cloned repo or a fork's pull-request branch — could point the API key's `Authorization` header at any other public host. The variable now also takes a host, or a comma/space-separated list of hosts; only those pass, so a config that redirects the endpoint elsewhere is refused even while the opt-in is set. `=1` keeps the broad "any remote host" behaviour, and a false-ish value (`0`/`false`) no longer enables it by string-truthiness. Cloud-metadata refusal and the separate reach-in opt-in are unchanged. `tests/test_config.py`.
 - **The capture-commit review exemption is confined to the base repository** (#1247). `_covered_heads` let a reviewer verdict pinned to an ancestor `P` answer for a head `H` when only a capture commit separated them — the mechanism that lets keel's own landed lesson ride an approved pull request. It never checked where the head branch lived, and keel's capture-land only ever pushes to the base repo, so a pull request from a fork (whose author controls the head branch) could push `H = P + one commit carrying the capture marker over a sink-path file` and ride `P`'s verdicts onto a head no reviewer saw. The walk is now refused unless the head repository is the base `owner/repo`. `tests/test_cli.py`.
