@@ -89,8 +89,23 @@ _HTML_HREF = re.compile(rf'(<a\b[^>]*?(?<![-\w])href="){_REL}([^"]+)"')
 # next lines — the usual hand-formatted hero — had its `href` missed once the
 # rewrite was scoped to `<a>` (#1294). An `<a` left open at the end of a line is
 # carried to the next, whose `href` is rewritten up to the `>` that closes the tag.
+# The carried state ends at that `>`, at a blank line and at a code fence: in
+# CommonMark an inline tag cannot span a blank line (the paragraph ends there) or a
+# code block. Without those bounds an `<a` mentioned in prose leaked forward and
+# rewrote the next `<link href>` — and no guard saw it, because the result was a
+# well-formed blob URL (#1300 review).
 _OPEN_ANCHOR = re.compile(r"<a\b[^>]*$")
+# Inline code is text, not HTML: a sentence documenting "`<a` tags" must not open an
+# anchor. Spans are dropped before looking for an open `<a` (#1300 review).
+_CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)+?\1")
 _CONTINUED_HREF = re.compile(rf'((?<![-\w])href="){_REL}([^"]+)"')
+
+
+def _path(target: str) -> str:
+    """The repo-relative path a target names. A root-relative `/docs/a.md` resolves
+    from the repository root on GitHub, so its leading slash is dropped rather than
+    doubled into `…/main//docs/a.md`. (`//host` never gets here: `_REL` refuses it.)"""
+    return target[1:] if target.startswith("/") else target
 
 
 def _link_host(target: str) -> str:
@@ -138,7 +153,7 @@ def _absolutize_srcset(value: str) -> str:
     rebuilt = []
     for url, descriptor in _srcset_candidates(value):
         if re.match(_REL + r".", url) is not None:
-            url = f"{_RAW}{url}"
+            url = f"{_RAW}{_path(url)}"
         rebuilt.append(f"{url} {descriptor}" if descriptor else url)
     return ", ".join(rebuilt)
 
@@ -155,6 +170,7 @@ def absolutize(text: str) -> str:
         if boundary is not None and boundary.group(1)[0] == "`" and "`" in boundary.group(2):
             boundary = None
         if boundary is not None:
+            in_anchor = False
             marker, info = boundary.group(1), boundary.group(2)
             if fence is None:
                 # An opening fence may carry an info string (```python).
@@ -166,23 +182,29 @@ def absolutize(text: str) -> str:
         if fence is not None:
             out.append(line)
             continue
+        if not line.strip():
+            in_anchor = False
         if in_anchor:
             head, close, tail = line.partition(">")
             head = _CONTINUED_HREF.sub(
-                lambda m: f'{m.group(1)}{_link_host(m.group(2))}{m.group(2)}"', head
+                lambda m: f'{m.group(1)}{_link_host(m.group(2))}{_path(m.group(2))}"', head
             )
             line = head + close + tail
             in_anchor = not close
         # Images first, so a relative `![](…)` is not also seen as a link.
-        line = _MD_IMAGE.sub(lambda m: f"![{m.group(1)}]({_RAW}{m.group(2)})", line)
-        line = _MD_LINK.sub(lambda m: f"[{m.group(1)}]({_link_host(m.group(2))}{m.group(2)})", line)
-        line = _MD_REFDEF.sub(
-            lambda m: f"{m.group(1)}{_link_host(m.group(2))}{m.group(2)}{m.group(3)}", line
+        line = _MD_IMAGE.sub(lambda m: f"![{m.group(1)}]({_RAW}{_path(m.group(2))})", line)
+        line = _MD_LINK.sub(
+            lambda m: f"[{m.group(1)}]({_link_host(m.group(2))}{_path(m.group(2))})", line
         )
-        line = _HTML_SRC.sub(lambda m: f'src="{_RAW}{m.group(1)}"', line)
+        line = _MD_REFDEF.sub(
+            lambda m: f"{m.group(1)}{_link_host(m.group(2))}{_path(m.group(2))}{m.group(3)}", line
+        )
+        line = _HTML_SRC.sub(lambda m: f'src="{_RAW}{_path(m.group(1))}"', line)
         line = _HTML_SRCSET.sub(lambda m: f'srcset="{_absolutize_srcset(m.group(1))}"', line)
-        line = _HTML_HREF.sub(lambda m: f'{m.group(1)}{_link_host(m.group(2))}{m.group(2)}"', line)
-        if not in_anchor and _OPEN_ANCHOR.search(line):
+        line = _HTML_HREF.sub(
+            lambda m: f'{m.group(1)}{_link_host(m.group(2))}{_path(m.group(2))}"', line
+        )
+        if not in_anchor and _OPEN_ANCHOR.search(_CODE_SPAN.sub("", line)):
             in_anchor = True
         out.append(line)
     return "".join(out)

@@ -74,9 +74,18 @@ def relative_reference_definitions(text: str) -> list[str]:
 
 
 def relative_anchor_hrefs(text: str) -> list[str]:
-    """`[^>]` crosses newlines, so an `<a>` whose `href` is on a later line counts."""
+    """An `<a>` tag's relative `href`, including one on a later line of the tag.
+
+    Bounded the way CommonMark bounds an inline tag: inline code is text, not HTML,
+    so code spans are dropped first; and a tag cannot span a blank line. Unbounded,
+    this guard shared the script's leak exactly — an `<a` mentioned in prose made
+    the next `<link href>` an anchor — so the two failed together (#1300 review).
+    """
+    text = re.sub(r"(`+)(?:(?!\1).)+?\1", "", text)
     return [
-        v for v in re.findall(r'<a\b[^>]*?(?<![-\w])href="([^"]+)"', text) if not _EXTERNAL.match(v)
+        v
+        for v in re.findall(r'<a\b(?:(?!\n[ \t]*\n)[^>])*?(?<![-\w])href="([^"]+)"', text)
+        if not _EXTERNAL.match(v)
     ]
 
 
@@ -352,6 +361,20 @@ class TheGuardsJudgeTheRightThings(unittest.TestCase):
             ["docs/b.svg"],
         )
 
+    def test_markdown_links_are_judged_both_ways(self):
+        self.assertEqual(relative_markdown_links("[a](https://x) [b](#c) [d](mailto:e)"), [])
+        self.assertEqual(relative_markdown_links("[a](docs/a.md)"), ["docs/a.md"])
+
+    def test_an_anchor_mentioned_in_prose_does_not_make_a_link_an_anchor(self):
+        text = 'Use `<a` tags\n<link rel="stylesheet" href="docs/a.css">\n'
+        self.assertEqual(relative_anchor_hrefs(text), [])
+
+    def test_an_anchor_does_not_reach_across_a_blank_line(self):
+        self.assertEqual(relative_anchor_hrefs('<a\n\n<image href="docs/a.svg"/>\n'), [])
+
+    def test_a_scheme_prefixed_as_a_path_is_caught(self):
+        self.assertEqual(mangled_targets(f"[x]({_BLOB}tel:+1)"), ["tel:"])
+
     def test_a_protocol_relative_target_prefixed_as_a_path_is_caught(self):
         self.assertEqual(mangled_targets(f"[x]({_BLOB}/cdn/a.png)"), ["/"])
         self.assertEqual(mangled_targets(f"[x]({_BLOB}docs/a.md)"), [])
@@ -508,6 +531,47 @@ class TheFormsLeftOpenIn1294(unittest.TestCase):
         )
         once = absolutize(text)
         self.assertEqual(absolutize(once), once)
+
+
+class TheCarriedAnchorStaysInItsTag(unittest.TestCase):
+    """#1300 review (gate and lead, independently): the carried `<a` state was set by
+    any `<a` token and cleared only by a `>`, so an `<a` mentioned in prose or inline
+    code rewrote the next `<link href>` — past a blank line and past a whole code
+    block — and no guard saw it, because the output was a well-formed blob URL."""
+
+    def test_an_anchor_in_inline_code_opens_nothing(self):
+        text = (
+            "A sentence mentioning `<a` with no closing bracket.\n"
+            '<link rel="stylesheet" href="docs/style.css">\n'
+        )
+        self.assertEqual(absolutize(text), text)
+
+    def test_the_state_does_not_survive_a_blank_line(self):
+        text = 'Use <a\n\n<image href="docs/a.svg"/>\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_the_state_does_not_survive_a_code_block(self):
+        text = 'Mentioning <a\n```python\ncode\n```\n<div href="docs/leak.html">\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_the_hand_formatted_hero_still_works(self):
+        """The counterweight: the bounds must not undo #1294."""
+        text = '<a\n  class="hero"\n  href="docs/a.md">x</a>\n'
+        self.assertEqual(absolutize(text), f'<a\n  class="hero"\n  href="{_BLOB}docs/a.md">x</a>\n')
+
+
+class ARootRelativeTargetResolvesFromTheRepositoryRoot(unittest.TestCase):
+    """`/docs/a.md` gained a second slash (`…/main//docs/a.md`); on GitHub a leading
+    `/` in a README resolves from the repository root, so it is dropped (#1300 review)."""
+
+    def test_a_link(self):
+        self.assertEqual(absolutize("[x](/docs/a.md)\n"), f"[x]({_BLOB}docs/a.md)\n")
+
+    def test_an_image(self):
+        self.assertEqual(absolutize('<img src="/docs/a.svg">\n'), f'<img src="{_RAW}docs/a.svg">\n')
+
+    def test_the_mangled_guard_stays_silent_on_it(self):
+        self.assertEqual(mangled_targets(absolutize("[x](/docs/a.md)\n")), [])
 
 
 if __name__ == "__main__":
