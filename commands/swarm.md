@@ -17,7 +17,8 @@ top of that, `--live` is never forwarded to those children at all (#1269).
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
-times, up to `--max-workers` in parallel. Budget for that before you start one.
+times — one at a time, since a dry run has no worktrees and the runs share your checkout
+(#1288). Budget for that before you start one.
 
 Planning does not see real scope either: `--issue-title`, `--issue-body`, `--issue-label` and
 `--declared-file` are shared by every issue and nothing fetches an issue's own text. With no scope
@@ -200,4 +201,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=plugin command=swarm keel_version=1.24.1 source_sha256=851eb531332a437898b2a16cedb8847272a55bc0f11d19af9697d43f5c8f4ad8 generated_sha256=851eb531332a437898b2a16cedb8847272a55bc0f11d19af9697d43f5c8f4ad8 -->
+<!-- keel-generated: surface=plugin command=swarm keel_version=1.24.1 source_sha256=632c1dd0648aa9e7aed65f6ca5f276d79f2f34d9ad5e8a24b704c0e01733af19 generated_sha256=632c1dd0648aa9e7aed65f6ca5f276d79f2f34d9ad5e8a24b704c0e01733af19 -->

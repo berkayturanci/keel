@@ -9819,8 +9819,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr = sub.add_parser(
         "swarm-run",
         help=(
-            "EXPERIMENTAL: run a keel ship assessment per cluster in isolated worktrees "
-            "(the gate suite runs once per issue); commits nothing and opens no PR (#1281)"
+            "EXPERIMENTAL: run a keel ship assessment per cluster, one at a time in this "
+            "checkout (the gate suite runs once per issue); commits nothing, opens no PR"
         ),
     )
     p_sr.add_argument("path", help="path to project.yaml")

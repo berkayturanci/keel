@@ -274,7 +274,12 @@ def run_swarm_orchestration(
             return c_id, res
 
         # Run wave clusters in parallel thread pool
-        pool_workers = min(max_workers, len(cluster_tasks)) if len(cluster_tasks) > 0 else 1
+        # Without a worktree each child runs in the operator's own checkout (a dry run
+        # creates none), and its gate suite is not written to share a tree with a
+        # sibling's: `.coverage`, `.pytest_cache`, build output. Such children run one
+        # at a time; only isolated workers run in parallel (#1288).
+        isolated = create_worktrees and not dry_run
+        pool_workers = min(max_workers, len(cluster_tasks)) if isolated and cluster_tasks else 1
         with concurrent.futures.ThreadPoolExecutor(max_workers=pool_workers) as executor:
             future_to_cluster = {
                 executor.submit(_worker_fn, cluster): cluster for cluster in cluster_tasks

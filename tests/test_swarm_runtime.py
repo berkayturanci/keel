@@ -381,6 +381,82 @@ class TheWorktreesBranchFromTheConfiguredBase(unittest.TestCase):
             self.assertEqual(orchestrate.call_args.kwargs.get("base_branch"), "develop")
 
 
+class ChildrenThatShareACheckoutRunOneAtATime(unittest.TestCase):
+    """#1288: a dry run creates no worktrees, so every child runs its gate suite in the
+    operator's own checkout — and they ran `--max-workers` at a time, four `.coverage`
+    writers in one tree. Children without a worktree now run one at a time."""
+
+    def _plan(self):
+        return build_swarm_plan(
+            [
+                IssueScope(issue=n, title=f"T{n}", predicted_files=(f"src/{n}.py",))
+                for n in (501, 502, 503)
+            ],
+            swarm_id="swarm-shared",
+        )
+
+    def test_a_dry_run_never_overlaps_two_children(self):
+        import threading
+        import time
+
+        lock, active, peak = threading.Lock(), [0], [0]
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return CommandResult(ok=True, code=0, output="ok")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_swarm_orchestration(
+                self._plan(),
+                ".keel/project.yaml",
+                root=tmpdir,
+                dry_run=True,
+                max_workers=4,
+                runner=runner,
+                base_branch="main",
+            )
+        self.assertEqual(peak[0], 1)
+
+    def test_isolated_workers_still_run_in_parallel(self):
+        """The counterweight: two workers with their own worktrees must be able to
+        meet — if they were serialised, the barrier would time out."""
+        import threading
+
+        barrier = threading.Barrier(2, timeout=5)
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            if "worktree" in cmd and "add" in cmd:
+                Path(cmd[5]).mkdir(parents=True, exist_ok=True)
+            elif "ship" in cmd:
+                barrier.wait()
+            return CommandResult(ok=True, code=0, output="ok")
+
+        plan = build_swarm_plan(
+            [
+                IssueScope(issue=n, title=f"T{n}", predicted_files=(f"src/{n}.py",))
+                for n in (601, 602)
+            ],
+            swarm_id="swarm-isolated",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = run_swarm_orchestration(
+                plan,
+                ".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                max_workers=2,
+                runner=runner,
+                create_worktrees=True,
+                base_branch="main",
+            )
+        self.assertEqual(result.passed_count, 2)
+
+
 class TestSwarmRunCLI(unittest.TestCase):
     def test_swarm_run_cli_missing_and_invalid_config(self):
         buf = io.StringIO()

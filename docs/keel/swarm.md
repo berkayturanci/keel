@@ -8,8 +8,10 @@
 > - `keel ship` — the *CLI subcommand*, registered as `dry ship assessment (tier, window, gates,
 >   decision)` — never commits, pushes or opens a pull request, in any mode. It is not inert: it
 >   runs `git diff` and executes the project's planned gates, and that gate run is **not** behind
->   `--live`, so a dry `swarm-run` over N issues still runs the whole gate suite N times, up to
->   `--max-workers` in parallel. What it never does is produce the commit. In keel's design the
+>   `--live`, so a dry `swarm-run` over N issues still runs the whole gate suite N times. A dry
+>   run creates no worktrees, so those runs share your checkout; they run one at a time
+>   ([#1288](https://github.com/berkayturanci/keel/issues/1288)), whatever `--max-workers`
+>   says. What it never does is produce the commit. In keel's design the
 >   implementation is done by the **agent** following `/keel:ship`, and the CLI assesses it;
 >   swarm's workers spawn the CLI, so a worker cannot produce a commit in any mode.
 > - On top of that, `swarm-run --live` never forwards `--live` to the child

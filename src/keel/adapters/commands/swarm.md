@@ -17,7 +17,8 @@ top of that, `--live` is never forwarded to those children at all (#1269).
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
-times, up to `--max-workers` in parallel. Budget for that before you start one.
+times — one at a time, since a dry run has no worktrees and the runs share your checkout
+(#1288). Budget for that before you start one.
 
 Planning does not see real scope either: `--issue-title`, `--issue-body`, `--issue-label` and
 `--declared-file` are shared by every issue and nothing fetches an issue's own text. With no scope
