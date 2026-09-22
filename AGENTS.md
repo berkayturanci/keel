@@ -26,6 +26,17 @@ The rules you will hit most often. Details follow below.
 - **Coverage bar is non-negotiable.** The pure core is held at **100 % line + branch**;
   the CI gate is `fail_under = 100` (`pyproject.toml`). New core code ships with tests
   that keep it at 100 %.
+- **Coverage is not fix evidence.** Because `fail_under = 100` is enforced, "maintained 100 %
+  coverage" is true of every merged PR before it is written — it describes the repository, not
+  the test. When you fix something, state instead, **for each source hunk**, a test that fails
+  when that hunk alone is reverted; list any hunk you cannot pin, with the reason. A whole-fix
+  revert is not enough — two past closures stated a true revert result while half the fix sat
+  unguarded. `N/A — <docs | pure refactor | dependency bump | packaging>` is available, but
+  **not** to a PR closing a `type:bug` issue: use `Relates to #N` and leave it open. And a
+  passing revert check is necessary, not sufficient — the fixture has to be one where the fix
+  changes the outcome (#1268 passed one and still shipped a regression). Written here as well
+  as in `CONTRIBUTING.md` for the same reason the bot-branch rule is: agents open these pull
+  requests. See step 7 there and #1289.
 - **Stdlib-first.** Exactly one runtime dependency on Linux/macOS: **PyYAML**. Do not add
   another runtime dep without an explicit, discussed reason — `jsonschema_min` is a
   hand-rolled validator precisely to avoid pulling `jsonschema`. The sole platform

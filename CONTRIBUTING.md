@@ -45,7 +45,8 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    hundred syntax errors that look like a regression. `PY=/path/to/python make test`
    overrides the resolver; `make doctor-python` prints what it picked, and
    `keel doctor` reports the same interpreter under its `python_toolchain` check.
-4. The pure core is held at **100% line + branch coverage**. New core logic needs tests.
+4. The pure core is held at **100% line + branch coverage**. New core logic needs tests —
+   and for a *fix*, coverage is not the bar; see step 7.
    `make test` also fails if any tracked file — `CHANGELOG.md` most often, since it conflicts
    on nearly every PR — still carries an unresolved `<<<<<<<`/`=======`/`>>>>>>>` marker after
    a merge or rebase.
@@ -56,31 +57,42 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    reference (`Closes #N` / `Relates to #N`, or `no issue` for a pure chore). The
    [PR description lint](.github/workflows/pr-lint.yml) check enforces this — a PR template
    only pre-fills the body, it can't stop an empty PR.
-7. **If the PR fixes something, say what fails without the fix.** One line naming the source
-   hunk you reverted and the test that then failed:
+7. **If the PR fixes something, say what fails without it — hunk by hunk.** For *each*
+   source hunk, name a test that fails when that hunk alone is reverted:
 
-   > Fix evidence: reverting the `wave_idx` guard in `swarm_runtime.py` makes
-   > `test_orchestration_rebalance_drops_subsequent_wave_on_failure` fail.
+   > Fix evidence: removing `/worktrees/` from the ignore tuple in `workspace.py` fails
+   > `test_git_ignores_a_swarm_worktree_at_the_path_swarm_writes_to`, which passed before.
 
-   For a change that cannot be reverted and re-tested — docs, a pure refactor, a dependency
-   bump — write `Fix evidence: N/A — <reason>`. A stated exemption is fine; silence is not.
+   One line per hunk. A hunk you cannot pin this way is listed with the reason — that is a
+   normal outcome, and naming it is the point. Whole-fix reverts hide exactly the failure this
+   is for: two of the closures below stated a true revert result while half the fix sat
+   unguarded, because reverting *everything* failed a test that the unguarded half did not own.
 
-   **"Maintained 100% coverage" does not count**, and the reason is worth understanding.
-   `pyproject.toml` sets `fail_under = 100` and CI enforces it, so that sentence was already
-   true before your change — it is a statement about the repository, not about your test. More
-   generally, coverage proves a line *ran*, not that any assertion depends on it: a test that
-   executes the fixed branch and asserts something true either way is fully covered and
-   worthless.
+   `Fix evidence: N/A — <docs | pure refactor | dependency bump | packaging>` is available for
+   changes with nothing to revert-test. **It is not available to a PR that closes a `type:bug`
+   issue or ticks `Bug fix`** — a refactor that closes a bug report either names a hunk and a
+   test, or says `Relates to #N` and leaves the issue open. That one restriction is what would
+   have kept #877 open; its closing PR was a genuine refactor that removed two redundant
+   frozensets and closed a bug it never touched.
 
-   This is not hypothetical here. An audit of 14 closed swarm fixes found 4 whose tests would
-   have passed with the fix removed — one where the fix was never written at all, and one whose
-   test could not see the regression the fix shipped (#1268). Every PR that stated a revert
-   result held up. The rationale and a proposal to mechanise the check are in
-   [#1289](https://github.com/berkayturanci/keel/issues/1289).
+   **"Maintained 100 % coverage" is not evidence.** `pyproject.toml` sets `fail_under = 100`
+   and CI enforces it, so the sentence was already true before your change — it describes the
+   repository, not your test. Coverage cannot carry this weight in any case: it proves a line
+   *ran*, not that an assertion depends on it.
 
-   One companion rule, which no script can check: **a fix that changes control flow needs a case
-   for each path through the change.** The #1268 regression passes a revert check — its test does
-   fail without the fix — but the fixture never exercised "this wave emptied, the next survived".
+   This is measured, not theoretical. An audit reverted each of 14 closed swarm fixes and re-ran
+   its guarding tests: today all 14 fail without their fix, but **three survived at the time
+   their issue was closed** — #877 (the fix was never written), and half of each of #871 and
+   #879. All three were caught by later audits, never by the closing procedure, and all three
+   carried "Maintained 100 % line + branch coverage" as their evidence. Full rationale, and a
+   proposal to mechanise the check, in [#1289](https://github.com/berkayturanci/keel/issues/1289).
+
+   **A revert check is necessary and not sufficient.** #873's fix passes it — its test does fail
+   without it — and it still shipped the regression now filed as
+   [#1268](https://github.com/berkayturanci/keel/issues/1268), because the fixture used the same
+   issue in both waves, so the fix and the bug produced the same result. The rule that would have
+   caught it cannot be scripted: **the fixture has to be one where the fix changes the outcome.**
+   If your test would assert the same thing for some other reason, it is not evidence yet.
 
 ## Bot-owned branches are read-only
 
