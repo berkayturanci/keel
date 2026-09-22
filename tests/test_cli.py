@@ -6,6 +6,7 @@ import io
 import itertools
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1212,7 +1213,7 @@ class TestOneBaseRef(unittest.TestCase):
         contributor branch called `origin/main` was enough to change what the gates and
         the jury were shown. Measured against real git, not a mock of it.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             real = _git_stdout(wt, "rev-parse", "refs/remotes/origin/main")
             (wt / "planted.py").write_text("x = 1\n", encoding="utf-8")
@@ -1239,7 +1240,7 @@ class TestOneBaseRef(unittest.TestCase):
         back to `refs/heads/refs/remotes/origin/main` — a local branch of that literal
         name. The base ref is chosen by the exact ref, so it falls back to the branch.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             real = _git_stdout(wt, "rev-parse", "refs/heads/main")
             (wt / "planted.py").write_text("x = 1\n", encoding="utf-8")
@@ -14735,10 +14736,12 @@ class TestTddOrderGateOnTheCli(unittest.TestCase):
         is on the branch's own line. The gate reads the range every other gate diffs
         against, which is `refs/remotes/origin/main` here.
         """
-        with tempfile.TemporaryDirectory() as d:
+        with _git_tmpdir() as d:
             origin, seed, work = Path(d) / "origin.git", Path(d) / "seed", Path(d) / "work"
             subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+            _quiet_background(origin)
             subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+            _quiet_background(seed / ".git")
             for repo in (seed,):
                 _run_git(repo, "config", "user.email", "test@example.com")
                 _run_git(repo, "config", "user.name", "Test User")
@@ -14748,6 +14751,7 @@ class TestTddOrderGateOnTheCli(unittest.TestCase):
             _run_git(seed, "remote", "add", "origin", str(origin))
             _run_git(seed, "push", "-q", "origin", "main")
             subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+            _quiet_background(work / ".git")
             _run_git(work, "config", "user.email", "test@example.com")
             _run_git(work, "config", "user.name", "Test User")
             # Someone else lands an implementation change on the base; this clone fetches
@@ -15727,6 +15731,47 @@ _LAND_SINK_LINES = [
 ]
 
 
+#: Settings written into every repository `_land_repo` builds. Both switch off work git
+#: would otherwise start *in the background and outlive the command that triggered it*:
+#: `gc.auto` from the receiving end of a push, `maintenance.auto` after a fetch or clone.
+#: Neither has anything to do with what these tests assert — a one-commit repository is
+#: nowhere near either threshold — and either one can put an entry back into `origin.git`
+#: after the push returns, which is the race #1283 tracks. `_git_tmpdir` keeps the
+#: resulting teardown failure from failing a job; these keep the race from happening.
+#:
+#: They are written into each repository rather than passed as `-c` on the commands,
+#: because the process that would start the background work is not the one being run:
+#: a push is served by `git-receive-pack` *inside the bare repo*, which reads that
+#: repo's own config and never sees the pushing client's `-c` flags.
+_GIT_NO_BACKGROUND = (("gc.auto", "0"), ("maintenance.auto", "false"))
+
+
+def _quiet_background(git_dir: Path) -> None:
+    """Write `_GIT_NO_BACKGROUND` into the repository at `git_dir` (bare or `.git`)."""
+    for key, value in _GIT_NO_BACKGROUND:
+        subprocess.run(
+            ["git", "--git-dir", str(git_dir), "config", key, value],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+
+def _git_tmpdir() -> tempfile.TemporaryDirectory:
+    """Scratch space for a fixture that builds real git repositories, whose teardown
+    cannot fail a test.
+
+    `TemporaryDirectory` removes the tree by scanning it and then calling `rmdir`. If
+    anything writes into `origin.git` between those two steps the `rmdir` raises
+    `OSError: [Errno 39] Directory not empty`, and because it happens in teardown it
+    surfaces as a test **error**: a job fails for a reason unrelated to the change under
+    review (#1283, twice in one session on Linux CI, never in an assertion). Cleanup is
+    best-effort here — the tree sits under the OS temp root and is reclaimed either way,
+    so an unremoved directory is not worth a red build.
+    """
+    return tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+
+
 def _land_repo(tmp: Path, *, seed_learning: str | None = None) -> tuple[Path, Path]:
     """A bare origin plus a clone whose *primary checkout holds `main`*, and a worktree.
 
@@ -15738,7 +15783,9 @@ def _land_repo(tmp: Path, *, seed_learning: str | None = None) -> tuple[Path, Pa
     """
     origin, seed, work = tmp / "origin.git", tmp / "seed", tmp / "work"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    _quiet_background(origin)
     subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+    _quiet_background(seed / ".git")
     _run_git(seed, "config", "user.email", "t@example.com")
     _run_git(seed, "config", "user.name", "T")
     (seed / "keep.txt").write_text("keep\n", encoding="utf-8")
@@ -15750,6 +15797,7 @@ def _land_repo(tmp: Path, *, seed_learning: str | None = None) -> tuple[Path, Pa
     _run_git(seed, "remote", "add", "origin", str(origin))
     _run_git(seed, "push", "-q", "origin", "main")
     subprocess.run(["git", "clone", "-q", str(origin), str(work)], check=True)
+    _quiet_background(work / ".git")
     _run_git(work, "config", "user.email", "t@example.com")
     _run_git(work, "config", "user.name", "T")
     _run_git(work, "worktree", "add", "-q", str(work / "wt"), "-b", "feature", "origin/main")
@@ -15774,6 +15822,65 @@ def _origin_commits(origin: Path) -> int:
         text=True,
     )
     return int(out.stdout.strip())
+
+
+class TestLandScratchDirTeardown(unittest.TestCase):
+    """`_git_tmpdir` — a teardown that cannot fail a test (#1283).
+
+    The flake is a timing race, so these tests *inject* it rather than wait for it.
+    `rmtree` scans a directory, removes what it saw, then calls `rmdir`; the race is a
+    new entry appearing in between, which makes that `rmdir` raise `ENOTEMPTY`. Wrapping
+    `os.unlink` so it re-creates a sibling reproduces exactly that window, and does so on
+    every platform — no permission tricks, which CPython's own cleanup defeats by
+    resetting the mode and retrying.
+    """
+
+    def _racy_dir(self):
+        """A directory whose last unlink puts a file back, as git's background work did."""
+        fired = []
+        real_unlink = os.unlink
+
+        def unlink(path, *args, **kwargs):
+            real_unlink(path, *args, **kwargs)
+            if not fired:
+                fired.append(True)
+                (self.stuck / "late").write_text("x", encoding="utf-8")
+
+        return unlink
+
+    def _prepare(self, holder):
+        self.stuck = Path(holder.name) / "stuck"
+        self.stuck.mkdir()
+        (self.stuck / "child").write_text("x", encoding="utf-8")
+        self.addCleanup(shutil.rmtree, holder.name, ignore_errors=True)
+
+    def test_cleanup_does_not_raise_when_the_tree_refills_mid_removal(self):
+        holder = _git_tmpdir()
+        self._prepare(holder)
+        with patch("os.unlink", new=self._racy_dir()):
+            holder.cleanup()  # the assertion is that this returns at all
+
+    def test_a_plain_temporary_directory_does_raise_there(self):
+        """Vacuity: without this, the test above would pass on any factory at all."""
+        holder = tempfile.TemporaryDirectory()
+        self._prepare(holder)
+        with patch("os.unlink", new=self._racy_dir()), self.assertRaises(OSError):
+            holder.cleanup()
+
+    def test_the_fixture_repositories_have_background_work_switched_off(self):
+        """The other half of #1283: keep the race from happening, not just from failing."""
+        with _git_tmpdir() as tmp:
+            origin, wt = _land_repo(Path(tmp))
+            for git_dir in (origin, Path(tmp) / "work" / ".git", Path(tmp) / "seed" / ".git"):
+                for key, value in _GIT_NO_BACKGROUND:
+                    got = subprocess.run(
+                        ["git", "--git-dir", str(git_dir), "config", "--get", key],
+                        capture_output=True,
+                        text=True,
+                    )
+                    with self.subTest(git_dir=git_dir.name, key=key):
+                        self.assertEqual(got.stdout.strip(), value)
+            self.assertTrue(wt.exists())
 
 
 class TestCoveredHeadsWalk(unittest.TestCase):
@@ -15995,7 +16102,7 @@ class TestCaptureLand(unittest.TestCase):
         return f".keel/learning/{name}"
 
     def test_lands_from_a_worktree_without_checking_out_the_base_branch(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             # The recipe #1163 ruled out, proven unavailable on this very fixture.
             switched = subprocess.run(
@@ -16024,7 +16131,7 @@ class TestCaptureLand(unittest.TestCase):
             self.assertEqual(_origin_files(origin), [".keel/learning/a.md", "keep.txt"])
 
     def test_the_landing_commit_adds_only_the_lesson(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp), seed_learning="# Older lesson\n")
             artifact = self._write_lesson(wt, "b.md")
             rc, _, _ = run(
@@ -16048,7 +16155,7 @@ class TestCaptureLand(unittest.TestCase):
             self.assertEqual(_origin_commits(origin), 2)
 
     def test_re_running_lands_nothing_a_second_time(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             config, artifact = self._config(wt), self._write_lesson(wt, "c.md")
             argv = ["capture-land", config, "--root", str(wt), "--pr", "9", "--artifact", artifact]
@@ -16061,7 +16168,7 @@ class TestCaptureLand(unittest.TestCase):
             self.assertEqual(_origin_commits(origin), 2)
 
     def test_a_concurrent_ship_is_retried_onto_the_branch_it_pushed(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             config, artifact = self._config(wt), self._write_lesson(wt, "mine.md")
             real_push = git.push_commit
@@ -16111,7 +16218,7 @@ class TestCaptureLand(unittest.TestCase):
             )
 
     def test_a_branch_that_keeps_moving_exhausts_the_budget_and_fails(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             config, artifact = self._config(wt), self._write_lesson(wt, "d.md")
             rejected = CommandResult(ok=False, code=1, output="! [rejected] (fetch first)")
@@ -16150,7 +16257,7 @@ class TestCaptureLand(unittest.TestCase):
         command then reported the branch as having moved under every attempt — a cause
         that had not happened, printed over the server's own reason.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             hook = origin / "hooks" / "pre-receive"
             hook.write_text(
@@ -16194,7 +16301,7 @@ class TestCaptureLand(unittest.TestCase):
         checkout satisfied every test this command made and put that file's contents on
         the shared base branch under an innocent name.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             secret = Path(tmp) / "outside.txt"
             secret.write_text("a private thing\n", encoding="utf-8")
@@ -16228,7 +16335,7 @@ class TestCaptureLand(unittest.TestCase):
         of `{date}` makes the first component match anything, so `config/private.env` is
         "inside" it. The refusal names what to change instead of landing on a guess.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             config = wt / "dated.yaml"
             config.write_text(
@@ -16266,7 +16373,7 @@ class TestCaptureLand(unittest.TestCase):
 
     def test_a_sink_with_a_resolvable_placeholder_lands(self):
         # `{repo}` is a value this command has, so the sink resolves and the lesson lands.
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             config = wt / "repo-sink.yaml"
             config.write_text(
@@ -16323,7 +16430,7 @@ class TestCaptureLand(unittest.TestCase):
         non-fast-forward — retried, against a fetch that fails identically every time,
         until the budget is spent on a race with nobody.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             config, artifact = self._config(wt), self._write_lesson(wt, "e.md")
             failed = CommandResult(ok=False, code=128, output="could not read from remote")
@@ -16357,7 +16464,7 @@ class TestCaptureLand(unittest.TestCase):
         file onto the shared base branch under a lesson's name. The sink is the boundary
         for where the content comes from, exactly as it is for where the path points.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             (wt / "config").mkdir(parents=True, exist_ok=True)
             (wt / "config" / "private.env").write_text("TOKEN=hunter2\n", encoding="utf-8")
@@ -16391,7 +16498,7 @@ class TestCaptureLand(unittest.TestCase):
         `learning_sink_in_worktree` calls `.` in-repo, so the plan is `planned` and the
         refusal has to happen where the content is resolved.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             config = wt / "root-sink.yaml"
             config.write_text(
@@ -16433,7 +16540,7 @@ class TestCaptureLand(unittest.TestCase):
         for `.` and for an absolute path and for nothing in between. The repo had already
         fixed this exact bug sixty lines away, in `_recorded_artifact`.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "rel.md")
             config = self._config(wt)
@@ -16469,7 +16576,7 @@ class TestCaptureLand(unittest.TestCase):
         untouched, and the commit it built is one `capture.capture_only_descent` accepts —
         so the head-pin exemption holds for the head the merge will actually see.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             _run_git(wt, "push", "-q", "origin", "feature")
             reviewed = subprocess.run(
@@ -16561,7 +16668,7 @@ class TestCaptureLand(unittest.TestCase):
         stale, so every attempt built the lesson on the old tip, every push was a genuine
         non-fast-forward, and the budget ran out on a race the command had set up itself.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             _run_git(wt, "push", "-q", "origin", "feature")
             other = Path(tmp) / "other"
@@ -16609,7 +16716,7 @@ class TestCaptureLand(unittest.TestCase):
         With no remote called `origin`, a repository committed at `<checkout>/origin` was
         fetched from and pushed to — and a push runs that repository's hooks.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             _run_git(wt, "remote", "rename", "origin", "upstream")
             planted = wt / "origin"
@@ -16645,7 +16752,7 @@ class TestCaptureLand(unittest.TestCase):
         the lesson was built on; the one-file check compared against that same base and
         passed; and the push fast-forwarded the real branch to carry the planted commit.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             (wt / "planted.py").write_text("import os\n", encoding="utf-8")
             _run_git(wt, "add", "planted.py")
@@ -16681,7 +16788,7 @@ class TestCaptureLand(unittest.TestCase):
         diff read the deletion as one rename *into* the lesson — one path, the lesson's —
         and the "exactly one file" check pushed a commit that deleted the sibling.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             body = "# Lesson\n\nThe same bytes as the sibling.\n"
             (wt / ".keel" / "learning").mkdir(parents=True)
@@ -16722,7 +16829,7 @@ class TestCaptureLand(unittest.TestCase):
         # (covered above), or it is still in the working tree — restored, or written
         # again by a retried append. The second must reach `already-landed` by the
         # content comparison and push nothing.
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             config, artifact = self._config(wt), self._write_lesson(wt, "again.md")
             argv = ["capture-land", config, "--root", str(wt), "--pr", "23", "--artifact", artifact]
@@ -16743,7 +16850,7 @@ class TestCaptureLand(unittest.TestCase):
         refspec, and it moved this checkout's local `main` to `feature`'s tip. Refused in
         the plan, nothing is fetched and no ref moves.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             primary = wt.parent
             before = subprocess.run(
@@ -16784,7 +16891,7 @@ class TestCaptureLand(unittest.TestCase):
 
     def test_a_lesson_edited_after_it_was_written_is_not_removed(self):
         # The local copy is only redundant when it is the same bytes that were committed.
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "edited.md")
             config = self._config(wt)
@@ -16815,7 +16922,7 @@ class TestCaptureLand(unittest.TestCase):
             self.assertTrue((wt / artifact).exists())
 
     def test_the_artifact_is_read_from_the_ledger_when_not_given(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             config = self._config(wt)
             artifact = self._write_lesson(wt, "from-ledger.md")
@@ -16840,7 +16947,7 @@ class TestCaptureLand(unittest.TestCase):
             self.assertEqual(_origin_files(origin), [".keel/learning/from-ledger.md", "keep.txt"])
 
     def test_a_ledger_with_no_record_for_the_pr_reports_no_artifact(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             config = self._config(wt)
             (wt / "state").mkdir()
@@ -16852,7 +16959,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertEqual(payload["status"], "no-artifact")
 
     def test_an_invalid_ledger_is_reported(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             config = self._config(wt)
             (wt / "state").mkdir()
@@ -16862,7 +16969,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("invalid ledger", err)
 
     def test_dry_run_pushes_nothing(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "e.md")
             rc, out, _ = run(
@@ -16885,7 +16992,7 @@ class TestCaptureLand(unittest.TestCase):
             self.assertEqual(_origin_files(origin), ["keep.txt"])
 
     def test_a_missing_artifact_file_fails(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             rc, out, _ = run(
                 [
@@ -16905,7 +17012,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("no such capture artifact", payload["detail"])
 
     def test_an_artifact_outside_the_repository_is_refused(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             rc, out, _ = run(
                 [
@@ -16926,7 +17033,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertTrue(payload["plan"]["errors"])
 
     def test_a_sink_outside_the_checkout_is_not_required(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             path = wt / "outside.yaml"
             lines = list(_LAND_SINK_LINES)
@@ -16944,7 +17051,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertEqual(payload["status"], "not-required")
 
     def test_text_output_names_the_commit(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "f.md")
             rc, out, _ = run(
@@ -16966,7 +17073,7 @@ class TestCaptureLand(unittest.TestCase):
     def test_text_output_without_a_commit_names_no_commit(self):
         # The `not-required` line has nothing to point at, and the "commit :" line
         # must not be printed with an empty value beside it.
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             path = wt / "outside.yaml"
             lines = list(_LAND_SINK_LINES)
@@ -16994,7 +17101,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("invalid keel config", err)
 
     def test_an_unresolvable_base_branch_fails(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "g.md")
             with patch.object(git, "resolve_ref", lambda *a, **k: None):
@@ -17016,7 +17123,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("cannot resolve refs/remotes/origin/main", payload["detail"])
 
     def test_an_unhashable_artifact_fails(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "h.md")
             with patch.object(git, "hash_object", lambda *a, **k: None):
@@ -17038,7 +17145,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("cannot hash", payload["detail"])
 
     def test_an_unbuildable_tree_fails(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "i.md")
             with patch.object(git, "mktree", lambda *a, **k: None):
@@ -17060,7 +17167,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("cannot build a tree", payload["detail"])
 
     def test_an_uncreatable_commit_fails(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "j.md")
             with patch.object(git, "commit_tree", lambda *a, **k: None):
@@ -17082,7 +17189,7 @@ class TestCaptureLand(unittest.TestCase):
         self.assertIn("cannot create the landing commit", payload["detail"])
 
     def test_a_commit_touching_anything_else_is_never_pushed(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "k.md")
             pushed = []
@@ -17110,7 +17217,7 @@ class TestCaptureLand(unittest.TestCase):
 
     def test_an_unreadable_diff_fails_closed(self):
         # `None` is "could not check", and this must never push what it could not check.
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             artifact = self._write_lesson(wt, "l.md")
             with patch.object(git, "diff_names", lambda *a, **k: None):
@@ -17239,7 +17346,7 @@ class TestCaptureLandWrite(unittest.TestCase):
         return sorted(p.name for p in sink.glob("*.md")) if sink.is_dir() else []
 
     def test_writes_the_lesson_lands_it_on_the_pull_request_and_records_nothing(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             _run_git(wt, "push", "-q", "origin", "feature")
             reviewed = _git_stdout(wt, "rev-parse", "HEAD")
@@ -17284,7 +17391,7 @@ class TestCaptureLandWrite(unittest.TestCase):
         landing on top of *that* commit. A push since then is code nobody checked, and
         building on it would have carried it along with the lesson.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             _run_git(wt, "push", "-q", "origin", "feature")
             reviewed = _git_stdout(wt, "rev-parse", "HEAD")
@@ -17315,7 +17422,7 @@ class TestCaptureLandWrite(unittest.TestCase):
         `plan["onto"]` names the destination either way — the base branch when `--onto` is
         omitted — so a pin read off the plan refused every `--write` landing on the base.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             (wt / "work.py").write_text("x = 1\n", encoding="utf-8")
             _run_git(wt, "add", "work.py")
@@ -17338,7 +17445,7 @@ class TestCaptureLandWrite(unittest.TestCase):
         the short name `origin/feature` resolved to ahead of the remote-tracking ref. The
         full ref name is not shadowed, and the head pin would refuse the planted commit.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             _run_git(wt, "push", "-q", "origin", "feature")
             reviewed = _git_stdout(wt, "rev-parse", "HEAD")
@@ -17369,7 +17476,7 @@ class TestCaptureLandWrite(unittest.TestCase):
         The filename carries the date, so a writer that did not look first rendered a second
         lesson under tomorrow's name, landed it beside the first, and merged both.
         """
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             origin, wt = _land_repo(Path(tmp))
             _run_git(wt, "push", "-q", "origin", "feature")
             reviewed = _git_stdout(wt, "rev-parse", "HEAD")
@@ -17576,7 +17683,7 @@ class TestCaptureLandWrite(unittest.TestCase):
 
     def test_a_lesson_that_did_not_land_is_not_left_behind(self):
         """Untracked in the primary checkout, it is the orphan #1203 exists to end."""
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp))
             reviewed = _git_stdout(wt, "rev-parse", "HEAD")
             config = self._config(wt)
@@ -17592,7 +17699,7 @@ class TestCaptureLandWrite(unittest.TestCase):
 
     def test_a_tracked_lesson_is_never_deleted(self):
         """After `git pull` the lesson is tracked, and every same-bytes check passes on it."""
-        with tempfile.TemporaryDirectory() as tmp:
+        with _git_tmpdir() as tmp:
             _, wt = _land_repo(Path(tmp), seed_learning="# Older lesson\n")
             _run_git(wt, "push", "-q", "origin", "feature")
             config = self._config(wt)
