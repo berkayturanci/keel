@@ -429,6 +429,7 @@ class TestSwarmPureStateHelpers(unittest.TestCase):
         scopes = [
             IssueScope(issue=10, title="A", predicted_files=("src/a.py",)),
             IssueScope(issue=11, title="B", predicted_files=("src/a.py",)),
+            IssueScope(issue=14, title="E", predicted_files=("src/a.py",)),
             IssueScope(issue=12, title="C", predicted_files=("src/c.py",)),
             IssueScope(issue=13, title="D", predicted_files=("src/c.py",)),
         ]
@@ -442,6 +443,9 @@ class TestSwarmPureStateHelpers(unittest.TestCase):
         self.assertNotIn(10, deps)
         self.assertNotIn(10, deps[11])
         self.assertIn(12, deps[13], "an unrelated edge must survive")
+        # 14 depended on both 10 and 11: only the failed edge goes, not the list.
+        self.assertIn(11, deps[14])
+        self.assertNotIn(10, deps[14])
         self.assertNotIn(10, after.conflict_map)
         self.assertFalse(any(10 in others for others in after.conflict_map.values()))
         self.assertNotIn(10, after.issue_scopes)
