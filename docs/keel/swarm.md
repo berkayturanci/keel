@@ -16,13 +16,14 @@
 >   ([#1269](https://github.com/berkayturanci/keel/issues/1269)): the child argv only gains
 >   `--dry-run` when the run is dry, and nothing ever adds `--live`.
 >
-> Planning runs, but not on real scope. `--issue-title`, `--issue-body` and `--declared-file` take
-> one value (or, for `--declared-file`, one repeatable list) that is shared by **every** issue —
-> nothing fetches an issue's own text. So with no scope text a multi-issue plan clusters synthetic
-> per-issue globs and returns one `orthogonal_parallel` wave
+> Planning runs, but not on real scope. `--issue-title`, `--issue-body`, `--issue-label` and
+> `--declared-file` take one value (or, for the repeatable ones, one list) that is shared by
+> **every** issue — nothing fetches an issue's own text. So with no scope text and no
+> directory-hinting label a multi-issue plan clusters synthetic per-issue globs and returns one
+> `orthogonal_parallel` wave
 > ([#1274](https://github.com/berkayturanci/keel/issues/1274)), and naming a path — in
-> `--declared-file` or in the shared body — puts it in *every* issue's scope, so they all overlap
-> and serialise. Neither is per-issue scope. `keel-visual swarm` rebuilds its scopes
+> `--declared-file`, in the shared body, or via an `--issue-label` that maps to a directory hint —
+> puts it in *every* issue's scope, so they all overlap and serialise. Neither is per-issue scope. `keel-visual swarm` rebuilds its scopes
 > without predicted files, so its DAG is always one flat wave
 > ([#1275](https://github.com/berkayturanci/keel/issues/1275),
 > [#1280](https://github.com/berkayturanci/keel/issues/1280)).
@@ -30,7 +31,8 @@
 > Landing is guarded, which is the one part that works as written: with `knobs.swarm_review_evidence`
 > on — the default — `swarm-land` holds any cluster with no open PR, an unarmed gate, missing
 > evidence, or a local head that differs from the reviewed PR head. Setting it to `false` is a
-> documented opt-out and is logged; with it off, cluster branches merge with no PR and no evidence.
+> documented opt-out, logged on every *live* landing (a dry preview with it off prints nothing and
+> shows the clusters as landing); with it off, cluster branches merge with no PR and no evidence.
 >
 > The rest is tracked under the audit epic
 > [#1281](https://github.com/berkayturanci/keel/issues/1281). Everything below describes the design

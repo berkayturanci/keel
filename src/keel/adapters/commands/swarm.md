@@ -1,5 +1,5 @@
 ---
-description: Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land them under a single-writer merge lock.
+description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. Planning runs; a live run lands nothing yet (#1281). Use /keel:ship for work that must merge.
 argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
@@ -24,9 +24,14 @@ shared by every issue and nothing fetches an issue's own text, so with no scope 
 plan returns one wave of synthetic globs, and naming a path puts it in every issue's scope so they
 all serialise (#1274). `keel-visual swarm` always renders a flat DAG (#1275, #1280).
 
-So: run `--plan-only`, `--tree` and `--visual` freely — none of them touches the repository's
-history (`--visual` writes an HTML file or serves one on a local port), and they will not mislead
-you as long as you read the plan as "what I passed", not "per-issue scope". For anything
+So: **`--plan-only` is the one that stops.** Run it freely, and add `--tree` or `--visual` to it
+for the rendering. On their own those two are renderers, not modes — this command reads
+`--plan-only` at Step 1 and exits there; `--tree` is a flag on the `swarm-plan` calls and
+`--visual` is read at Step 4, so `/keel:swarm <issues> --visual` walks straight on into Step 2's
+live `swarm-run` and Step 3's live `swarm-land`. That cuts a worktree per cluster, leaves the
+`swarm/<swarm_id>/<cluster_id>` branches behind (nothing deletes them), and runs the N child gate
+suites above — for a run that lands nothing. Read the plan it renders as "what I passed", not
+"per-issue scope". For anything
 the user expects to be **merged**, say plainly that swarm cannot do it and run `/keel:ship` per
 issue instead.
 

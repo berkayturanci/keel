@@ -137,7 +137,7 @@ window.KEEL_ARGS = {
   ]
  },
  "swarm": {
-  "desc": "Multi-agent swarm coordinator — cluster backlog issues, execute parallel waves in isolated worktrees, and land them under a single-writer merge lock.",
+  "desc": "EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. Planning runs; a live run lands nothing yet (#1281). Use /keel:ship for work that must merge.",
   "hint": "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]",
   "flags": [
    "issue numbers...",

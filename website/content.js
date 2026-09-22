@@ -190,8 +190,8 @@ window.KEEL = {
     ["keel plan <cfg> [--live --json]", "render the backbone + the full structured command contract; --live runs the s0 consent preflight"],
     ["keel swarm-plan <cfg> --issues 12,15", "cluster backlog issues into conflict-free execution waves from their predicted scopes"],
     ["keel swarm-status <cfg>", "multi-cluster status snapshot — each cluster's lead, difficulty band, and running/passed/failed state"],
-    ["keel swarm-run <cfg> --issues 12,15", "orchestrate parallel workers in isolated worktrees, rebalancing the plan when a cluster fails"],
-    ["keel swarm-land <cfg> --wave 1", "merge a wave's cluster branches sequentially under the merge lock, aborting on conflict"],
+    ["keel swarm-run <cfg> --issues 12,15", "EXPERIMENTAL (#1281) — orchestrate parallel workers in isolated worktrees, rebalancing the plan when a cluster fails; a live run produces no commits and no PRs"],
+    ["keel swarm-land <cfg> --wave 1", "EXPERIMENTAL (#1281) — merge a wave's cluster branches sequentially under the merge lock, aborting on conflict; nothing reaches it from a live swarm run yet"],
     ["keel-visual swarm", "2D DAG and pseudo-3D spatial worktree topology, rendered as a snapshot"],
     ["keel run-gates <cfg>", "run the project's build / lint / command gates"],
     ["keel window <cfg>", "is the merge window open right now?"],
@@ -549,7 +549,7 @@ window.KEEL = {
       body:
         "<p>keel is an <b>agentic work-ownership backbone</b>. Its job is not to be another isolated coding command, review bot, or merge queue — it is to make an agent <b>accountable for the whole path</b> a strong software teammate would normally own.</p>" +
         "<p>That path starts before code is written: read the issue, decide whether the scope is ready, ask for clarification when it is not, cut an isolated branch, implement, keep CI and tests green, get reviewed, fix feedback, merge inside policy, close the loop, and record what should be remembered next time.</p>" +
-        "<p><b>One issue, a work block, or a backlog.</b> Hand keel one issue, a bounded work block, or — with <code>swarm</code> — a backlog split into dependency waves that run in parallel worktrees, and get the same quality loop every time: readiness before mutation, isolated worktree, deterministic gates + capability checks, independent review and optional jury, merge-window + merge-lock safety, structured ledger, closeout + capture hooks, and morning/wrap visibility. The point isn't autonomy for its own sake — it's work that is observable, recoverable, reviewable, and governed by policy while the agent owns the execution details.</p>",
+        "<p><b>One issue, a work block, or a backlog.</b> Hand keel one issue or a bounded work block and get the same quality loop every time (<code>swarm</code> splits a backlog into dependency waves across parallel worktrees, but it is <b>experimental</b> and lands nothing yet — see <a href='https://github.com/berkayturanci/keel/issues/1281'>#1281</a>): readiness before mutation, isolated worktree, deterministic gates + capability checks, independent review and optional jury, merge-window + merge-lock safety, structured ledger, closeout + capture hooks, and morning/wrap visibility. The point isn't autonomy for its own sake — it's work that is observable, recoverable, reviewable, and governed by policy while the agent owns the execution details.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md#the-vision-to-production-gap-in-agentic-ai",
     },
     {
