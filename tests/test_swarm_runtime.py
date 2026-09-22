@@ -21,6 +21,7 @@ from keel.swarm import (
     SwarmRunState,
     SwarmWorkerStatus,
     build_swarm_plan,
+    load_swarm_state,
     rebalance_swarm_plan,
     render_swarm_run_result,
     update_worker_state,
@@ -223,6 +224,47 @@ class TestSwarmOrchestration(unittest.TestCase):
             rendered = render_swarm_run_result(result)
             self.assertIn("keel swarm run — swarm-orch-test", rendered)
             self.assertIn("partial_failure", rendered)
+
+    def test_a_worker_that_raises_is_a_failed_cluster_not_a_failed_run(self):
+        """#1271: `future.result()` re-raised a worker's exception unguarded, so one bad
+        cluster ended the run, discarded the others' results and left them `running`
+        in the state file, with no way for swarm-status to tell they were dead."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=301, title="Fine", predicted_files=("src/a.py",))
+            s2 = IssueScope(issue=302, title="Raises", predicted_files=("src/b.py",))
+            plan = build_swarm_plan([s1, s2], swarm_id="swarm-raises")
+            removed: list[str] = []
+
+            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "worktree" in cmd and "add" in cmd:
+                    Path(cmd[5]).mkdir(parents=True, exist_ok=True)
+                if "worktree" in cmd and "remove" in cmd:
+                    removed.append(cmd[-1])
+                if "ship" in cmd and "302" in cmd:
+                    raise RuntimeError("boom in 302")
+                return CommandResult(ok=True, code=0, output="passed")
+
+            try:
+                result = run_swarm_orchestration(
+                    plan,
+                    ".keel/project.yaml",
+                    root=tmpdir,
+                    dry_run=False,
+                    max_workers=2,
+                    runner=mock_runner,
+                    create_worktrees=True,
+                )
+            except RuntimeError as exc:
+                self.fail(f"a worker's exception ended the run: {exc}")
+
+            self.assertEqual((result.passed_count, result.failed_count), (1, 1))
+            self.assertEqual(result.status, "partial_failure")
+            outputs = [r["output"] for r in result.wave_results[0]["cluster_results"].values()]
+            self.assertTrue(any("worker raised RuntimeError: boom in 302" in o for o in outputs))
+            state = load_swarm_state("swarm-raises", root=tmpdir)
+            assert state is not None
+            self.assertNotIn("running", {w.status for w in state.workers})
+            self.assertEqual(len(removed), 2, "the raising worker's worktree must be removed too")
 
     def test_orchestration_all_passed_live_worktrees(self):
         with tempfile.TemporaryDirectory() as tmpdir:

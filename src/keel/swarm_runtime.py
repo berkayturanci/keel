@@ -273,7 +273,22 @@ def run_swarm_orchestration(
                 executor.submit(_worker_fn, cluster): cluster for cluster in cluster_tasks
             }
             for future in concurrent.futures.as_completed(future_to_cluster):
-                c_id, worker_res = future.result()
+                try:
+                    c_id, worker_res = future.result()
+                except Exception as exc:  # noqa: BLE001 - one worker must not end the run
+                    # A worker that raised (a malformed assignment, an OSError making
+                    # its path) is a failed cluster, not a failed run. Left unguarded,
+                    # the raise discarded the other workers' results and froze them
+                    # as `running` in the state file (#1271).
+                    cluster = future_to_cluster[future]
+                    c_id = cluster.cluster_id
+                    worker_res = {
+                        "issue": cluster.issues[0] if cluster.issues else 0,
+                        "role": cluster.role,
+                        "ok": False,
+                        "code": 1,
+                        "output": f"worker raised {type(exc).__name__}: {exc}",
+                    }
                 wave_record["cluster_results"][c_id] = worker_res
                 issue_val = worker_res.get("issue", 0)
 
