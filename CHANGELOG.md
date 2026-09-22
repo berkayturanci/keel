@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Questions have a home: GitHub Discussions is enabled** (#1296 follow-up). #1296 removed the issue chooser's "Ask a Question" link because it pointed at Discussions while Discussions was disabled, which sent every visitor who clicked it to a 404. Discussions is now enabled, and the chooser links to its Q&A category, alongside the docs and the private security-report policy.
+
 ## [1.24.1] - 2026-09-22
 
 ### Fixed

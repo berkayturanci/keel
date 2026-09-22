@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Ask a question
+    url: https://github.com/berkayturanci/keel/discussions/categories/q-a
+    about: Questions about setup, configuration or the backbone — answered in Discussions, not as issues.
   - name: Read the docs
     url: https://keel-ship.dev/docs.html
     about: Configuration, the backbone, extensions and the CLI reference.
