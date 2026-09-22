@@ -4,10 +4,10 @@
 
 Only the latest released version of **keel** is supported with security updates.
 
-| Version  | Supported |
-| -------- | --------- |
-| >= 0.5.0 | Yes       |
-| < 0.5.0  | No        |
+| Version          | Supported |
+| ---------------- | --------- |
+| Latest release   | Yes       |
+| Earlier releases | No        |
 
 ## Reporting a Vulnerability
 

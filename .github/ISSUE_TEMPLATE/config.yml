@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Ask a Question
-    url: https://github.com/berkayturanci/keel/discussions
-    about: Ask Q&A, request help, or discuss workflow/backbone design.
+  - name: Read the docs
+    url: https://keel-ship.dev/docs.html
+    about: Configuration, the backbone, extensions and the CLI reference.
+  - name: Report a security vulnerability
+    url: https://github.com/berkayturanci/keel/security/policy
+    about: Please report vulnerabilities privately, not as a public issue.

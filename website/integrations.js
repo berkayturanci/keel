@@ -72,7 +72,8 @@
       name: "Devin / External Agents",
       category: "assistants",
       badge: "Autonomous Agent",
-      desc: "Autonomous coding agent runs gated by Keel's merge lock, review cycles, and the review-evidence gate.",
+      desc: "A pull request an autonomous agent opens goes through the same merge lock, review cycles and review-evidence gate as any other.",
+      note: "keel ships no Devin profile or integration: it gates the pull request, whoever wrote it.",
       cmd: "keel ship .keel/project.yaml --issue 101 --live",
       logo: "logos/devin.png"
     },
@@ -111,7 +112,8 @@
       name: "GitHub Copilot",
       category: "assistants",
       badge: "AI Assistant",
-      desc: "Copilot workspace and coding actions verified against deterministic Keel pre-merge evidence gates.",
+      desc: "A pull request Copilot authored is verified against the same deterministic pre-merge evidence gates as any other.",
+      note: "keel does not integrate with Copilot itself; <code>keel evidence-verify</code> checks any pull request.",
       cmd: "keel evidence-verify .keel/project.yaml --pr 101 --phase pre-merge",
       logo: "logos/githubcopilot.svg"
     },
@@ -208,7 +210,8 @@
       name: "Model Context Protocol",
       category: "skills",
       badge: "Open Standard",
-      desc: "Expose Keel's deterministic backbone tools and GitHub transport via native MCP protocol.",
+      desc: "Reach GitHub through a GitHub MCP server instead of the gh CLI: keel selects the mcp transport when github-mcp is available and an authenticated gh is not.",
+      note: "keel consumes MCP for its GitHub access; it does not expose an MCP server of its own. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/github-transport.md' target='_blank' rel='noopener'>GitHub transport</a>.",
       cmd: "keel ship .keel/project.yaml --transport mcp",
       logo: "logos/mcp.svg"
     },

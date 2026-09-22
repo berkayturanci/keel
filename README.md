@@ -230,7 +230,8 @@ authenticated `gh` (`gh auth login`). A dry run needs only Python and git.
 
 ```bash
 keel setup --root .                          # add keel config + adapters to this project
-keel setup --root . --wizard                 # …and pick the team interactively
+#   or, to pick the team interactively instead: keel setup --root . --wizard
+#   (on a project that is already set up, --force re-runs it and overwrites .keel/project.yaml)
 keel validate .keel/project.yaml --root .    # validate the config setup just wrote
 keel plan     .keel/project.yaml --root .    # show the backbone plan for this project
 keel doctor   .keel/project.yaml --root .    # check versions, adapters and prerequisites
@@ -453,6 +454,7 @@ config.
 keel plan      .keel/project.yaml --root . # render keel's own backbone
 keel run-gates .keel/project.yaml --root . # keel runs its own test + lint gates
 keel ship      .keel/project.yaml --root . # full dry assessment: tier, window, gates, decision
+#   (example output; the tier follows the files a change touches)
 #   risk tier     : TIER-3  → 3 reviewer(s)
 #   decision      : MERGE — clear to merge
 ```
