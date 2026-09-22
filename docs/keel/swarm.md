@@ -265,8 +265,8 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 ```
 
 ### Worktree Lifecycle & Isolation
-1. **Creation**: Dedicated worktrees are branched from the local `main` onto
-   `swarm/<swarm_id>/<cluster_id>`.
+1. **Creation**: Dedicated worktrees are branched from the configured `base_branch` onto
+   `swarm/<swarm_id>/<cluster_id>` ([#1262](https://github.com/berkayturanci/keel/issues/1262)).
 2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
    named, to execute the full `s0`–`s12` backbone. The lead appends the cluster's team to every
    child ship — `--delegate <implementer>`, one `--review-delegate` per staffed reviewer

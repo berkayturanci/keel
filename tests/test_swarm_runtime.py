@@ -433,7 +433,12 @@ class ChildrenThatShareACheckoutRunOneAtATime(unittest.TestCase):
             if "worktree" in cmd and "add" in cmd:
                 Path(cmd[5]).mkdir(parents=True, exist_ok=True)
             elif "ship" in cmd:
-                barrier.wait()
+                try:
+                    barrier.wait()
+                except threading.BrokenBarrierError:
+                    # Serialised: the partner never arrived. Report it as a failed
+                    # cluster so the count below fails as an assertion.
+                    return CommandResult(ok=False, code=1, output="ran alone")
             return CommandResult(ok=True, code=0, output="ok")
 
         plan = build_swarm_plan(

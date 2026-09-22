@@ -9819,8 +9819,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr = sub.add_parser(
         "swarm-run",
         help=(
-            "EXPERIMENTAL: run a keel ship assessment per cluster, one at a time in this "
-            "checkout (the gate suite runs once per issue); commits nothing, opens no PR"
+            "EXPERIMENTAL: run a keel ship assessment per cluster (a dry run: one at a time "
+            "in this checkout, the gate suite once per issue); commits nothing, opens no PR"
         ),
     )
     p_sr.add_argument("path", help="path to project.yaml")
@@ -9849,7 +9849,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr.add_argument("--swarm-id", default=None, help="custom swarm ID")
     _add_staffing_args(p_sr, reviewers=True)
     p_sr.add_argument(
-        "--max-workers", type=_positive_int, default=4, help="maximum parallel workers (default: 4)"
+        "--max-workers",
+        type=_positive_int,
+        default=4,
+        help="parallel workers with their own worktree (default: 4); a dry run runs one at a time",
     )
     p_sr.add_argument("--live", action="store_true", help="run mutating live execution")
     p_sr.add_argument("--tree", action="store_true", help="render visual DAG tree")
@@ -9859,7 +9862,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sl = sub.add_parser(
         "swarm-land",
         help=(
-            "EXPERIMENTAL: merge a wave's cluster branches into the base with git merge "
+            "EXPERIMENTAL: merge a wave's cluster branches into the local base with git merge "
             "--no-ff under the merge lock, holding any cluster without review evidence"
         ),
     )
