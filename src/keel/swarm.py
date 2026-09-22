@@ -1035,9 +1035,12 @@ def save_swarm_state(state: SwarmRunState, root: str | Path = ".") -> Path:
     state_dir = resolve_swarm_state_dir(root)
     file_path = state_dir / f"{state.swarm_id}.json"
     # Atomic + durable, like the checkpoint and activity records. This was a bare
-    # `write_text`: the same torn-file-on-interruption bug #872 fixed in its two
-    # named files and never reached here, because each writer carried its own
-    # copy of the dance instead of sharing one (#932).
+    # `write_text`: the same torn-file-on-interruption bug #869 fixed in its two
+    # named files — `checkpoint.py` and `activity.py` — and never reached here,
+    # because each writer carried its own copy of the dance instead of sharing
+    # one. The shared `write_text_atomic` arrived with #932. (This comment said
+    # #872 until #1290; that issue is an unrelated `gh api` fix, and a reader
+    # sent there finds nothing about torn files.)
     workspace.write_text_atomic(file_path, json.dumps(state.to_dict(), indent=2))
     return file_path
 

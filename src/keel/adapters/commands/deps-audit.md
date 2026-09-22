@@ -1,6 +1,6 @@
 ---
 description: On-demand dependency security + licence audit across the project's ecosystems; classify security vs. routine, append findings to today's tracking issue, and route fixes to keel:ship.
-argument-hint: "[<ecosystem>|all] [--severity low|moderate|high|critical] [--open-issues] [--dry-run]"
+argument-hint: "[<ecosystem>|all] [--severity low|moderate|high|critical] [--security-only] [--open-issues] [--dry-run]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Edit
 ---
 
