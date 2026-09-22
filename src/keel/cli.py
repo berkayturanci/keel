@@ -9870,7 +9870,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr.add_argument(
         "--max-workers", type=_positive_int, default=4, help="maximum parallel workers (default: 4)"
     )
-    p_sr.add_argument("--live", action="store_true", help="run mutating live execution")
+    p_sr.add_argument(
+        "--live",
+        action="store_true",
+        help="refused: live workers could not pass keel ship --live's consent gate (#1281)",
+    )
     p_sr.add_argument("--tree", action="store_true", help="render visual DAG tree")
     p_sr.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sr.set_defaults(func=_cmd_swarm_run)

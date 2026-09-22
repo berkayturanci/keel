@@ -265,6 +265,11 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
 ```
 
 ### Worktree Lifecycle & Isolation
+
+> While `swarm-run --live` is refused ([#1269](https://github.com/berkayturanci/keel/issues/1269)),
+> no CLI path creates worktrees: this lifecycle is the library's
+> (`run_swarm_orchestration(dry_run=False)`), described so the next change starts from what it does.
+
 1. **Creation**: Dedicated worktrees are branched from the local `main` onto
    `swarm/<swarm_id>/<cluster_id>`.
 2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
