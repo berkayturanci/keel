@@ -212,7 +212,7 @@
       badge: "Open Standard",
       desc: "Reach GitHub through a GitHub MCP server instead of the gh CLI: keel selects the mcp transport when github-mcp is available and an authenticated gh is not.",
       note: "keel consumes MCP for its GitHub access; it does not expose an MCP server of its own. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/github-transport.md' target='_blank' rel='noopener'>GitHub transport</a>.",
-      cmd: "keel ship .keel/project.yaml --transport mcp",
+      cmd: "keel capabilities --project .keel/project.yaml",
       logo: "logos/mcp.svg"
     },
     {
