@@ -5,8 +5,10 @@ invocation per command — rendered on the commands page. Nothing checked it aga
 commands themselves, and it had drifted badly: 12 of 17 entries used a flag the command
 does not define. Six passed a value as `--issue` / `--pr` / `--issues` where the command
 takes a **positional** argument; `--comments` should have been `--review-comments`; and
-`--route-to-ship`, `--apply`, `--until`, `--propose-fix` and `--security-only` did not
-exist anywhere in the repository.
+`--route-to-ship`, `--apply`, `--until` and `--propose-fix` do not exist anywhere in the
+repository. (`/keel:deps-audit --security-only` was a different case: the flag is real —
+documented in the adapter body and implemented — but its `argument-hint` omits it, so the
+example was moved to one the hint declares.)
 
 The earlier hand check missed it by asking the wrong question — whether a flag token
 existed *somewhere* in keel's CLI, rather than on the command being illustrated. A flag
