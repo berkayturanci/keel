@@ -44,7 +44,7 @@ _FLAG_RE = re.compile(r"--[a-z][a-z0-9-]*")
 # `--jury-advisory` unchecked, so the whole head of the bullet is read — up to the
 # em dash that opens the prose, which is where a quoted flag would be someone
 # else's.
-_BULLET_HEAD_RE = re.compile(r"^- (`--[a-z][a-z0-9-]*`[^\n]*)$", re.MULTILINE)
+_BULLET_HEAD_RE = re.compile(r"^- (`--[a-z][a-z0-9-]*[^\n]*)$", re.MULTILINE)
 _BACKTICKED_FLAG_RE = re.compile(r"`(--[a-z][a-z0-9-]*)")
 
 
@@ -56,6 +56,15 @@ def site_examples() -> dict[str, str]:
     return dict(_ENTRY_RE.findall(block.group(1)))
 
 
+def _flags_in_bullet_head(head: str) -> set[str]:
+    """The flags a documentation bullet declares as the command's own.
+
+    Everything up to the em dash is the declaration; past it is prose, where a
+    backticked flag belongs to whatever `keel …` line the prose is describing.
+    """
+    return set(_BACKTICKED_FLAG_RE.findall(head.split("\u2014")[0]))
+
+
 def documented_flags(command: str) -> set[str]:
     """The flags the adapter body describes as this command's own."""
     source = COMMANDS_DIR / f"{command}.md"
@@ -63,7 +72,7 @@ def documented_flags(command: str) -> set[str]:
         return set()
     flags: set[str] = set()
     for head in _BULLET_HEAD_RE.findall(source.read_text(encoding="utf-8")):
-        flags.update(_BACKTICKED_FLAG_RE.findall(head.split("\u2014")[0]))
+        flags.update(_flags_in_bullet_head(head))
     return flags
 
 
@@ -160,6 +169,26 @@ class HintsDeclareEveryDocumentedFlag(unittest.TestCase):
             5,
             "no adapter documents a flag as '- `--flag`'; the convention moved and "
             "this check no longer reads anything",
+        )
+
+    def test_a_flag_documented_with_its_parameter_is_read(self):
+        """Round 2 finding, and a fix that made things worse before it made them
+        better. Requiring a closing backtick straight after the flag name excluded
+        every bullet of the form `- ``--role <label>`` — …`, which is most of them:
+        15 flags across 6 adapters, `--role` among them — the exact flag this branch
+        claimed to have pinned."""
+        flags = documented_flags("ship")
+        for flag in ("--role", "--delegate", "--review-delegate", "--effort", "--team"):
+            with self.subTest(flag=flag):
+                self.assertIn(flag, flags)
+
+    def test_a_flag_quoted_in_the_prose_is_not_claimed(self):
+        """The counterweight to reading the whole head: the bullets describe keel's
+        CLI in their prose, and those flags belong to `keel …`, not to the slash
+        command. The em dash is the boundary."""
+        self.assertEqual(
+            _flags_in_bullet_head("- `--dry-run` \u2014 does nothing; see `keel gc --scratch`"),
+            {"--dry-run"},
         )
 
     def test_a_bullet_heading_several_alternatives_is_read_whole(self):
