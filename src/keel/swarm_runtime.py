@@ -171,8 +171,14 @@ def run_swarm_orchestration(
     max_workers: int = 4,
     runner: SubprocessRunner | None = None,
     create_worktrees: bool = True,
+    base_branch: str,
 ) -> SwarmRunResult:
-    """Execute the waves and clusters of a SwarmPlan with fail-soft isolation."""
+    """Execute the waves and clusters of a SwarmPlan with fail-soft isolation.
+
+    ``base_branch`` is required, as it is for ``land_wave_clusters``: the worktrees
+    are branched from it and the wave is later landed onto it, and a default of
+    ``main`` branched a ``develop`` project's clusters off the wrong history (#1262).
+    """
     root_path = Path(root).resolve()
     workers_list: list[SwarmWorkerStatus] = []
 
@@ -235,7 +241,9 @@ def run_swarm_orchestration(
 
             if create_worktrees and not dry_run:
                 branch_name = f"swarm/{plan.swarm_id}/{c_id}"
-                ok = create_swarm_worktree(root_path, wt_path, branch_name, runner=runner)
+                ok = create_swarm_worktree(
+                    root_path, wt_path, branch_name, base_branch=base_branch, runner=runner
+                )
                 if not ok or not wt_path.exists():
                     return c_id, {
                         "issue": issue_n,

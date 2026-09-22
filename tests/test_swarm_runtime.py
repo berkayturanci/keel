@@ -177,6 +177,7 @@ class TestSwarmOrchestration(unittest.TestCase):
                 max_workers=2,
                 runner=mock_runner,
                 create_worktrees=False,
+                base_branch="main",
             )
 
             self.assertEqual(result.swarm_id, "swarm-orch-test")
@@ -208,6 +209,7 @@ class TestSwarmOrchestration(unittest.TestCase):
                 max_workers=1,
                 runner=mock_runner,
                 create_worktrees=True,
+                base_branch="main",
             )
 
             self.assertEqual(result.status, "success")
@@ -232,6 +234,7 @@ class TestSwarmOrchestration(unittest.TestCase):
                 max_workers=1,
                 runner=mock_runner,
                 create_worktrees=True,
+                base_branch="main",
             )
 
             self.assertEqual(result.status, "failed")
@@ -261,6 +264,7 @@ class TestSwarmOrchestration(unittest.TestCase):
                 ".keel/project.yaml",
                 root=tmpdir,
                 dry_run=True,
+                base_branch="main",
             )
             self.assertEqual(result.status, "success")
             self.assertEqual(result.total_workers, 0)
@@ -296,6 +300,7 @@ class TestSwarmOrchestration(unittest.TestCase):
                     ".keel/project.yaml",
                     root=tmpdir,
                     dry_run=True,
+                    base_branch="main",
                 )
             self.assertEqual(result.status, "failed")
             self.assertEqual(result.failed_count, 1)
@@ -322,6 +327,58 @@ class TestSwarmPureStateHelpers(unittest.TestCase):
         st_updated = update_worker_state(st, "c1", status="passed")
         self.assertEqual(st_updated.workers[0].status, "passed")
         self.assertEqual(st_updated.workers[1].status, "queued")
+
+
+class TheWorktreesBranchFromTheConfiguredBase(unittest.TestCase):
+    """#1262: the worktree was always branched from `main` while landing targets
+    `config.base_branch`, so a `develop` project's clusters grew on the wrong history."""
+
+    def test_the_worktree_is_branched_from_the_base_it_is_given(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = build_swarm_plan(
+                [IssueScope(issue=401, title="A", predicted_files=("src/a.py",))],
+                swarm_id="swarm-develop",
+            )
+            adds: list[list[str]] = []
+
+            def runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "worktree" in cmd and "add" in cmd:
+                    adds.append(cmd)
+                    Path(cmd[5]).mkdir(parents=True, exist_ok=True)
+                return CommandResult(ok=True, code=0, output="ok")
+
+            run_swarm_orchestration(
+                plan,
+                ".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                runner=runner,
+                create_worktrees=True,
+                base_branch="develop",
+            )
+            self.assertEqual(len(adds), 1)
+            self.assertEqual(adds[0][-1], "develop")
+
+    def test_there_is_no_silent_default(self):
+        """Required, as it is for `land_wave_clusters`: a default is how `main` crept in."""
+        plan = build_swarm_plan([], swarm_id="swarm-none")
+        with self.assertRaises(TypeError):
+            run_swarm_orchestration(plan, ".keel/project.yaml", dry_run=True)  # type: ignore[call-arg]
+
+    def test_swarm_run_hands_the_configured_base_down(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            text = Path(".keel/project.yaml").read_text(encoding="utf-8")
+            self.assertIn("base_branch: main\n", text)
+            config = Path(tmpdir) / "project.yaml"
+            config.write_text(
+                text.replace("base_branch: main\n", "base_branch: develop\n"), encoding="utf-8"
+            )
+            with patch("keel.swarm_runtime.run_swarm_orchestration") as orchestrate:
+                orchestrate.return_value.status = "success"
+                orchestrate.return_value.to_dict.return_value = {}
+                with redirect_stdout(io.StringIO()):
+                    main(["swarm-run", str(config), "--root", tmpdir, "--issues", "7", "--json"])
+            self.assertEqual(orchestrate.call_args.kwargs.get("base_branch"), "develop")
 
 
 class TestSwarmRunCLI(unittest.TestCase):

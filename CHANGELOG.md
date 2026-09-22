@@ -9,6 +9,10 @@ All notable changes to keel are documented here. The format follows
 ### Changed
 - **Questions have a home: GitHub Discussions is enabled** (#1296 follow-up). #1296 removed the issue chooser's "Ask a Question" link because it pointed at Discussions while Discussions was disabled, which sent every visitor who clicked it to a 404. Discussions is now enabled, and the chooser links to its Q&A category, alongside the docs and the private security-report policy.
 
+### Fixed
+- **Swarm worktrees branch from the configured base** (#1262). `create_swarm_worktree` defaulted to `main` and `swarm-run` never passed `config.base_branch`, while `swarm-land` lands onto the configured base — so a `develop` or `master` project's clusters were built on the wrong history. `run_swarm_orchestration` now requires `base_branch`, as `land_wave_clusters` already did, and `swarm-run` passes the configured one.
+- **`swarm-run --help` and `swarm-land --help` say what the commands do** (#1263). `swarm-land` advertised "sequential funneling", which no invocation can select (the CLI passes no PR diff map, so every wave lands as a direct batch — wiring the funnel is #1266); `swarm-run` described parallel execution with no hint that it commits nothing and runs the gate suite once per issue. Both are marked experimental and describe the behaviour. Swarm stays experimental.
+
 ## [1.24.1] - 2026-09-22
 
 ### Fixed

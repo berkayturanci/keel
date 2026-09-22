@@ -7359,6 +7359,7 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
         root=args.root,
         dry_run=not args.live,
         max_workers=args.max_workers,
+        base_branch=config.base_branch,
     )
 
     if args.json:
@@ -9817,7 +9818,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sr = sub.add_parser(
         "swarm-run",
-        help="execute parallel swarm workers in isolated worktrees across DAG waves",
+        help=(
+            "EXPERIMENTAL: run a keel ship assessment per cluster in isolated worktrees "
+            "(the gate suite runs once per issue); commits nothing and opens no PR (#1281)"
+        ),
     )
     p_sr.add_argument("path", help="path to project.yaml")
     p_sr.add_argument("--root", default=".", help="repo root for git, gates + extensions")
@@ -9854,7 +9858,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sl = sub.add_parser(
         "swarm-land",
-        help="land a wave of clusters via direct batch landing or sequential funneling",
+        help=(
+            "EXPERIMENTAL: merge a wave's cluster branches into the base with git merge "
+            "--no-ff under the merge lock, holding any cluster without review evidence"
+        ),
     )
     p_sl.add_argument("path", help="path to project.yaml")
     p_sl.add_argument("--root", default=".", help="repo root for git, gates + extensions")
