@@ -42,8 +42,21 @@ _FLAG_RE = re.compile(r"--[a-z][a-z0-9-]*")
 # One bullet can head several alternatives: "- `--jury` / `--no-jury` /
 # `--jury-advisory` — …". Reading only the first left `--no-jury` and
 # `--jury-advisory` unchecked, so the whole head of the bullet is read — up to the
-# em dash that opens the prose, which is where a quoted flag would be someone
+# separator that opens the prose, which is where a quoted flag would be someone
 # else's.
+#
+# **What this deliberately does not read**, so a reader does not assume more coverage
+# than there is:
+#
+# - A bullet opening `- **`--flag`**`. Two adapters declare that way (`stale-prs`,
+#   `triage`), and both flags are declared — but `- **`--head-sha` is the head that
+#   merged**` (`ship.md:1389`) is the *same shape* around a `keel capture-land` flag,
+#   not a slash-command one. Widening to it was measured and claimed two CLI flags
+#   immediately, so the shape stays out.
+# - Adapters that document their flags in prose or a table rather than a bullet list.
+#   11 of the 17 yield no flags at all, `overnight`, `swarm` and `work-block` among
+#   them, and their hints are therefore held to nothing here. Closing that gap means
+#   a documentation convention, not a wider regex.
 _BULLET_HEAD_RE = re.compile(r"^- (`--[a-z][a-z0-9-]*[^\n]*)$", re.MULTILINE)
 _BACKTICKED_FLAG_RE = re.compile(r"`(--[a-z][a-z0-9-]*)")
 
@@ -56,13 +69,19 @@ def site_examples() -> dict[str, str]:
     return dict(_ENTRY_RE.findall(block.group(1)))
 
 
+# The separator between a bullet's declaration and its prose. Most adapters use an
+# em dash; three (`coverage`, `deps-audit`, `flake-audit`) use an arrow on their
+# `--dry-run` bullet. Splitting on only one of them read a whole line as declaration.
+_BULLET_SEPARATORS = re.compile(r"[\u2014\u2192]")
+
+
 def _flags_in_bullet_head(head: str) -> set[str]:
     """The flags a documentation bullet declares as the command's own.
 
-    Everything up to the em dash is the declaration; past it is prose, where a
+    Everything up to the separator is the declaration; past it is prose, where a
     backticked flag belongs to whatever `keel …` line the prose is describing.
     """
-    return set(_BACKTICKED_FLAG_RE.findall(head.split("\u2014")[0]))
+    return set(_BACKTICKED_FLAG_RE.findall(_BULLET_SEPARATORS.split(head, 1)[0]))
 
 
 def documented_flags(command: str) -> set[str]:
@@ -185,11 +204,23 @@ class HintsDeclareEveryDocumentedFlag(unittest.TestCase):
     def test_a_flag_quoted_in_the_prose_is_not_claimed(self):
         """The counterweight to reading the whole head: the bullets describe keel's
         CLI in their prose, and those flags belong to `keel …`, not to the slash
-        command. The em dash is the boundary."""
-        self.assertEqual(
-            _flags_in_bullet_head("- `--dry-run` \u2014 does nothing; see `keel gc --scratch`"),
-            {"--dry-run"},
-        )
+        command. The separator is the boundary.
+
+        The first version of this test could not fail: its fixture wrote the prose
+        flag as `` `keel gc --scratch` ``, where no backtick sits immediately before
+        `--scratch`, so the flag regex missed it whether or not the split ran. A
+        counterweight that passes with the thing it guards removed is the #1289 class
+        this very check exists to catch — found by the lead review, inside the check.
+        The prose flag is now its own code span, which is the only shape that reaches
+        the boundary."""
+        for separator in ("\u2014", "\u2192"):
+            with self.subTest(separator=separator):
+                self.assertEqual(
+                    _flags_in_bullet_head(
+                        f"- `--dry-run` {separator} does nothing; pass `--scratch` to `keel gc`"
+                    ),
+                    {"--dry-run"},
+                )
 
     def test_a_bullet_heading_several_alternatives_is_read_whole(self):
         """Round 1 finding. `- ``--jury`` / ``--no-jury`` / ``--jury-advisory`` — …`
