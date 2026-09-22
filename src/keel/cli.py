@@ -7559,6 +7559,15 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
                 config=config,
             )
         )
+    if not scopes:
+        # With no scope there is no plan and so no wave; the command used to report
+        # `status: failed` for that, the same words as every cluster failing (#1279).
+        print(
+            "swarm-land needs the wave's issues: pass --issues/--issue (or the scope "
+            "flags) the run was planned with",
+            file=sys.stderr,
+        )
+        return 1
 
     overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(

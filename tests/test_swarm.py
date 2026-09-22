@@ -53,6 +53,49 @@ class TestSwarmPathExtraction(unittest.TestCase):
         self.assertEqual(_normalize_path(" 'website/index.html' "), "website/index.html")
         self.assertEqual(_normalize_path("src\\keel\\swarm.py"), "src/keel/swarm.py")
 
+    def test_normalizing_twice_changes_nothing(self):
+        """#1279: the plan normalises twice, and a second pass ate the `)` the first
+        exposed. Every spelling here must be a fixed point after one pass."""
+        import itertools
+
+        cores = [
+            "docs/(draft)/",
+            "(x)/y",
+            "src/a.py",
+            ".github/workflows/ci.yml",
+            "a/(b",
+            "((a/b))",
+        ]
+        wraps = [("", ""), ("(", ")"), ("`", "`"), ("'", "'."), ("", ","), ("", ");"), (" ", " ")]
+        for core, (head, tail) in itertools.product(cores, wraps):
+            once = _normalize_path(head + core + tail)
+            with self.subTest(raw=head + core + tail):
+                self.assertEqual(_normalize_path(once), once)
+
+    def test_brackets_that_belong_to_the_path_are_kept(self):
+        self.assertEqual(_normalize_path("docs/(draft)/"), "docs/(draft)")
+        self.assertEqual(_normalize_path("(x)/y"), "(x)/y")
+        self.assertEqual(_normalize_path("(src/a.py)"), "src/a.py")
+        self.assertEqual(_normalize_path("src/a.py);"), "src/a.py")
+
+    def test_a_dot_directory_keeps_its_dot(self):
+        """A leading dot was stripped as punctuation: `.github/…` became `github/…`."""
+        self.assertEqual(_normalize_path(".github/workflows/ci.yml"), ".github/workflows/ci.yml")
+        self.assertEqual(_normalize_path("`.keel/project.yaml`."), ".keel/project.yaml")
+        self.assertEqual(
+            extract_predicted_paths("Edit .github/workflows/ci.yml."), [".github/workflows/ci.yml"]
+        )
+
+    def test_a_bracketed_directory_overlaps_the_files_inside_it(self):
+        """The scenario: stored as `docs/(draft)` but matched as `docs/(draft`, so a
+        second issue under that directory was declared orthogonal to the first."""
+        a = extract_issue_scope(1, title="", body="", labels=(), declared_files=["docs/(draft)/"])
+        b = extract_issue_scope(
+            2, title="", body="", labels=(), declared_files=["docs/(draft)/x.md"]
+        )
+        plan = build_swarm_plan([a, b], swarm_id="swarm-draft")
+        self.assertEqual(len(plan.waves), 2, "the two issues share a directory and must serialise")
+
     def test_extract_predicted_paths_backticks_and_text(self):
         text = """
         Let's modify `src/keel/swarm.py` and `tests/test_swarm.py`.

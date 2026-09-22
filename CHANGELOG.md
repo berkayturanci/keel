@@ -9,6 +9,9 @@ All notable changes to keel are documented here. The format follows
 ### Changed
 - **Questions have a home: GitHub Discussions is enabled** (#1296 follow-up). #1296 removed the issue chooser's "Ask a Question" link because it pointed at Discussions while Discussions was disabled, which sent every visitor who clicked it to a 404. Discussions is now enabled, and the chooser links to its Q&A category, alongside the docs and the private security-report policy.
 
+### Fixed
+- **Swarm scope paths keep their shape** (#1279, items 2 and 5). `_normalize_path` stripped a leading dot as punctuation, so `.github/workflows/ci.yml` and `.keel/project.yaml` were planned as `github/…` and `keel/…`; and it was not idempotent — the plan normalises twice, and the second pass ate the `)` the first exposed (`docs/(draft)/` → `docs/(draft)` → `docs/(draft`), so a second issue under that directory was declared orthogonal to the first and would have run beside it. A dot is now trailing punctuation only, brackets go only when they wrap the whole path or are unbalanced, and one pass is a fixed point. `swarm-land` with no issue list now says it needs one instead of reporting `status: failed`, the same words as a wave whose every cluster failed. Swarm stays experimental.
+
 ## [1.24.1] - 2026-09-22
 
 ### Fixed

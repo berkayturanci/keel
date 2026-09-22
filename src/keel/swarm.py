@@ -309,8 +309,43 @@ class SwarmLandingResult:
         }
 
 
+#: Punctuation prose puts around a path. A dot is trailing-only: a leading one is
+#: part of `.github/…` or `.keel/…`, and stripping it made those `github/…` (#1279).
+_PATH_LEAD = "`'\" \t\r\n,;:"
+_PATH_TRAIL = _PATH_LEAD + "."
+
+
+def _wraps(text: str) -> bool:
+    """Whether the first `(` of ``text`` is closed by its last character."""
+    depth = 0
+    for i, ch in enumerate(text):
+        depth += (ch == "(") - (ch == ")")
+        if depth == 0:
+            return i == len(text) - 1
+    return False
+
+
+def _strip_path_punctuation(p: str) -> str:
+    """Prose punctuation off both ends; brackets only when they wrap the whole path
+    or are unbalanced — `(src/a.py)` loses them, `docs/(draft)/` keeps them."""
+    while True:
+        before = p
+        p = p.lstrip(_PATH_LEAD).rstrip(_PATH_TRAIL)
+        if p.startswith("(") and p.endswith(")") and _wraps(p):
+            p = p[1:-1]
+        elif p.startswith("(") and p.count("(") > p.count(")"):
+            p = p[1:]
+        elif p.endswith(")") and p.count(")") > p.count("("):
+            p = p[:-1]
+        if p == before:
+            return p
+
+
 def _normalize_path(p: str) -> str:
-    cleaned = p.strip("`'\" \t\r\n.,;:()")
+    """One canonical spelling of a path, the same however often it is applied: the
+    plan normalises twice, and a second pass used to eat the `)` the first exposed
+    (`docs/(draft)/` → `docs/(draft)` → `docs/(draft`, #1279)."""
+    cleaned = _strip_path_punctuation(p)
     cleaned = cleaned.replace("\\", "/").removeprefix("./").removeprefix("/")
     return posixpath.normpath(cleaned) if cleaned else ""
 

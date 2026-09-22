@@ -1716,8 +1716,8 @@ class TestSwarmLandCLI(unittest.TestCase):
             for f in state_dir.glob("*.json"):
                 f.unlink()
 
-            buf_empty = io.StringIO()
-            with redirect_stdout(buf_empty):
+            buf_empty, err_empty = io.StringIO(), io.StringIO()
+            with redirect_stdout(buf_empty), redirect_stderr(err_empty):
                 code_empty = main(
                     [
                         "swarm-land",
@@ -1727,6 +1727,9 @@ class TestSwarmLandCLI(unittest.TestCase):
                     ]
                 )
             self.assertEqual(code_empty, 1)
+            # #1279: said `status: failed` like a wave whose clusters all failed.
+            self.assertIn("swarm-land needs the wave's issues", err_empty.getvalue())
+            self.assertNotIn("status", buf_empty.getvalue())
 
             with tempfile.TemporaryDirectory() as tmp_fresh:
                 buf_no_state = io.StringIO()
@@ -1771,6 +1774,8 @@ class TestSwarmLandCLI(unittest.TestCase):
                             tmpdir,
                             "--swarm-id",
                             "swarm-part",
+                            "--issues",
+                            "714",
                             "--live",
                         ]
                     )
