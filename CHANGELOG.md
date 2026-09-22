@@ -6,6 +6,14 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The PyPI README absolutizer handles the two forms #1261 left open, and its guards stop blaming it for correct output** (#1294). Neither form is in today's README; both failed the publish tests loudly when planted.
+  - **A `data:` candidate inside `srcset`** kept its own comma: candidates are now parsed as the HTML standard does — a URL is the run of non-whitespace, and a comma ends it only at the end of that run — instead of splitting on every comma, which cut `data:image/png;base64,AAAA` in two and rewrote `AAAA` as a path.
+  - **An `<a>` whose `href` sits on a later line** is rewritten again: the rewrite is scoped to `<a>`, and the script reads a line at a time, so an `<a` left open at the end of a line is now carried to the next, up to the `>` that closes it. A non-anchor tag across lines is still left alone.
+  - A line opening with inline code (```` ```x``` ````) is no longer taken for a fence — CommonMark forbids a backtick in a backtick fence's info string — and `[l]:docs/a.md`, with no space after the colon, is a definition too.
+  - **The real-README guards** are functions now, each mirroring the script's rules (any scheme or `//host` is external, a `[^…]` label is a footnote, only a quoted title may follow a definition, only an `<a>` tag's `href` is a link), and each is tested both ways: silent on what the script correctly leaves alone, loud on what stays relative. A GFM footnote or a `data:` image in the README used to fail them with a message blaming the script. The mangled-target guard also catches a protocol-relative target prefixed as a path (`…/main//cdn/…`), and no longer lists each hit twice.
+  - Reverting any of the nine rules — five in the script, four in the guards — fails `tests/test_absolutize_readme.py` as an assertion.
+
 ### Changed
 - **Questions have a home: GitHub Discussions is enabled** (#1296 follow-up). #1296 removed the issue chooser's "Ask a Question" link because it pointed at Discussions while Discussions was disabled, which sent every visitor who clicked it to a 404. Discussions is now enabled, and the chooser links to its Q&A category, alongside the docs and the private security-report policy.
 
