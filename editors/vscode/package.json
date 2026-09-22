@@ -1,7 +1,7 @@
 {
   "name": "keel-vscode",
   "displayName": "Keel Workflow Core",
-  "description": "Multi-agent workflow core companion for VS Code and Cursor — status bar merge window indicator, live swarm activity, and command palette integration.",
+  "description": "Multi-agent workflow core companion for VS Code and Cursor — status bar merge window indicator, swarm activity, and command palette integration.",
   "version": "1.8.0",
   "publisher": "berkayturanci",
   "icon": "icon.png",
@@ -43,7 +43,7 @@
       },
       {
         "command": "keel.swarm",
-        "title": "Keel: Run Swarm on Backlog (/keel:swarm)",
+        "title": "Keel: Plan a Swarm over the Backlog (experimental)",
         "category": "Keel"
       },
       {

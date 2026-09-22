@@ -130,9 +130,9 @@
       name: "Hermes Agent",
       category: "assistants",
       badge: "Autonomous Agent",
-      desc: "Lightweight autonomous agent runner dispatched across parallel Swarm isolated worktrees.",
-      cmd: "keel swarm-run .keel/project.yaml --issues 12,15 --delegate hermes",
-      note: "Needs a <code>knobs.delegate_profiles.hermes</code> entry naming the agent's binary — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
+      desc: "Lightweight autonomous agent runner. Usable as a delegate on any keel command; the swarm fan-out it was written for is experimental.",
+      cmd: "keel ship .keel/project.yaml --issue 12 --delegate hermes",
+      note: "Needs a <code>knobs.delegate_profiles.hermes</code> entry naming the agent's binary — keel ships no profile for it. The swarm variant of this command (<code>keel swarm-run … --delegate hermes</code>) is <b>experimental</b> and lands nothing yet — see <a href='https://github.com/berkayturanci/keel/issues/1281' target='_blank' rel='noopener'>#1281</a>. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/hermes.png"
     },
 
@@ -234,9 +234,10 @@
       id: "git-worktrees",
       name: "Swarm Worktrees",
       category: "skills",
-      badge: "Concurrency Engine",
-      desc: "Zero dirty-checkout collisions: parallel multi-agent workers run in isolated git worktrees.",
-      cmd: "keel swarm-plan .keel/project.yaml --issues 101,102",
+      badge: "Experimental",
+      desc: "Parallel multi-agent workers in isolated git worktrees. Planning runs; a live run lands nothing yet.",
+      cmd: "keel swarm-plan .keel/project.yaml --issues 101,102 --tree",
+      note: "<b>Experimental.</b> The planning commands work; a live swarm produces no commits and no pull requests. See <a href='https://github.com/berkayturanci/keel/issues/1281' target='_blank' rel='noopener'>#1281</a>.",
       logo: "logos/swarm.svg"
     },
     {

@@ -13,7 +13,8 @@ Turn coding agents into work owners directly inside **VS Code** and **Cursor**.
 - ⚡ **Real-Time Step Tracker**: Displays currently active backbone steps (`s4 implement`, `s7 review`) and active issue numbers from `.keel/activity/`.
 - ⌘ **Command Palette Integration**:
   - `Keel: Ship Issue End-to-End (/keel:ship)`
-  - `Keel: Run Swarm on Backlog (/keel:swarm)`
+  - `Keel: Plan a Swarm over the Backlog (experimental)` — runs `swarm-plan --tree` only; a live
+    swarm lands nothing yet ([#1281](https://github.com/berkayturanci/keel/issues/1281))
   - `Keel: Check Merge Window Status`
   - `Keel: Run Command Gates (Test & Lint)`
   - `Keel: View Token & USD Cost Report`

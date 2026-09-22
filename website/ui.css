@@ -322,10 +322,10 @@ pre.code .n { color: var(--brass-2); }
 .cmd-note { margin-top: 1.2rem; font-size: .82rem; color: var(--faint); font-style: italic; overflow-wrap: anywhere; }
 .cmp-note { margin: .9rem 0 0; font-size: .82rem; color: var(--faint); line-height: 1.55; overflow-wrap: anywhere; }
 /* An experimental/unsupported banner above a section that still describes the design. */
-.warn-note { margin: 0 0 1rem; padding: .8rem 1rem; font-size: .86rem; line-height: 1.65;
+.view-head .warn-note, .warn-note { margin: 0 0 1rem; padding: .8rem 1rem; font-size: .86rem; line-height: 1.65;
   border-left: 3px solid #d97706; border-radius: 0 6px 6px 0;
   background: color-mix(in srgb, #d97706 10%, transparent); color: var(--text); }
-.warn-note strong { color: var(--text); }
+.view-head .warn-note strong, .warn-note strong { color: var(--text); }
 .warn-note code { font-size: .92em; }
 
 /* grid helpers */
