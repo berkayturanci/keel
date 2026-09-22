@@ -16,7 +16,7 @@
 > **Keel turns coding agents into work owners.** It is a project-neutral,
 > multi-agent **workflow backbone** that drives a unit of work — a GitHub issue —
 > from intake to done: understand readiness, branch, implement, wait on CI, review,
-> test, merge safely, close, and run capture hooks. Projects never fork the
+> test, merge safely, run capture hooks, and close. Projects never fork the
 > backbone: they set per-project **values** in `project.yaml` and snap their own
 > **Lego pieces** into named extension slots.
 
