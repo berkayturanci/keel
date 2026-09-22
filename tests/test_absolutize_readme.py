@@ -77,14 +77,15 @@ def relative_anchor_hrefs(text: str) -> list[str]:
     """An `<a>` tag's relative `href`, including one on a later line of the tag.
 
     Bounded the way CommonMark bounds an inline tag: inline code is text, not HTML,
-    so code spans are dropped first; and a tag cannot span a blank line. Unbounded,
+    so code spans are dropped first; a tag cannot span a blank line; and a tag's
+    attributes cannot contain `<`, so the match cannot reach into the next tag. Unbounded,
     this guard shared the script's leak exactly — an `<a` mentioned in prose made
     the next `<link href>` an anchor — so the two failed together (#1300 review).
     """
     text = re.sub(r"(`+)(?:(?!\1).)+?\1", "", text)
     return [
         v
-        for v in re.findall(r'<a\b(?:(?!\n[ \t]*\n)[^>])*?(?<![-\w])href="([^"]+)"', text)
+        for v in re.findall(r'<a\b(?:(?!\n[ \t]*\n)[^><])*?(?<![-\w])href="([^"]+)"', text)
         if not _EXTERNAL.match(v)
     ]
 
@@ -553,6 +554,38 @@ class TheCarriedAnchorStaysInItsTag(unittest.TestCase):
     def test_the_state_does_not_survive_a_code_block(self):
         text = 'Mentioning <a\n```python\ncode\n```\n<div href="docs/leak.html">\n'
         self.assertEqual(absolutize(text), text)
+
+    def test_a_raw_anchor_word_in_prose_does_not_reach_the_next_tag(self):
+        """#1300 lead, round 2: an attribute list cannot contain `<`, so in
+        "wrap it in an <a tag" followed by a `<link>` the `<a` was never a tag."""
+        text = 'Wrap it in an <a tag\n<link rel="stylesheet" href="docs/a.css">\n'
+        self.assertEqual(absolutize(text), text)
+        self.assertEqual(relative_anchor_hrefs(text), [])
+
+    def test_the_guard_does_not_blame_a_fence_the_script_respected(self):
+        text = 'an <a tag\n```\ncode\n```\n<link href="docs/a.css">\n'
+        self.assertEqual(absolutize(text), text)
+        self.assertEqual(relative_anchor_hrefs(text), [])
+
+    def test_nothing_that_opened_the_state_reaches_another_element(self):
+        """#1300 gate, round 2: three more ways to open the state — a code span
+        across lines, a raw `<a` followed by an element on the next line, an HTML
+        comment. Whatever opened it, a new `<` before the `>` ends it, so none of
+        them reaches the `<link>`."""
+        cases = {
+            "code span across lines": (
+                'Mentioning `<a\ntag` and <link rel="stylesheet" href="docs/s.css">\n'
+            ),
+            "raw prose": (
+                'The <a\nelement and its <link rel="stylesheet" href="docs/s.css"> usage.\n'
+            ),
+            "comment": (
+                '<!-- We can write <a\nand <link rel="stylesheet" href="docs/s.css"> here -->\n'
+            ),
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                self.assertEqual(absolutize(text), text)
 
     def test_the_hand_formatted_hero_still_works(self):
         """The counterweight: the bounds must not undo #1294."""

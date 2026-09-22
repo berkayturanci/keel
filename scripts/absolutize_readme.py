@@ -96,7 +96,9 @@ _HTML_HREF = re.compile(rf'(<a\b[^>]*?(?<![-\w])href="){_REL}([^"]+)"')
 # well-formed blob URL (#1300 review).
 _OPEN_ANCHOR = re.compile(r"<a\b[^>]*$")
 # Inline code is text, not HTML: a sentence documenting "`<a` tags" must not open an
-# anchor. Spans are dropped before looking for an open `<a` (#1300 review).
+# anchor. Spans on one line are dropped before looking for an open `<a`; a span that
+# runs across lines is ended by the `<` rule below, like any other stray `<a` (#1300
+# review). An `href` shown inside a code span may still be rewritten, as before #1294.
 _CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)+?\1")
 _CONTINUED_HREF = re.compile(rf'((?<![-\w])href="){_REL}([^"]+)"')
 
@@ -186,11 +188,17 @@ def absolutize(text: str) -> str:
             in_anchor = False
         if in_anchor:
             head, close, tail = line.partition(">")
-            head = _CONTINUED_HREF.sub(
-                lambda m: f'{m.group(1)}{_link_host(m.group(2))}{_path(m.group(2))}"', head
-            )
-            line = head + close + tail
-            in_anchor = not close
+            if "<" in head:
+                # A tag's attribute list cannot contain `<`, so a new `<` before the
+                # `>` means the earlier `<a` was never a tag — prose like "wrap it in
+                # an <a tag" — and this line's `href` belongs to another element.
+                in_anchor = False
+            else:
+                head = _CONTINUED_HREF.sub(
+                    lambda m: f'{m.group(1)}{_link_host(m.group(2))}{_path(m.group(2))}"', head
+                )
+                line = head + close + tail
+                in_anchor = not close
         # Images first, so a relative `![](…)` is not also seen as a link.
         line = _MD_IMAGE.sub(lambda m: f"![{m.group(1)}]({_RAW}{_path(m.group(2))})", line)
         line = _MD_LINK.sub(
