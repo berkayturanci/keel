@@ -204,11 +204,12 @@ knobs:
   segment — while a **backticked** module name is taken as a file. A bare `keel.swarm` yields
   nothing,
   but `` `keel.swarm` `` — how anyone writes a module in an issue — becomes the phantom path
-  `keel.swarm`. It suppresses the label fallback below, and it matches no real file, so it conflicts
-  with nothing except `*` and an *identical* phantom. That exception is the usual case, not the rare
-  one: the scope flags are shared by every issue, so one backticked module in the shared body gives
-  every issue the same phantom, they all conflict, and the plan serialises into one wave per
-  issue —
+  `keel.swarm`. It suppresses the label fallback below, and it matches no real file, so the only
+  things it conflicts with are `*`, a `--declared-file` glob that happens to match it, and an
+  *identical* phantom. That last one is not an edge case — it is the **only** case a multi-issue
+  plan can produce, because nothing fetches an issue's own text: one backticked module in the shared
+  body gives every issue the same phantom, they all conflict, and the plan serialises into one wave
+  per issue —
   the opposite of the isolation the path appears to describe. Measured: three issues, body
   ``touch `keel.swarm` `` → three single-cluster waves. Check what a scope actually resolved to
   with `swarm-plan --tree` rather
@@ -321,7 +322,7 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 ### Status board (`keel swarm-status`)
 Print the swarm's clusters — each one's lead, difficulty band, role, step and status
 (`queued` / `running` / `passed` / `failed` / `merged` / `held` — the full vocabulary
-`WorkerState.status` carries) — from the persisted run state. It is a one-shot render of
+`SwarmWorkerStatus.status` carries) — from the persisted run state. It is a one-shot render of
 that state, not a live feed; re-run it to refresh:
 
 ```bash
