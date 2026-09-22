@@ -27,23 +27,36 @@ def _declared() -> list[tuple[str, int]]:
 # The jobs whose matrices are the test runs. Other jobs (format, external-promises,
 # release-lockfiles) pin one Python to run a tool, and a version named only there is
 # not tested — counting them let a version leave both matrices unnoticed (#1302 gate).
+# Each job is held to the classifiers on its own: a union let 3.14 leave `test` while
+# `test-visual` still ran it, and the core package is what the classifier describes.
 _TEST_JOBS = ("test", "test-visual")
 
 
-def _tested() -> set[str]:
-    """Every `3.x` on a `python:` line inside a test job of ci.yml, comments dropped."""
+def _matrix_versions() -> dict[str, set[str]]:
+    """Each test job's `3.x` versions, read from its `strategy.matrix` block only,
+    comments dropped — a `python:` step input or env value elsewhere is not a leg."""
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    versions: set[str] = set()
-    job = None
+    found: dict[str, set[str]] = {}
+    job, matrix_indent = None, None
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].rstrip()
-        header = re.fullmatch(r"  ([\w-]+):", line)
-        if header or (line and not line.startswith(" ")):
-            job = header.group(1) if header else None
+        if not line:
             continue
-        if job in _TEST_JOBS and re.match(r"\s*python:", line):
-            versions.update(re.findall(r"3\.\d+", line))
-    return versions
+        indent = len(line) - len(line.lstrip())
+        header = re.fullmatch(r"  ([\w-]+):", line)
+        if header or indent == 0:
+            job, matrix_indent = (header.group(1) if header else None), None
+            continue
+        if job not in _TEST_JOBS:
+            continue
+        if re.fullmatch(r"\s*matrix:", line):
+            matrix_indent = indent
+            continue
+        if matrix_indent is not None and indent <= matrix_indent:
+            matrix_indent = None
+        if matrix_indent is not None and re.match(r"\s*python:", line):
+            found.setdefault(job, set()).update(re.findall(r"3\.\d+", line))
+    return found
 
 
 class TheClassifiersAreClaimsCIBacks(unittest.TestCase):
@@ -55,13 +68,20 @@ class TheClassifiersAreClaimsCIBacks(unittest.TestCase):
         self.assertEqual(minors[0], int(floor.group(1)))
         self.assertEqual(minors, list(range(minors[0], minors[-1] + 1)))
 
-    def test_both_test_matrices_are_read(self):
-        """A parser that found no test job would make the check below vacuous."""
-        self.assertGreaterEqual(_tested(), {"3.11", "3.12", "3.13"})
+    def test_every_test_job_has_a_matrix(self):
+        """A parser that found no matrix would make the check below vacuous."""
+        found = _matrix_versions()
+        for job in _TEST_JOBS:
+            with self.subTest(job):
+                self.assertGreaterEqual(found.get(job, set()), {"3.11", "3.12", "3.13"})
 
-    def test_every_classified_version_is_one_ci_runs(self):
-        untested = {version for version, _ in _declared()} - _tested()
-        self.assertEqual(untested, set(), f"classified but no CI leg runs it: {untested}")
+    def test_every_classified_version_runs_in_every_test_job(self):
+        declared = {version for version, _ in _declared()}
+        found = _matrix_versions()
+        for job in _TEST_JOBS:
+            with self.subTest(job):
+                missing = declared - found.get(job, set())
+                self.assertEqual(missing, set(), f"classified but `{job}` never runs it")
 
 
 if __name__ == "__main__":
