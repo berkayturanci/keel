@@ -160,5 +160,125 @@ class MainEntrypoint(unittest.TestCase):
             )
 
 
+class LatentFormsTheOldGuardWouldHaveMangled(unittest.TestCase):
+    """#1261, from #1260's tier-3 review. None of these forms is in today's README,
+    so none was a merge blocker — and none would have been *caught* either, which is
+    the point: the real-README guard asks whether a target still looks relative, and
+    a mangled `…/blob/main/tel:+1` starts with `https://` like any correct rewrite.
+    """
+
+    def test_a_non_http_scheme_is_left_alone(self):
+        """The old guard named only `https?://`, `#` and `mailto:`, so every other
+        scheme was treated as a relative path and prefixed."""
+        for target in ("tel:+15551234", "ftp://example.org/x", "irc://example.org"):
+            with self.subTest(target=target):
+                self.assertEqual(absolutize(f"[x]({target})\n"), f"[x]({target})\n")
+
+    def test_a_data_uri_image_is_left_alone(self):
+        src = '<img src="data:image/svg+xml;base64,AAAA">\n'
+        self.assertEqual(absolutize(src), src)
+
+    def test_a_protocol_relative_target_is_left_alone(self):
+        for line in ("[x](//cdn.example.org/a.png)\n", '<img src="//cdn.example.org/a.png">\n'):
+            with self.subTest(line=line):
+                self.assertEqual(absolutize(line), line)
+
+    def test_every_srcset_candidate_is_rewritten(self):
+        """A single prefix left the second candidate relative, so a 2x display fell
+        back to a 404."""
+        out = absolutize('<img srcset="docs/a.svg 1x, docs/b.svg 2x">\n')
+        self.assertEqual(out, f'<img srcset="{_RAW}docs/a.svg 1x, {_RAW}docs/b.svg 2x">\n')
+
+    def test_a_srcset_candidate_that_is_already_absolute_is_left_alone(self):
+        line = '<img srcset="https://cdn/a.svg 1x, docs/b.svg 2x">\n'
+        self.assertEqual(
+            absolutize(line), f'<img srcset="https://cdn/a.svg 1x, {_RAW}docs/b.svg 2x">\n'
+        )
+
+    def test_a_tilde_fence_does_not_close_a_backtick_block(self):
+        """The class #1218 fixed in `test_docs_links`: tracking only "inside a fence
+        or not" let the wrong marker flip the state, leaving the rest of the file
+        relative — here, silently shipping a 404 to PyPI."""
+        text = "```\n~~~\n[x](docs/a.md)\n```\n[y](docs/b.md)\n"
+        expected = f"```\n~~~\n[x](docs/a.md)\n```\n[y]({_BLOB}docs/b.md)\n"
+        self.assertEqual(absolutize(text), expected)
+
+    def test_a_backtick_fence_does_not_close_a_tilde_block(self):
+        text = "~~~\n```\n[x](docs/a.md)\n~~~\n[y](docs/b.md)\n"
+        expected = f"~~~\n```\n[x](docs/a.md)\n~~~\n[y]({_BLOB}docs/b.md)\n"
+        self.assertEqual(absolutize(text), expected)
+
+    def test_a_reference_style_definition_is_rewritten(self):
+        self.assertEqual(absolutize("[label]: docs/a.md\n"), f"[label]: {_BLOB}docs/a.md\n")
+
+    def test_a_reference_style_definition_keeps_its_title(self):
+        self.assertEqual(
+            absolutize('[label]: docs/a.md "A title"\n'),
+            f'[label]: {_BLOB}docs/a.md "A title"\n',
+        )
+
+    def test_an_absolute_reference_style_definition_is_left_alone(self):
+        line = "[label]: https://example.org/a\n"
+        self.assertEqual(absolutize(line), line)
+
+    def test_a_relative_html_href_is_rewritten(self):
+        self.assertEqual(
+            absolutize('<a href="docs/a.md">x</a>\n'), f'<a href="{_BLOB}docs/a.md">x</a>\n'
+        )
+
+    def test_a_directory_href_uses_tree(self):
+        self.assertEqual(absolutize('<a href="docs/">x</a>\n'), f'<a href="{_TREE}docs/">x</a>\n')
+
+    def test_the_new_forms_are_idempotent(self):
+        text = (
+            "[label]: docs/a.md\n"
+            '<a href="docs/b.md">x</a>\n'
+            '<img srcset="docs/c.svg 1x, docs/d.svg 2x">\n'
+            "[x](tel:+15551234)\n"
+        )
+        once = absolutize(text)
+        self.assertEqual(absolutize(once), once)
+
+
+class TheRealReadmeGuardSeesTheNewForms(unittest.TestCase):
+    """The guard that missed all of this asked only whether a target still *looks*
+    relative. These add the forms it could not see at all."""
+
+    def setUp(self):
+        self.out = absolutize((_REPO_ROOT / "README.md").read_text(encoding="utf-8"))
+
+    def test_no_relative_reference_definition_survives(self):
+        remaining = [
+            t
+            for t in re.findall(r"(?m)^[ \t]{0,3}\[[^\]]+\]:[ \t]+(\S+)", self.out)
+            if not re.match(r"[a-zA-Z][a-zA-Z0-9+.\-]*:|//|#", t)
+        ]
+        self.assertEqual(remaining, [], f"relative reference definitions remain: {remaining}")
+
+    def test_no_relative_html_href_survives(self):
+        remaining = [
+            v
+            for v in re.findall(r'\bhref="([^"]+)"', self.out)
+            if not re.match(r"[a-zA-Z][a-zA-Z0-9+.\-]*:|//|#", v)
+        ]
+        self.assertEqual(remaining, [], f"relative hrefs remain: {remaining}")
+
+    def test_no_srcset_candidate_stays_relative(self):
+        remaining = []
+        for value in re.findall(r'\bsrcset="([^"]+)"', self.out):
+            for candidate in value.split(","):
+                url = candidate.strip().split(" ")[0]
+                if url and not re.match(r"[a-zA-Z][a-zA-Z0-9+.\-]*:|//", url):
+                    remaining.append(url)
+        self.assertEqual(remaining, [], f"relative srcset candidates remain: {remaining}")
+
+    def test_no_target_was_mangled_into_a_scheme_bearing_path(self):
+        """The assertion the old guard could not make: a rewritten target must not
+        contain a second scheme after the host."""
+        bad = re.findall(r"(?:blob|tree)/main/([a-zA-Z][a-zA-Z0-9+.\-]*:)", self.out)
+        bad += re.findall(r"main/([a-zA-Z][a-zA-Z0-9+.\-]*:)", self.out)
+        self.assertEqual(bad, [], f"a scheme was prefixed as if it were a path: {bad}")
+
+
 if __name__ == "__main__":
     unittest.main()

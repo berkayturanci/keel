@@ -12,11 +12,20 @@ What it rewrites (only outside fenced code blocks):
 
 - relative Markdown links   `[text](docs/…)`        → `…/blob/main/docs/…`
   (a trailing-slash target → `…/tree/main/…`; any `#anchor` is preserved)
+- relative reference defs   `[label]: docs/…`        → the same, title preserved
 - relative Markdown images  `![alt](docs/…)`         → `raw.githubusercontent.com/…/main/docs/…`
-- relative HTML `src`/`srcset` (the hero `<picture>`) → the same raw host
+- relative HTML `href`      `<a href="docs/…">`      → `…/blob/main/docs/…`
+- relative HTML `src`/`srcset` (the hero `<picture>`) → the same raw host,
+  every candidate in a multi-candidate `srcset`, not just the first
 
-Absolute URLs, `mailto:`, and same-page `#anchors` are left untouched. The
-transform is deterministic and idempotent (a second run is a no-op), so the
+Left untouched: anything carrying a URL scheme (`https:`, `mailto:`, `tel:`,
+`data:`, `ftp:`…), a protocol-relative `//host/…` target, and same-page
+`#anchors`. The old guard named only `https?://`, `#` and `mailto:`, so a
+future `[x](tel:…)` or `<img src="data:…">` would have been rewritten into
+`…/blob/main/tel:…` — and the real-README guard would not have caught it,
+because the mangled target still starts with `https://` (#1261).
+
+The transform is deterministic and idempotent (a second run is a no-op), so the
 reproducible-build rebuild in `publish.yml` sees the same bytes and digests match.
 
 `scripts/` is maintenance tooling outside the coverage gate;
@@ -34,17 +43,37 @@ _BLOB = f"https://github.com/{_OWNER_REPO}/blob/main/"
 _TREE = f"https://github.com/{_OWNER_REPO}/tree/main/"
 _RAW = f"https://raw.githubusercontent.com/{_OWNER_REPO}/main/"
 
-# A fenced code block boundary: ``` or ~~~ at the start of a (possibly indented) line.
-_FENCE = re.compile(r"^[ \t]*(?:```|~~~)")
+# "Not already pointing somewhere of its own": any URL scheme (`https:`, `tel:`,
+# `data:`, `mailto:`…), a protocol-relative `//host/…`, or a same-page `#anchor`.
+# This is the same rule `tests/test_docs_links.py` calls external.
+_REL = r"(?![a-zA-Z][a-zA-Z0-9+.\-]*:|//|#)"
+
+# A fenced code block boundary: ``` or ~~~ at the start of a (possibly indented)
+# line. The marker is captured because a `~~~` line inside a ``` block does not
+# close it — tracking only "in a fence or not" let the wrong marker flip the
+# state and leave the rest of the file relative (the class #1218 fixed in
+# `test_docs_links`).
+_FENCE = re.compile(r"^[ \t]*(```|~~~)")
 # Markdown image: ![alt](target) where target is not already absolute.
-_MD_IMAGE = re.compile(r"!\[([^\]]*)\]\((?!https?://)([^)]+)\)")
+_MD_IMAGE = re.compile(rf"!\[([^\]]*)\]\({_REL}([^)]+)\)")
 # Markdown link: [text](target), not an image itself (negative lookbehind for !),
-# where target is not absolute, a same-page #anchor, or a mailto:. The text may be
-# plain OR a nested image — the badge-in-link pattern `[![alt](badge)](LICENSE)` —
-# so the alternation keeps the whole label intact while only the outer target moves.
-_MD_LINK = re.compile(r"(?<!!)\[(!\[[^\]]*\]\([^)]*\)|[^\]]*)\]\((?!https?://|#|mailto:)([^)]+)\)")
-# HTML src="…" / srcset="…" with a relative value (the hero <picture>/<img>).
-_HTML_SRC = re.compile(r'\b(src|srcset)="(?!https?://)([^"]+)"')
+# where target is relative. The text may be plain OR a nested image — the
+# badge-in-link pattern `[![alt](badge)](LICENSE)` — so the alternation keeps the
+# whole label intact while only the outer target moves.
+_MD_LINK = re.compile(rf"(?<!!)\[(!\[[^\]]*\]\([^)]*\)|[^\]]*)\]\({_REL}([^)]+)\)")
+# Reference-style definition: `[label]: docs/x "optional title"`, up to three
+# leading spaces (CommonMark). The tail is preserved verbatim.
+_MD_REFDEF = re.compile(rf"^([ \t]{{0,3}}\[[^\]]+\]:[ \t]+){_REL}(\S+)(.*)$")
+# HTML src="…" with a relative value (the hero <picture>/<img>).
+_HTML_SRC = re.compile(rf'\bsrc="{_REL}([^"]+)"')
+# HTML srcset="…". Deliberately **not** guarded at the attribute level: a srcset is
+# a list, and its candidates can mix. Guarding the whole attribute on its first
+# candidate meant `srcset="https://cdn/a.svg 1x, docs/b.svg 2x"` matched nothing at
+# all and the relative second candidate survived. Each candidate is guarded on its
+# own instead.
+_HTML_SRCSET = re.compile(r'\bsrcset="([^"]+)"')
+# HTML href="…" with a relative value (<a href="docs/…">).
+_HTML_HREF = re.compile(rf'\bhref="{_REL}([^"]+)"')
 
 
 def _link_host(target: str) -> str:
@@ -52,22 +81,53 @@ def _link_host(target: str) -> str:
     return _TREE if target.endswith("/") else _BLOB
 
 
+def _absolutize_srcset(value: str) -> str:
+    """Prefix every candidate in a `srcset`, not only the first.
+
+    `srcset` is a comma-separated list of `url [descriptor]` candidates, so a
+    single prefix left `docs/b.svg 2x` relative in `"docs/a.svg 1x, docs/b.svg 2x"`.
+    """
+    out = []
+    for candidate in value.split(","):
+        stripped = candidate.strip()
+        if not stripped:
+            out.append(candidate)
+            continue
+        url, _, descriptor = stripped.partition(" ")
+        if re.match(_REL + r".", url) is None:
+            out.append(candidate)
+            continue
+        rebuilt = f"{_RAW}{url}" + (f" {descriptor.strip()}" if descriptor.strip() else "")
+        out.append(rebuilt)
+    return ", ".join(part.strip() for part in out)
+
+
 def absolutize(text: str) -> str:
     """Return *text* with relative README links/images made absolute (pure)."""
     out: list[str] = []
-    in_fence = False
+    fence_marker: str | None = None
     for line in text.splitlines(keepends=True):
-        if _FENCE.match(line):
-            in_fence = not in_fence
+        fence = _FENCE.match(line)
+        if fence:
+            marker = fence.group(1)
+            if fence_marker is None:
+                fence_marker = marker
+            elif marker == fence_marker:
+                fence_marker = None
             out.append(line)
             continue
-        if in_fence:
+        if fence_marker is not None:
             out.append(line)
             continue
         # Images first, so a relative `![](…)` is not also seen as a link.
         line = _MD_IMAGE.sub(lambda m: f"![{m.group(1)}]({_RAW}{m.group(2)})", line)
         line = _MD_LINK.sub(lambda m: f"[{m.group(1)}]({_link_host(m.group(2))}{m.group(2)})", line)
-        line = _HTML_SRC.sub(lambda m: f'{m.group(1)}="{_RAW}{m.group(2)}"', line)
+        line = _MD_REFDEF.sub(
+            lambda m: f"{m.group(1)}{_link_host(m.group(2))}{m.group(2)}{m.group(3)}", line
+        )
+        line = _HTML_SRC.sub(lambda m: f'src="{_RAW}{m.group(1)}"', line)
+        line = _HTML_SRCSET.sub(lambda m: f'srcset="{_absolutize_srcset(m.group(1))}"', line)
+        line = _HTML_HREF.sub(lambda m: f'href="{_link_host(m.group(1))}{m.group(1)}"', line)
         out.append(line)
     return "".join(out)
 
