@@ -56,6 +56,31 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    reference (`Closes #N` / `Relates to #N`, or `no issue` for a pure chore). The
    [PR description lint](.github/workflows/pr-lint.yml) check enforces this — a PR template
    only pre-fills the body, it can't stop an empty PR.
+7. **If the PR fixes something, say what fails without the fix.** One line naming the source
+   hunk you reverted and the test that then failed:
+
+   > Fix evidence: reverting the `wave_idx` guard in `swarm_runtime.py` makes
+   > `test_orchestration_rebalance_drops_subsequent_wave_on_failure` fail.
+
+   For a change that cannot be reverted and re-tested — docs, a pure refactor, a dependency
+   bump — write `Fix evidence: N/A — <reason>`. A stated exemption is fine; silence is not.
+
+   **"Maintained 100% coverage" does not count**, and the reason is worth understanding.
+   `pyproject.toml` sets `fail_under = 100` and CI enforces it, so that sentence was already
+   true before your change — it is a statement about the repository, not about your test. More
+   generally, coverage proves a line *ran*, not that any assertion depends on it: a test that
+   executes the fixed branch and asserts something true either way is fully covered and
+   worthless.
+
+   This is not hypothetical here. An audit of 14 closed swarm fixes found 4 whose tests would
+   have passed with the fix removed — one where the fix was never written at all, and one whose
+   test could not see the regression the fix shipped (#1268). Every PR that stated a revert
+   result held up. The rationale and a proposal to mechanise the check are in
+   [#1289](https://github.com/berkayturanci/keel/issues/1289).
+
+   One companion rule, which no script can check: **a fix that changes control flow needs a case
+   for each path through the change.** The #1268 regression passes a revert check — its test does
+   fail without the fix — but the fixture never exercised "this wave emptied, the next survived".
 
 ## Bot-owned branches are read-only
 
