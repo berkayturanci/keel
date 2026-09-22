@@ -56,12 +56,15 @@ Keel Swarm is built on three core pillars:
    strictly immutable. Swarm does not alter or bypass backbone steps; instead, each parallel cluster
    worker executes a complete, standard `keel ship` run within its own isolated worktree.
 2. **Pure Core / Thin I/O Separation**: Dependency analysis, clustering, wave partitioning, and landing
-   decision logic are 100% pure and deterministic (`src/keel/swarm.py`). Every **subprocess and git**
+   decision logic are 100% pure and deterministic (`src/keel/swarm.py`). Every **subprocess and
+   git**
    mutation is confined to thin fail-soft runtime wrappers (`src/keel/swarm_runtime.py`,
    `src/keel/swarm_landing.py`) — but the filesystem is not: `resolve_swarm_state_dir` and
-   `save_swarm_state` in `swarm.py` `mkdir` and write `.keel/state/swarm/<swarm_id>.json` (atomically
+   `save_swarm_state` in `swarm.py` `mkdir` and write `.keel/state/swarm/<swarm_id>.json`
+   (atomically
    since [#932](https://github.com/berkayturanci/keel/issues/932); the `#872` in the code comment
-   beside it names an unrelated `gh api` fix). The separation the heading claims holds for the process boundary, not for disk.
+   beside it names an unrelated `gh api` fix). The separation the heading claims holds for the
+   process boundary, not for disk.
 3. **Deterministic Conflict Resolution**: Rather than naively merging branches or relying on LLMs
    to resolve arbitrary git merge conflicts, Swarm statically models predicted scopes, enforces
    worktree isolation, and keeps every wave's clusters mutually disjoint so landing never has to
@@ -195,12 +198,20 @@ knobs:
 
 ### Scope Prediction Heuristics
 - **Title / Body Path Parsing**: a path written in the title or body expands the predicted scope —
-  `touch src/keel/*.py` yields `src/keel/*`. It is path matching, not language awareness, and it cuts
+  `touch src/keel/*.py` yields `src/keel/*`. It is path matching, not language awareness, and it
+  cuts
   both ways: `tests/test_*.py` yields nothing, because the extractor does not accept the `test_*`
-  segment — while a **backticked** module name is taken as a file. A bare `keel.swarm` yields nothing,
+  segment — while a **backticked** module name is taken as a file. A bare `keel.swarm` yields
+  nothing,
   but `` `keel.swarm` `` — how anyone writes a module in an issue — becomes the phantom path
-  `keel.swarm`, which conflicts with nothing and so declares the issue disjoint from everything, and
-  suppresses the label fallback below. Check what a scope actually resolved to with `swarm-plan --tree` rather
+  `keel.swarm`. It suppresses the label fallback below, and it matches no real file, so it conflicts
+  with nothing except `*` and an *identical* phantom. That exception is the usual case, not the rare
+  one: the scope flags are shared by every issue, so one backticked module in the shared body gives
+  every issue the same phantom, they all conflict, and the plan serialises into one wave per
+  issue —
+  the opposite of the isolation the path appears to describe. Measured: three issues, body
+  ``touch `keel.swarm` `` → three single-cluster waves. Check what a scope actually resolved to
+  with `swarm-plan --tree` rather
   than assuming a mention was understood.
 - **Label / Role Fallback**: only when the text and `--declared-file` predicted *nothing*, a
   substring match over the role **and every label** maps `docs`/`website`/`visual` to a directory
@@ -267,9 +278,11 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
    builds. What is not a no-op is the discarded wave: `run_swarm_orchestration` iterates the wave
    list by index, so when the failing cluster was alone in its wave the list shrinks underneath the
    index and **the next, unrelated wave is skipped entirely** — its clusters finish the run as
-   `queued` — reported as `partial_failure`, or as `failed` when nothing else passed, and in neither
-   case are they mentioned. Reproduced with three conflicting issues: issue 1 fails, the run ships
-   `[1, 3]`, and `cluster-2-2` is never attempted. Being alone in its wave is sufficient but not
+   `queued` — reported as `partial_failure`, or as `failed` when nothing else passed, and in
+   neither
+   case are they mentioned. Reproduced with three conflicting issues: issue 1 fails, the run
+   executes waves 1 and 3,
+   and `cluster-2-2` is never attempted. Being alone in its wave is sufficient but not
    necessary — a two-cluster wave whose clusters both fail skips the next one too.
 
    The positional loop came from [#893](https://github.com/berkayturanci/keel/pull/893), closing
@@ -290,7 +303,8 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
    worktree to remove. Four things it does **not** do, each verified against
    `src/keel/swarm_runtime.py`:
 
-   - the `.keel/worktrees/<swarm_id>/` parent directory is created by `mkdir(parents=True)` and never
+   - the `.keel/worktrees/<swarm_id>/` parent directory is created by `mkdir(parents=True)` and
+     never
      removed, so one directory per run accumulates;
    - the `swarm/<swarm_id>/<cluster_id>` branch is never deleted — nothing in `src/keel` runs
      `git branch -d/-D`. A re-run with the same `--swarm-id` therefore force-resets a surviving
@@ -306,7 +320,8 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
 
 ### Status board (`keel swarm-status`)
 Print the swarm's clusters — each one's lead, difficulty band, role, step and status
-(`running` / `passed` / `failed`) — from the persisted run state. It is a one-shot render of
+(`queued` / `running` / `passed` / `failed` / `merged` / `held` — the full vocabulary
+`WorkerState.status` carries) — from the persisted run state. It is a one-shot render of
 that state, not a live feed; re-run it to refresh:
 
 ```bash
@@ -376,7 +391,8 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
   pills, and role badges.
 - **Pseudo-3D Multi-Wave Topology**: An HTML5 Canvas renderer projecting the stacked wave layers as
   a pseudo-3D scene, with drag-to-rotate and scroll-to-zoom.
-- **Worker Matrix**: Worker cards showing each cluster's `running` / `passed` / `failed` state,
+- **Worker Matrix**: Worker cards showing each cluster's state —
+  `queued`/`running`/`passed`/`failed`/`merged`/`held` —
   its role badge, and the recorded `details` string.
 
 The rendered page is a snapshot of the run state at render time; re-run `keel-visual swarm` to
