@@ -43,7 +43,7 @@ Keel does not compete with a single category. The closest tools each own one sli
   [Mergify pause docs](https://docs.mergify.com/merge-queue/pause/)
 
 Keel's product claim is narrower and more integrated: it turns a coding agent into a
-work owner. It starts before the PR exists and ends after merge, closure, capture markers,
+work owner. It starts before the PR exists and ends after merge, capture markers, closure,
 and optional project-owned learning decisions.
 
 | capability | Keel | Coding agents | PR reviewers | Merge queues | Multi-Agent Swarms (CrewAI/AutoGen/Swarm) |
@@ -279,7 +279,7 @@ name for.
   The per-host ports are separate projects under their own terms.
   [cursor/plugins ralph-loop](https://github.com/cursor/plugins/tree/main/ralph-loop)
 - **What keel does that it does not**: everything from s5 on — classification, CI,
-  independent review, gates, merge window and lock, closeout, capture — and a record. A
+  independent review, gates, merge window and lock, capture, closeout — and a record. A
   Ralph run leaves no ledger of how many iterations ran, what each changed, or what the
   tests said between them: the stop hook deletes its state file when the promise is
   detected or the iteration limit is reached, and the only other write bumps the iteration

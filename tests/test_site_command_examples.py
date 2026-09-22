@@ -5,8 +5,9 @@ invocation per command — rendered on the commands page. Nothing checked it aga
 commands themselves, and it had drifted badly: 12 of 17 entries used a flag the command
 does not define. Six passed a value as `--issue` / `--pr` / `--issues` where the command
 takes a **positional** argument; `--comments` should have been `--review-comments`; and
-`--route-to-ship`, `--apply`, `--until` and `--propose-fix` do not exist anywhere in the
-repository. (`/keel:deps-audit --security-only` was a different case: the flag is real —
+`--route-to-ship`, `--apply`, `--until` and `--propose-fix` are not flags of any keel
+command. (`--until` appears in the tree only as git's own option, in prose about
+`git log --since/--until`.) (`/keel:deps-audit --security-only` was a different case: the flag is real —
 documented in the adapter body and implemented — but its `argument-hint` omits it, so the
 example was moved to one the hint declares.)
 
