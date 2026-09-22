@@ -7,9 +7,11 @@ does not define. Six passed a value as `--issue` / `--pr` / `--issues` where the
 takes a **positional** argument; `--comments` should have been `--review-comments`; and
 `--route-to-ship`, `--apply`, `--until` and `--propose-fix` are not flags of any keel
 command. (`--until` appears in the tree only as git's own option, in prose about
-`git log --since/--until`.) (`/keel:deps-audit --security-only` was a different case: the flag is real —
-documented in the adapter body and implemented — but its `argument-hint` omits it, so the
-example was moved to one the hint declares.)
+`git log --since/--until`.)
+
+`/keel:deps-audit --security-only` was a different case: the flag is real — documented
+in the adapter body and implemented — but its own `argument-hint` omits it, so the
+example was moved to one the hint does declare.
 
 The earlier hand check missed it by asking the wrong question — whether a flag token
 existed *somewhere* in keel's CLI, rather than on the command being illustrated. A flag
