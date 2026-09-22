@@ -510,6 +510,16 @@ class TheFormsLeftOpenIn1294(unittest.TestCase):
             absolutize(text), f'<a\n  href="{_BLOB}docs/a.md">x</a>\n<div\n  href="docs/x">\n'
         )
 
+    def test_the_closing_bracket_ends_the_state_with_no_later_tag_to_help(self):
+        """The same rule with nothing else to end the state: the next line is prose
+        with an `href` and no `<`, so only the `>` that closed the `<a` stops it
+        (#1300 gate, round 3 — the fixture above also trips the `<` rule)."""
+        text = '<a\n  href="docs/a.md">x</a>\nSet href="docs/x.md" on the element.\n'
+        self.assertEqual(
+            absolutize(text),
+            f'<a\n  href="{_BLOB}docs/a.md">x</a>\nSet href="docs/x.md" on the element.\n',
+        )
+
     def test_inline_code_at_the_start_of_a_line_is_not_a_fence(self):
         """CommonMark §4.5: a backtick fence's info string cannot contain a backtick."""
         text = "```x```\n[y](docs/b.md)\n"
