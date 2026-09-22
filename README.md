@@ -1,7 +1,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero.svg">
   <source media="(prefers-color-scheme: light)" srcset="docs/assets/hero-light.svg">
-  <img src="docs/assets/hero-light.svg" alt="keel — drive every issue to merged on one fixed backbone: 13 steps, 28 extension slots, 17 /keel commands, multi-agent swarm DAGs, 100% covered">
+  <img src="docs/assets/hero-light.svg" alt="keel — drive every issue to merged on one fixed backbone: 13 steps, 28 extension slots, 17 /keel commands, experimental multi-agent swarm DAGs, 100% covered">
 </picture>
 
 # keel ⚓

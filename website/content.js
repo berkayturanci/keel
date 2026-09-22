@@ -163,7 +163,7 @@ window.KEEL = {
   /* ---- example invocation per command (illustrative) ------------- */
   cmdExample: {
     "ship": "/keel:ship 128 --reviewers 3",
-    "swarm": "/keel:swarm 714 715 716 717 --tree",
+    "swarm": "/keel:swarm 714 715 716 717 --plan-only",
     "implement": "/keel:implement 128",
     "review-cycle": "/keel:review-cycle 214 --review-comments inline",
     "pr-loop": "/keel:pr-loop 214",

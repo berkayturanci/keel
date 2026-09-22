@@ -14,8 +14,8 @@ Keel provides official companion extensions for **Visual Studio Code** and **Cur
 - ⚡ **Live Run Tracker**: Observes `.keel/activity/` to show active step progress (e.g. `$(gear~spin) Keel: s4 implement (#747)`).
 - ⌘ **Command Palette Shortcuts**:
   - `Keel: Ship Issue End-to-End (/keel:ship)`
-  - `Keel: Plan a Swarm over the Backlog (/keel:swarm)` — **experimental**; runs `swarm-plan --tree` only,
-    because a live swarm lands nothing yet ([#1281](https://github.com/berkayturanci/keel/issues/1281))
+  - `Keel: Plan a Swarm over the Backlog (experimental)` — runs `swarm-plan --tree` only, because a
+    live swarm lands nothing yet ([#1281](https://github.com/berkayturanci/keel/issues/1281))
   - `Keel: Check Merge Window Status`
   - `Keel: Run Command Gates (Test & Lint)`
   - `Keel: View Token & USD Cost Report`
