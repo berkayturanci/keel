@@ -1778,5 +1778,90 @@ class TestSwarmLandCLI(unittest.TestCase):
                 self.assertIn("partial_failure", buf.getvalue())
 
 
+class AFailedCheckoutStopsTheLanding(unittest.TestCase):
+    """#1270: both primitives ran `git checkout` and discarded the result, so a
+    checkout that failed left HEAD on the operator's branch and the merge — or the
+    rebase — rewrote *that* branch while reporting the cluster landed. Measured in a
+    real repository: a dirty tree on `feature` makes `git checkout main` fail."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "commit.gpgsign", "false")
+        self.commit("a.txt", "1\n", "base")
+        self.git("checkout", "-q", "-b", "cluster")
+        self.commit("b.txt", "cluster\n", "cluster work")
+        self.git("checkout", "-q", "main")
+        self.git("checkout", "-q", "-b", "feature")
+        self.commit("a.txt", "2\n", "feature work")
+
+    def git(self, *args: str) -> str:
+        import subprocess
+
+        done = subprocess.run(
+            ["git", *args], cwd=self.root, capture_output=True, text=True, check=True
+        )
+        return done.stdout.strip()
+
+    def commit(self, name: str, text: str, message: str) -> None:
+        (self.root / name).write_text(text, encoding="utf-8")
+        self.git("add", name)
+        self.git("commit", "-q", "-m", message)
+
+    def heads(self) -> tuple[str, str, str]:
+        return (
+            self.git("rev-parse", "main"),
+            self.git("rev-parse", "feature"),
+            self.git("symbolic-ref", "--short", "HEAD"),
+        )
+
+    def dirty(self) -> None:
+        # An uncommitted edit to a file that differs on `main`, so checkout refuses.
+        (self.root / "a.txt").write_text("3\n", encoding="utf-8")
+
+    def test_the_merge_does_not_land_on_the_operators_branch(self):
+        self.dirty()
+        before = self.heads()
+
+        self.assertFalse(merge_cluster_branch(self.root, "cluster", base_branch="main"))
+        self.assertEqual(self.heads(), before, "a branch moved though the checkout failed")
+
+    def test_the_rebase_does_not_rewrite_the_operators_branch(self):
+        self.git("checkout", "-q", "cluster")
+        self.commit("a.txt", "cluster edit\n", "cluster touches a.txt")
+        self.git("checkout", "-q", "feature")
+        self.dirty()
+        before = self.heads()
+
+        ok, reason = rebase_and_heal_cluster_branch(self.root, "cluster", base_branch="main")
+        self.assertEqual((ok, reason), (False, "checkout_failed"))
+        self.assertEqual(self.heads(), before)
+
+    def test_a_clean_tree_still_lands(self):
+        """The counterweight: the check refuses a failed checkout, not a merge."""
+        self.assertTrue(merge_cluster_branch(self.root, "cluster", base_branch="main"))
+        self.assertEqual(self.git("symbolic-ref", "--short", "HEAD"), "main")
+        self.assertIn("cluster work", self.git("log", "--format=%s", "main"))
+        self.assertNotIn("cluster work", self.git("log", "--format=%s", "feature"))
+
+    def test_nothing_runs_after_a_failed_checkout(self):
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            ok = cmd[:2] != ["git", "checkout"]
+            return CommandResult(ok=ok, code=0 if ok else 1, output="")
+
+        ok, reason = rebase_and_heal_cluster_branch(self.root, "c", runner=runner)
+        self.assertEqual((ok, reason), (False, "checkout_failed"))
+        self.assertFalse(any(c[:2] == ["git", "rebase"] for c in calls), calls)
+        self.assertFalse(merge_cluster_branch(self.root, "c", runner=runner))
+        self.assertFalse(any(c[:2] == ["git", "merge"] for c in calls), calls)
+
+
 if __name__ == "__main__":
     unittest.main()
