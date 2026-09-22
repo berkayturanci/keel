@@ -32,11 +32,13 @@ def _declared() -> list[tuple[str, int]]:
 _TEST_JOBS = ("test", "test-visual")
 
 
-def _matrix_versions() -> dict[str, set[str]]:
+def _read_matrices() -> tuple[dict[str, set[str]], set[str]]:
     """Each test job's `3.x` versions, read from its `strategy.matrix` block only,
-    comments dropped — a `python:` step input or env value elsewhere is not a leg."""
+    comments dropped — a `python:` step input or env value elsewhere is not a leg —
+    and the test jobs whose matrix has an `exclude:` key."""
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     found: dict[str, set[str]] = {}
+    excluding: set[str] = set()
     job, matrix_indent = None, None
     for raw in text.splitlines():
         line = raw.split("#", 1)[0].rstrip()
@@ -54,9 +56,15 @@ def _matrix_versions() -> dict[str, set[str]]:
             continue
         if matrix_indent is not None and indent <= matrix_indent:
             matrix_indent = None
+        if matrix_indent is not None and re.match(r"\s*exclude:", line):
+            excluding.add(job)
         if matrix_indent is not None and re.match(r"\s*python:", line):
             found.setdefault(job, set()).update(re.findall(r"3\.\d+", line))
-    return found
+    return found, excluding
+
+
+def _matrix_versions() -> dict[str, set[str]]:
+    return _read_matrices()[0]
 
 
 class TheClassifiersAreClaimsCIBacks(unittest.TestCase):
@@ -69,11 +77,19 @@ class TheClassifiersAreClaimsCIBacks(unittest.TestCase):
         self.assertEqual(minors, list(range(minors[0], minors[-1] + 1)))
 
     def test_every_test_job_has_a_matrix(self):
-        """A parser that found no matrix would make the check below vacuous."""
+        """A parser that found no matrix would make the check below vacuous. The
+        floor comes from the classifiers, so moving it needs no second edit here."""
         found = _matrix_versions()
+        floor = _declared()[0][0]
         for job in _TEST_JOBS:
             with self.subTest(job):
-                self.assertGreaterEqual(found.get(job, set()), {"3.11", "3.12", "3.13"})
+                self.assertIn(floor, found.get(job, set()))
+
+    def test_no_test_matrix_excludes_a_leg(self):
+        """An `exclude:` drops a listed version from what runs, and this parser does
+        not model it (#1302 lead). The matrices have never used one: drop the version
+        from the list instead, so the check below sees it."""
+        self.assertEqual(_read_matrices()[1], set())
 
     def test_every_classified_version_runs_in_every_test_job(self):
         declared = {version for version, _ in _declared()}

@@ -59,9 +59,9 @@ jobs:
           python -m keel run-gates .keel/project.yaml --root .
 
   format:
-    # Its own job rather than a step in the 9-way test matrix: formatting is a
+    # Its own job rather than a step in the 12-way test matrix: formatting is a
     # property of the tree, not of the interpreter or the OS, so checking it
-    # nine times costs nine pinned installs to learn one fact.
+    # twelve times costs twelve pinned installs to learn one fact.
     #
     # Without this the tree drifts back. `.pre-commit-config.yaml` declares
     # `ruff-format` as a *rewriting* hook, so before #966 a contributor who
