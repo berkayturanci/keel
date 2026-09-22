@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -88,24 +89,65 @@ _TEMPLATES: dict[str, dict] = {
 }
 
 
+# A rule line names its targets before a `:` or `::`. `test := x`, `test ::= x` and
+# `test ?= x` assign a variable instead, and a line starting with a tab is a recipe
+# (#1301 review).
+_MAKE_RULE = re.compile(r"^ *([^:#=\t][^:#=]*?)[ \t]*::?(?![:=])")
+# `pytest` or a `pytest-…` plugin (which depends on it) as a requirement or a table
+# key — never `flake8-pytest-style`, whose name only contains the word.
+_PYTEST_NAME = re.compile(r"(?i)pytest(?:[-.][\w.-]*)?")
+_PYTEST_REQUIREMENT = re.compile(r"(?i)^\s*pytest(?:[-.][\w.-]*)?\s*(?:[\[(<>=!~;@,]|$)")
+_PYTEST_WORD = re.compile(r"(?i)(?<![\w.-])pytest(?!\w)")
+
+
+def _read_text(path: Path) -> str | None:
+    """A file's text, or None when it is absent or cannot be read — no evidence."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+    except OSError:
+        return None
+
+
+def _read_toml(path: Path) -> dict:
+    text = _read_text(path)
+    if text is None:
+        return {}
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return {}
+
+
 def _makefile_has_target(root: Path, target: str) -> bool:
-    """Whether the project's Makefile defines ``target``."""
+    """Whether the project's Makefile has a rule for ``target``."""
     for name in ("GNUmakefile", "makefile", "Makefile"):
         path = root / name
         if path.is_file():
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                return False
-            return re.search(rf"(?m)^{re.escape(target)}[ \t]*:", text) is not None
+            text = _read_text(path) or ""
+            for line in text.splitlines():
+                rule = None if line.startswith("\t") else _MAKE_RULE.match(line)
+                if rule and target in rule.group(1).split():
+                    return True
+            return False
     return False
 
 
-def _file_mentions(path: Path, marker: str) -> bool:
-    try:
-        return path.is_file() and marker in path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
+def _toml_names_pytest(node: object) -> bool:
+    """Whether a parsed TOML tree names pytest: a ``[tool.pytest…]`` table, a Poetry or
+    Pipfile ``pytest = "…"`` key, or a PEP 508 requirement string anywhere in it."""
+    if isinstance(node, dict):
+        return any(
+            _PYTEST_NAME.fullmatch(str(key)) or _toml_names_pytest(value)
+            for key, value in node.items()
+        )
+    if isinstance(node, list):
+        return any(_toml_names_pytest(item) for item in node)
+    return isinstance(node, str) and _PYTEST_REQUIREMENT.match(node) is not None
+
+
+def _text_names_pytest(text: str) -> bool:
+    """Whether an INI, ``setup.py`` or requirements text names pytest outside a comment."""
+    return any(_PYTEST_WORD.search(line.split("#", 1)[0]) for line in text.splitlines())
 
 
 def _uses_pytest(root: Path) -> bool:
@@ -116,14 +158,39 @@ def _uses_pytest(root: Path) -> bool:
     none of those and, from Python 3.12, exits 5 ("NO TESTS RAN") — the same
     blocked gate by another route — so a dependency on pytest counts too.
     """
-    if any((root / name).is_file() for name in ("pytest.ini", "conftest.py")):
+    for name in ("pytest.ini", ".pytest.ini", "conftest.py"):
+        if (root / name).is_file():
+            return True
+    if any((root / d / "conftest.py").is_file() for d in ("tests", "test")):
         return True
-    if (root / "tests" / "conftest.py").is_file():
+    if any(_toml_names_pytest(_read_toml(root / n)) for n in ("pyproject.toml", "Pipfile")):
         return True
-    manifests = ("pyproject.toml", "setup.cfg", "tox.ini", "Pipfile", "setup.py")
-    candidates = [root / n for n in manifests]
-    candidates += sorted(root.glob("requirements*.txt"))
-    return any(_file_mentions(path, "pytest") for path in candidates)
+    texts = [root / n for n in ("setup.cfg", "tox.ini", "setup.py")]
+    for pattern in ("*requirements*.txt", "*requirements*.in", "requirements/*.txt"):
+        texts += sorted(root.glob(pattern))
+    return any(_text_names_pytest(_read_text(path) or "") for path in texts)
+
+
+def _uses_ruff(root: Path) -> bool:
+    """Whether the project configures ruff: its own file, or a ``[tool.ruff]`` table."""
+    if (root / "ruff.toml").is_file() or (root / ".ruff.toml").is_file():
+        return True
+    tool = _read_toml(root / "pyproject.toml").get("tool")
+    return isinstance(tool, dict) and "ruff" in tool
+
+
+def _unittest_command(root: Path, py: str) -> str:
+    """``unittest discover`` pointed where the tests are.
+
+    Discovery recurses only into packages, so from the root it finds nothing in a
+    ``tests/`` directory without an ``__init__.py`` — the most common layout — and
+    exits 5 (#1301 review). Such a directory is named with ``-s``; a package, or no
+    tests directory, keeps the plain command.
+    """
+    for directory in ("tests", "test"):
+        if (root / directory).is_dir() and not (root / directory / "__init__.py").is_file():
+            return f"{py} -m unittest discover -s {directory}"
+    return f"{py} -m unittest discover"
 
 
 def _python_interpreter() -> str:
@@ -142,10 +209,10 @@ def _python_gates(root: Path) -> tuple[str, str | None]:
     The template wrote ``make test`` whatever the project held, so a Python project
     with no Makefile scaffolded a gate that BLOCKs every ship with
     ``make: *** No rule to make target `test'``; and ``ruff check .`` whether or not
-    ruff is part of the project. Build: the Makefile's ``test`` target if there is one,
+    ruff is part of the project. Build: the Makefile's ``test`` rule if there is one,
     else pytest if the project configures or depends on it, else ``unittest``, which
-    ships with Python. Lint: ruff only when the project configures ruff; otherwise no lint
-    gate, which the operator can add.
+    ships with Python. Lint: ruff only when the project configures ruff; otherwise no
+    lint gate, which the operator can add.
     """
     py = _python_interpreter()
     if _makefile_has_target(root, "test"):
@@ -153,13 +220,8 @@ def _python_gates(root: Path) -> tuple[str, str | None]:
     elif _uses_pytest(root):
         build = f"{py} -m pytest"
     else:
-        build = f"{py} -m unittest discover"
-    uses_ruff = (
-        (root / "ruff.toml").is_file()
-        or (root / ".ruff.toml").is_file()
-        or _file_mentions(root / "pyproject.toml", "[tool.ruff")
-    )
-    return build, ("ruff check ." if uses_ruff else None)
+        build = _unittest_command(root, py)
+    return build, ("ruff check ." if _uses_ruff(root) else None)
 
 
 def template_for(stack: str, root: str | Path | None = None) -> dict:

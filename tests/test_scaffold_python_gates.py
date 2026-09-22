@@ -15,6 +15,8 @@ another route. Lint is ruff only when the project configures ruff.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -40,6 +42,14 @@ class _Project(unittest.TestCase):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+
+    def reset(self) -> None:
+        """Empty the project, for a subtest that needs a clean one."""
+        for child in self.root.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
 
     def gates(self):
         t = scaffold.template_for("python", self.root)
@@ -91,8 +101,14 @@ class AnUnreadableFileIsNoEvidence(_Project):
             self.assertFalse(scaffold._makefile_has_target(self.root, "test"))
 
     def test_an_unreadable_manifest_mentions_nothing(self):
+        self.write("requirements.txt", "pytest\n")
         with mock.patch.object(Path, "read_text", side_effect=PermissionError("denied")):
-            self.assertFalse(scaffold._file_mentions(self.root / "pyproject.toml", "pytest"))
+            self.assertIsNone(scaffold._read_text(self.root / "requirements.txt"))
+            self.assertFalse(scaffold._uses_pytest(self.root))
+
+    def test_a_pyproject_that_is_not_toml_is_no_evidence(self):
+        self.write("pyproject.toml", "[tool.ruff\npytest = \n")
+        self.assertEqual(self.gates(), ("python -m unittest discover", None))
 
 
 class TheLintGateFollowsTheProject(_Project):
@@ -106,6 +122,140 @@ class TheLintGateFollowsTheProject(_Project):
     def test_a_ruff_toml_means_ruff(self):
         self.write("ruff.toml", "line-length = 100\n")
         self.assertEqual(self.gates()[1], "ruff check .")
+
+
+class AMakefileRuleIsARule(_Project):
+    """#1301 review: the Makefile is read for rules, not for the word `test:`."""
+
+    def test_a_variable_assignment_is_not_a_target(self):
+        for assignment in (
+            "test := pytest",
+            "test ::= pytest",
+            "test:::= pytest",
+            "test ?= pytest",
+        ):
+            with self.subTest(assignment):
+                self.write("Makefile", f"{assignment}\nall:\n\techo hi\n")
+                self.assertEqual(self.gates()[0], "python -m unittest discover")
+
+    def test_a_multi_target_rule_names_test(self):
+        self.write("Makefile", "check test:\n\tpython -m pytest\n")
+        self.assertEqual(self.gates()[0], "make test")
+
+    def test_a_double_colon_rule_and_an_indented_one_count(self):
+        for makefile in ("test::\n\tpytest\n", "ifdef CI\n  test:\n\tpytest\nendif\n"):
+            with self.subTest(makefile):
+                self.write("Makefile", makefile)
+                self.assertEqual(self.gates()[0], "make test")
+
+    def test_a_recipe_line_is_not_a_rule(self):
+        self.write("Makefile", "build:\n\ttest: x\n")
+        self.assertEqual(self.gates()[0], "python -m unittest discover")
+
+    def test_a_prerequisite_named_test_is_not_a_rule(self):
+        self.write("Makefile", ".PHONY: test\nall: test\n")
+        self.assertEqual(self.gates()[0], "python -m unittest discover")
+
+
+class PytestIsFoundWhereProjectsDeclareIt(_Project):
+    """#1301 review: the common places, and not the word inside another name."""
+
+    def assert_pytest(self, expected=True):
+        want = "python -m pytest" if expected else "python -m unittest discover"
+        self.assertEqual(self.gates()[0], want)
+
+    def test_test_requirements_and_a_requirements_directory(self):
+        for name in ("test-requirements.txt", "requirements/test.txt", "dev-requirements.in"):
+            with self.subTest(name):
+                self.reset()
+                self.write(name, "pytest-cov>=5\n")
+                self.assert_pytest()
+
+    def test_a_conftest_under_test(self):
+        self.write("test/conftest.py", "")
+        self.assert_pytest()
+
+    def test_poetry_and_dependency_groups(self):
+        for body in (
+            '[tool.poetry.group.dev.dependencies]\npytest = "^8"\n',
+            '[dependency-groups]\ndev = ["pytest (>=8)"]\n',
+            '[project.optional-dependencies]\ntest = ["pytest[testing]>=8"]\n',
+        ):
+            with self.subTest(body):
+                self.write("pyproject.toml", '[project]\nname = "x"\n' + body)
+                self.assert_pytest()
+
+    def test_the_word_inside_another_name_is_not_pytest(self):
+        """The ruff plugin that lints pytest style is not pytest."""
+        self.write(
+            "pyproject.toml",
+            '[project]\nname = "x"\ndependencies = ["flake8-pytest-style"]\n\n'
+            "[tool.ruff.lint.flake8-pytest-style]\nfixture-parentheses = false\n",
+        )
+        self.assert_pytest(False)
+
+    def test_a_commented_out_requirement_is_not_one(self):
+        self.write("requirements.txt", "requests\n# pytest\n")
+        self.assert_pytest(False)
+
+    def test_setup_cfg_and_tox_sections(self):
+        for name, text in (
+            ("setup.cfg", "[tool:pytest]\n"),
+            ("tox.ini", "[testenv]\ndeps = pytest\n"),
+        ):
+            with self.subTest(name):
+                self.reset()
+                self.write(name, text)
+                self.assert_pytest()
+
+
+class RuffIsATableNotAString(_Project):
+    def test_a_commented_table_and_a_longer_name_are_not_ruff(self):
+        for body in ("# [tool.ruff]\n", "[tool.ruffle]\nx = 1\n"):
+            with self.subTest(body):
+                self.write("pyproject.toml", '[project]\nname = "x"\n' + body)
+                self.assertIsNone(self.gates()[1])
+
+    def test_a_dotted_ruff_table_is_ruff(self):
+        self.write("pyproject.toml", '[project]\nname = "x"\n\n[tool.ruff.lint]\nselect = ["E"]\n')
+        self.assertEqual(self.gates()[1], "ruff check .")
+
+
+class TheUnittestGateFindsTheTests(_Project):
+    """#1301 review: `unittest discover` recurses only into packages, so from the root
+    it finds nothing in a `tests/` directory without an `__init__.py` and exits 5."""
+
+    _TEST = (
+        "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n"
+    )
+
+    def run_gate(self):
+        build = self.gates()[0]
+        argv = [sys.executable, *build.split()[1:]]
+        return subprocess.run(argv, cwd=self.root, capture_output=True, text=True, timeout=60)
+
+    def test_a_tests_directory_that_is_not_a_package_is_named(self):
+        self.write("tests/test_a.py", self._TEST)
+        self.assertEqual(self.gates()[0], "python -m unittest discover -s tests")
+        run = self.run_gate()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("Ran 1 test", run.stderr)
+
+    def test_the_singular_test_directory_too(self):
+        self.write("test/test_a.py", self._TEST)
+        self.assertEqual(self.gates()[0], "python -m unittest discover -s test")
+        self.assertEqual(self.run_gate().returncode, 0)
+
+    def test_a_tests_package_keeps_the_plain_command(self):
+        """The counterweight: a package is found from the root, and naming it with
+        `-s` would import its modules as top-level ones and break relative imports."""
+        self.write("tests/__init__.py", "")
+        self.write("tests/helper.py", "X = 1\n")
+        self.write("tests/test_a.py", "from .helper import X\n" + self._TEST)
+        self.assertEqual(self.gates()[0], "python -m unittest discover")
+        run = self.run_gate()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn("Ran 1 test", run.stderr)
 
 
 class TheRenderedConfigCarriesThem(_Project):
