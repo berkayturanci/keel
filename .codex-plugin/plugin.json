@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "keel",
     "shortDescription": "Turns coding agents into work owners — a fixed backbone from backlog to done.",
-    "longDescription": "keel drives a GitHub issue end-to-end through a fixed backbone (select, branch, implement, CI, review, test, merge, close, capture) so a coding agent's work reaches a real done, not just a first draft. Project-neutral: every project-specific value is read from .keel/project.yaml via the keel CLI.",
+    "longDescription": "keel drives a GitHub issue end-to-end through a fixed backbone (select, branch, implement, CI, review, test, merge, capture, close) so a coding agent's work reaches a real done, not just a first draft. Project-neutral: every project-specific value is read from .keel/project.yaml via the keel CLI.",
     "developerName": "Berkay Turancı",
     "category": "developer-tools"
   }
