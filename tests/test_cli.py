@@ -15736,7 +15736,7 @@ _LAND_SINK_LINES = [
 #: that *outlives the command which triggered it*. Measured on git 2.54, not assumed:
 #: a `git commit`, a `git fetch` and the receiving end of a push each spawn
 #: `git maintenance run --auto --quiet --detach`, and `maintenance.auto=false` in the
-#: repository being written to stops that spawn. A `git clone` spawns nothing. `gc.auto=0`
+#: repository being written to stops that spawn. A `git clone` spawns no maintenance. `gc.auto=0`
 #: is belt-and-braces for older git, where the same hook is `git gc --auto`.
 #:
 #: What is **not** established is that this detached maintenance is what produced #1283.
