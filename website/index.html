@@ -157,7 +157,7 @@
           <div class="ov-hero">
             <div class="ov-top">
               <h1>Drive every issue to <span class="grad">merged</span> — on one fixed backbone.</h1>
-              <p><strong>keel</strong> turns coding agents into <strong>work owners</strong>. A project-neutral, multi-agent <strong>workflow backbone</strong> drives GitHub issues from <strong>intake to done</strong> — linearly with <code>/keel:ship</code> or as high-concurrency parallel DAG waves with <code>/keel:swarm</code>.</p>
+              <p><strong>keel</strong> turns coding agents into <strong>work owners</strong>. A project-neutral, multi-agent <strong>workflow backbone</strong> drives GitHub issues from <strong>intake to done</strong> with <code>/keel:ship</code>. (<code>/keel:swarm</code> aims the same backbone at a whole backlog as parallel DAG waves, but it is <strong>experimental</strong> and does not land work yet — see <a href='https://github.com/berkayturanci/keel/issues/1281'>#1281</a>.)</p>
               <div class="ov-cta">
                 <a class="btn primary" href="https://github.com/berkayturanci/keel">View on GitHub</a>
                 <span class="ov-install"><span class="p">$</span><code id="brew-cmd">brew install berkayturanci/keel/keel</code><button class="hi-copy" type="button" data-copy="brew install berkayturanci/keel/keel" data-copy-target="#brew-cmd" aria-label="Copy brew install command"><span>copy</span></button></span>
@@ -309,9 +309,9 @@
           <p class="view-kicker" style="margin:2rem 0 .8rem">Swarm CLI commands</p>
           <div class="cli-grid">
             <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; --issues 12,15</code><span>Compute the conflict graph from predicted scopes and partition the backlog into conflict-free execution waves. <a href="docs.html#swarm">Swarm docs →</a></span></div>
-            <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span>Execute parallel cluster workers in isolated worktrees, tracking each worker's status and rebalancing the plan when one fails.</span></div>
+            <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span><b>Experimental (#1281)</b> — execute parallel cluster workers in isolated worktrees, tracking each worker's status and rebalancing the plan when one fails.</span></div>
             <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect each cluster's running/passed/failed status, its lead, and its difficulty band.</span></div>
-            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --wave 1</code><span>Land a completed wave's cluster branches under the merge lock, sequentially, aborting any conflicting merge.</span></div>
+            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --wave 1</code><span><b>Experimental (#1281)</b> — land a completed wave's cluster branches under the merge lock, sequentially, aborting any conflicting merge.</span></div>
             <div class="cli-row"><code>keel-visual swarm</code><span>Render the interactive 2D DAG and pseudo-3D spatial node topology as a snapshot (static HTML or served on localhost).</span></div>
           </div>
         </section>

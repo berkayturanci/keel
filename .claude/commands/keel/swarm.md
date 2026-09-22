@@ -19,16 +19,19 @@ It is not free, though: that CLI runs `git diff` and executes the project's plan
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
 times, up to `--max-workers` in parallel. Budget for that before you start one.
 
-Planning does not see real scope either: `--issue-title`, `--issue-body` and `--declared-file` are
-shared by every issue and nothing fetches an issue's own text, so with no scope text a multi-issue
-plan returns one wave of synthetic globs, and naming a path puts it in every issue's scope so they
-all serialise (#1274). `keel-visual swarm` always renders a flat DAG (#1275, #1280).
+Planning does not see real scope either: `--issue-title`, `--issue-body`, `--issue-label` and
+`--declared-file` are shared by every issue and nothing fetches an issue's own text. With no scope
+text and no directory-hinting label a multi-issue plan returns one wave of synthetic globs; name a
+path — in a file, in the shared body, or via a label like `docs` that maps to a directory — and it
+lands in *every* issue's scope, so they all serialise instead (#1274). Neither is per-issue scope. `keel-visual swarm` always renders a flat DAG (#1275, #1280).
 
-So: **`--plan-only` is the one that stops.** Run it freely, and add `--tree` or `--visual` to it
-for the rendering. On their own those two are renderers, not modes — this command reads
-`--plan-only` at Step 1 and exits there; `--tree` is a flag on the `swarm-plan` calls and
-`--visual` is read at Step 4, so `/keel:swarm <issues> --visual` walks straight on into Step 2's
-live `swarm-run` and Step 3's live `swarm-land`. That cuts a worktree per cluster, leaves the
+So: **`--plan-only` is the one that stops**, and it already renders the ASCII tree — `--tree` is
+passed on the `swarm-plan` calls either way, so adding it changes nothing. `--visual` is a
+different matter twice over: it is read at Step 4, *after* Step 2, so on its own
+`/keel:swarm <issues> --visual` walks straight into the live `swarm-run` and `swarm-land`; and
+with `--plan-only` it never runs at all — and could not show anything if it did, because
+`keel-visual swarm` reads the state file only `swarm-run` writes and falls back to an empty
+board without it. That cuts a worktree per cluster, leaves the
 `swarm/<swarm_id>/<cluster_id>` branches behind (nothing deletes them), and runs the N child gate
 suites above — for a run that lands nothing. Read the plan it renders as "what I passed", not
 "per-issue scope". For anything
@@ -197,4 +200,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=5b3b4397d6c2bf6aedb053297a9578e0afb0924482bace7b4035536df3f95f96 generated_sha256=5b3b4397d6c2bf6aedb053297a9578e0afb0924482bace7b4035536df3f95f96 -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=851eb531332a437898b2a16cedb8847272a55bc0f11d19af9697d43f5c8f4ad8 generated_sha256=851eb531332a437898b2a16cedb8847272a55bc0f11d19af9697d43f5c8f4ad8 -->

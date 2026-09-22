@@ -20,9 +20,10 @@
 > backbone: they set per-project **values** in `project.yaml` and snap their own
 > **Lego pieces** into named extension slots.
 
-The keel is a ship's backbone — the fixed spine every project builds on. Linear work
-is driven by `keel:ship`, while high-concurrency parallel backlogs are orchestrated by
-`keel:swarm`; keel is where ships and fleets are built.
+The keel is a ship's backbone — the fixed spine every project builds on. Work is driven
+by `keel:ship`; `keel:swarm` aims the same backbone at a whole backlog as parallel waves,
+but it is **experimental** and does not land work yet ([#1281](https://github.com/berkayturanci/keel/issues/1281)). keel is where
+ships and fleets are built.
 
 Keel is based on the work pattern of a strong teammate in a real engineering team:
 take an issue from the queue, decide whether it is ready, own the implementation,
