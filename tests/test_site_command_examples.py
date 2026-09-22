@@ -53,7 +53,7 @@ _FLAG_RE = re.compile(r"--[a-z][a-z0-9-]*")
 #   merged**` (`ship.md:1389`) is the *same shape* around a `keel capture-land` flag,
 #   not a slash-command one. Widening to it was measured and claimed two CLI flags
 #   immediately, so the shape stays out.
-# - Adapters that document their flags in prose or a table rather than a bullet list.
+# - Adapters that document their flags in running prose rather than a bullet list.
 #   11 of the 17 yield no flags at all, `overnight`, `swarm` and `work-block` among
 #   them, and their hints are therefore held to nothing here. Closing that gap means
 #   a documentation convention, not a wider regex.
