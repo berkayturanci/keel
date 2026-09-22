@@ -55,7 +55,7 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 
 - **One backbone, every agent** — install once; `/keel:<command>` runs as native Claude commands
   *and* as a single shared skill set every other agent (Codex, Antigravity, Gemini) reads.
-- **High-concurrency Swarm orchestration** — cluster entire backlogs into topological dependency waves, execute disjoint clusters in isolated git worktrees, and land them under a single-writer merge lock with sequential `git merge --no-ff` ([guide](docs/keel/swarm.md)).
+- **High-concurrency Swarm orchestration** (**experimental**) — cluster entire backlogs into topological dependency waves, execute disjoint clusters in isolated git worktrees, and land them under a single-writer merge lock with sequential `git merge --no-ff` ([guide](docs/keel/swarm.md)). Planning and dry runs work; the **live path does not land anything yet** — `swarm-run --live` does not reach the child `keel ship` ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and scope cannot be expressed per issue ([#1274](https://github.com/berkayturanci/keel/issues/1274)). Audit epic: [#1281](https://github.com/berkayturanci/keel/issues/1281). Use `/keel:ship` for work you need merged.
 - **Project Lego + policy packs** — snap gates/steps into named hooks (`guard`, `tester`,
   `pre-merge`, …) and keep labels, path policy, health sources, local commands, and
   workflow preferences in `policy_pack` data instead of packaged command prose.

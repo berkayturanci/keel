@@ -1,5 +1,24 @@
 # Keel Swarm — High-Concurrency Multi-Agent Orchestration
 
+> ## ⚠️ Experimental — the live path does not work end to end
+>
+> Planning runs: `swarm-plan`, `--plan-only`, `--tree` and `keel-visual swarm` all do what this
+> document describes. **A live run does not.** Two defects stop it before any work lands:
+>
+> - `swarm-run --live` never forwards `--live` to the child `keel ship`, so every worker runs in
+>   dry-run and a live swarm produces **no commits and no pull requests**
+>   ([#1269](https://github.com/berkayturanci/keel/issues/1269)).
+> - The CLI cannot express per-issue scope, so the clustering engine has nothing real to cluster
+>   on and the dependency graph is inert in practice
+>   ([#1274](https://github.com/berkayturanci/keel/issues/1274)).
+>
+> Fifteen further findings — worktree lifecycle, rebalancing, error handling, landing hygiene —
+> are tracked under the audit epic
+> [#1281](https://github.com/berkayturanci/keel/issues/1281). Everything below describes the
+> design and the code that exists; read it as architecture, not as a supported workflow.
+>
+> **Use [`/keel:ship`](../../src/keel/adapters/commands/ship.md) for work you need landed.**
+
 **keel-swarm** is an additive, high-concurrency orchestration layer designed to coordinate
 multiple AI developer agents working in parallel across complex backlogs. It transforms a list of
 GitHub issues into a topologically ordered execution graph, partitions issues into conflict-free

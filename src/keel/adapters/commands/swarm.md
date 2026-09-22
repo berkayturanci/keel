@@ -6,6 +6,20 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:swarm
 
+## ⚠️ Experimental — stop and say so before running this live
+
+Planning works. A live run does not land anything, and two defects stop it before it starts:
+
+- `swarm-run --live` never forwards `--live` to the child `keel ship`, so every worker runs in
+  dry-run and the swarm produces **no commits and no pull requests** (#1269).
+- The CLI cannot express per-issue scope, so the clustering engine has nothing real to cluster on
+  (#1274).
+
+So: `--plan-only`, `--tree` and `--visual` are safe and useful — run them freely. For anything the
+user expects to be **merged**, tell them swarm cannot do it yet and offer `/keel:ship` per issue
+instead. Do not work around #1269 by hand-driving the children; that produces an unreviewed,
+unledgered merge. The remaining findings are tracked under the audit epic #1281.
+
 ## Live progress — stamp this run (required)
 
 So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you

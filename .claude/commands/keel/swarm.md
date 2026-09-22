@@ -6,6 +6,20 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 # /keel:swarm
 
+## ⚠️ Experimental — stop and say so before running this live
+
+Planning works. A live run does not land anything, and two defects stop it before it starts:
+
+- `swarm-run --live` never forwards `--live` to the child `keel ship`, so every worker runs in
+  dry-run and the swarm produces **no commits and no pull requests** (#1269).
+- The CLI cannot express per-issue scope, so the clustering engine has nothing real to cluster on
+  (#1274).
+
+So: `--plan-only`, `--tree` and `--visual` are safe and useful — run them freely. For anything the
+user expects to be **merged**, tell them swarm cannot do it yet and offer `/keel:ship` per issue
+instead. Do not work around #1269 by hand-driving the children; that produces an unreviewed,
+unledgered merge. The remaining findings are tracked under the audit epic #1281.
+
 ## Live progress — stamp this run (required)
 
 So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
@@ -161,4 +175,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=03cf63c242f2afd376675e3c5db6f277e2ff7769411c0ee3cf2866a79c3b9e17 generated_sha256=03cf63c242f2afd376675e3c5db6f277e2ff7769411c0ee3cf2866a79c3b9e17 -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.23.1 source_sha256=43e41b311661ff3cf2809a5d3e3b988e45cb8e0f69827484c5f8840e0c1fa09f generated_sha256=43e41b311661ff3cf2809a5d3e3b988e45cb8e0f69827484c5f8840e0c1fa09f -->

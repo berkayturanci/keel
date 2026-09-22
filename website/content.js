@@ -64,9 +64,9 @@ window.KEEL = {
     {
       slug: "swarm", name: "/keel:swarm", group: "Flagship", flagship: true, featured: true, scene: "swarm",
       cmd: "keel:swarm",
-      one: "Multi-agent swarm coordinator — cluster backlog issues, run parallel waves, and batch land.",
+      one: "EXPERIMENTAL — multi-agent swarm coordinator: cluster backlog issues, run parallel waves, and batch land.",
       detail:
-        "Clusters backlog issues into disjoint execution waves based on static file-overlap of predicted scopes. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before sequential git merge --no-ff landing under the merge lock.",
+        "EXPERIMENTAL — planning and dry runs work; a live run lands nothing yet. swarm-run --live never reaches the child keel ship (#1269) and scope cannot be expressed per issue (#1274). Audit epic: #1281. Clusters backlog issues into disjoint execution waves based on static file-overlap of predicted scopes. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before sequential git merge --no-ff landing under the merge lock.",
     },
     {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
@@ -394,8 +394,9 @@ window.KEEL = {
     },
     {
       group: "Architecture", title: "Keel Swarm (Multi-Agent Concurrency & Cross-Model Topology)", slug: "swarm",
-      summary: "High-concurrency multi-agent orchestration — static DAG clustering, isolated git worktrees, cross-model routing, and single-writer batch landing.",
+      summary: "EXPERIMENTAL — high-concurrency multi-agent orchestration: static DAG clustering, isolated git worktrees, cross-model routing, and single-writer batch landing. The live path does not land anything yet.",
       body:
+        "<p><b>⚠️ Experimental.</b> Planning runs — <code>swarm-plan</code>, <code>--plan-only</code>, <code>--tree</code> and <code>keel-visual swarm</code> all behave as described below. A <i>live</i> run does not: <code>swarm-run --live</code> never forwards <code>--live</code> to the child <code>keel ship</code>, so a live swarm produces no commits and no pull requests (<a href='https://github.com/berkayturanci/keel/issues/1269'>#1269</a>), and the CLI cannot express per-issue scope, so the clustering engine has nothing real to cluster on (<a href='https://github.com/berkayturanci/keel/issues/1274'>#1274</a>). Fifteen further findings are tracked under the audit epic <a href='https://github.com/berkayturanci/keel/issues/1281'>#1281</a>. Read this as architecture, not as a supported workflow — use <code>/keel:ship</code> for work you need merged.</p>" +
         "<p><b>Keel Swarm</b> is Keel's high-concurrency multi-agent orchestration subsystem. While <code>/keel:ship</code> drives a single issue linearly, <code>/keel:swarm</code> clusters a list or backlog of issues into disjoint execution waves and executes them across isolated git worktrees in parallel.</p>" +
         "<h3>1. Static Dependency DAG & Wave Partitioning</h3>" +
         "<p>Swarm computes file-overlap conflict graphs from each issue's predicted scope, without executing code; a cluster's dependencies are derived from that overlap. Orthogonal clusters are scheduled in parallel in <b>Wave 1</b>, while dependent or overlapping clusters are sequenced into subsequent waves (<code>Wave 2</code>, <code>Wave 3</code>).</p>" +
