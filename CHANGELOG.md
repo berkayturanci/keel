@@ -18,6 +18,9 @@ All notable changes to keel are documented here. The format follows
 ### Changed
 - **Questions have a home: GitHub Discussions is enabled** (#1296 follow-up). #1296 removed the issue chooser's "Ask a Question" link because it pointed at Discussions while Discussions was disabled, which sent every visitor who clicked it to a 404. Discussions is now enabled, and the chooser links to its Q&A category, alongside the docs and the private security-report policy.
 
+### Fixed
+- **`keel setup` writes Python gates the project can run** (#1297). A detected `stack: python` always got `build_gate_cmd: "make test"` and `lint_cmd: "ruff check ."`, so a Python project with no Makefile scaffolded a build gate that blocked every `keel ship` with ``make: *** No rule to make target `test'``, and a project without ruff got a lint gate it could not pass. The build gate now follows the project: its Makefile's `test` target if it has one, `python -m pytest` if the project configures pytest *or depends on it* (in `pyproject.toml`, `setup.cfg`, a `requirements*.txt`, …), and otherwise `python -m unittest discover`, which ships with Python. The dependency case matters: most pytest projects keep no pytest config, and `unittest discover` finds none of their plain `def test_…` functions — from Python 3.12 it exits 5, the same blocked gate by another route. `python3` is written where there is no `python` on PATH. The lint gate is `ruff check .` only when the project configures ruff (`ruff.toml`, `.ruff.toml` or `[tool.ruff]`), and absent otherwise. `keel setup` and `keel init` (plain, `--wizard` and `--auto`) all use it; other stacks are unchanged.
+
 ## [1.24.1] - 2026-09-22
 
 ### Fixed

@@ -6224,11 +6224,16 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 base_default=scaffold.detect_base_branch(root),
                 catalog=_wizard_catalog(),
                 notify=_warn,
+                root=root,
             )
         else:
             stack = scaffold.detect_stack(root)
             text = scaffold.default_config(
-                stack, repo=repo, owner=owner, base_branch=scaffold.detect_base_branch(root)
+                stack,
+                repo=repo,
+                owner=owner,
+                base_branch=scaffold.detect_base_branch(root),
+                root=root,
             )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -6274,10 +6279,14 @@ def _render_scaffolded_config(root: Path, *, wizard: bool) -> tuple[str, str]:
                 base_default=base_branch,
                 catalog=_wizard_catalog(),
                 notify=_warn,
+                root=root,
             ),
             stack,
         )
-    return scaffold.default_config(stack, repo=repo, owner=owner, base_branch=base_branch), stack
+    return (
+        scaffold.default_config(stack, repo=repo, owner=owner, base_branch=base_branch, root=root),
+        stack,
+    )
 
 
 def _report_install(surface: str, installed: list[str], skipped: list[str]) -> None:
