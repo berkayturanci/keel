@@ -1831,15 +1831,19 @@ class AFailedCheckoutStopsTheLanding(unittest.TestCase):
         self.assertEqual(self.heads(), before, "a branch moved though the checkout failed")
 
     def test_the_rebase_does_not_rewrite_the_operators_branch(self):
-        self.git("checkout", "-q", "cluster")
-        self.commit("a.txt", "cluster edit\n", "cluster touches a.txt")
+        """An untracked file that the cluster branch tracks blocks `git checkout
+        cluster`. With `main` ahead of `feature`, the old code then rebased `feature`
+        itself and reported `clean_rebase` (measured in review). A dirty *tracked*
+        file does not show it: `git rebase` refuses a dirty tree on its own."""
+        self.git("checkout", "-q", "main")
+        self.commit("c.txt", "main moved\n", "main moves on")
         self.git("checkout", "-q", "feature")
-        self.dirty()
+        (self.root / "b.txt").write_text("untracked\n", encoding="utf-8")
         before = self.heads()
 
         ok, reason = rebase_and_heal_cluster_branch(self.root, "cluster", base_branch="main")
+        self.assertEqual(self.heads(), before, "feature was rewritten though its checkout failed")
         self.assertEqual((ok, reason), (False, "checkout_failed"))
-        self.assertEqual(self.heads(), before)
 
     def test_a_clean_tree_still_lands(self):
         """The counterweight: the check refuses a failed checkout, not a merge."""
@@ -1847,6 +1851,49 @@ class AFailedCheckoutStopsTheLanding(unittest.TestCase):
         self.assertEqual(self.git("symbolic-ref", "--short", "HEAD"), "main")
         self.assertIn("cluster work", self.git("log", "--format=%s", "main"))
         self.assertNotIn("cluster work", self.git("log", "--format=%s", "feature"))
+
+    def test_the_wave_names_the_failed_checkout(self):
+        """The reason reaches the run state that swarm-status reads."""
+        plan = build_swarm_plan(
+            [IssueScope(issue=101, title="A", predicted_files=("src/a.py",))], swarm_id="swarm-co"
+        )
+        cid = plan.waves[0].clusters[0].cluster_id
+        worker = SwarmWorkerStatus(
+            cluster_id=cid,
+            issue=101,
+            role="core",
+            agent="a",
+            model="m",
+            step="s8",
+            status="passed",
+            updated_at="",
+            details="",
+        )
+        save_swarm_state(
+            SwarmRunState(swarm_id="swarm-co", total_workers=1, active_wave=1, workers=(worker,)),
+            root=self.root,
+        )
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            ok = cmd[:2] != ["git", "checkout"]
+            return CommandResult(ok=ok, code=0 if ok else 1, output="")
+
+        result = land_wave_clusters(
+            plan,
+            wave_index=1,
+            project_yaml=".keel/project.yaml",
+            root=self.root,
+            dry_run=False,
+            runner=runner,
+            evidence_checker=None,
+            base_branch="main",
+        )
+        self.assertEqual(result.failed_clusters, (cid,))
+        state = load_swarm_state("swarm-co", root=self.root)
+        assert state is not None
+        self.assertEqual(
+            state.workers[0].details, "merge into main failed (or could not check it out)"
+        )
 
     def test_nothing_runs_after_a_failed_checkout(self):
         calls: list[list[str]] = []
