@@ -8,7 +8,7 @@ keel is an **agent-agnostic, project-agnostic work-ownership backbone** that dri
 single GitHub issue end-to-end through a fixed lifecycle: issue intake/readiness →
 branch/worktree → implement (coding agent) → push → CI wait → multi-agent code review
 (review→debate→verify→synthesize) → project test/build/lint gates → risk classification
-(TIER 1/2/3 → reviewer count) → safe merge → close → capture hooks. v1 includes the
+(TIER 1/2/3 → reviewer count) → safe merge → capture → close. v1 includes the
 capture marker/verifier contract, redaction-before-durability guardrails, capture-health
 surfacing, and optional learning-quality decisions in the run ledger. Distinctive elements:
 

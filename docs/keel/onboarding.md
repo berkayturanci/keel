@@ -7,7 +7,8 @@ commands; project policy and extensions remain project-owned.
 
 ## Prerequisites
 
-- Python 3.11 or newer.
+- Python 3.11 or newer, and `git`.
+- An authenticated `gh` (`gh auth login`) for a live run (`--live`); a dry run needs only Python and git.
 - A clean git worktree created from the project's normal base branch.
 - The `keel` CLI installed via Homebrew, standalone curl installer, or PyPI:
 

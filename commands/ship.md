@@ -1,5 +1,5 @@
 ---
-description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → close → capture), reading every project value from .keel/project.yaml via the keel CLI.
+description: Drive a GitHub issue end-to-end through the keel backbone (select → branch → implement → CI → review → test → merge → capture → close), reading every project value from .keel/project.yaml via the keel CLI.
 argument-hint: "[issue numbers...] [--compound|--profile <standard|compound>] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>] [--review-delegate <...> (repeatable, one per reviewer slot)] [--review-comments <inline|summary>] [--reviewers <1|2|3>] [--effort <low|medium|high>] [--team <profile>] [--jury|--no-jury|--jury-advisory] [--tdd] [--loop] [--hotfix] [--dry-run] [--wizard]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
@@ -1576,4 +1576,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.23.1 source_sha256=c1b3fd07830286a4c547610ae39d3d2cc42eea0d364e791c4c42ddbec8fe72a4 generated_sha256=c1b3fd07830286a4c547610ae39d3d2cc42eea0d364e791c4c42ddbec8fe72a4 -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.23.1 source_sha256=82680143fb7a2b294613ce733c515e463f41a62ee781275d3b8b1484b74a6fc3 generated_sha256=82680143fb7a2b294613ce733c515e463f41a62ee781275d3b8b1484b74a6fc3 -->

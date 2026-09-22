@@ -37,7 +37,7 @@ window.KEEL = {
     { id: "s5",  name: "classify",  blurb: "Classify risk tier from the touched paths.", slots: ["classify", "after:classify"], agent: true },
     { id: "s6",  name: "ci",        blurb: "Wait on the project's CI workflows.", slots: ["before:ci", "after:ci"] },
     { id: "s7",  name: "review",    blurb: "Parallel reviewers — plus the opt-in <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>jury</a> gate, or the panel <i>as</i> the review.", slots: ["reviewers", "after:review"], agent: true, slot: true },
-    { id: "s8",  name: "test",      blurb: "Run the build / lint / test gates.", slots: ["tester", "test", "after:test"], slot: true, block: true },
+    { id: "s8",  name: "test",      blurb: "Run the build / lint / jury gates.", slots: ["tester", "test", "after:test"], slot: true, block: true },
     { id: "s9",  name: "fixloop",   blurb: "Bounded rounds of fixes until gates pass.", slots: ["before:fixloop", "fixloop", "after:fixloop"] },
     { id: "s10", name: "merge",     blurb: "Merge — inside the window, behind the lock, after pre-merge gates.", slots: ["pre-merge", "after:merge"], slot: true, block: true },
     { id: "s11", name: "capture",   blurb: "Write reports and capture markers post-merge — the compound-learning contract: sanitized, fail-soft, deduped by fingerprint.", slots: ["capture", "post-merge"], slot: true },
@@ -228,7 +228,7 @@ window.KEEL = {
     ["core", "Pinned keel-core version range (e.g. ^1.0) — installed, never copied."],
     ["base_branch", "The branch work is cut from and merged back into."],
     ["timezone · merge_window", "Timezone-aware HH:MM–HH:MM window; merges only happen inside it."],
-    ["gates", "Built-in build / lint / test gates run at the s8 test step."],
+    ["gates", "Built-in build / lint / jury gates run at the s8 test step."],
     ["knobs", "Runnable commands, risk globs, docs paths, CI workflow mapping, local agent roles, runtime capabilities."],
     ["knobs.team", "The whole team as values: who implements (per issue role, model and reasoning effort), the mandatory gate reviewer from a different vendor, the reviewer seats per risk tier — or <code>jury</code>, when the cross-vendor panel <b>is</b> the review — who applies the findings, and named benches selected with <code>--team</code>."],
     ["knobs.implement_mode", "<code>default</code> or <code>tdd</code>. Test-first splits s4 into a test-only commit and the implementation, and adds the blocking <code>tdd-order</code> gate at s8."],
@@ -263,7 +263,7 @@ window.KEEL = {
     ["Can the jury panel be the review itself, not an extra gate?", "Yes — set a tier's seats to the string <code>jury</code> (<code>knobs.team.review.by_tier.\"3\": jury</code>) and s7 dispatches the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> panel <b>once</b> instead of running host readers beside it. <code>keel review --from-jury &lt;report.json&gt;</code> then turns the panel's report into the run's public evidence: one head-pinned review verdict per panelist ballot, carrying the vendor and model that produced it, plus the panel's consensus record — in one call, so everything is pinned to the same head SHA. The panel's <i>verified</i> findings are what the fix loop receives. Adopt it deliberately: on a panel tier no per-run flag can take the panel back off."],
     ["Can keel write the tests first?", "Yes. <code>knobs.implement_mode: tdd</code> (or <code>--tdd</code> for one run) splits s4 into two phases — a test-only commit carrying the issue's acceptance criteria, then the implementation — and s8 gains the pure, blocking <code>tdd-order</code> gate, which checks that commit order against the project's <code>test_groups</code> paths. So “tests first” is verified, not asserted."],
     ["Does keel use itself?", "Yes. keel drives itself: its config is .keel/project.yaml (Python, make test + make lint gates) and CI runs keel on keel-core on every push. If a gate fails, keel blocks its own merge — the same backbone every consumer gets."],
-    ["What do I need installed?", "Python 3.11+ and PyYAML — that's the one runtime dependency (on Windows, also tzdata for the timezone database). It runs on Linux, macOS, and Windows. The pure core is stdlib-first. Adapters install the /keel:&lt;command&gt; workflows into the surfaces your agents already read."],
+    ["What do I need installed?", "Python 3.11+, <code>git</code>, and PyYAML — that's the one runtime dependency (on Windows, also tzdata for the timezone database). A live run (<code>--live</code>) also needs an authenticated <code>gh</code> (<code>gh auth login</code>); a dry run does not. It runs on Linux, macOS, and Windows. The pure core is stdlib-first. Adapters install the /keel:&lt;command&gt; workflows into the surfaces your agents already read."],
   ],
 
   /* ---- Coverage (pure core held at 100% line + branch) ----------- */
@@ -402,9 +402,9 @@ window.KEEL = {
         "<h3>2. Cross-Model Routing & Per-Cluster Review</h3>" +
         "<p>Different clusters can be assigned to different models and agent vendors concurrently via <code>knobs.team.implement.by_role</code> and <code>knobs.delegate_profiles</code>:</p>" +
         "<ul>" +
-        "<li><b>Core / Architecture</b>: Claude 3.7 Sonnet / Claude Code (<code>claude</code>)</li>" +
-        "<li><b>Frontend / Visual</b>: Google Gemini 2.5 Flash / Antigravity (<code>agy</code> / <code>google-api:</code>)</li>" +
-        "<li><b>Documentation / Scripts</b>: OpenAI GPT-4o / Codex (<code>codex</code> / <code>openai-api:</code>)</li>" +
+        "<li><b>Core / Architecture</b>: Claude Code (<code>claude</code> / <code>anthropic-api:</code>)</li>" +
+        "<li><b>Frontend / Visual</b>: Antigravity (<code>agy</code> / <code>google-api:</code>)</li>" +
+        "<li><b>Documentation / Scripts</b>: Codex (<code>codex</code> / <code>openai-api:</code>)</li>" +
         "<li><b>Local / Offline Worktrees</b>: Local Ollama / vLLM (<code>ollama:qwen2.5-coder</code>)</li>" +
         "</ul>" +
         "<p>Each cluster is reviewed inside its own <b>keel ship</b> run — on tier-3 work that can be the cross-vendor <b>AI Jury</b> panel (e.g. Anthropic + OpenAI + Google) — and no branch lands until it clears the review-evidence gate, whichever model authored it.</p>" +
