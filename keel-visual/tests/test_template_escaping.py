@@ -6,8 +6,15 @@ which can quote issue and PR text) ran as markup when the page opened. This test
 reads each template's inline scripts, finds every template literal that builds
 markup, and requires each ``${...}`` in it to be an ``esc(...)`` or
 ``statusClass(...)`` call, or one of the few allow-listed expressions below. A new
-raw interpolation fails here, with node or without it; the behaviour itself is
-pinned by ``tests/js/swarm.test.mjs`` and ``tests/js/runviz.test.mjs``.
+raw ``${...}`` in a markup-building template literal fails here, with node or
+without it.
+
+What this scanner does not see, so it is not the guard for them: markup built by
+string concatenation (runviz.html's pattern — ``'<b>' + x``), a literal with no tag
+of its own assigned to ``innerHTML`` (``el.innerHTML = `${x}` ``), an allow-listed
+name rebound to a raw value, and unquoted-attribute or URL contexts. The behaviour
+itself, including runviz.html, is pinned by ``tests/js/swarm.test.mjs`` and
+``tests/js/runviz.test.mjs``, which feed hostile values through the real scripts.
 """
 
 from __future__ import annotations
