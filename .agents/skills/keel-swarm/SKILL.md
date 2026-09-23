@@ -15,8 +15,9 @@ Use this skill when the user asks to run the keel command `swarm` (e.g. `keel sw
 commit or a pull request**, and the reason is deeper than a missing flag: `keel ship` the CLI
 subcommand is a *dry ship assessment* — it reports tier, window, gates and a decision, and never
 commits, pushes or opens a PR in any mode. In keel's design the **agent** does the implementation
-by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit. On
-top of that, `--live` is never forwarded to those children at all (#1269).
+by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit.
+`swarm-run --live` is refused outright: its workers would run `keel ship --live`, whose
+operator-consent gate swarm cannot satisfy for a child (#1269, #1281).
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
@@ -137,8 +138,12 @@ actually dispatch rather than the default one.
 Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/<swarm_id>/<cluster_id>/`:
 
 ```bash
-keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
+keel swarm-run .keel/project.yaml --root . --issues <n,n,n>
 ```
+
+This is the dry run: it assesses each cluster in its worktree and commits nothing. Do not add
+`--live` — it is refused (see the top of this command), because its workers could not pass
+`keel ship --live`'s operator-consent gate. The implementation is the leads' work, below.
 
 - Spawn **one team lead subagent per cluster**, briefed with that cluster's `assignment`
   and `difficulty` verbatim. The lead runs the cluster's issues through the standard
@@ -203,4 +208,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.24.1 source_sha256=80ef9301008c01812fdecbcf40bb134650959b5659a53e40a645fe6e1654bb3b generated_sha256=70070bd3df3809e50e0ec9de450c14cacf6329203d745aa6f0378e9c2265c7f9 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.24.1 source_sha256=82d1911858c601e198864250b4c4dc8b7c5e612e191995fbe5112d6847d7ebcd generated_sha256=3d8d4c4c334f3f43ed9b65ebdfcce4c94680212248c5ec757fd9c3f38eae0a31 -->

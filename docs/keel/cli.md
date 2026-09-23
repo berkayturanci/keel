@@ -3022,17 +3022,18 @@ keel swarm-status .keel/project.yaml --root . --swarm-id swarm-2026-08-15 --json
 
 ## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
-> **Experimental — `--live` does not make this land anything.** The flag is never forwarded to the
-> child `keel ship` ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and that child is
-> a dry assessment that never commits or opens a pull request in any mode. Audit epic:
-> [#1281](https://github.com/berkayturanci/keel/issues/1281).
+> **Experimental — `--live` is refused.** Its workers are handed `--live`
+> ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and `keel ship --live` stops at the
+> operator-consent gate, which swarm cannot satisfy for a child; `keel ship` also never commits or
+> opens a pull request in any mode. `swarm-run --live` exits 1 with that reason before anything
+> starts. Audit epic: [#1281](https://github.com/berkayturanci/keel/issues/1281).
 
 Launch parallel workers per cluster in dedicated git worktrees under
 `.keel/worktrees/<swarm_id>/<cluster_id>/`:
 
 ```bash
 keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
-keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live --max-workers 2
+keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --max-workers 2
 ```
 
 Each worker runs the standard `keel ship` backbone machine in its isolated worktree, launched

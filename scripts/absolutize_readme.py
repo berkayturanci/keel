@@ -66,9 +66,10 @@ _MD_LINK = re.compile(rf"(?<!!)\[(!\[[^\]]*\]\([^)]*\)|[^\]]*)\]\({_REL}([^)]+)\
 # destination; anything else makes the line ordinary paragraph text. Accepting an
 # arbitrary tail turned every GFM footnote (`[^1]: Keel is a tool`) and every
 # `[NOTE]: remember to …` line into a definition and rewrote its first word into a
-# blob URL. A `[^…]` label is a footnote, never a definition.
+# blob URL. A `[^…]` label is a footnote, never a definition. Whitespace after the
+# colon is optional (`[l]:docs/a.md` is a definition too, #1294).
 _MD_REFDEF = re.compile(
-    rf"^([ \t]{{0,3}}\[(?!\^)[^\]]+\]:[ \t]+){_REL}(\S+)"
+    rf"^([ \t]{{0,3}}\[(?!\^)[^\]]+\]:[ \t]*){_REL}(\S+)"
     r"((?:[ \t]+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?[ \t]*)$"
 )
 # HTML src="…" with a relative value (the hero <picture>/<img>).
@@ -84,6 +85,29 @@ _HTML_SRCSET = re.compile(r'\bsrcset="([^"]+)"')
 # is the wrong host for a `<link rel="stylesheet">` or an SVG `<image href>` — those
 # want raw bytes, not a GitHub page — so the tag is named rather than assumed.
 _HTML_HREF = re.compile(rf'(<a\b[^>]*?(?<![-\w])href="){_REL}([^"]+)"')
+# The script reads a line at a time, so an `<a` whose attributes continue onto the
+# next lines — the usual hand-formatted hero — had its `href` missed once the
+# rewrite was scoped to `<a>` (#1294). An `<a` left open at the end of a line is
+# carried to the next, whose `href` is rewritten up to the `>` that closes the tag.
+# The carried state ends at that `>`, at a blank line and at a code fence: in
+# CommonMark an inline tag cannot span a blank line (the paragraph ends there) or a
+# code block. Without those bounds an `<a` mentioned in prose leaked forward and
+# rewrote the next `<link href>` — and no guard saw it, because the result was a
+# well-formed blob URL (#1300 review).
+_OPEN_ANCHOR = re.compile(r"<a\b[^>]*$")
+# Inline code is text, not HTML: a sentence documenting "`<a` tags" must not open an
+# anchor. Spans on one line are dropped before looking for an open `<a`; a span that
+# runs across lines is ended by the `<` rule below, like any other stray `<a` (#1300
+# review). An `href` shown inside a code span may still be rewritten, as before #1294.
+_CODE_SPAN = re.compile(r"(`+)(?:(?!\1).)+?\1")
+_CONTINUED_HREF = re.compile(rf'((?<![-\w])href="){_REL}([^"]+)"')
+
+
+def _path(target: str) -> str:
+    """The repo-relative path a target names. A root-relative `/docs/a.md` resolves
+    from the repository root on GitHub, so its leading slash is dropped rather than
+    doubled into `…/main//docs/a.md`. (`//host` never gets here: `_REL` refuses it.)"""
+    return target[1:] if target.startswith("/") else target
 
 
 def _link_host(target: str) -> str:
@@ -91,38 +115,64 @@ def _link_host(target: str) -> str:
     return _TREE if target.endswith("/") else _BLOB
 
 
-def _absolutize_srcset(value: str) -> str:
-    """Prefix every candidate in a `srcset`, not only the first.
+def _srcset_candidates(value: str) -> list[tuple[str, str]]:
+    """The ``(url, descriptor)`` candidates of a `srcset`, parsed as the HTML standard does.
 
-    `srcset` is a comma-separated list of `url [descriptor]` candidates, so a
-    single prefix left `docs/b.svg 2x` relative in `"docs/a.svg 1x, docs/b.svg 2x"`.
+    A candidate's URL is the run of non-whitespace characters, and a comma ends it
+    only at the end of that run. Splitting on every comma cut a `data:` URL — which
+    legally contains one, `data:image/png;base64,AAAA` — in two and rewrote its tail
+    as a relative path (#1294).
     """
-    out = []
-    for candidate in value.split(","):
-        stripped = candidate.strip()
-        if not stripped:
-            out.append(candidate)
-            continue
-        # The HTML standard separates a candidate's URL from its descriptor with any
-        # ASCII whitespace, so splitting on one space glued a tab-separated descriptor
-        # onto the URL.
-        parts = stripped.split(None, 1)
-        url, descriptor = parts[0], (parts[1] if len(parts) > 1 else "")
-        if re.match(_REL + r".", url) is None:
-            out.append(candidate)
-            continue
-        rebuilt = f"{_RAW}{url}" + (f" {descriptor.strip()}" if descriptor.strip() else "")
-        out.append(rebuilt)
-    return ", ".join(part.strip() for part in out)
+    out: list[tuple[str, str]] = []
+    i, n = 0, len(value)
+    while i < n:
+        while i < n and (value[i].isspace() or value[i] == ","):
+            i += 1
+        if i >= n:
+            break
+        j = i
+        while j < n and not value[j].isspace():
+            j += 1
+        url, i = value[i:j], j
+        descriptor = ""
+        if url.endswith(","):
+            url = url.rstrip(",")
+        else:
+            end = value.find(",", i)
+            end = n if end == -1 else end
+            descriptor, i = value[i:end].strip(), end + 1
+        out.append((url, descriptor))
+    return out
+
+
+def _absolutize_srcset(value: str) -> str:
+    """Prefix every relative candidate in a `srcset`, and only those.
+
+    A single prefix left `docs/b.svg 2x` relative in `"docs/a.svg 1x, docs/b.svg 2x"`.
+    Descriptors are separated from the URL by any ASCII whitespace, so a tab no longer
+    glues one onto it.
+    """
+    rebuilt = []
+    for url, descriptor in _srcset_candidates(value):
+        if re.match(_REL + r".", url) is not None:
+            url = f"{_RAW}{_path(url)}"
+        rebuilt.append(f"{url} {descriptor}" if descriptor else url)
+    return ", ".join(rebuilt)
 
 
 def absolutize(text: str) -> str:
     """Return *text* with relative README links/images made absolute (pure)."""
     out: list[str] = []
     fence: str | None = None  # the opening marker, or None outside a block
+    in_anchor = False  # an `<a` tag opened on an earlier line and not yet closed
     for line in text.splitlines(keepends=True):
         boundary = _FENCE.match(line.rstrip("\r\n"))
+        # CommonMark §4.5: a backtick fence's info string cannot contain a backtick, so
+        # a line opening with inline code (```x```) is text, not a fence (#1294).
+        if boundary is not None and boundary.group(1)[0] == "`" and "`" in boundary.group(2):
+            boundary = None
         if boundary is not None:
+            in_anchor = False
             marker, info = boundary.group(1), boundary.group(2)
             if fence is None:
                 # An opening fence may carry an info string (```python).
@@ -134,15 +184,38 @@ def absolutize(text: str) -> str:
         if fence is not None:
             out.append(line)
             continue
+        if not line.strip():
+            in_anchor = False
+        if in_anchor:
+            head, close, tail = line.partition(">")
+            if "<" in head:
+                # A tag's attribute names and unquoted values cannot contain `<`, so a
+                # new `<` before the `>` means the earlier `<a` was never a tag — prose
+                # like "wrap it in an <a tag" — and this line's `href` belongs to
+                # another element. A quoted value may hold `<` (or `>`); an anchor
+                # with one before its `href` is left relative, as before #1294.
+                in_anchor = False
+            else:
+                head = _CONTINUED_HREF.sub(
+                    lambda m: f'{m.group(1)}{_link_host(m.group(2))}{_path(m.group(2))}"', head
+                )
+                line = head + close + tail
+                in_anchor = not close
         # Images first, so a relative `![](…)` is not also seen as a link.
-        line = _MD_IMAGE.sub(lambda m: f"![{m.group(1)}]({_RAW}{m.group(2)})", line)
-        line = _MD_LINK.sub(lambda m: f"[{m.group(1)}]({_link_host(m.group(2))}{m.group(2)})", line)
-        line = _MD_REFDEF.sub(
-            lambda m: f"{m.group(1)}{_link_host(m.group(2))}{m.group(2)}{m.group(3)}", line
+        line = _MD_IMAGE.sub(lambda m: f"![{m.group(1)}]({_RAW}{_path(m.group(2))})", line)
+        line = _MD_LINK.sub(
+            lambda m: f"[{m.group(1)}]({_link_host(m.group(2))}{_path(m.group(2))})", line
         )
-        line = _HTML_SRC.sub(lambda m: f'src="{_RAW}{m.group(1)}"', line)
+        line = _MD_REFDEF.sub(
+            lambda m: f"{m.group(1)}{_link_host(m.group(2))}{_path(m.group(2))}{m.group(3)}", line
+        )
+        line = _HTML_SRC.sub(lambda m: f'src="{_RAW}{_path(m.group(1))}"', line)
         line = _HTML_SRCSET.sub(lambda m: f'srcset="{_absolutize_srcset(m.group(1))}"', line)
-        line = _HTML_HREF.sub(lambda m: f'{m.group(1)}{_link_host(m.group(2))}{m.group(2)}"', line)
+        line = _HTML_HREF.sub(
+            lambda m: f'{m.group(1)}{_link_host(m.group(2))}{_path(m.group(2))}"', line
+        )
+        if not in_anchor and _OPEN_ANCHOR.search(_CODE_SPAN.sub("", line)):
+            in_anchor = True
         out.append(line)
     return "".join(out)
 

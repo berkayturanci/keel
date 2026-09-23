@@ -470,6 +470,44 @@ class TestSwarmStateAndDashboard(unittest.TestCase):
             corrupt_file.write_text("{bad json", encoding="utf-8")
             self.assertIsNone(load_swarm_state("corrupt", root=tmpdir))
 
+    def test_state_that_parses_but_has_the_wrong_shape_is_unreadable_not_fatal(self):
+        """#1273: only unparseable JSON was handled; JSON of the wrong shape raised
+        out of swarm-status, the recovery tool."""
+        shapes = {
+            "a worker that is not an object": '{"workers": ["not-a-dict"]}',
+            "null workers": '{"workers": null}',
+            "not an object": "[1, 2, 3]",
+            "a worker field of the wrong type": '{"workers": [{"issue": [1]}]}',
+            "a null count": '{"total_workers": null, "workers": []}',
+            "an infinite count": '{"total_workers": 1e999, "workers": []}',
+            "an infinite issue": '{"workers": [{"issue": 1e999}]}',
+        }
+        for label, text in shapes.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmpdir:
+                state_dir = Path(tmpdir) / ".keel" / "state" / "swarm"
+                state_dir.mkdir(parents=True)
+                (state_dir / "odd.json").write_text(text, encoding="utf-8")
+                out, err = io.StringIO(), io.StringIO()
+                try:
+                    loaded = load_swarm_state("odd", root=tmpdir)
+                    with redirect_stdout(out), redirect_stderr(err):
+                        code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
+                except Exception as exc:  # noqa: BLE001 - the defect is that it raises
+                    self.fail(f"{type(exc).__name__} escaped: {exc}")
+                self.assertIsNone(loaded)
+                self.assertEqual(code, 0)
+                self.assertIn("odd.json is not the shape keel writes", err.getvalue())
+
+    def test_a_well_formed_state_draws_no_warning(self):
+        """The counterweight."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = SwarmRunState(swarm_id="fine", total_workers=0, active_wave=1, workers=())
+            save_swarm_state(state, root=tmpdir)
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
+            self.assertEqual(err.getvalue(), "")
+
 
 class TestSwarmCLI(unittest.TestCase):
     def test_swarm_plan_cli_missing_config(self):
