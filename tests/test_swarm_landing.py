@@ -1733,13 +1733,15 @@ class TestSwarmLandCLI(unittest.TestCase):
 
             with tempfile.TemporaryDirectory() as tmp_fresh:
                 buf_no_state = io.StringIO()
-                with redirect_stdout(buf_no_state):
+                with redirect_stdout(buf_no_state), redirect_stderr(io.StringIO()):
                     code_no_state = main(
                         [
                             "swarm-land",
                             ".keel/project.yaml",
                             "--root",
                             tmp_fresh,
+                            "--issues",
+                            "714",
                         ]
                     )
                 self.assertEqual(code_no_state, 1)

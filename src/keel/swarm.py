@@ -321,7 +321,9 @@ def _rstrip_path_punctuation(p: str) -> str:
     while True:
         before = p
         p = p.rstrip(_PATH_LEAD)
-        if p.endswith(".") and not ("/" in p and p.rsplit("/", 1)[-1] in (".", "..")):
+        # `\\` counts as a separator here: this runs before it becomes `/`.
+        steps = p.replace("\\", "/")
+        if p.endswith(".") and not ("/" in steps and steps.rsplit("/", 1)[-1] in (".", "..")):
             p = p[:-1]
         if p == before:
             return p

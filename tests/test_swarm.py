@@ -126,6 +126,7 @@ class TestSwarmPathExtraction(unittest.TestCase):
     def test_a_final_dot_segment_is_a_path_step(self):
         self.assertEqual(_normalize_path("src/a/.."), "src")
         self.assertEqual(_normalize_path("src/a/."), "src/a")
+        self.assertEqual(_normalize_path("src\\a\\.."), "src")
         self.assertEqual(_normalize_path("..."), "")
 
     def test_extract_predicted_paths_backticks_and_text(self):
