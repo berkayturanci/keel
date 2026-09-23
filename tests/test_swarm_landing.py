@@ -1732,19 +1732,20 @@ class TestSwarmLandCLI(unittest.TestCase):
             self.assertNotIn("status", buf_empty.getvalue())
 
             with tempfile.TemporaryDirectory() as tmp_fresh:
-                buf_no_state = io.StringIO()
-                with redirect_stdout(buf_no_state), redirect_stderr(io.StringIO()):
+                # No state dir and no issues: the no-scope refusal, not a lookup. (With
+                # issues it would reach the evidence checker's real `gh pr list`.)
+                buf_no_state, err_no_state = io.StringIO(), io.StringIO()
+                with redirect_stdout(buf_no_state), redirect_stderr(err_no_state):
                     code_no_state = main(
                         [
                             "swarm-land",
                             ".keel/project.yaml",
                             "--root",
                             tmp_fresh,
-                            "--issues",
-                            "714",
                         ]
                     )
                 self.assertEqual(code_no_state, 1)
+                self.assertIn("swarm-land needs the wave's issues", err_no_state.getvalue())
 
     def test_swarm_land_cli_partial_failure_returns_exit_code_1(self):
         with tempfile.TemporaryDirectory() as tmpdir:
