@@ -207,15 +207,12 @@ class TestTheStatedCommandCountIsReal(unittest.TestCase):
     _CLAIMS = (
         ("website/llms.txt", re.compile(r"> (\d+) `/keel` commands")),
         ("website/docs.html", re.compile(r"all (\d+) /keel commands")),
-        ("website/docs.html", re.compile(r"extension slots, (\d+) /keel commands")),
         ("website/docs.html", re.compile(r'Workflow commands <span class="badge">(\d+)</span>')),
-        ("website/index.html", re.compile(r"extension slots, (\d+) /keel commands")),
         ("website/index.html", re.compile(r'Workflow commands <span class="badge">(\d+)</span>')),
         ("website/index.html", re.compile(r"(\d+) /keel commands, stdlib-first")),
         ("website/index.html", re.compile(r"All (\d+) <code>/keel:")),
         ("website/index.html", re.compile(r"(\d+) workflows · /keel:")),
         ("website/index.html", re.compile(r"<b>(\d+)<span class=\"u\"> cmds</span>")),
-        ("website/coverage.html", re.compile(r"extension slots, (\d+) /keel commands")),
         (
             "website/coverage.html",
             re.compile(r'Workflow commands <span class="badge">(\d+)</span>'),
@@ -301,10 +298,10 @@ class TestTheEnumeratedCommandsAreTheShippedOnes(unittest.TestCase):
 class TestTheSiteStatesTheRealBackboneShape(unittest.TestCase):
     """`13 steps` and `28 extension slots` are printed in nine places across the site.
 
-    Both are hero numbers: they appear in `og:image:alt`, in `twitter:image:alt`, in the
-    README's hero and in the body copy, and every one of them is hand-typed. The command
-    count drifted exactly this way — 16 in five places, 17 in five others — and there is
-    no reason the other two are safer. `model.BACKBONE` and `model.SLOTS` are the answer.
+    Both are hero numbers: they appear in the README's hero and in the site's body copy
+    (the social-card alt text used to carry them too), and every one of them is
+    hand-typed. The command count drifted exactly this way — 16 in five places, 17 in
+    five others — and there is no reason the other two are safer. `model.BACKBONE` and `model.SLOTS` are the answer.
     """
 
     _PAGES = ("index.html", "docs.html", "coverage.html", "content.js")

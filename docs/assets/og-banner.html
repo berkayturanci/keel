@@ -1,0 +1,50 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>og-banner</title>
+<style>
+  html,body{margin:0;padding:0;width:1200px;height:630px;overflow:hidden;background:#0b0d17}
+  body{font-family:-apple-system,"SF Pro Display","Helvetica Neue",Arial,sans-serif;color:#e8eaf6}
+  .mono{font-family:"SF Mono",Menlo,Monaco,monospace}
+  .bg{position:absolute;inset:0;
+      background:
+        radial-gradient(900px 500px at 95% 0%, rgba(88,90,190,.35), transparent 60%),
+        radial-gradient(700px 420px at 0% 100%, rgba(16,120,90,.30), transparent 60%),
+        linear-gradient(180deg,#0e1020,#0a0c16);}
+  .grid{position:absolute;inset:0;opacity:.07;
+      background-image:linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px);
+      background-size:48px 48px}
+  .card{position:absolute;left:16px;top:16px;right:16px;bottom:16px;border:1px solid rgba(255,255,255,.14);border-radius:28px}
+  .brand{position:absolute;left:72px;top:60px;display:flex;align-items:center;gap:16px}
+  .logo{width:56px;height:56px;border-radius:14px;background:#12152a;border:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center}
+  .name{font-size:28px;font-weight:700;line-height:1}
+  .sub{font-size:15px;color:#aab0cc;margin-top:6px}
+  .meta{position:absolute;right:72px;top:72px;font-size:15px;color:#8f9cf5}
+  h1{position:absolute;left:72px;top:170px;margin:0;font-size:68px;line-height:1.1;font-weight:800;letter-spacing:-1.5px}
+  .grad{background:linear-gradient(90deg,#8b8ff7,#4cc3d9);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{position:absolute;left:72px;top:326px;font-size:22px;line-height:1.45;color:#9aa1bd;width:640px}
+  .term{position:absolute;left:72px;right:72px;top:412px;height:150px;border-radius:12px;background:#07080f;border:1px solid rgba(255,255,255,.10);overflow:hidden}
+  .bar{height:30px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#0f1120;border-bottom:1px solid rgba(255,255,255,.07)}
+  .dot{width:11px;height:11px;border-radius:50%}
+  .bar span.t{margin-left:14px;font-size:13px;color:#737a99}
+  .lines{padding:12px 20px;font-size:15px;line-height:1.55;color:#cfd3e6;white-space:pre}
+  .p{color:#fff}
+  .ok{color:#34d399}
+  .pill{position:absolute;right:18px;bottom:16px;background:#10b981;color:#062016;font-weight:700;font-size:14px;padding:6px 12px;border-radius:7px}
+</style></head>
+<body>
+  <div class="bg"></div><div class="grid"></div><div class="card"></div>
+  <div class="brand">
+    <div class="logo"><svg width="36" height="36" viewBox="0 0 36 36"><circle cx="8" cy="26" r="2.6" fill="#7c83f4"/><circle cx="14" cy="26" r="2.6" fill="#7c83f4"/><path d="M14 26 C 22 25, 26 18, 29 9" stroke="#34d399" stroke-width="3.2" fill="none" stroke-linecap="round"/><circle cx="29" cy="9" r="3" fill="#34d399"/></svg></div>
+    <div><div class="name mono">keel</div><div class="sub mono">turn coding agents into work owners</div></div>
+  </div>
+  <div class="meta mono">open source · vendor-neutral · Apache-2.0</div>
+  <h1>Drive every issue to<br><span class="grad">merged.</span></h1>
+  <div class="lede">One fixed backbone for any coding agent — Claude Code, Codex, Cursor, Antigravity.</div>
+  <div class="term mono">
+    <div class="bar"><div class="dot" style="background:#ff5f57"></div><div class="dot" style="background:#febc2e"></div><div class="dot" style="background:#28c840"></div><span class="t">/keel:ship 142 · in your agent</span></div>
+    <div class="lines"><span class="p">&gt; /keel:ship 142</span>
+s4 implement  patch written   s6 ci  green
+s7 review  2 reviewers approve at head   s8 test  ok
+s10 merge  window open · evidence verified</div>
+    <div class="pill">merged + closed — issue #142</div>
+  </div>
+</body></html>
