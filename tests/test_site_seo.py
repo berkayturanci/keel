@@ -91,6 +91,21 @@ class TestSearchFacingFields(unittest.TestCase):
         missing = [term for term in SEARCH_TERMS if term.lower() not in text]
         self.assertEqual([], missing, "the homepage never uses these search terms")
 
+    def test_a_shared_link_previews_the_pitch_and_a_search_result_the_terms(self):
+        # Two readers, two titles (#1297). `<title>` is what a search result shows,
+        # so it keeps the words people type; og:/twitter:title is what a pasted
+        # link shows on Reddit, X or Slack, so it says what the README says.
+        head = _head("index.html")
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8").lower()
+        self.assertIn("turns coding agents into work owners", readme)
+        for field in ('property="og:title"', 'name="twitter:title"'):
+            with self.subTest(field=field):
+                preview = re.search(rf'<meta {field} content="([^"]+)"', head)
+                self.assertIsNotNone(preview, f"the homepage has no {field}")
+                self.assertIn("turn coding agents into work owners", preview.group(1).lower())
+        title = re.search(r"<title>([^<]+)</title>", head).group(1).lower()
+        self.assertIn("code review", title)
+
     def test_every_indexed_page_declares_a_canonical_url(self):
         for page in INDEXED_PAGES:
             with self.subTest(page=page):

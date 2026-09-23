@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **A shared link to keel-ship.dev now previews the README's pitch** (#1297): the homepage's `og:title` and `twitter:title` said "AI Code Review & PR Automation for Coding Agents — keel", the search-engine copy, so a link pasted into Reddit, X or Slack led with a keyword list instead of what keel is. They now read "keel — turn coding agents into work owners", the README's lead. `<title>` is unchanged on purpose: that is what a search result shows, and it keeps the terms people type. `tests/test_site_seo.py` pins both halves, and ties the preview to the README sentence so the two cannot drift apart silently.
+
 ## [1.24.2] - 2026-09-23
 
 ### Changed
