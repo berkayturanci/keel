@@ -3027,7 +3027,7 @@ code makes it usable as a gate ([#1280](https://github.com/berkayturanci/keel/is
 |---|---|---|
 | `0` | the run was read | the run's state |
 | `0` | no `--swarm-id` was given and no run exists — nothing is in flight | `{}` |
-| `1` | the run's state file exists but cannot be read (a warning on stderr names the file) | `{"swarm_id", "error_code": "unreadable-state", "error"}` |
+| `1` | the run's state file exists but cannot be read — the wrong shape, or it cannot be opened (stderr names the file) | `{"swarm_id", "error_code": "unreadable-state", "error"}` |
 | `1` | `--swarm-id` names a run that has no state file (stderr names it) | `{"swarm_id", "error_code": "unknown-swarm", "error"}` |
 | `1` | the config does not load | nothing |
 

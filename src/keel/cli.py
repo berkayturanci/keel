@@ -7293,12 +7293,13 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
         # recovery tool does not tell an operator nothing is in flight (#1273).
         error_code = "unreadable-state"
         message = (
-            f"warning: swarm state {state_file} is not the shape keel writes; inspect or remove it"
+            f"swarm state {state_file} is not the shape keel writes, or cannot be read; "
+            "inspect or remove it"
         )
     elif swarm_id and state is None:
-        # Only reachable through `--swarm-id`: a discovered id always has its file. The
-        # operator asked for one run, and "nothing in flight" would be an answer about
-        # a question they did not ask.
+        # Reached through `--swarm-id` (or a file removed between the glob and the
+        # load). The operator asked for one run, and "nothing in flight" would be an
+        # answer about a question they did not ask.
         error_code = "unknown-swarm"
         message = f"no swarm run {swarm_id!r}: {state_file} does not exist"
 

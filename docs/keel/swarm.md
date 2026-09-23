@@ -459,6 +459,6 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | **Merge conflict during landing** | `git merge` non-zero exit code | Automatic `git merge --abort`; the base branch remains untouched; the cluster is reported `merge failed`. |
 | **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock; a second writer raises `LockError` rather than retrying, so landing is single-writer by refusal. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |
-| **Missing or unreadable run state** | `load_swarm_state` JSON/Value/Key errors | Fails soft to no state rather than raising; `swarm-land` rebuilds the plan from `--issues`, so a lost state file costs the board, not the landing. |
+| **Missing or unreadable run state** | `load_swarm_state` JSON/Value/Key/Type/Overflow errors, and an `OSError` opening the file | Fails soft to no state rather than raising; `swarm-land` rebuilds the plan from `--issues`, so a lost state file costs the board, not the landing. |
 | **A cluster scored lighter than it turns out to be** | The lead's own progress against the plan | The lead reports through its worker record and the CTO re-plans; a lead never re-staffs itself, so the run's team stays the one the plan published. |
 | **`--team` names a bench that is not configured** | `assignment.warnings` at plan time | The run falls back to the configured policy and says so; the name is never silently ignored. |

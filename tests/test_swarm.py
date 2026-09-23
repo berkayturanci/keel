@@ -587,6 +587,22 @@ class SwarmStatusIsAGate(unittest.TestCase):
             )
             self.assertIn("torn.json", payload.get("error", ""))
 
+    def test_a_state_file_that_cannot_be_opened_is_unreadable_not_a_crash(self):
+        # A directory named `<id>.json` exists but cannot be read — the portable stand-in
+        # for a file with no read permission (chmod does not bind root or Windows). The
+        # docs promise the unreadable-state object, not a traceback.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / ".keel" / "state" / "swarm" / "locked.json").mkdir(parents=True)
+            try:
+                loaded = load_swarm_state("locked", root=tmpdir)
+                code, out, err = self._run(tmpdir, "--json", "--swarm-id", "locked")
+            except OSError as exc:  # the defect is that it escapes
+                raise AssertionError(f"{type(exc).__name__} escaped: {exc}") from exc
+            self.assertIsNone(loaded)
+            self.assertEqual(code, 1)
+            self.assertIn("locked.json", err)
+            self.assertEqual(json.loads(out).get("error_code"), "unreadable-state")
+
     def test_an_explicit_unreadable_state_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._unreadable(tmpdir)
