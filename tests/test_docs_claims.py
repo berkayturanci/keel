@@ -1232,6 +1232,10 @@ class TestTheDogfoodTerminalIsTheDryAssessment(unittest.TestCase):
         # The whole `<span class="cmd">…</span>` source, across the JS concatenation.
         commands = re.findall(r'class="cmd">\$ keel ship.*?</span>', self.reveal)
         commands += re.findall(r'class="term-title">([^<]*)<', self.view)
+        # render() overwrites that static title at runtime, so it is a command too.
+        runtime_titles = re.findall(r'title\.textContent = ("[^;]*);', self.render)
+        self.assertTrue(runtime_titles, "render() no longer sets the terminal title")
+        commands += runtime_titles
         self.assertTrue(commands)
         for command in commands:
             with self.subTest(command=command):
