@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.24.2] - 2026-09-23
+
 ### Changed
 - **Questions have a home: GitHub Discussions is enabled** (#1296 follow-up). #1296 removed the issue chooser's "Ask a Question" link because it pointed at Discussions while Discussions was disabled, which sent every visitor who clicked it to a 404. Discussions is now enabled, and the chooser links to its Q&A category, alongside the docs and the private security-report policy.
 - **Python 3.14 is tested and declared** (#1297, item 2). CI's test and keel-visual matrices run 3.14 on Linux, macOS and Windows beside 3.11–3.13, and `pyproject.toml` gains the 3.14 classifier, so the PyPI version badge matches what the installer and the package already accepted. The classifier waited for the CI job, because a classifier is a claim, and `tests/test_python_classifiers.py` keeps it one: every classified version must appear in a CI matrix, the lowest must be the `requires-python` floor, and there may be no gaps.
