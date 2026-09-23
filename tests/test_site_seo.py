@@ -94,17 +94,22 @@ class TestSearchFacingFields(unittest.TestCase):
     def test_a_shared_link_previews_the_pitch_and_a_search_result_the_terms(self):
         # Two readers, two titles (#1297). `<title>` is what a search result shows,
         # so it keeps the words people type; og:/twitter:title is what a pasted
-        # link shows on Reddit, X or Slack, so it says what the README says.
+        # link shows in Slack, LinkedIn or on X, so it leads with the README's pitch
+        # and still names the thing: a card is often read with no description.
         head = _head("index.html")
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8").lower()
         self.assertIn("turns coding agents into work owners", readme)
         for field in ('property="og:title"', 'name="twitter:title"'):
             with self.subTest(field=field):
-                preview = re.search(rf'<meta {field} content="([^"]+)"', head)
-                self.assertIsNotNone(preview, f"the homepage has no {field}")
-                self.assertIn("turn coding agents into work owners", preview.group(1).lower())
-        title = re.search(r"<title>([^<]+)</title>", head).group(1).lower()
-        self.assertIn("code review", title)
+                # Exactly one: some scrapers take the last tag, so a stale duplicate
+                # further down <head> would be what a preview shows.
+                previews = re.findall(rf'<meta {field} content="([^"]+)"', head)
+                self.assertEqual(1, len(previews), f"the homepage needs one {field}")
+                self.assertIn("turn coding agents into work owners", previews[0].lower())
+                self.assertIn("merged pr", previews[0].lower())
+        titles = re.findall(r"<title>([^<]+)</title>", head)
+        self.assertEqual(1, len(titles))
+        self.assertIn("code review", titles[0].lower())
 
     def test_every_indexed_page_declares_a_canonical_url(self):
         for page in INDEXED_PAGES:
