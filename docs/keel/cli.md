@@ -3055,8 +3055,8 @@ clusters carrying that issue from the remaining waves (there is no runtime file-
 Land passing cluster branches from completed execution waves into `main` under atomic `merge_lock`:
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --wave 1
-keel swarm-land .keel/project.yaml --root . --wave 1 --live
+keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1
+keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
 ```
 
 The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's

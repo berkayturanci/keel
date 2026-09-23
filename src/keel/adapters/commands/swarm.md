@@ -167,7 +167,7 @@ keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
 When an execution wave completes, land all passing clusters onto `main`:
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --wave <n> --live
+keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
 - The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.

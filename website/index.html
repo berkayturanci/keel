@@ -311,7 +311,7 @@
             <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; --issues 12,15</code><span>Compute the conflict graph from predicted scopes and partition the backlog into conflict-free execution waves. <a href="docs.html#swarm">Swarm docs →</a></span></div>
             <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span><b>Experimental (#1281)</b> — execute parallel cluster workers in isolated worktrees, tracking each worker's status and rebalancing the plan when one fails.</span></div>
             <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect each cluster's running/passed/failed status, its lead, and its difficulty band.</span></div>
-            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --wave 1</code><span><b>Experimental (#1281)</b> — land a completed wave's cluster branches under the merge lock, sequentially, aborting any conflicting merge.</span></div>
+            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --issues N,N --wave 1</code><span><b>Experimental (#1281)</b> — land a completed wave's cluster branches under the merge lock, sequentially, aborting any conflicting merge.</span></div>
             <div class="cli-row"><code>keel-visual swarm</code><span>Render the interactive 2D DAG and pseudo-3D spatial node topology as a snapshot (static HTML or served on localhost).</span></div>
           </div>
         </section>

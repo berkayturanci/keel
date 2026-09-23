@@ -170,7 +170,7 @@ keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
 When an execution wave completes, land all passing clusters onto `main`:
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --wave <n> --live
+keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
 - The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
@@ -203,4 +203,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.24.1 source_sha256=851eb531332a437898b2a16cedb8847272a55bc0f11d19af9697d43f5c8f4ad8 generated_sha256=4fa21f71b9cf55c5f738dfb1ad0948623767dad1b2c49b38a89aac4ff9912d80 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.24.1 source_sha256=80ef9301008c01812fdecbcf40bb134650959b5659a53e40a645fe6e1654bb3b generated_sha256=70070bd3df3809e50e0ec9de450c14cacf6329203d745aa6f0378e9c2265c7f9 -->

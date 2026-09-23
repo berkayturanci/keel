@@ -191,7 +191,7 @@ window.KEEL = {
     ["keel swarm-plan <cfg> --issues 12,15", "cluster backlog issues into conflict-free execution waves from their predicted scopes"],
     ["keel swarm-status <cfg>", "multi-cluster status snapshot — each cluster's lead, difficulty band, and running/passed/failed state"],
     ["keel swarm-run <cfg> --issues 12,15", "EXPERIMENTAL (#1281) — orchestrate parallel workers in isolated worktrees, rebalancing the plan when a cluster fails; a live run produces no commits and no PRs"],
-    ["keel swarm-land <cfg> --wave 1", "EXPERIMENTAL (#1281) — merge a wave's cluster branches sequentially under the merge lock, aborting on conflict; nothing reaches it from a live swarm run yet"],
+    ["keel swarm-land <cfg> --issues N,N --wave 1", "EXPERIMENTAL (#1281) — merge a wave's cluster branches sequentially under the merge lock, aborting on conflict; nothing reaches it from a live swarm run yet"],
     ["keel-visual swarm", "2D DAG and pseudo-3D spatial worktree topology, rendered as a snapshot"],
     ["keel run-gates <cfg>", "run the project's build / lint / command gates"],
     ["keel window <cfg>", "is the merge window open right now?"],

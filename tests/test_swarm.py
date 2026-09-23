@@ -75,7 +75,8 @@ class TestSwarmPathExtraction(unittest.TestCase):
     def test_brackets_that_belong_to_the_path_are_kept(self):
         self.assertEqual(_normalize_path("docs/(draft)/"), "docs/(draft)")
         self.assertEqual(_normalize_path("(x)/y"), "(x)/y")
-        self.assertEqual(_normalize_path("(src/a.py)"), "src/a.py")
+        self.assertEqual(_normalize_path("(docs/draft)/"), "(docs/draft)")
+        self.assertEqual(_normalize_path("(src/a.py"), "src/a.py")
         self.assertEqual(_normalize_path("src/a.py);"), "src/a.py")
 
     def test_a_dot_directory_keeps_its_dot(self):
@@ -88,13 +89,36 @@ class TestSwarmPathExtraction(unittest.TestCase):
 
     def test_a_bracketed_directory_overlaps_the_files_inside_it(self):
         """The scenario: stored as `docs/(draft)` but matched as `docs/(draft`, so a
-        second issue under that directory was declared orthogonal to the first."""
-        a = extract_issue_scope(1, title="", body="", labels=(), declared_files=["docs/(draft)/"])
-        b = extract_issue_scope(
-            2, title="", body="", labels=(), declared_files=["docs/(draft)/x.md"]
-        )
-        plan = build_swarm_plan([a, b], swarm_id="swarm-draft")
-        self.assertEqual(len(plan.waves), 2, "the two issues share a directory and must serialise")
+        second issue under that directory was declared orthogonal to the first — and,
+        in the review of the first fix, the same through `(docs/draft)/`."""
+        for directory, inside in (
+            ("docs/(draft)/", "docs/(draft)/x.md"),
+            ("(docs/draft)/", "(docs/draft)/y.md"),
+            ("(docs\\draft)\\", "(docs\\draft)\\y.md"),
+        ):
+            with self.subTest(directory):
+                a = extract_issue_scope(1, title="", body="", labels=(), declared_files=[directory])
+                b = extract_issue_scope(2, title="", body="", labels=(), declared_files=[inside])
+                plan = build_swarm_plan([a, b], swarm_id="swarm-draft")
+                self.assertEqual(len(plan.waves), 2, "they share a directory and must serialise")
+
+    def test_normalizing_is_a_fixed_point_on_generated_spellings(self):
+        """#1311 review: a 200k fuzz found normpath exposing new end punctuation after
+        the strip (`(docs/draft)/` → `(docs/draft)` → `docs/draft`). Seeded, so a
+        failure names a reproducible spelling."""
+        import random
+
+        rng = random.Random(7)
+        alphabet = "()./\\ `'a,;:"
+        for _ in range(20000):
+            raw = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 9)))
+            once = _normalize_path(raw)
+            self.assertEqual(_normalize_path(once), once, f"not a fixed point: {raw!r}")
+
+    def test_a_final_dot_segment_is_a_path_step(self):
+        self.assertEqual(_normalize_path("src/a/.."), "src")
+        self.assertEqual(_normalize_path("src/a/."), "src/a")
+        self.assertEqual(_normalize_path("..."), "")
 
     def test_extract_predicted_paths_backticks_and_text(self):
         text = """

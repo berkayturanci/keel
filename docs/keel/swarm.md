@@ -337,7 +337,7 @@ Landing is coordinated by `src/keel/swarm_landing.py` under the atomic `merge_lo
 (`.keel/state/locks/merge-<sha12>.lock`):
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --wave 1 --live
+keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
 ```
 
 ### What landing actually does
