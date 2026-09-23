@@ -182,3 +182,21 @@ test('runviz: play=1 URL param starts playback on boot', () => {
   assert.equal(h.byId('playlbl').textContent, 'pause');
   assert.ok(h.timers.length >= 1);
 });
+
+test('runviz: meta chips and node labels write run values as text, not markup', () => {
+  // keel-visual's runstate normalises these fields today; the page escapes them
+  // anyway, so a payload that skips that normalisation still cannot add markup.
+  const bad = '<img src=x onerror=alert(1)>';
+  const steps = makeSteps();
+  steps[0] = { ...steps[0], id: bad };
+  const h = bootViz(
+    makePayload({ command: bad, issue: bad, pr: bad, steps, jury: { active: true, mode: bad } }),
+  );
+  const nodes = h.byId('nodes').children.map((n) => n.innerHTML).join('\n');
+  const html = h.byId('meta').innerHTML + '\n' + nodes;
+  assert.ok(!html.includes('<img'), 'a run value was written as markup:\n' + html);
+  // command, issue, PR and jury mode in the chips, and the step id in its node label
+  assert.equal(html.split('&lt;img src=x onerror=alert(1)&gt;').length - 1, 5);
+  // the s4 glyph is text too: its node shows "</>", as the stage badge does
+  assert.ok(nodes.includes('<div class="dot">&lt;/&gt;</div><div class="lab">s4</div>'));
+});

@@ -182,6 +182,8 @@
 <script>
 (function(){
   const RUN = window.KEEL_RUN || {steps:[],active_index:0,merged:false,regression:{}};
+  // Every value that reaches an innerHTML string goes through esc(), constants included.
+  function esc(v){ return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   const STEP_DESC = {s0:"resolve config + plan",s1:"pick the issue(s)",s2:"worktree off base",s3:"blocker preconditions",s4:"agent writes the change",s5:"risk tier + reviewers",s6:"poll CI workflows",s7:"N reviewer verdicts",s8:"run the gate suite",s9:"address findings",s10:"lock + window + merge",s11:"compound capture",s12:"close + finalize"};
   const GLYPH = {s0:"⚙",s1:"☑",s2:"⎇",s3:"⛨",s4:"</>",s5:"▤",s6:"⟳",s7:"◉",s8:"⚗",s9:"↻",s10:"⑃",s11:"◳",s12:"✓"};
   const REVIEW_STEP = "s7";   // jury attaches to the review step (keel.runstate.REVIEW_STEP_ID)
@@ -197,18 +199,18 @@
   // meta chips
   const meta = document.getElementById('meta');
   const chips = [];
-  if(RUN.command) chips.push('<span class="chip">cmd <b>'+RUN.command+'</b></span>');
-  if(RUN.issue) chips.push('<span class="chip">issue <b>#'+RUN.issue+'</b></span>');
-  if(RUN.pr) chips.push('<span class="chip">PR <b>#'+RUN.pr+'</b></span>');
+  if(RUN.command) chips.push('<span class="chip">cmd <b>'+esc(RUN.command)+'</b></span>');
+  if(RUN.issue) chips.push('<span class="chip">issue <b>#'+esc(RUN.issue)+'</b></span>');
+  if(RUN.pr) chips.push('<span class="chip">PR <b>#'+esc(RUN.pr)+'</b></span>');
   chips.push('<span class="chip">'+(RUN.merged?'<b style="color:var(--ok)">merged</b>':'in progress')+'</span>');
-  if(RUN.jury && RUN.jury.active) chips.push('<span class="chip">jury <b style="color:var(--info)">'+(RUN.jury.mode||'on')+'</b></span>');
+  if(RUN.jury && RUN.jury.active) chips.push('<span class="chip">jury <b style="color:var(--info)">'+esc(RUN.jury.mode||'on')+'</b></span>');
   meta.innerHTML = chips.join('');
 
   // build 2D nodes
   const nodesEl = document.getElementById('nodes');
   steps.forEach((s,idx)=>{
     const n=document.createElement('div'); n.className='node'; n.dataset.idx=idx;
-    n.innerHTML='<div class="dot">'+(GLYPH[s.id]||'●')+'</div><div class="lab">'+s.id+'</div>';
+    n.innerHTML='<div class="dot">'+esc(GLYPH[s.id]||'●')+'</div><div class="lab">'+esc(s.id)+'</div>';
     n.addEventListener('click',()=>{pause();active=idx;paint();});
     nodesEl.appendChild(n);
   });

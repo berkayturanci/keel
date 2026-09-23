@@ -1,8 +1,8 @@
 """Bridge to the JS-level template tests in ``tests/js/*.test.mjs``.
 
 The JS suite uses only node's built-in test runner (``node --test``) — zero npm
-dependencies, fully offline — and exercises the inline scripts of the three web
-templates (runviz.html, board.html, dashboard.html) against a stub DOM.
+dependencies, fully offline — and exercises the inline scripts of the four web
+templates (runviz.html, board.html, dashboard.html, swarm.html) against a stub DOM.
 
 Running it from unittest means the existing CI step
 (``coverage run -m unittest discover -s keel-visual/tests``) picks it up with no

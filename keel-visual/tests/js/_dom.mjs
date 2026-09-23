@@ -273,6 +273,9 @@ class StubDocument {
 // variable directly, so templates are exercised exactly as shipped.
 export function boot(templateName, opts = {}) {
   const { payloadVar, payload, search = '', localStorageData = {}, fetchJson = null } = opts;
+  // globals: extra bare identifiers for the script, e.g. swarm.html's main script
+  // itself reads `__KEEL_SWARM__`, which render.py substitutes before shipping.
+  const { globals = {} } = opts;
   const html = loadTemplate(templateName);
   const doc = new StubDocument(html);
   const store = new Map(Object.entries(localStorageData));
@@ -368,6 +371,7 @@ export function boot(templateName, opts = {}) {
       });
     },
     console,
+    ...globals,
   };
   harness.location = location;
   vm.createContext(sandbox);

@@ -148,6 +148,18 @@
 <script>
 window.KEEL_SWARM = __KEEL_SWARM__;
 
+// Every run-derived value that reaches an innerHTML template goes through esc():
+// worker details carry the child keel ship output, which can quote issue/PR text.
+function esc(v){
+  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// A status used as a CSS class must be one plain token, or it could add classes.
+function statusClass(v){
+  return (typeof v === 'string' && /^[a-z_-]+$/.test(v)) ? v : 'queued';
+}
+
 function toggleTheme(){
   const cur = document.documentElement.getAttribute('data-theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
   const next = cur === 'light' ? 'dark' : 'light';
@@ -198,7 +210,7 @@ function renderSwarmData(){
 
     col.innerHTML = `
       <div class="wave-head">
-        <span class="wave-title">Wave ${w.wave_index || (wIdx + 1)}</span>
+        <span class="wave-title">Wave ${esc(w.wave_index || (wIdx + 1))}</span>
         <span class="wave-mode ${modeClass}">${modeLabel}</span>
       </div>
     `;
@@ -207,15 +219,15 @@ function renderSwarmData(){
       const card = document.createElement('div');
       const workerMatch = workers.find(wk => wk.cluster_id === c.cluster_id);
       const st = workerMatch ? workerMatch.status : 'queued';
-      card.className = `cluster-card ${st}`;
+      card.className = `cluster-card ${statusClass(st)}`;
 
-      const issuesHtml = (c.issues || []).map(num => `<span class="issue-pill">#${num}</span>`).join('');
-      const scopeHtml = (c.combined_scope || []).slice(0, 3).map(s => `<span class="scope-item">${s}</span>`).join('');
+      const issuesHtml = (c.issues || []).map(num => `<span class="issue-pill">#${esc(num)}</span>`).join('');
+      const scopeHtml = (c.combined_scope || []).slice(0, 3).map(s => `<span class="scope-item">${esc(s)}</span>`).join('');
 
       card.innerHTML = `
         <div class="cluster-header">
-          <span class="cluster-id">${c.cluster_id}</span>
-          <span class="role-badge">${c.role || 'core'}</span>
+          <span class="cluster-id">${esc(c.cluster_id)}</span>
+          <span class="role-badge">${esc(c.role || 'core')}</span>
         </div>
         <div class="issues-row">${issuesHtml}</div>
         <div class="scope-list">${scopeHtml}</div>
@@ -234,12 +246,12 @@ function renderSwarmData(){
     card.className = 'worker-card';
     card.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-weight:700;font-size:15px;color:var(--txt)">Issue #${w.issue}</span>
-        <span class="role-badge">${w.role || 'core'}</span>
-        <span class="worker-status ${w.status || 'queued'}">${w.status || 'queued'}</span>
+        <span style="font-weight:700;font-size:15px;color:var(--txt)">Issue #${esc(w.issue)}</span>
+        <span class="role-badge">${esc(w.role || 'core')}</span>
+        <span class="worker-status ${statusClass(w.status)}">${esc(w.status || 'queued')}</span>
       </div>
-      <div style="font-size:12px;color:var(--mut);font-family:ui-monospace,Menlo,monospace">Cluster: ${w.cluster_id} · Step: ${w.step || 's4'}</div>
-      ${w.details ? `<div style="font-size:11px;color:var(--dim);background:var(--panel2);padding:6px 10px;border-radius:6px">${w.details}</div>` : ''}
+      <div style="font-size:12px;color:var(--mut);font-family:ui-monospace,Menlo,monospace">Cluster: ${esc(w.cluster_id)} · Step: ${esc(w.step || 's4')}</div>
+      ${w.details ? `<div style="font-size:11px;color:var(--dim);background:var(--panel2);padding:6px 10px;border-radius:6px">${esc(w.details)}</div>` : ''}
     `;
     matrixGrid.appendChild(card);
   });

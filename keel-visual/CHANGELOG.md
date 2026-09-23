@@ -6,6 +6,14 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **The swarm page escapes every value it interpolates.** `swarm.html` wrote worker
+  details, roles, statuses, cluster ids, steps, issue numbers and scope paths into
+  `innerHTML` unescaped, so markup in a failed worker's details ran when the page was
+  opened. They now pass through `esc()`, and a status used as a CSS class must be one
+  plain token or falls back to `queued`. `runviz.html` escapes its meta chips and step
+  labels the same way (defence in depth: `runstate` already normalises them).
+
 ## [0.8.0] — 2026-08-14
 
 ### Added
