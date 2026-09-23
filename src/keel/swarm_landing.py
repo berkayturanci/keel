@@ -6,11 +6,12 @@ under atomic merge locks, and automatically rebasing / healing drifted sequentia
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from .lock import merge_lock, resource_path
+from .lock import LockError, merge_lock, resource_path
 from .swarm import (
     SwarmLandingResult,
     SwarmPlan,
@@ -150,8 +151,10 @@ def rebase_and_heal_cluster_branch(
 ) -> tuple[bool, str]:
     """Rebase a cluster branch onto base branch, with intelligent self-healing on conflict."""
     run = runner or default_runner
-    # Checkout branch
-    run(["git", "checkout", branch_name], repo_root)
+    # A checkout that fails leaves HEAD where it was, and `git rebase` would then
+    # rewrite whatever branch the operator had checked out (#1270).
+    if not run(["git", "checkout", branch_name], repo_root).ok:
+        return False, "checkout_failed"
     # Attempt rebase
     res = run(["git", "rebase", base_branch], repo_root)
     if res.ok:
@@ -210,7 +213,11 @@ def merge_cluster_branch(
 ) -> bool:
     """Merge a cluster branch into base branch."""
     run = runner or default_runner
-    run(["git", "checkout", base_branch], repo_root)
+    # A checkout that fails — a dirty tree it would overwrite is the usual cause —
+    # leaves HEAD where it was, and the merge would land on whatever branch the
+    # operator had checked out while reporting the cluster landed (#1270).
+    if not run(["git", "checkout", base_branch], repo_root).ok:
+        return False
     cmd = ["git", "merge", "--no-ff", branch_name, "-m", f"Merge branch {branch_name}"]
     res = run(cmd, repo_root)
     if not res.ok:
@@ -438,7 +445,27 @@ def land_wave_clusters(
     if state and held:
         save_swarm_state(state, root=root_path)
 
-    with merge_lock(lock_path):
+    # A lock that is not granted — a concurrent `keel merge` is the expected case —
+    # holds every cleared cluster and returns a result like any other wave, so the
+    # `--json` contract and the exit code hold instead of a LockError traceback (#1272).
+    lock = contextlib.ExitStack()
+    try:
+        lock.enter_context(merge_lock(lock_path))
+    except LockError as exc:
+        for c in cleared:
+            held.append(
+                (
+                    c.cluster_id,
+                    f"{exc}: another merge is landing, so nothing was merged; "
+                    "run swarm-land again once it finishes",
+                )
+            )
+            if state:
+                state = update_worker_state(
+                    state, c.cluster_id, step="s10", status="held", details="merge lock held"
+                )
+        cleared = []
+    with lock:
         for c in cleared:
             branch_name = f"swarm/{plan.swarm_id}/{c.cluster_id}"
             # Applies to both arms: the evidence check ran outside the lock,
@@ -470,7 +497,11 @@ def land_wave_clusters(
                     failed.append(c.cluster_id)
                     if state:
                         state = update_worker_state(
-                            state, c.cluster_id, step="s10", status="failed", details="merge failed"
+                            state,
+                            c.cluster_id,
+                            step="s10",
+                            status="failed",
+                            details=f"merge into {base_branch} failed (or could not check it out)",
                         )
             else:
                 # Sequential funnel with rebase & heal
@@ -551,7 +582,11 @@ def land_wave_clusters(
                             c.cluster_id,
                             step="s10",
                             status="failed",
-                            details=f"rebase conflict: {reason}",
+                            details=(
+                                f"could not check out {branch_name}"
+                                if reason == "checkout_failed"
+                                else f"rebase conflict: {reason}"
+                            ),
                         )
 
     if state:

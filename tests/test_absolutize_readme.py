@@ -33,6 +33,71 @@ _TREE = "https://github.com/berkayturanci/keel/tree/main/"
 _RAW = "https://raw.githubusercontent.com/berkayturanci/keel/main/"
 
 
+# The real-README guards, as functions so the guards themselves can be tested
+# (#1294). Each mirrors a rule the script applies — any scheme or `//host` is
+# external, a `[^…]` label is a footnote, only a quoted title may follow a
+# definition's destination, and only an `<a>` tag's `href` is a link — but is
+# written independently, so it judges the output rather than re-running the
+# rewrite. A guard that disagreed with the script failed on forms the script
+# correctly leaves alone, and blamed the script for it.
+_EXTERNAL = re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*:|//|#")
+_SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*:|//")
+_DEFINITION = re.compile(
+    r"(?m)^[ \t]{0,3}\[(?!\^)[^\]]+\]:[ \t]*(\S+)"
+    r"(?:[ \t]+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?[ \t]*$"
+)
+_DESCRIPTOR = re.compile(r"\d+(?:\.\d+)?[wx]")
+
+
+def relative_markdown_links(text: str) -> list[str]:
+    return [t for t in re.findall(r"\]\(([^)]+)\)", text) if not _EXTERNAL.match(t)]
+
+
+def relative_image_sources(text: str) -> list[str]:
+    return [v for v in re.findall(r'\bsrc="([^"]+)"', text) if not _SCHEME.match(v)]
+
+
+def relative_srcset_candidates(text: str) -> list[str]:
+    """Each candidate URL is a whitespace-delimited token, so a `data:` URL keeps its
+    comma; a trailing comma ends a candidate; `1x` / `300w` are descriptors."""
+    remaining = []
+    for value in re.findall(r'\bsrcset="([^"]+)"', text):
+        for token in value.split():
+            token = token.rstrip(",")
+            if token and not _DESCRIPTOR.fullmatch(token) and not _SCHEME.match(token):
+                remaining.append(token)
+    return remaining
+
+
+def relative_reference_definitions(text: str) -> list[str]:
+    return [t for t in _DEFINITION.findall(text) if not _EXTERNAL.match(t)]
+
+
+def relative_anchor_hrefs(text: str) -> list[str]:
+    """An `<a>` tag's relative `href`, including one on a later line of the tag.
+
+    Bounded the way CommonMark bounds an inline tag: inline code is text, not HTML,
+    so code spans are dropped first; a tag cannot span a blank line; and a tag's
+    attributes cannot contain `<`, so the match cannot reach into the next tag. Unbounded,
+    this guard shared the script's leak exactly — an `<a` mentioned in prose made
+    the next `<link href>` an anchor — so the two failed together (#1300 review).
+    """
+    text = re.sub(r"(`+)(?:(?!\1).)+?\1", "", text)
+    return [
+        v
+        for v in re.findall(r'<a\b(?:(?!\n[ \t]*\n)[^><])*?(?<![-\w])href="([^"]+)"', text)
+        if not _EXTERNAL.match(v)
+    ]
+
+
+def mangled_targets(text: str) -> list[str]:
+    """A scheme or a second `/` straight after a rewritten host means an absolute or
+    protocol-relative target was prefixed as if it were a path."""
+    return re.findall(
+        r"berkayturanci/keel/(?:blob/main|tree/main|main)/([a-zA-Z][a-zA-Z0-9+.\-]*:|/)", text
+    )
+
+
 class TransformProperties(unittest.TestCase):
     def test_a_relative_file_link_becomes_a_blob_url(self):
         self.assertEqual(
@@ -102,19 +167,11 @@ class OnTheRealReadme(unittest.TestCase):
         self.out = absolutize(self.original)
 
     def test_no_relative_markdown_link_survives(self):
-        remaining = [
-            t
-            for t in re.findall(r"\]\(([^)]+)\)", self.out)
-            if not t.startswith(("https://", "http://", "#", "mailto:"))
-        ]
+        remaining = relative_markdown_links(self.out)
         self.assertEqual(remaining, [], f"relative links remain: {remaining}")
 
     def test_no_relative_image_source_survives(self):
-        remaining = [
-            v
-            for v in re.findall(r'\bsrc(?:set)?="([^"]+)"', self.out)
-            if not v.startswith(("https://", "http://"))
-        ]
+        remaining = relative_image_sources(self.out)
         self.assertEqual(remaining, [], f"relative image sources remain: {remaining}")
 
     def test_the_transform_does_not_touch_the_file_on_disk(self):
@@ -248,36 +305,80 @@ class TheRealReadmeGuardSeesTheNewForms(unittest.TestCase):
         self.out = absolutize((_REPO_ROOT / "README.md").read_text(encoding="utf-8"))
 
     def test_no_relative_reference_definition_survives(self):
-        remaining = [
-            t
-            for t in re.findall(r"(?m)^[ \t]{0,3}\[[^\]]+\]:[ \t]+(\S+)", self.out)
-            if not re.match(r"[a-zA-Z][a-zA-Z0-9+.\-]*:|//|#", t)
-        ]
+        remaining = relative_reference_definitions(self.out)
         self.assertEqual(remaining, [], f"relative reference definitions remain: {remaining}")
 
     def test_no_relative_html_href_survives(self):
-        remaining = [
-            v
-            for v in re.findall(r'\bhref="([^"]+)"', self.out)
-            if not re.match(r"[a-zA-Z][a-zA-Z0-9+.\-]*:|//|#", v)
-        ]
+        remaining = relative_anchor_hrefs(self.out)
         self.assertEqual(remaining, [], f"relative hrefs remain: {remaining}")
 
     def test_no_srcset_candidate_stays_relative(self):
-        remaining = []
-        for value in re.findall(r'\bsrcset="([^"]+)"', self.out):
-            for candidate in value.split(","):
-                url = candidate.strip().split(" ")[0]
-                if url and not re.match(r"[a-zA-Z][a-zA-Z0-9+.\-]*:|//", url):
-                    remaining.append(url)
+        remaining = relative_srcset_candidates(self.out)
         self.assertEqual(remaining, [], f"relative srcset candidates remain: {remaining}")
 
     def test_no_target_was_mangled_into_a_scheme_bearing_path(self):
         """The assertion the old guard could not make: a rewritten target must not
-        contain a second scheme after the host."""
-        bad = re.findall(r"(?:blob|tree)/main/([a-zA-Z][a-zA-Z0-9+.\-]*:)", self.out)
-        bad += re.findall(r"main/([a-zA-Z][a-zA-Z0-9+.\-]*:)", self.out)
-        self.assertEqual(bad, [], f"a scheme was prefixed as if it were a path: {bad}")
+        carry a scheme or a second `/` after the host."""
+        bad = mangled_targets(self.out)
+        self.assertEqual(bad, [], f"an absolute target was prefixed as if it were a path: {bad}")
+
+
+class TheGuardsJudgeTheRightThings(unittest.TestCase):
+    """#1294: the guards did not mirror the script's narrowings, so they failed on
+    forms the script correctly leaves alone — a footnote in the README would have
+    broken the publish tests with a message blaming the script. Each guard is held
+    both ways: silent on what is correctly left alone, loud on what is relative."""
+
+    def test_footnotes_and_prose_labels_are_not_definitions(self):
+        text = "[^1]: Keel is a tool\n[NOTE]: remember to update docs/x\n"
+        self.assertEqual(relative_reference_definitions(text), [])
+
+    def test_a_footnote_shaped_like_a_definition_is_not_one(self):
+        """The case the guard's `[^…]` exclusion is for, as in the script: a valid
+        footnote whose body has the shape of a destination and a title."""
+        self.assertEqual(relative_reference_definitions('[^1]: docs/a.md "A title"\n'), [])
+
+    def test_a_relative_definition_is_caught(self):
+        self.assertEqual(relative_reference_definitions("[l]: docs/a.md\n"), ["docs/a.md"])
+        self.assertEqual(relative_reference_definitions("[l]:docs/a.md\n"), ["docs/a.md"])
+
+    def test_non_anchor_hrefs_are_not_links(self):
+        text = '<div data-href="docs/x"></div>\n<link rel="stylesheet" href="docs/a.css">\n'
+        self.assertEqual(relative_anchor_hrefs(text), [])
+
+    def test_a_relative_anchor_href_is_caught_across_lines(self):
+        self.assertEqual(relative_anchor_hrefs('<a\n  href="docs/a.md">x</a>\n'), ["docs/a.md"])
+
+    def test_a_data_image_is_not_relative(self):
+        self.assertEqual(relative_image_sources('<img src="data:image/png;base64,AAAA">'), [])
+        self.assertEqual(relative_image_sources('<img src="docs/a.png">'), ["docs/a.png"])
+
+    def test_a_data_srcset_candidate_keeps_its_comma(self):
+        self.assertEqual(
+            relative_srcset_candidates('<img srcset="data:image/png;base64,AAAA 1x">'), []
+        )
+        self.assertEqual(
+            relative_srcset_candidates('<img srcset="https://cdn/a.svg 1x, docs/b.svg 2x">'),
+            ["docs/b.svg"],
+        )
+
+    def test_markdown_links_are_judged_both_ways(self):
+        self.assertEqual(relative_markdown_links("[a](https://x) [b](#c) [d](mailto:e)"), [])
+        self.assertEqual(relative_markdown_links("[a](docs/a.md)"), ["docs/a.md"])
+
+    def test_an_anchor_mentioned_in_prose_does_not_make_a_link_an_anchor(self):
+        text = 'Use `<a` tags\n<link rel="stylesheet" href="docs/a.css">\n'
+        self.assertEqual(relative_anchor_hrefs(text), [])
+
+    def test_an_anchor_does_not_reach_across_a_blank_line(self):
+        self.assertEqual(relative_anchor_hrefs('<a\n\n<image href="docs/a.svg"/>\n'), [])
+
+    def test_a_scheme_prefixed_as_a_path_is_caught(self):
+        self.assertEqual(mangled_targets(f"[x]({_BLOB}tel:+1)"), ["tel:"])
+
+    def test_a_protocol_relative_target_prefixed_as_a_path_is_caught(self):
+        self.assertEqual(mangled_targets(f"[x]({_BLOB}/cdn/a.png)"), ["/"])
+        self.assertEqual(mangled_targets(f"[x]({_BLOB}docs/a.md)"), [])
 
 
 class FormsThatOnlyLOOKLikeTheOnesWeRewrite(unittest.TestCase):
@@ -368,6 +469,177 @@ class FormsThatOnlyLOOKLikeTheOnesWeRewrite(unittest.TestCase):
         )
         once = absolutize(text)
         self.assertEqual(absolutize(once), once)
+
+
+class TheFormsLeftOpenIn1294(unittest.TestCase):
+    """#1294, from #1293's lead review: two defects in the fix itself, and two nits."""
+
+    def test_a_data_srcset_candidate_is_not_split_on_its_own_comma(self):
+        """Splitting on every comma cut `data:image/png;base64,AAAA` in two and
+        rewrote `AAAA` as a relative path."""
+        line = '<img srcset="data:image/png;base64,AAAA 1x">\n'
+        self.assertEqual(absolutize(line), line)
+
+    def test_a_data_candidate_beside_a_relative_one(self):
+        out = absolutize('<img srcset="data:image/png;base64,AAAA 1x, docs/b.png 2x">\n')
+        self.assertEqual(
+            out, f'<img srcset="data:image/png;base64,AAAA 1x, {_RAW}docs/b.png 2x">\n'
+        )
+
+    def test_an_anchor_whose_href_is_on_a_later_line(self):
+        """The usual hand-formatted hero. Scoping the rewrite to `<a>` lost it."""
+        text = '<a\n  class="hero"\n  href="docs/a.md">x</a>\n'
+        self.assertEqual(absolutize(text), f'<a\n  class="hero"\n  href="{_BLOB}docs/a.md">x</a>\n')
+
+    def test_a_non_anchor_tag_across_lines_is_left_alone(self):
+        """The counterweight: carrying an open tag must not make every href a link."""
+        text = '<div\n  href="docs/x">\n<a href="docs/a.md">\n'
+        self.assertEqual(absolutize(text), f'<div\n  href="docs/x">\n<a href="{_BLOB}docs/a.md">\n')
+
+    def test_an_anchor_closed_on_its_own_line_does_not_carry(self):
+        text = '<a href="docs/a.md">x</a>\n<div\n  href="docs/x">\n'
+        self.assertEqual(
+            absolutize(text), f'<a href="{_BLOB}docs/a.md">x</a>\n<div\n  href="docs/x">\n'
+        )
+
+    def test_a_multi_line_anchor_stops_carrying_where_its_tag_closes(self):
+        """The carried state ends at the `>` that closes the `<a` tag; after it, a
+        non-anchor tag's `href` is not a link."""
+        text = '<a\n  href="docs/a.md">x</a>\n<div\n  href="docs/x">\n'
+        self.assertEqual(
+            absolutize(text), f'<a\n  href="{_BLOB}docs/a.md">x</a>\n<div\n  href="docs/x">\n'
+        )
+
+    def test_the_closing_bracket_ends_the_state_with_no_later_tag_to_help(self):
+        """The same rule with nothing else to end the state: the next line is prose
+        with an `href` and no `<`, so only the `>` that closed the `<a` stops it
+        (#1300 gate, round 3 — the fixture above also trips the `<` rule)."""
+        text = '<a\n  href="docs/a.md">x</a>\nSet href="docs/x.md" on the element.\n'
+        self.assertEqual(
+            absolutize(text),
+            f'<a\n  href="{_BLOB}docs/a.md">x</a>\nSet href="docs/x.md" on the element.\n',
+        )
+
+    def test_inline_code_at_the_start_of_a_line_is_not_a_fence(self):
+        """CommonMark §4.5: a backtick fence's info string cannot contain a backtick."""
+        text = "```x```\n[y](docs/b.md)\n"
+        self.assertEqual(absolutize(text), f"```x```\n[y]({_BLOB}docs/b.md)\n")
+
+    def test_a_tilde_fence_may_carry_a_backtick_in_its_info_string(self):
+        """The counterweight: the rule is for backtick fences only."""
+        text = "~~~ `lang`\n[y](docs/b.md)\n~~~\n"
+        self.assertEqual(absolutize(text), text)
+
+    def test_a_definition_with_no_space_after_the_colon(self):
+        self.assertEqual(absolutize("[l]:docs/a.md\n"), f"[l]:{_BLOB}docs/a.md\n")
+
+    def test_these_forms_are_idempotent(self):
+        text = (
+            '<img srcset="data:image/png;base64,AAAA 1x, docs/b.png 2x">\n'
+            '<a\n  href="docs/a.md">x</a>\n'
+            "```x```\n[y](docs/b.md)\n"
+            "[l]:docs/a.md\n"
+        )
+        once = absolutize(text)
+        self.assertEqual(absolutize(once), once)
+
+
+class TheCarriedAnchorStaysInItsTag(unittest.TestCase):
+    """#1300 review (gate and lead, independently): the carried `<a` state was set by
+    any `<a` token and cleared only by a `>`, so an `<a` mentioned in prose or inline
+    code rewrote the next `<link href>` — past a blank line and past a whole code
+    block — and no guard saw it, because the output was a well-formed blob URL."""
+
+    def test_an_anchor_in_inline_code_opens_nothing(self):
+        text = (
+            "A sentence mentioning `<a` with no closing bracket.\n"
+            '<link rel="stylesheet" href="docs/style.css">\n'
+        )
+        self.assertEqual(absolutize(text), text)
+
+    def test_the_state_does_not_survive_a_blank_line(self):
+        text = 'Use <a\n\n<image href="docs/a.svg"/>\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_the_state_does_not_survive_a_code_block(self):
+        text = 'Mentioning <a\n```python\ncode\n```\n<div href="docs/leak.html">\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_a_raw_anchor_word_in_prose_does_not_reach_the_next_tag(self):
+        """#1300 lead, round 2: an attribute list cannot contain `<`, so in
+        "wrap it in an <a tag" followed by a `<link>` the `<a` was never a tag."""
+        text = 'Wrap it in an <a tag\n<link rel="stylesheet" href="docs/a.css">\n'
+        self.assertEqual(absolutize(text), text)
+        self.assertEqual(relative_anchor_hrefs(text), [])
+
+    def test_the_guard_does_not_blame_a_fence_the_script_respected(self):
+        text = 'an <a tag\n```\ncode\n```\n<link href="docs/a.css">\n'
+        self.assertEqual(absolutize(text), text)
+        self.assertEqual(relative_anchor_hrefs(text), [])
+
+    def test_nothing_that_opened_the_state_reaches_another_element(self):
+        """#1300 gate, round 2: three more ways to open the state — a code span
+        across lines, a raw `<a` followed by an element on the next line, an HTML
+        comment. Whatever opened it, a new `<` before the `>` ends it, so none of
+        them reaches the `<link>`."""
+        cases = {
+            "code span across lines": (
+                'Mentioning `<a\ntag` and <link rel="stylesheet" href="docs/s.css">\n'
+            ),
+            "raw prose": (
+                'The <a\nelement and its <link rel="stylesheet" href="docs/s.css"> usage.\n'
+            ),
+            "comment": (
+                '<!-- We can write <a\nand <link rel="stylesheet" href="docs/s.css"> here -->\n'
+            ),
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                self.assertEqual(absolutize(text), text)
+
+    def test_the_hand_formatted_hero_still_works(self):
+        """The counterweight: the bounds must not undo #1294."""
+        text = '<a\n  class="hero"\n  href="docs/a.md">x</a>\n'
+        self.assertEqual(absolutize(text), f'<a\n  class="hero"\n  href="{_BLOB}docs/a.md">x</a>\n')
+
+
+class EachBoundHoldsOnItsOwn(unittest.TestCase):
+    """#1300 lead, round 3: the `<` rule ends the carried state whenever the next
+    line opens a tag, so a fixture whose next line starts with `<` pins that rule
+    and nothing else. Here the `href` follows with no `<` before it, so only the
+    bound under test can stop it."""
+
+    def test_a_blank_line_ends_the_state(self):
+        text = '<a\n\n  href="docs/a.md">x</a>\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_a_fence_ends_the_state(self):
+        text = 'Mentioning <a\n```\ncode\n```\n  href="docs/a.md">x\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_an_anchor_in_a_code_span_opens_nothing(self):
+        text = 'Use `<a` tags\n  href="docs/a.md">x\n'
+        self.assertEqual(absolutize(text), text)
+
+    def test_the_guard_does_not_cross_a_blank_line(self):
+        self.assertEqual(relative_anchor_hrefs('<a\n\n  href="docs/a.md">x</a>\n'), [])
+
+    def test_the_guard_ignores_an_anchor_in_a_code_span(self):
+        self.assertEqual(relative_anchor_hrefs('Use `<a` tags\n  href="docs/a.md">x\n'), [])
+
+
+class ARootRelativeTargetResolvesFromTheRepositoryRoot(unittest.TestCase):
+    """`/docs/a.md` gained a second slash (`…/main//docs/a.md`); on GitHub a leading
+    `/` in a README resolves from the repository root, so it is dropped (#1300 review)."""
+
+    def test_a_link(self):
+        self.assertEqual(absolutize("[x](/docs/a.md)\n"), f"[x]({_BLOB}docs/a.md)\n")
+
+    def test_an_image(self):
+        self.assertEqual(absolutize('<img src="/docs/a.svg">\n'), f'<img src="{_RAW}docs/a.svg">\n')
+
+    def test_the_mangled_guard_stays_silent_on_it(self):
+        self.assertEqual(mangled_targets(absolutize("[x](/docs/a.md)\n")), [])
 
 
 if __name__ == "__main__":

@@ -53,6 +53,82 @@ class TestSwarmPathExtraction(unittest.TestCase):
         self.assertEqual(_normalize_path(" 'website/index.html' "), "website/index.html")
         self.assertEqual(_normalize_path("src\\keel\\swarm.py"), "src/keel/swarm.py")
 
+    def test_normalizing_twice_changes_nothing(self):
+        """#1279: the plan normalises twice, and a second pass ate the `)` the first
+        exposed. Every spelling here must be a fixed point after one pass."""
+        import itertools
+
+        cores = [
+            "docs/(draft)/",
+            "(x)/y",
+            "src/a.py",
+            ".github/workflows/ci.yml",
+            "a/(b",
+            "((a/b))",
+        ]
+        wraps = [("", ""), ("(", ")"), ("`", "`"), ("'", "'."), ("", ","), ("", ");"), (" ", " ")]
+        for core, (head, tail) in itertools.product(cores, wraps):
+            once = _normalize_path(head + core + tail)
+            with self.subTest(raw=head + core + tail):
+                self.assertEqual(_normalize_path(once), once)
+
+    def test_brackets_that_belong_to_the_path_are_kept(self):
+        self.assertEqual(_normalize_path("docs/(draft)/"), "docs/(draft)")
+        self.assertEqual(_normalize_path("(x)/y"), "(x)/y")
+        self.assertEqual(_normalize_path("(docs/draft)/"), "(docs/draft)")
+        self.assertEqual(_normalize_path("(src/a.py"), "src/a.py")
+        self.assertEqual(_normalize_path("src/a.py);"), "src/a.py")
+
+    def test_a_dot_directory_keeps_its_dot(self):
+        """A leading dot was stripped as punctuation: `.github/…` became `github/…`."""
+        self.assertEqual(_normalize_path(".github/workflows/ci.yml"), ".github/workflows/ci.yml")
+        self.assertEqual(_normalize_path("`.keel/project.yaml`."), ".keel/project.yaml")
+        self.assertEqual(
+            extract_predicted_paths("Edit .github/workflows/ci.yml."), [".github/workflows/ci.yml"]
+        )
+
+    def test_a_bracketed_directory_overlaps_the_files_inside_it(self):
+        """The scenario: stored as `docs/(draft)` but matched as `docs/(draft`, so a
+        second issue under that directory was declared orthogonal to the first — and,
+        in the review of the first fix, the same through `(docs/draft)/`."""
+        for directory, inside in (
+            ("docs/(draft)/", "docs/(draft)/x.md"),
+            ("(docs/draft)/", "(docs/draft)/y.md"),
+            ("(docs\\draft)\\", "(docs\\draft)\\y.md"),
+        ):
+            with self.subTest(directory):
+                a = extract_issue_scope(1, title="", body="", labels=(), declared_files=[directory])
+                b = extract_issue_scope(2, title="", body="", labels=(), declared_files=[inside])
+                plan = build_swarm_plan([a, b], swarm_id="swarm-draft")
+                self.assertEqual(len(plan.waves), 2, "they share a directory and must serialise")
+
+    def test_normalizing_is_a_fixed_point_on_generated_spellings(self):
+        """#1311 review: a 200k fuzz found normpath exposing new end punctuation after
+        the strip (`(docs/draft)/` → `(docs/draft)` → `docs/draft`). Seeded, so a
+        failure names a reproducible spelling."""
+        import random
+
+        rng = random.Random(7)
+        alphabet = "()./\\ `'a,;:"
+        for _ in range(20000):
+            raw = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 9)))
+            once = _normalize_path(raw)
+            self.assertEqual(_normalize_path(once), once, f"not a fixed point: {raw!r}")
+
+    def test_a_long_run_of_exposed_punctuation_still_ends_canonical(self):
+        """Each round peels one exposed end; a fixed round cap returned a non-canonical
+        value for 64+ layers (#1311 review)."""
+        raw = "a" + ",/" * 200
+        once = _normalize_path(raw)
+        self.assertEqual(once, "a")
+        self.assertEqual(_normalize_path(once), once)
+
+    def test_a_final_dot_segment_is_a_path_step(self):
+        self.assertEqual(_normalize_path("src/a/.."), "src")
+        self.assertEqual(_normalize_path("src/a/."), "src/a")
+        self.assertEqual(_normalize_path("src\\a\\.."), "src")
+        self.assertEqual(_normalize_path("..."), "")
+
     def test_extract_predicted_paths_backticks_and_text(self):
         text = """
         Let's modify `src/keel/swarm.py` and `tests/test_swarm.py`.
@@ -393,6 +469,44 @@ class TestSwarmStateAndDashboard(unittest.TestCase):
             corrupt_file = Path(tmpdir) / ".keel" / "state" / "swarm" / "corrupt.json"
             corrupt_file.write_text("{bad json", encoding="utf-8")
             self.assertIsNone(load_swarm_state("corrupt", root=tmpdir))
+
+    def test_state_that_parses_but_has_the_wrong_shape_is_unreadable_not_fatal(self):
+        """#1273: only unparseable JSON was handled; JSON of the wrong shape raised
+        out of swarm-status, the recovery tool."""
+        shapes = {
+            "a worker that is not an object": '{"workers": ["not-a-dict"]}',
+            "null workers": '{"workers": null}',
+            "not an object": "[1, 2, 3]",
+            "a worker field of the wrong type": '{"workers": [{"issue": [1]}]}',
+            "a null count": '{"total_workers": null, "workers": []}',
+            "an infinite count": '{"total_workers": 1e999, "workers": []}',
+            "an infinite issue": '{"workers": [{"issue": 1e999}]}',
+        }
+        for label, text in shapes.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmpdir:
+                state_dir = Path(tmpdir) / ".keel" / "state" / "swarm"
+                state_dir.mkdir(parents=True)
+                (state_dir / "odd.json").write_text(text, encoding="utf-8")
+                out, err = io.StringIO(), io.StringIO()
+                try:
+                    loaded = load_swarm_state("odd", root=tmpdir)
+                    with redirect_stdout(out), redirect_stderr(err):
+                        code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
+                except Exception as exc:  # noqa: BLE001 - the defect is that it raises
+                    self.fail(f"{type(exc).__name__} escaped: {exc}")
+                self.assertIsNone(loaded)
+                self.assertEqual(code, 0)
+                self.assertIn("odd.json is not the shape keel writes", err.getvalue())
+
+    def test_a_well_formed_state_draws_no_warning(self):
+        """The counterweight."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = SwarmRunState(swarm_id="fine", total_workers=0, active_wave=1, workers=())
+            save_swarm_state(state, root=tmpdir)
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
+            self.assertEqual(err.getvalue(), "")
 
 
 class TestSwarmCLI(unittest.TestCase):

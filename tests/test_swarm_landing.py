@@ -1716,8 +1716,8 @@ class TestSwarmLandCLI(unittest.TestCase):
             for f in state_dir.glob("*.json"):
                 f.unlink()
 
-            buf_empty = io.StringIO()
-            with redirect_stdout(buf_empty):
+            buf_empty, err_empty = io.StringIO(), io.StringIO()
+            with redirect_stdout(buf_empty), redirect_stderr(err_empty):
                 code_empty = main(
                     [
                         "swarm-land",
@@ -1727,10 +1727,15 @@ class TestSwarmLandCLI(unittest.TestCase):
                     ]
                 )
             self.assertEqual(code_empty, 1)
+            # #1279: said `status: failed` like a wave whose clusters all failed.
+            self.assertIn("swarm-land needs the wave's issues", err_empty.getvalue())
+            self.assertNotIn("status", buf_empty.getvalue())
 
             with tempfile.TemporaryDirectory() as tmp_fresh:
-                buf_no_state = io.StringIO()
-                with redirect_stdout(buf_no_state):
+                # No state dir and no issues: the no-scope refusal, not a lookup. (With
+                # issues it would reach the evidence checker's real `gh pr list`.)
+                buf_no_state, err_no_state = io.StringIO(), io.StringIO()
+                with redirect_stdout(buf_no_state), redirect_stderr(err_no_state):
                     code_no_state = main(
                         [
                             "swarm-land",
@@ -1740,6 +1745,7 @@ class TestSwarmLandCLI(unittest.TestCase):
                         ]
                     )
                 self.assertEqual(code_no_state, 1)
+                self.assertIn("swarm-land needs the wave's issues", err_no_state.getvalue())
 
     def test_swarm_land_cli_partial_failure_returns_exit_code_1(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1771,11 +1777,257 @@ class TestSwarmLandCLI(unittest.TestCase):
                             tmpdir,
                             "--swarm-id",
                             "swarm-part",
+                            "--issues",
+                            "714",
                             "--live",
                         ]
                     )
                 self.assertEqual(code, 1)
                 self.assertIn("partial_failure", buf.getvalue())
+
+
+class AContendedMergeLockHoldsTheWave(unittest.TestCase):
+    """#1272: `merge_lock` raises when it is not granted, and the raise escaped
+    `land_wave_clusters` as a traceback — no result, no `--json`, no exit contract —
+    in exactly the case the lock exists to make orderly."""
+
+    def _land(self, tmpdir: str, calls: list[list[str]]):
+        from keel.lock import LockError, merge_lock, resource_path
+
+        s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+        s2 = IssueScope(issue=102, title="B", predicted_files=("docs/b.md",))
+        plan = build_swarm_plan([s1, s2], swarm_id="swarm-contended")
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            return CommandResult(ok=True, code=0, output="")
+
+        lock_dir = resource_path(Path(tmpdir).resolve() / ".keel" / "state" / "locks", "merge")
+        with merge_lock(lock_dir):
+            try:
+                result = land_wave_clusters(
+                    plan,
+                    wave_index=1,
+                    project_yaml=".keel/project.yaml",
+                    root=tmpdir,
+                    dry_run=False,
+                    runner=runner,
+                    evidence_checker=None,
+                    base_branch="main",
+                )
+            except LockError as exc:
+                self.fail(f"LockError escaped land_wave_clusters: {exc}")
+        return plan, result
+
+    def test_every_cluster_is_held_and_nothing_is_merged(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            calls: list[list[str]] = []
+            plan, result = self._land(tmpdir, calls)
+
+            wave = [c.cluster_id for c in plan.waves[0].clusters]
+            self.assertEqual(sorted(c for c, _ in result.held_clusters), sorted(wave))
+            self.assertTrue(all("merge lock" in why for _, why in result.held_clusters))
+            self.assertEqual(result.landed_clusters, ())
+            self.assertEqual(result.status, "failed")
+            self.assertFalse(any(c[:2] in (["git", "merge"], ["git", "checkout"]) for c in calls))
+            json.dumps(result.to_dict())
+
+    def test_the_held_reason_is_written_to_the_run_state(self):
+        """swarm-status reads the state file; the hold must be there, not only in the
+        return value."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            s2 = IssueScope(issue=102, title="B", predicted_files=("docs/b.md",))
+            ids = [
+                c.cluster_id
+                for c in build_swarm_plan([s1, s2], swarm_id="swarm-contended").waves[0].clusters
+            ]
+            workers = tuple(
+                SwarmWorkerStatus(
+                    cluster_id=i,
+                    issue=0,
+                    role="core",
+                    agent="a",
+                    model="m",
+                    step="s8",
+                    status="passed",
+                    updated_at="",
+                    details="",
+                )
+                for i in ids
+            )
+            save_swarm_state(
+                SwarmRunState(
+                    swarm_id="swarm-contended",
+                    total_workers=len(ids),
+                    active_wave=1,
+                    workers=workers,
+                ),
+                root=tmpdir,
+            )
+            self._land(tmpdir, [])
+            state = load_swarm_state("swarm-contended", root=tmpdir)
+            assert state is not None
+            self.assertEqual({w.status for w in state.workers}, {"held"})
+            self.assertEqual({w.details for w in state.workers}, {"merge lock held"})
+
+    def test_the_lock_is_free_again_for_the_next_run(self):
+        """The counterweight: a granted lock lands as before."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
+            plan = build_swarm_plan([s1], swarm_id="swarm-free")
+            result = land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                runner=lambda cmd, cwd: CommandResult(ok=True, code=0, output=""),
+                evidence_checker=None,
+                base_branch="main",
+            )
+            self.assertEqual(result.held_clusters, ())
+            self.assertEqual(len(result.landed_clusters), 1)
+            # The contract, not the mechanism: once the call returns the lock is free.
+            # (CPython finalises an unclosed generator on return, so a leak there
+            # would not show; this pins what callers rely on.)
+            from keel.lock import merge_lock, resource_path
+
+            lock_dir = resource_path(Path(tmpdir).resolve() / ".keel" / "state" / "locks", "merge")
+            with merge_lock(lock_dir):
+                pass
+
+
+class AFailedCheckoutStopsTheLanding(unittest.TestCase):
+    """#1270: both primitives ran `git checkout` and discarded the result, so a
+    checkout that failed left HEAD on the operator's branch and the merge — or the
+    rebase — rewrote *that* branch while reporting the cluster landed. Measured in a
+    real repository: a dirty tree on `feature` makes `git checkout main` fail."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "commit.gpgsign", "false")
+        self.commit("a.txt", "1\n", "base")
+        self.git("checkout", "-q", "-b", "cluster")
+        self.commit("b.txt", "cluster\n", "cluster work")
+        self.git("checkout", "-q", "main")
+        self.git("checkout", "-q", "-b", "feature")
+        self.commit("a.txt", "2\n", "feature work")
+
+    def git(self, *args: str) -> str:
+        import subprocess
+
+        done = subprocess.run(
+            ["git", *args], cwd=self.root, capture_output=True, text=True, check=True
+        )
+        return done.stdout.strip()
+
+    def commit(self, name: str, text: str, message: str) -> None:
+        (self.root / name).write_text(text, encoding="utf-8")
+        self.git("add", name)
+        self.git("commit", "-q", "-m", message)
+
+    def heads(self) -> tuple[str, str, str]:
+        return (
+            self.git("rev-parse", "main"),
+            self.git("rev-parse", "feature"),
+            self.git("symbolic-ref", "--short", "HEAD"),
+        )
+
+    def dirty(self) -> None:
+        # An uncommitted edit to a file that differs on `main`, so checkout refuses.
+        (self.root / "a.txt").write_text("3\n", encoding="utf-8")
+
+    def test_the_merge_does_not_land_on_the_operators_branch(self):
+        self.dirty()
+        before = self.heads()
+
+        self.assertFalse(merge_cluster_branch(self.root, "cluster", base_branch="main"))
+        self.assertEqual(self.heads(), before, "a branch moved though the checkout failed")
+
+    def test_the_rebase_does_not_rewrite_the_operators_branch(self):
+        """An untracked file that the cluster branch tracks blocks `git checkout
+        cluster`. With `main` ahead of `feature`, the old code then rebased `feature`
+        itself and reported `clean_rebase` (measured in review). A dirty *tracked*
+        file does not show it: `git rebase` refuses a dirty tree on its own."""
+        self.git("checkout", "-q", "main")
+        self.commit("c.txt", "main moved\n", "main moves on")
+        self.git("checkout", "-q", "feature")
+        (self.root / "b.txt").write_text("untracked\n", encoding="utf-8")
+        before = self.heads()
+
+        ok, reason = rebase_and_heal_cluster_branch(self.root, "cluster", base_branch="main")
+        self.assertEqual(self.heads(), before, "feature was rewritten though its checkout failed")
+        self.assertEqual((ok, reason), (False, "checkout_failed"))
+
+    def test_a_clean_tree_still_lands(self):
+        """The counterweight: the check refuses a failed checkout, not a merge."""
+        self.assertTrue(merge_cluster_branch(self.root, "cluster", base_branch="main"))
+        self.assertEqual(self.git("symbolic-ref", "--short", "HEAD"), "main")
+        self.assertIn("cluster work", self.git("log", "--format=%s", "main"))
+        self.assertNotIn("cluster work", self.git("log", "--format=%s", "feature"))
+
+    def test_the_wave_names_the_failed_checkout(self):
+        """The reason reaches the run state that swarm-status reads."""
+        plan = build_swarm_plan(
+            [IssueScope(issue=101, title="A", predicted_files=("src/a.py",))], swarm_id="swarm-co"
+        )
+        cid = plan.waves[0].clusters[0].cluster_id
+        worker = SwarmWorkerStatus(
+            cluster_id=cid,
+            issue=101,
+            role="core",
+            agent="a",
+            model="m",
+            step="s8",
+            status="passed",
+            updated_at="",
+            details="",
+        )
+        save_swarm_state(
+            SwarmRunState(swarm_id="swarm-co", total_workers=1, active_wave=1, workers=(worker,)),
+            root=self.root,
+        )
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            ok = cmd[:2] != ["git", "checkout"]
+            return CommandResult(ok=ok, code=0 if ok else 1, output="")
+
+        result = land_wave_clusters(
+            plan,
+            wave_index=1,
+            project_yaml=".keel/project.yaml",
+            root=self.root,
+            dry_run=False,
+            runner=runner,
+            evidence_checker=None,
+            base_branch="main",
+        )
+        self.assertEqual(result.failed_clusters, (cid,))
+        state = load_swarm_state("swarm-co", root=self.root)
+        assert state is not None
+        self.assertEqual(
+            state.workers[0].details, "merge into main failed (or could not check it out)"
+        )
+
+    def test_nothing_runs_after_a_failed_checkout(self):
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            ok = cmd[:2] != ["git", "checkout"]
+            return CommandResult(ok=ok, code=0 if ok else 1, output="")
+
+        ok, reason = rebase_and_heal_cluster_branch(self.root, "c", runner=runner)
+        self.assertEqual((ok, reason), (False, "checkout_failed"))
+        self.assertFalse(any(c[:2] == ["git", "rebase"] for c in calls), calls)
+        self.assertFalse(merge_cluster_branch(self.root, "c", runner=runner))
+        self.assertFalse(any(c[:2] == ["git", "merge"] for c in calls), calls)
 
 
 if __name__ == "__main__":

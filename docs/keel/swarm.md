@@ -14,9 +14,11 @@
 >   says. What it never does is produce the commit. In keel's design the
 >   implementation is done by the **agent** following `/keel:ship`, and the CLI assesses it;
 >   swarm's workers spawn the CLI, so a worker cannot produce a commit in any mode.
-> - On top of that, `swarm-run --live` never forwards `--live` to the child
->   ([#1269](https://github.com/berkayturanci/keel/issues/1269)): the child argv only gains
->   `--dry-run` when the run is dry, and nothing ever adds `--live`.
+> - `swarm-run --live` is refused before anything starts. Its workers are handed `--live`
+>   ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and `keel ship --live` stops
+>   at the operator-consent gate, which swarm has no way to satisfy for a child — so a live run
+>   would fail every worker and leave `swarm/<id>/…` branches behind
+>   ([#1281](https://github.com/berkayturanci/keel/issues/1281)).
 >
 > Planning runs, but not on real scope. `--issue-title`, `--issue-body`, `--issue-label` and
 > `--declared-file` take one value (or, for the repeatable ones, one list) that is shared by
@@ -261,10 +263,15 @@ Parallel execution runs across isolated git worktrees created under
 `.keel/worktrees/<swarm_id>/<cluster_id>/` (the swarm id is `swarm-YYYYMMDD-HHMMSS`):
 
 ```bash
-keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --live
+keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
 ```
 
 ### Worktree Lifecycle & Isolation
+
+> While `swarm-run --live` is refused ([#1269](https://github.com/berkayturanci/keel/issues/1269)),
+> no CLI path creates worktrees: this lifecycle is the library's
+> (`run_swarm_orchestration(dry_run=False)`), described so the next change starts from what it does.
+
 1. **Creation**: Dedicated worktrees are branched from the configured `base_branch` onto
    `swarm/<swarm_id>/<cluster_id>` ([#1262](https://github.com/berkayturanci/keel/issues/1262)).
 2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
@@ -339,7 +346,7 @@ Landing is coordinated by `src/keel/swarm_landing.py` under the atomic `merge_lo
 (`.keel/state/locks/merge-<sha12>.lock`):
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --wave 1 --live
+keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
 ```
 
 ### What landing actually does

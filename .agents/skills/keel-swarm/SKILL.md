@@ -15,8 +15,9 @@ Use this skill when the user asks to run the keel command `swarm` (e.g. `keel sw
 commit or a pull request**, and the reason is deeper than a missing flag: `keel ship` the CLI
 subcommand is a *dry ship assessment* — it reports tier, window, gates and a decision, and never
 commits, pushes or opens a PR in any mode. In keel's design the **agent** does the implementation
-by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit. On
-top of that, `--live` is never forwarded to those children at all (#1269).
+by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit.
+`swarm-run --live` is refused outright: its workers would run `keel ship --live`, whose
+operator-consent gate swarm cannot satisfy for a child (#1269, #1281).
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
@@ -138,8 +139,12 @@ actually dispatch rather than the default one.
 Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/<swarm_id>/<cluster_id>/`:
 
 ```bash
-keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
+keel swarm-run .keel/project.yaml --root . --issues <n,n,n>
 ```
+
+This is the dry run: it assesses each cluster in its worktree and commits nothing. Do not add
+`--live` — it is refused (see the top of this command), because its workers could not pass
+`keel ship --live`'s operator-consent gate. The implementation is the leads' work, below.
 
 - Spawn **one team lead subagent per cluster**, briefed with that cluster's `assignment`
   and `difficulty` verbatim. The lead runs the cluster's issues through the standard
@@ -171,7 +176,7 @@ keel swarm-run .keel/project.yaml --root . --issues <n,n,n> --live
 When an execution wave completes, land all passing clusters onto `main`:
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --wave <n> --live
+keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
 - The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
@@ -204,4 +209,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.24.1 source_sha256=632c1dd0648aa9e7aed65f6ca5f276d79f2f34d9ad5e8a24b704c0e01733af19 generated_sha256=0293c04ca9c480662b36cc54afe87cfa7bcb282db75950c97e012d406855826c -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.24.1 source_sha256=9a9c39d063a82bec740c71cfb8bbd78b7dd1b2abeec6bd7fcc136a353269fad2 generated_sha256=9ce63369fd99b24d36046d05ec068f1f7a2fb7cabf32585f11fa37974443c636 -->

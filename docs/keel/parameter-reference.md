@@ -2095,8 +2095,8 @@ in committed config rather than in a driver's judgement call. Full field documen
 ### Examples
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --wave 1
-keel swarm-land .keel/project.yaml --root . --wave 1 --live --json
+keel swarm-land .keel/project.yaml --root . --issues 714,715 --wave 1
+keel swarm-land .keel/project.yaml --root . --issues 714,715 --wave 1 --live --json
 ```
 
 ## `/keel:ship` adapter arguments
