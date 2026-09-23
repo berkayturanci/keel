@@ -6224,11 +6224,16 @@ def _cmd_init(args: argparse.Namespace) -> int:
                 base_default=scaffold.detect_base_branch(root),
                 catalog=_wizard_catalog(),
                 notify=_warn,
+                root=root,
             )
         else:
             stack = scaffold.detect_stack(root)
             text = scaffold.default_config(
-                stack, repo=repo, owner=owner, base_branch=scaffold.detect_base_branch(root)
+                stack,
+                repo=repo,
+                owner=owner,
+                base_branch=scaffold.detect_base_branch(root),
+                root=root,
             )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
@@ -6274,10 +6279,14 @@ def _render_scaffolded_config(root: Path, *, wizard: bool) -> tuple[str, str]:
                 base_default=base_branch,
                 catalog=_wizard_catalog(),
                 notify=_warn,
+                root=root,
             ),
             stack,
         )
-    return scaffold.default_config(stack, repo=repo, owner=owner, base_branch=base_branch), stack
+    return (
+        scaffold.default_config(stack, repo=repo, owner=owner, base_branch=base_branch, root=root),
+        stack,
+    )
 
 
 def _report_install(surface: str, installed: list[str], skipped: list[str]) -> None:
@@ -7297,6 +7306,20 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
         return 1
     except cfg.ConfigError as exc:
         print(str(exc), file=sys.stderr)
+        return 1
+
+    if args.live:
+        # Its workers now get `--live` (#1269), and `keel ship --live` stops at the
+        # operator-consent gate, which swarm-run has no way to satisfy for a child.
+        # A live run would fail every worker and leave `swarm/<id>/…` branches
+        # behind, so it is refused before anything starts, with the reason.
+        print(
+            "swarm-run --live is refused: each worker would run `keel ship --live`, which "
+            "needs operator consent that swarm-run cannot hand down, and `keel ship` never "
+            "commits or opens a pull request in any mode. Run it without --live to plan and "
+            "assess. Tracked on https://github.com/berkayturanci/keel/issues/1281.",
+            file=sys.stderr,
+        )
         return 1
 
     issue_nums: list[int] = []
@@ -9855,7 +9878,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr.add_argument(
         "--max-workers", type=_positive_int, default=4, help="maximum parallel workers (default: 4)"
     )
-    p_sr.add_argument("--live", action="store_true", help="run mutating live execution")
+    p_sr.add_argument(
+        "--live",
+        action="store_true",
+        help="refused: live workers could not pass keel ship --live's consent gate (#1281)",
+    )
     p_sr.add_argument("--tree", action="store_true", help="render visual DAG tree")
     p_sr.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sr.set_defaults(func=_cmd_swarm_run)

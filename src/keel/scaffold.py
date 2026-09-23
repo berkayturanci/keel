@@ -14,6 +14,9 @@ out of somebody else's example.
 
 from __future__ import annotations
 
+import re
+import shutil
+import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -86,6 +89,160 @@ _TEMPLATES: dict[str, dict] = {
 }
 
 
+# A rule line names its targets before a `:` or `::`. `test := x`, `test ::= x` and
+# `test ?= x` assign a variable instead, and a line starting with a tab is a recipe
+# (#1301 review). Leading spaces are allowed: a rule inside `ifdef` may be indented.
+_MAKE_RULE = re.compile(r"^([^:#=\t][^:#=]*?)[ \t]*::?(?![:=])")
+# `pytest` or a `pytest-…` / `pytest_…` plugin (which depends on it; PEP 503 makes the
+# two spellings one name) as a requirement or a table key — never
+# `flake8-pytest-style`, whose name only contains the word.
+_PYTEST_NAME = re.compile(r"(?i)pytest(?:[-_.][\w.-]*)?")
+_PYTEST_REQUIREMENT = re.compile(r"(?i)^\s*pytest(?:[-_.][\w.-]*)?\s*(?:[\[(<>=!~;@,]|$)")
+_PYTEST_WORD = re.compile(r"(?i)(?<![\w.-])pytest(?![a-z0-9])")
+
+
+def _read_text(path: Path) -> str | None:
+    """A file's text, or None when it is absent or cannot be read — no evidence."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+    except OSError:
+        return None
+
+
+def _read_toml(path: Path) -> dict:
+    text = _read_text(path)
+    if text is None:
+        return {}
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return {}
+
+
+def _makefile_has_target(root: Path, target: str) -> bool:
+    """Whether the project's Makefile has a rule for ``target``."""
+    for name in ("GNUmakefile", "makefile", "Makefile"):
+        path = root / name
+        if path.is_file():
+            text = _read_text(path) or ""
+            for line in text.splitlines():
+                rule = _MAKE_RULE.match(line)
+                if rule and target in rule.group(1).split():
+                    return True
+            return False
+    return False
+
+
+def _toml_names_pytest(node: object) -> bool:
+    """Whether a parsed TOML tree names pytest: a ``[tool.pytest…]`` table, a Poetry or
+    Pipfile ``pytest = "…"`` key, or a PEP 508 requirement string anywhere in it.
+
+    Deliberately not bounded by table: Hatch, PDM, Rye, uv and Flit each keep
+    dependencies somewhere else, and a string that parses as a pytest requirement
+    almost always belongs to a project that runs pytest."""
+    if isinstance(node, dict):
+        return any(
+            _PYTEST_NAME.fullmatch(str(key)) or _toml_names_pytest(value)
+            for key, value in node.items()
+        )
+    if isinstance(node, list):
+        return any(_toml_names_pytest(item) for item in node)
+    return isinstance(node, str) and _PYTEST_REQUIREMENT.match(node) is not None
+
+
+def _text_names_pytest(text: str) -> bool:
+    """Whether an INI, ``setup.py`` or requirements text names pytest outside a comment."""
+    return any(_PYTEST_WORD.search(line.split("#", 1)[0]) for line in text.splitlines())
+
+
+def _uses_pytest(root: Path) -> bool:
+    """Whether the project runs pytest — configured *or* merely depended on.
+
+    Most pytest projects keep no pytest config at all: plain ``def test_…``
+    functions and ``pytest`` in their dependencies. ``unittest discover`` finds
+    none of those and, from Python 3.12, exits 5 ("NO TESTS RAN") — the same
+    blocked gate by another route — so a dependency on pytest counts too.
+    """
+    for name in ("pytest.ini", ".pytest.ini", "conftest.py"):
+        if (root / name).is_file():
+            return True
+    if any((root / d / "conftest.py").is_file() for d in ("tests", "test")):
+        return True
+    if any(_toml_names_pytest(_read_toml(root / n)) for n in ("pyproject.toml", "Pipfile")):
+        return True
+    texts = [root / n for n in ("setup.cfg", "tox.ini", "setup.py", "noxfile.py")]
+    patterns = ("*requirements*.txt", "*requirements*.in")
+    for pattern in (*patterns, "requirements/**/*.txt", "requirements/**/*.in"):
+        texts += sorted(root.glob(pattern))
+    return any(_text_names_pytest(_read_text(path) or "") for path in texts)
+
+
+def _uses_ruff(root: Path) -> bool:
+    """Whether the project configures ruff: its own file, or a ``[tool.ruff]`` table."""
+    if (root / "ruff.toml").is_file() or (root / ".ruff.toml").is_file():
+        return True
+    tool = _read_toml(root / "pyproject.toml").get("tool")
+    return isinstance(tool, dict) and "ruff" in tool
+
+
+def _unittest_command(root: Path, py: str) -> str:
+    """``unittest discover`` pointed where the tests are.
+
+    Discovery recurses only into packages, so from the root it finds nothing in a
+    ``tests/`` directory without an ``__init__.py`` — the most common layout — and
+    exits 5 (#1301 review). Such a directory is named with ``-s``; a package, or no
+    tests directory, keeps the plain command.
+
+    Two layouts stay out of reach of any ``unittest`` command: tests in a
+    subdirectory that is not a package (``tests/unit/`` without ``__init__.py``),
+    which discovery never enters, and a ``src/`` layout whose package is not
+    installed — the gate runs after the project's own install, as pytest's would.
+    """
+    for directory in ("tests", "test"):
+        if (root / directory).is_dir() and not (root / directory / "__init__.py").is_file():
+            return f"{py} -m unittest discover -s {directory}"
+    return f"{py} -m unittest discover"
+
+
+def _python_interpreter() -> str:
+    """``python`` where it exists, else ``python3``.
+
+    A venv — and Windows — has ``python``; a macOS or Debian machine outside one has
+    only ``python3``. Writing either one blindly scaffolds a gate that fails with
+    "command not found" on the other, the same broken gate #1297 is about.
+    """
+    return "python" if shutil.which("python") else "python3"
+
+
+def _python_gates(root: Path) -> tuple[str, str | None]:
+    """The build and lint commands a Python project can actually run (#1297).
+
+    The template wrote ``make test`` whatever the project held, so a Python project
+    with no Makefile scaffolded a gate that BLOCKs every ship with
+    ``make: *** No rule to make target `test'``; and ``ruff check .`` whether or not
+    ruff is part of the project. Build: the Makefile's ``test`` rule if there is one,
+    else pytest if the project configures or depends on it, else ``unittest``, which
+    ships with Python. Lint: ruff only when the project configures ruff; otherwise no
+    lint gate, which the operator can add.
+    """
+    py = _python_interpreter()
+    if _makefile_has_target(root, "test"):
+        build = "make test"
+    elif _uses_pytest(root):
+        build = f"{py} -m pytest"
+    else:
+        build = _unittest_command(root, py)
+    return build, ("ruff check ." if _uses_ruff(root) else None)
+
+
+def template_for(stack: str, root: str | Path | None = None) -> dict:
+    """The stack's defaults, resolved against the project at ``root`` when given."""
+    t = dict(_TEMPLATES.get(stack, _TEMPLATES["generic"]))
+    if stack == "python" and root is not None:
+        t["build"], t["lint"] = _python_gates(Path(root))
+    return t
+
+
 def detect_stack(root: str | Path) -> str:
     """Detect the project stack from marker files (``generic`` if none match)."""
     root = Path(root)
@@ -121,7 +278,7 @@ def auto_detect_config(
     root = Path(root)
     stack = detect_stack(root)
     base_branch = detect_base_branch(root)
-    t = _TEMPLATES.get(stack, _TEMPLATES["generic"])
+    t = template_for(stack, root)
     meta = {
         "stack": stack,
         "platform": t["platform"],
@@ -263,10 +420,15 @@ def _render_sequence(items: list[Any], indent: int) -> list[str]:
 
 
 def default_config(
-    stack: str, *, repo: str = "my-repo", owner: str | None = None, base_branch: str = "main"
+    stack: str,
+    *,
+    repo: str = "my-repo",
+    owner: str | None = None,
+    base_branch: str = "main",
+    root: str | Path | None = None,
 ) -> str:
     """Render the default ``project.yaml`` for ``stack`` (non-interactive)."""
-    t = _TEMPLATES.get(stack, _TEMPLATES["generic"])
+    t = template_for(stack, root)
     return render_config(
         repo=repo,
         owner=owner,
@@ -291,6 +453,7 @@ def wizard(
     base_default: str = "main",
     catalog: wizard_core.Catalog | None = None,
     notify: Callable[[str], None] | None = None,
+    root: str | Path | None = None,
 ) -> str:
     """Build a config by asking for each value, defaulting to the stack template.
 
@@ -308,7 +471,7 @@ def wizard(
     this machine has never had. Without one (or with an empty one — a machine where
     nothing is installed yet) the step is skipped and no ``team`` block is written.
     """
-    t = _TEMPLATES.get(stack, _TEMPLATES["generic"])
+    t = template_for(stack, root)
     report = _ignore if notify is None else notify
     base = ask("Base branch", base_default)
     tz, win = merge_window_answers(ask, report)

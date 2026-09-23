@@ -1890,5 +1890,137 @@ class AContendedMergeLockHoldsTheWave(unittest.TestCase):
                 pass
 
 
+class AFailedCheckoutStopsTheLanding(unittest.TestCase):
+    """#1270: both primitives ran `git checkout` and discarded the result, so a
+    checkout that failed left HEAD on the operator's branch and the merge — or the
+    rebase — rewrote *that* branch while reporting the cluster landed. Measured in a
+    real repository: a dirty tree on `feature` makes `git checkout main` fail."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "commit.gpgsign", "false")
+        self.commit("a.txt", "1\n", "base")
+        self.git("checkout", "-q", "-b", "cluster")
+        self.commit("b.txt", "cluster\n", "cluster work")
+        self.git("checkout", "-q", "main")
+        self.git("checkout", "-q", "-b", "feature")
+        self.commit("a.txt", "2\n", "feature work")
+
+    def git(self, *args: str) -> str:
+        import subprocess
+
+        done = subprocess.run(
+            ["git", *args], cwd=self.root, capture_output=True, text=True, check=True
+        )
+        return done.stdout.strip()
+
+    def commit(self, name: str, text: str, message: str) -> None:
+        (self.root / name).write_text(text, encoding="utf-8")
+        self.git("add", name)
+        self.git("commit", "-q", "-m", message)
+
+    def heads(self) -> tuple[str, str, str]:
+        return (
+            self.git("rev-parse", "main"),
+            self.git("rev-parse", "feature"),
+            self.git("symbolic-ref", "--short", "HEAD"),
+        )
+
+    def dirty(self) -> None:
+        # An uncommitted edit to a file that differs on `main`, so checkout refuses.
+        (self.root / "a.txt").write_text("3\n", encoding="utf-8")
+
+    def test_the_merge_does_not_land_on_the_operators_branch(self):
+        self.dirty()
+        before = self.heads()
+
+        self.assertFalse(merge_cluster_branch(self.root, "cluster", base_branch="main"))
+        self.assertEqual(self.heads(), before, "a branch moved though the checkout failed")
+
+    def test_the_rebase_does_not_rewrite_the_operators_branch(self):
+        """An untracked file that the cluster branch tracks blocks `git checkout
+        cluster`. With `main` ahead of `feature`, the old code then rebased `feature`
+        itself and reported `clean_rebase` (measured in review). A dirty *tracked*
+        file does not show it: `git rebase` refuses a dirty tree on its own."""
+        self.git("checkout", "-q", "main")
+        self.commit("c.txt", "main moved\n", "main moves on")
+        self.git("checkout", "-q", "feature")
+        (self.root / "b.txt").write_text("untracked\n", encoding="utf-8")
+        before = self.heads()
+
+        ok, reason = rebase_and_heal_cluster_branch(self.root, "cluster", base_branch="main")
+        self.assertEqual(self.heads(), before, "feature was rewritten though its checkout failed")
+        self.assertEqual((ok, reason), (False, "checkout_failed"))
+
+    def test_a_clean_tree_still_lands(self):
+        """The counterweight: the check refuses a failed checkout, not a merge."""
+        self.assertTrue(merge_cluster_branch(self.root, "cluster", base_branch="main"))
+        self.assertEqual(self.git("symbolic-ref", "--short", "HEAD"), "main")
+        self.assertIn("cluster work", self.git("log", "--format=%s", "main"))
+        self.assertNotIn("cluster work", self.git("log", "--format=%s", "feature"))
+
+    def test_the_wave_names_the_failed_checkout(self):
+        """The reason reaches the run state that swarm-status reads."""
+        plan = build_swarm_plan(
+            [IssueScope(issue=101, title="A", predicted_files=("src/a.py",))], swarm_id="swarm-co"
+        )
+        cid = plan.waves[0].clusters[0].cluster_id
+        worker = SwarmWorkerStatus(
+            cluster_id=cid,
+            issue=101,
+            role="core",
+            agent="a",
+            model="m",
+            step="s8",
+            status="passed",
+            updated_at="",
+            details="",
+        )
+        save_swarm_state(
+            SwarmRunState(swarm_id="swarm-co", total_workers=1, active_wave=1, workers=(worker,)),
+            root=self.root,
+        )
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            ok = cmd[:2] != ["git", "checkout"]
+            return CommandResult(ok=ok, code=0 if ok else 1, output="")
+
+        result = land_wave_clusters(
+            plan,
+            wave_index=1,
+            project_yaml=".keel/project.yaml",
+            root=self.root,
+            dry_run=False,
+            runner=runner,
+            evidence_checker=None,
+            base_branch="main",
+        )
+        self.assertEqual(result.failed_clusters, (cid,))
+        state = load_swarm_state("swarm-co", root=self.root)
+        assert state is not None
+        self.assertEqual(
+            state.workers[0].details, "merge into main failed (or could not check it out)"
+        )
+
+    def test_nothing_runs_after_a_failed_checkout(self):
+        calls: list[list[str]] = []
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            ok = cmd[:2] != ["git", "checkout"]
+            return CommandResult(ok=ok, code=0 if ok else 1, output="")
+
+        ok, reason = rebase_and_heal_cluster_branch(self.root, "c", runner=runner)
+        self.assertEqual((ok, reason), (False, "checkout_failed"))
+        self.assertFalse(any(c[:2] == ["git", "rebase"] for c in calls), calls)
+        self.assertFalse(merge_cluster_branch(self.root, "c", runner=runner))
+        self.assertFalse(any(c[:2] == ["git", "merge"] for c in calls), calls)
+
+
 if __name__ == "__main__":
     unittest.main()

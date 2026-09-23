@@ -13,7 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from keel.cli import main
+from keel.cli import build_parser, main
 from keel.runner import CommandResult
 from keel.swarm import (
     IssueScope,
@@ -153,7 +153,42 @@ class TestSwarmRuntimeHelpers(unittest.TestCase):
                 runner=mock_runner,
             )
 
-            self.assertEqual(calls[0][-1], "--json")
+            self.assertEqual(calls[0][-2:], ["--json", "--live"])
+
+    def _argv(self, *, dry_run: bool) -> list[str]:
+        calls: list[list[str]] = []
+
+        def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            return CommandResult(ok=True, code=0, output="{}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            execute_cluster_worker(
+                ".keel/project.yaml",
+                7,
+                Path(tmpdir),
+                Path(tmpdir) / "wt",
+                dry_run=dry_run,
+                runner=mock_runner,
+            )
+        return calls[0]
+
+    def test_a_live_worker_runs_a_live_child(self):
+        """#1269: leaving out `--dry-run` never meant `--live`; every live-only path in
+        `keel ship` is gated on `args.live`, so a live swarm ran dry assessments."""
+        argv = self._argv(dry_run=False)
+        self.assertIn("--live", argv)
+        self.assertNotIn("--dry-run", argv)
+        self.assertTrue(build_parser().parse_args(argv[3:]).live)
+
+    def test_a_dry_worker_stays_dry(self):
+        """The counterweight: a dry swarm never hands a child `--live`."""
+        argv = self._argv(dry_run=True)
+        self.assertIn("--dry-run", argv)
+        self.assertNotIn("--live", argv)
+        parsed = build_parser().parse_args(argv[3:])
+        self.assertFalse(parsed.live)
+        self.assertTrue(parsed.dry_run)
 
 
 class TestSwarmOrchestration(unittest.TestCase):
@@ -344,6 +379,28 @@ class TestSwarmRunCLI(unittest.TestCase):
         finally:
             if os.path.exists(path):
                 os.unlink(path)
+
+    def test_a_live_swarm_run_is_refused_before_anything_starts(self):
+        """#1304 lead: with `--live` forwarded, every worker stops at `keel ship
+        --live`'s operator-consent gate, which swarm-run cannot satisfy for a child —
+        so a live run is refused up front, with the reason, instead of failing every
+        cluster and leaving `swarm/<id>` branches behind."""
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("keel.swarm_runtime.run_swarm_orchestration") as orchestrate,
+        ):
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = main(
+                    ["swarm-run", ".keel/project.yaml", "--root", tmpdir, "--issues", "7", "--live"]
+                )
+
+        self.assertEqual(code, 1)
+        self.assertIn("swarm-run --live is refused", err.getvalue())
+        self.assertIn("operator consent", err.getvalue())
+        self.assertIn("issues/1281", err.getvalue())
+        orchestrate.assert_not_called()
+        self.assertEqual(out.getvalue(), "")
 
     def test_swarm_run_cli_dry_run_success(self):
         with tempfile.TemporaryDirectory() as tmpdir:
