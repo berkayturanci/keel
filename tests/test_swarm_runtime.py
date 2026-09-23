@@ -256,6 +256,7 @@ class TestSwarmOrchestration(unittest.TestCase):
                         max_workers=2,
                         runner=mock_runner,
                         create_worktrees=True,
+                        base_branch="main",
                     )
             except RuntimeError as exc:
                 raise AssertionError(f"a worker's exception ended the run: {exc}") from exc
@@ -417,6 +418,7 @@ class AFailedWaveDoesNotSkipTheNext(unittest.TestCase):
                 dry_run=True,
                 runner=runner,
                 create_worktrees=False,
+                base_branch="main",
             )
             state = load_swarm_state("swarm-skip", root=tmpdir)
 
