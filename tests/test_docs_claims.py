@@ -301,7 +301,8 @@ class TestTheSiteStatesTheRealBackboneShape(unittest.TestCase):
     Both are hero numbers: they appear in the README's hero and in the site's body copy
     (the social-card alt text used to carry them too), and every one of them is
     hand-typed. The command count drifted exactly this way — 16 in five places, 17 in
-    five others — and there is no reason the other two are safer. `model.BACKBONE` and `model.SLOTS` are the answer.
+    five others — and there is no reason the other two are safer. `model.BACKBONE` and
+    `model.SLOTS` are the answer.
     """
 
     _PAGES = ("index.html", "docs.html", "coverage.html", "content.js")
