@@ -120,9 +120,9 @@ an install imports.
 
 **`agy plugin list` reports what was imported, not what is on disk.** It records
 the component list at import time, so an install made before an upstream layout
-change keeps the old answer — on this machine keel reads `"components":
-["commands"]` from a 2026-09-08 import, while the checkout beside it carries
-`skills/`. Re-run `agy plugin install <url>` after any release that adds a
+change keeps the old answer — on the machine these commands were measured on, keel
+read `"components": ["commands"]` from a 2026-09-08 import, while the checkout
+beside it carried `skills/`. Re-run `agy plugin install <url>` after any release that adds a
 component directory.
 
 ---
@@ -144,8 +144,8 @@ Then install it from Cursor's `/plugins` screen.
 
 `cursor-agent plugin marketplace update <nameOrUrl>` re-indexes the **marketplace**
 — Cursor's own description of it — which is not the same thing as moving an
-already-installed plugin to a newer commit, and this session did not establish
-that it does. So the two routes trade off: this one registers the commands, the
+already-installed plugin to a newer commit. Not verified: whether it also moves
+an installed plugin forward. So the two routes trade off: this one registers the commands, the
 one below has an update that is a `git pull`.
 
 **Install — local checkout** (skills only; its update is a `git pull`)
@@ -156,8 +156,8 @@ git clone --depth 1 https://github.com/berkayturanci/keel \
 ```
 
 Then restart Cursor. It is *reported* to list as `keel (Local)` under
-**Settings → Plugins**. That is a GUI claim and has not been confirmed from a CLI
-session — everything else on this page was run.
+**Settings → Plugins**. Not verified: that is a GUI listing, and only the CLI was
+checked — everything else on this page was run.
 
 **Update — local checkout**
 

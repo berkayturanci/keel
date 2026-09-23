@@ -14,8 +14,10 @@ Then, for the task at hand:
   generated into the plugin `commands/`, the installed `.claude/commands/keel/`, and
   `.agents/skills/keel-*`. It is project-neutral and reads every keel-specific value
   from `projects/keel.yaml` via the `keel` CLI.
-- **Architecture / design questions**:
-  [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
+- **Architecture / design questions**: current behaviour is in [`docs/keel/`](docs/keel/)
+  and `src/keel/model.py`; the original design proposal,
+  [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md), is
+  historical and not maintained.
 - **Config / extensions / CLI reference**: [`docs/keel/`](docs/keel/).
 
 Keep durable workflow rules in `AGENTS.md` instead of duplicating them here.

@@ -14,8 +14,10 @@ Then, for the task at hand:
   installed into the shared [`keel-ship` skill](.agents/skills/keel-ship/SKILL.md).
   Gemini, Antigravity, Codex, and other non-Claude agents read the shared
   `.agents/skills/keel-<cmd>/SKILL.md` files instead of separate per-agent adapter copies.
-- **Architecture / design questions**:
-  [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
+- **Architecture / design questions**: current behaviour is in [`docs/keel/`](docs/keel/)
+  and `src/keel/model.py`; the original design proposal,
+  [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md), is
+  historical and not maintained.
 - **Config / extensions / CLI reference**: [`docs/keel/`](docs/keel/).
 
 Keep durable workflow rules in `AGENTS.md` instead of duplicating them here.

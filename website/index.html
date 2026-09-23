@@ -19,7 +19,7 @@
   })();
 </script>
 <title>AI Code Review &amp; PR Automation for Coding Agents — keel</title>
-<meta name="description" content="Automate pull request review and merge with AI coding agents. Open-source CLI and GitHub Action for Claude Code, Codex and Gemini.">
+<meta name="description" content="Automate pull request review and merge with AI coding agents. Open-source CLI and GitHub Action for Claude Code, Codex, Cursor and Antigravity.">
 <meta name="keywords" content="ai code review, pull request automation, automate code review, claude code github actions, codex code review, gemini code review, multi-agent code review, ai pr review, github action ai review, merge automation, ci cd ai agent, keel">
 <meta name="author" content="Berkay Turancı">
 <meta name="theme-color" content="#6366f1">
@@ -40,7 +40,7 @@
 <meta property="og:site_name" content="keel">
 <meta property="og:url" content="https://keel-ship.dev/">
 <meta property="og:title" content="keel — turn coding agents into work owners: issue to merged PR">
-<meta property="og:description" content="Open-source AI code review and pull request automation. One fixed backbone takes a GitHub issue from intake to merged — multi-agent review, CI gates, merge evidence. Claude Code, Codex, Gemini.">
+<meta property="og:description" content="Open-source AI code review and pull request automation. One fixed backbone takes a GitHub issue from intake to merged — multi-agent review, CI gates, merge evidence. Claude Code, Codex, Cursor, Antigravity.">
 <meta property="og:image" content="https://keel-ship.dev/assets/og-banner.png">
 <meta property="og:image:alt" content="keel — drive every issue to merged on one fixed backbone: 13 steps, 28 extension slots, 17 /keel commands, 100% covered.">
 <meta property="og:image:width" content="1200">
@@ -219,7 +219,7 @@
           <div class="layers" id="layers"></div>
           <p class="view-kicker" style="margin:2rem 0 .6rem">What you get</p>
           <div class="invs">
-            <div class="inv"><b>One backbone, every agent</b><span>Install once; /keel:&lt;command&gt; runs as native Claude commands and as one shared skill set every other agent reads (Codex, Antigravity, Gemini).</span></div>
+            <div class="inv"><b>One backbone, four hosts</b><span>keel installs into Claude Code, Codex, Cursor and Antigravity; /keel:&lt;command&gt; runs as native Claude commands and as one shared skill set under .agents/skills/ for agents that read skills there.</span></div>
             <div class="inv"><b>Project Lego + policy packs</b><span>Snap gates and steps into named hooks (guard, tester, pre-merge, …); keep labels, path policy, health sources, and workflow preferences in policy_pack data — not packaged command prose.</span></div>
             <div class="inv"><b>Opt-in jury gate</b><span>Add <code>jury</code> to your <code>gates:</code> (off by default); then it runs the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> multi-agent reviewer on the diff when the binary is installed, else a fail-soft no-op.</span></div>
             <div class="inv"><b>Safe merges by construction</b><span>A core-owned <code style="font-family:var(--font-mono)">keel merge</code> path — resource claim, window re-check, live CI rollup, and PR evidence verification before the merge — plus the timezone-aware night no-merge window, mkdir merge lock, risk-tier → reviewer count, hotfix bypass with an audit line, and vendor+model attribution.</span></div>
@@ -232,7 +232,7 @@
           <div class="bb-figure" id="bb-figure"></div>
           <p class="view-kicker" style="margin:2rem 0 .6rem">The ordered step machine</p>
           <div class="bb-tbl-wrap"><table class="bb-tbl"><thead><tr><th>step</th><th>name</th><th>does</th><th>primary hooks</th></tr></thead><tbody id="bb-tbl-body"></tbody></table></div>
-          <p class="bb-note"><span class="bbn-line bbn-lead"><span class="hook">hook</span> all 28 hooks are <strong>add-only extension slots</strong> — every step exposes them; a project snaps in its own Lego and can never reorder or remove the machine.</span> <span class="bbn-line"><span class="tag-agent">agent</span> the step's work is produced by a coding agent (Claude Code, Codex, Gemini, …) — but only the orchestrator writes to git/PRs.</span> <span class="bbn-line"><span class="hook slot">hook</span> amber hooks are <strong>primary slots</strong> that can own or shape the step's outcome (<span style="font-family:var(--font-mono)">after-implement</span>, <span style="font-family:var(--font-mono)">reviewers</span>, <span style="font-family:var(--font-mono)">capture</span>, <span style="font-family:var(--font-mono)">post-merge</span>); grey ones are passive before/after points that observe without gating.</span> <span class="bbn-line"><span class="hook slot block">guard ⊘</span> red slots can <strong>block</strong> the run — <span style="font-family:var(--font-mono)">guard</span> (s3), <span style="font-family:var(--font-mono)">tester / test</span> (s8) and <span style="font-family:var(--font-mono)">pre-merge</span> (s10) stop work when their checks fail.</span></p>
+          <p class="bb-note"><span class="bbn-line bbn-lead"><span class="hook">hook</span> all 28 hooks are <strong>add-only extension slots</strong> — every step exposes them; a project snaps in its own Lego and can never reorder or remove the machine.</span> <span class="bbn-line"><span class="tag-agent">agent</span> the step's work is produced by a coding agent (Claude Code, Codex, Cursor, Antigravity, …) — but only the orchestrator writes to git/PRs.</span> <span class="bbn-line"><span class="hook slot">hook</span> amber hooks are <strong>primary slots</strong> that can own or shape the step's outcome (<span style="font-family:var(--font-mono)">after-implement</span>, <span style="font-family:var(--font-mono)">reviewers</span>, <span style="font-family:var(--font-mono)">capture</span>, <span style="font-family:var(--font-mono)">post-merge</span>); grey ones are passive before/after points that observe without gating.</span> <span class="bbn-line"><span class="hook slot block">guard ⊘</span> red slots can <strong>block</strong> the run — <span style="font-family:var(--font-mono)">guard</span> (s3), <span style="font-family:var(--font-mono)">tester / test</span> (s8) and <span style="font-family:var(--font-mono)">pre-merge</span> (s10) stop work when their checks fail.</span></p>
           <p class="view-kicker" style="margin:2rem 0 .6rem">Invariants the backbone always preserves</p>
           <div class="invs" id="invs"></div>
         </section>
@@ -271,9 +271,9 @@
         <section class="view" id="view-swarm" data-view="swarm">
           <div class="view-head">
             <p class="view-kicker green">Multi-agent concurrency</p>
-            <h1>Keel Swarm — parallel waves &amp; cross-model topology</h1>
+            <h1>Keel Swarm (experimental) — parallel waves &amp; cross-model topology</h1>
             <p class="warn-note"><strong>⚠️ Experimental — this subsystem does not land work.</strong> The planning commands run. A live run cannot produce a commit or a pull request: <code>keel ship</code>, the CLI subcommand swarm's workers spawn, is a dry assessment that never commits or opens a PR, and <code>swarm-run --live</code> is refused, since its workers could not pass <code>keel ship --live</code>&#39;s operator-consent gate (<a href="https://github.com/berkayturanci/keel/issues/1269">#1269</a>). Scope cannot be given per issue, so a multi-issue plan returns one flat wave (<a href="https://github.com/berkayturanci/keel/issues/1274">#1274</a>). Audit epic: <a href="https://github.com/berkayturanci/keel/issues/1281">#1281</a>. Use <code>/keel:ship</code> for work you need merged — the description below is the design, not a supported workflow.</p>
-          <p><strong>Keel Swarm</strong> scales work ownership from single-issue execution to high-concurrency multi-agent orchestration. It clusters backlogs into topological dependency waves, runs parallel workers in isolated worktrees, routes across diverse AI models, and lands batches safely under the merge lock.</p>
+          <p><strong>Keel Swarm</strong> is designed to scale work ownership from one issue to a backlog: cluster it into dependency waves, run parallel workers in isolated worktrees, route clusters across AI models, and land each wave under the merge lock. What runs today is the plan (<code>keel swarm-plan</code>) and a dry <code>swarm-run</code>; the cards below describe the design and say where the code stops short of it.</p>
           </div>
 
           <!-- Interactive Swarm Simulator -->
@@ -282,36 +282,36 @@
           <div class="invs">
             <div class="inv">
               <b>Static DAG &amp; Disjoint Wave Partitioning</b>
-              <span><code>keel swarm-plan</code> analyzes file-overlap conflict graphs from each issue's predicted scope, without executing code; dependencies are derived from that overlap. Orthogonal issues run concurrently in <b>Wave 1</b>; dependent items sequence automatically into subsequent waves.</span>
+              <span><code>keel swarm-plan</code> analyzes file-overlap conflict graphs from each issue's predicted scope, without executing code; dependencies are derived from that overlap. Orthogonal issues are placed in <b>Wave 1</b> and dependent ones in later waves. Today the CLI cannot give scope per issue, so a multi-issue plan is one flat wave (<a href="https://github.com/berkayturanci/keel/issues/1274">#1274</a>).</span>
             </div>
             <div class="inv">
               <b>Worktree Filesystem Sandboxing</b>
-              <span>Every parallel cluster worker runs in an isolated directory (<code>.keel/worktrees/&lt;swarm_id&gt;/&lt;cluster_id&gt;/</code>). Workers never collide, dirty state stays contained, and local branches remain clean.</span>
+              <span>The design gives every parallel cluster worker its own directory (<code>.keel/worktrees/&lt;swarm_id&gt;/&lt;cluster_id&gt;/</code>), so workers do not collide and dirty state stays contained. Not yet true: <code>swarm-run --live</code> is refused, and a dry run creates no worktrees, so its workers take turns in your own checkout. The worktree lifecycle also has open gaps — no orphan recovery, and swarm branches and directories left behind (<a href="https://github.com/berkayturanci/keel/issues/1278">#1278</a>).</span>
             </div>
             <div class="inv">
               <b>Cross-Model Delegation Topology</b>
-              <span>Assign different clusters to different models and vendors simultaneously: <b>Claude Code</b> on core architecture, <b>Antigravity</b> on frontend/visualizers, <b>Codex</b> on tests and documentation, and <b>local Ollama / vLLM</b> for offline nodes. keel pins no model catalogue — <code>keel doctor --providers</code> reports what a machine can actually reach.</span>
+              <span>The design assigns different clusters to different models and vendors at once: <b>Claude Code</b> on core architecture, <b>Antigravity</b> on frontend/visualizers, <b>Codex</b> on tests and documentation, and <b>local Ollama / vLLM</b> for offline nodes. keel pins no model catalogue — <code>keel doctor --providers</code> reports what a machine can actually reach.</span>
             </div>
             <div class="inv">
               <b>Per-Cluster Review, Evidence-Gated</b>
-              <span>Each cluster is reviewed inside its own <code>keel ship</code> run — on tier-3 work that can be the cross-vendor AI Jury panel (e.g. Anthropic + OpenAI + Google). No branch lands until it clears the review-evidence gate, whichever model authored it.</span>
+              <span>Each cluster is meant to be reviewed inside its own <code>keel ship</code> run — on tier-3 work that can be the cross-vendor AI Jury panel (e.g. Anthropic + OpenAI + Google). <code>swarm-land</code> holds a cluster until an open pull request whose head matches the cluster branch clears the review-evidence gate — but it then lands with a local merge, and never pushes or merges that pull request (<a href="https://github.com/berkayturanci/keel/issues/1287">#1287</a>).</span>
             </div>
             <div class="inv">
               <b>Single-Writer Batch Landing</b>
-              <span>Under the single-writer <code>merge_lock</code>, each cluster branch is merged into the base with <code>git merge --no-ff</code>, one after another. A conflicting merge is aborted and the cluster reported failed — the base branch is never left half-landed.</span>
+              <span>Under the single-writer <code>merge_lock</code>, each cluster branch is merged into the base with <code>git merge --no-ff</code>, one after another. A conflicting merge is aborted and the cluster reported failed — the base branch is never left half-landed. The merge is local: nothing is pushed (<a href="https://github.com/berkayturanci/keel/issues/1287">#1287</a>).</span>
             </div>
             <div class="inv">
               <b>2D DAG &amp; Pseudo-3D Spatial Visualizer</b>
-              <span>Run <code style="font-family:var(--font-mono)">keel-visual swarm</code> to render an HTML page showing the dependency DAG, the worktree clusters, each cluster's running/passed/failed state, and the run's landing mode — a rendered snapshot you re-run to refresh.</span>
+              <span>Run <code style="font-family:var(--font-mono)">keel-visual swarm</code> to render an HTML page showing the worktree clusters, each cluster's running/passed/failed state, and the run's landing mode — a rendered snapshot you re-run to refresh. Its DAG is rebuilt without the plan's scopes, so today it is always one wave with no edges (<a href="https://github.com/berkayturanci/keel/issues/1280">#1280</a>).</span>
             </div>
           </div>
 
           <p class="view-kicker" style="margin:2rem 0 .8rem">Swarm CLI commands</p>
           <div class="cli-grid">
-            <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; --issues 12,15</code><span>Compute the conflict graph from predicted scopes and partition the backlog into conflict-free execution waves. <a href="docs.html#swarm">Swarm docs →</a></span></div>
-            <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span><b>Experimental (#1281)</b> — execute parallel cluster workers in isolated worktrees, tracking each worker's status and rebalancing the plan when one fails.</span></div>
+            <div class="cli-row"><code>keel swarm-plan &lt;cfg&gt; --issues 12,15</code><span>Compute the conflict graph from predicted scopes and partition the backlog into conflict-free execution waves (one flat wave until <a href="https://github.com/berkayturanci/keel/issues/1274">#1274</a>). <a href="docs.html#swarm">Swarm docs →</a></span></div>
+            <div class="cli-row"><code>keel swarm-run &lt;cfg&gt; --issues 12,15</code><span><b>Experimental (#1281)</b> — designed to execute parallel cluster workers in isolated worktrees, tracking each worker's status and rebalancing the plan when one fails. Dry runs only: <code>--live</code> is refused.</span></div>
             <div class="cli-row"><code>keel swarm-status &lt;cfg&gt;</code><span>Inspect each cluster's running/passed/failed status, its lead, and its difficulty band.</span></div>
-            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --issues N,N --wave 1</code><span><b>Experimental (#1281)</b> — land a completed wave's cluster branches under the merge lock, sequentially, aborting any conflicting merge.</span></div>
+            <div class="cli-row"><code>keel swarm-land &lt;cfg&gt; --issues N,N --wave 1</code><span><b>Experimental (#1281)</b> — merge a completed wave's cluster branches locally under the merge lock, sequentially, aborting any conflicting merge; it does not push or merge the pull requests (#1287).</span></div>
             <div class="cli-row"><code>keel-visual swarm</code><span>Render the interactive 2D DAG and pseudo-3D spatial node topology as a snapshot (static HTML or served on localhost).</span></div>
           </div>
         </section>
@@ -320,8 +320,8 @@
         <section class="view" id="view-integrations" data-view="integrations">
           <div class="view-head">
             <p class="view-kicker green">Ecosystem &amp; Compatibility</p>
-            <h1>Installs into the tools you already use.</h1>
-            <p>One project-neutral workflow core registers everywhere: <strong>12 AI assistants · 6 LLM backends · 6 engineering skill libraries · GitHub Actions &amp; MCP</strong>. Zero runtime lock-in, on-device, Apache-2.0.</p>
+            <h1>Works with the tools you already use.</h1>
+            <p>One project-neutral workflow core. It installs as a plugin into <strong>Claude Code, Codex, Cursor and Antigravity</strong>, and the catalogue below covers <strong>12 AI assistants · 6 LLM backends · 6 engineering skill libraries · GitHub Actions &amp; MCP</strong>. Zero runtime lock-in, on-device, Apache-2.0.</p>
           </div>
 
           <!-- Controls: Category Filter Tabs + Search -->
@@ -443,7 +443,7 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
 
         <!-- Security -->
         <section class="view" id="view-security" data-view="security">
-          <div class="view-head"><p class="view-kicker">Security</p><h1>No telemetry, no surprises</h1><p>keel's deterministic core makes <strong>no network calls</strong>, sends <strong>no telemetry</strong>, and ships a single runtime dependency (PyYAML; on Windows it also installs <code>tzdata</code> for the standard-library timezone database). The only outbound activity is deliberate and named: a live <code>ship</code>/<code>merge</code> reaches GitHub for the pull request's evidence, <code>keel doctor</code> checks PyPI for the latest release (skip it with <code>--offline</code>), and the gate commands and agent CLIs <strong>you</strong> configure reach out exactly as you set them.</p></div>
+          <div class="view-head"><p class="view-kicker">Security</p><h1>No telemetry, no surprises</h1><p>keel sends <strong>no telemetry</strong> and ships a single runtime dependency (PyYAML; on Windows it also installs <code>tzdata</code> for the standard-library timezone database). Its network calls are deliberate and named, each made by a command you run: GitHub, through <code>gh</code>, for a live <code>ship</code>/<code>merge</code> and the pull request's evidence; your git remote, when <code>keel capture-land --write</code> pushes a lesson onto the pull request; PyPI, for <code>keel doctor</code>'s release check (skip it with <code>--offline</code>); a <strong>hosted-API delegate you choose</strong> (<code>anthropic-api:</code>, <code>openai-api:</code>, <code>google-api:</code>, or an <code>openai-compatible</code> endpoint), which receives the delegate's brief, issue text and diff included; and the gate commands and agent CLIs <strong>you</strong> configure, exactly as you set them. The full list is in <a href="https://github.com/berkayturanci/keel/blob/main/SECURITY.md#outbound-network-calls">SECURITY.md</a>.</p></div>
           <div class="invs">
             <div class="inv"><b>Gate commands run your shell</b><span><code style="font-family:var(--font-mono)">run-gates</code> / <code style="font-family:var(--font-mono)">ship</code> execute the build / lint / command Lego from your config. Review a config before running it on a sensitive repository — exactly as you would a Makefile or CI script.</span></div>
             <div class="inv"><b>Agent reach = agent auth</b><span>The /keel:&lt;command&gt; adapters drive coding agents that may receive diffs, push branches, comment and merge. Their reach is governed by your agent's own auth and permissions, not by keel.</span></div>
@@ -452,11 +452,14 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
           </div>
           <p class="view-kicker" style="margin:2.2rem 0 .8rem">Security audits — published in the repo</p>
           <div class="cli-grid">
-            <div class="cli-row"><code>2026-06-11</code><span>v1.2.1 line — no findings; prior follow-ups verified resolved. <a href="docs.html#security-audits">report →</a></span></div>
+            <div class="cli-row"><code>2026-09</code><span>No report — the month's security fixes (1.23.1: #1219, #1223; 1.24.0: #1247) are listed under Security in the <a href="https://github.com/berkayturanci/keel/blob/main/CHANGELOG.md">CHANGELOG</a>.</span></div>
+            <div class="cli-row"><code>2026-08-15</code><span>v1.14.2 line, swarm subsystem only — by Google Antigravity (Gemini 3.7 Flash). Swarm is experimental and its live path has never worked end to end (<a href="https://github.com/berkayturanci/keel/issues/1281">#1281</a>), so this report says nothing about a swarm run that lands work. <a href="docs.html#security-audits">report →</a></span></div>
+            <div class="cli-row"><code>2026-06-15</code><span>v1.3.0 line — by Claude (Opus 4.8); the keel-visual and website surfaces. <a href="docs.html#security-audits">report →</a></span></div>
+            <div class="cli-row"><code>2026-06-11</code><span>v1.2.1 line — by Claude (Fable 5); prior follow-ups verified resolved. <a href="docs.html#security-audits">report →</a></span></div>
             <div class="cli-row"><code>2026-06-09</code><span>v1.0.1 line — secret scanning and consumer-neutrality follow-ups (resolved). <a href="docs.html#security-audits">report →</a></span></div>
             <div class="cli-row"><code>2026-06-08</code><span>Initial audit — trust boundaries, bandit, pip-audit, workflow &amp; permission review. <a href="docs.html#security-audits">report →</a></span></div>
           </div>
-          <p class="cmd-note" style="margin-top:1.2rem;font-size:.84rem;color:var(--muted)">Each report covers source-level trust boundaries, static analysis (<code style="font-family:var(--font-mono)">bandit</code>), dependency scanning (<code style="font-family:var(--font-mono)">pip-audit</code>), workflow / permission review, and the repository's GitHub security settings. Full policy: <a href="https://github.com/berkayturanci/keel/blob/main/SECURITY.md">SECURITY.md</a></p>
+          <p class="cmd-note" style="margin-top:1.2rem;font-size:.84rem;color:var(--muted)">Three of the five reports were written by AI models acting as the reviewing security engineer, as each states; the June 8 and 9 reports do not record what produced them. The June reports cover source-level trust boundaries, static analysis (<code style="font-family:var(--font-mono)">bandit</code>) and dependency scanning (<code style="font-family:var(--font-mono)">pip-audit</code>); the August one covers the swarm subsystem only. Full policy: <a href="https://github.com/berkayturanci/keel/blob/main/SECURITY.md">SECURITY.md</a></p>
         </section>
 
         <!-- FAQ -->

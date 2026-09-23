@@ -7,7 +7,7 @@
     {
       "name": "keel",
       "source": "./",
-      "description": "Set up keel in a project with config, adapters, validation, and plan rendering."
+      "description": "Turn coding agents into work owners. A vendor-neutral backbone that takes a GitHub issue to a merged PR: readiness check, isolated worktree, multi-agent review, CI and evidence gates, merge window. Claude Code, Codex, Cursor, Antigravity."
     }
   ]
 }

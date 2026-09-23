@@ -8,8 +8,9 @@
 **keel** is a project-neutral, multi-agent **workflow core**. A *fixed backbone* of
 ordered steps (`s0`–`s12`) drives a unit of work — a GitHub issue — from backlog to done.
 Projects never fork the backbone: they set per-project **values** in `project.yaml` and
-snap their own **Lego pieces** into named extension slots. Full design:
-[`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
+snap their own **Lego pieces** into named extension slots. Current behaviour is documented
+in [`docs/keel/`](docs/keel/); the original design proposal,
+[`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md), is historical.
 
 ## Quick Reference
 
@@ -245,4 +246,4 @@ website/             static site + live coverage report (make site)
 - [`docs/keel/command-contracts.md`](docs/keel/command-contracts.md) — structured command plan/result contracts
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel on GitHub's runner
-- [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design
+- [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — the original design proposal (historical, not maintained)

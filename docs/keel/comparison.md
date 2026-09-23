@@ -12,7 +12,7 @@ branch/worktree → implement (coding agent) → push → CI wait → multi-agen
 capture marker/verifier contract, redaction-before-durability guardrails, capture-health
 surfacing, and optional learning-quality decisions in the run ledger. Distinctive elements:
 
-- **Agent adapters** (Claude Code, Codex, Gemini, Antigravity) behind one backbone.
+- **Agent adapters** (Claude Code, Codex, Cursor, Antigravity) behind one backbone.
 - **`.keel/project.yaml`** per project (base branch, build/lint/test commands, CI names, file globs) + pluggable "Lego" extension gates.
 - **Merge invariants**: timezone-aware merge *window* ("night no-merge"), `mkdir`-based merge *lock* (mutual exclusion), risk-tiered reviewer counts, fix-loop with capped budget.
 - **Pure-core + thin-IO, deterministic, stdlib-only ethos** (sibling `ai-jury` is the multi-agent review engine).

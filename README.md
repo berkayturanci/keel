@@ -30,17 +30,18 @@ take an issue from the queue, decide whether it is ready, own the implementation
 get it reviewed, keep the quality gates green, merge inside policy, and leave useful
 memory behind for the next session. keel focuses on one agent owning work end to end.
 
-### The Vision-to-Production Gap in Agentic AI
+### From "I opened a PR" to merged
 
-While over 70% of engineering organizations experiment with autonomous AI agents, only a small fraction (~11-15%) successfully run agentic workflows in production. The bottleneck is rarely code generation—it is **work ownership and delivery governance**.
+The bottleneck in agentic coding is rarely code generation—it is **work ownership and delivery governance**.
 
 Most coding agents stop at *"I opened a PR."* Without an invariant delivery backbone, agent-written code stalls in review loops, introduces silent regressions, causes merge collisions, or bypasses compliance.
 
-**Keel closes the vision-to-production gap.** It provides the fixed backbone (`s0`–`s12`) that drives every unit of work through scope validation, multi-agent adversarial reviews, commit-bound evidence verification, timezone-aware merge locks, and post-merge proof—guaranteeing work either lands safely in production or fails loudly at a named step.
+**Keel closes that gap.** It provides the fixed backbone (`s0`–`s12`) that drives every unit of work through scope validation, multi-agent adversarial reviews, commit-bound evidence verification, timezone-aware merge locks, and post-merge proof, so work either merges into the base branch or stops loudly at a named step.
 
 > keel uses a thin-consumer model: the core is installed + pinned, never copied, so the
-> drift/overwrite class of bug is structurally gone. Background:
-> [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md).
+> drift/overwrite class of bug is structurally gone. Background: the original design
+> proposal, [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md)
+> (historical; current behaviour is documented in [`docs/keel/`](docs/keel/)).
 
 ## Three layers
 
@@ -54,8 +55,9 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
 
 ### What you get
 
-- **One backbone, every agent** — install once; `/keel:<command>` runs as native Claude commands
-  *and* as a single shared skill set every other agent (Codex, Antigravity, Gemini) reads.
+- **One backbone, four hosts** — keel installs into Claude Code, Codex, Cursor and Antigravity
+  ([per-host steps](docs/keel/install.md)); `/keel:<command>` runs as native Claude commands
+  *and* as a single shared skill set under `.agents/skills/` for agents that read skills there.
 - **High-concurrency Swarm orchestration** (**experimental**) — cluster entire backlogs into topological dependency waves, execute disjoint clusters in isolated git worktrees, and land them under a single-writer merge lock with sequential `git merge --no-ff` ([guide](docs/keel/swarm.md)). The planning commands run; **a live run cannot produce a commit or a pull request**. The child `keel ship` is a dry assessment that never commits or opens a PR in any mode — keel's design has the *agent* implement by following `/keel:ship` — and `swarm-run --live` is refused, since its workers could not pass `keel ship --live`'s operator-consent gate ([#1269](https://github.com/berkayturanci/keel/issues/1269)); scope cannot be given per issue, so a multi-issue plan returns one flat wave ([#1274](https://github.com/berkayturanci/keel/issues/1274)). Audit epic: [#1281](https://github.com/berkayturanci/keel/issues/1281). Use `/keel:ship` for work you need merged.
 - **Project Lego + policy packs** — snap gates/steps into named hooks (`guard`, `tester`,
   `pre-merge`, …) and keep labels, path policy, health sources, local commands, and
@@ -131,7 +133,7 @@ Changing the backbone is a keel-core change. Projects only ever touch layers 2�
   each. Probes are time-boxed and fail-soft, and print key *names* only, never values
   ([reference](docs/keel/runtime-capabilities.md#probing-providers-keel-doctor---providers)).
 - **Auditable evidence chain & compliance** — every PR merged through Keel carries a
-  tamper-evident, commit-SHA-bound record of reviewer verdicts, test results, and model
+  commit-SHA-bound, auditable record of reviewer verdicts, test results, and model
   attributions ([guide](docs/keel/evidence.md)). Approvals are locked to the exact HEAD commit,
   preventing approval drift across subsequent pushes — a lesson `keel capture-land` lands is the one
   commit they survive, under the rule above — with first-class, audited exception tracking.
@@ -279,7 +281,7 @@ project; only that project's `.keel/project.yaml` + extensions change the behavi
 ```bash
 keel install-adapter claude   # native Claude commands → /keel:ship, /keel:regression, …
 keel install-adapter skills   # one shared keel-<cmd> skill set under .agents/skills/
-#                               (read by every non-Claude agent: Codex, Antigravity, Gemini)
+#                               (the shared surface for non-Claude hosts)
 keel install-adapter all      # both surfaces
 ```
 
@@ -398,7 +400,7 @@ git clone --depth 1 https://github.com/berkayturanci/keel ~/.cursor/plugins/loca
 ```
 
 Then restart Cursor. It is *reported* to list as `keel (Local)` under
-**Settings → Plugins** — a GUI claim, not confirmed from a CLI session.
+**Settings → Plugins**. Not verified: that is a GUI listing, and only the CLI was checked.
 
 **Update**
 
@@ -413,8 +415,8 @@ cursor-agent plugin marketplace update berkayturanci/keel  # if you used the mar
 ```
 
 Restart Cursor either way. The second re-indexes the **marketplace** — Cursor's
-own words — which is not the same as moving an installed plugin forward, and this
-session did not establish that it does. The two routes trade off: marketplace
+own words — which is not the same as moving an installed plugin forward. Not
+verified: whether it also updates an installed plugin. The two routes trade off: marketplace
 registers the commands, the local checkout has an update that is a `git pull`.
 
 A locally installed Cursor plugin registers **skills only — and here that is one
@@ -490,7 +492,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)
 - [`docs/keel/release.md`](docs/keel/release.md) — PyPI/TestPyPI release runbook and package smoke test
 - [`docs/keel/homebrew-release-chain.md`](docs/keel/homebrew-release-chain.md) — how a release reaches `brew install`, every guard on the way, and what has already gone wrong
-- [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — full design
+- [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — the original design proposal (historical; current behaviour is in `docs/keel/`)
 - [`docs/proposals/api-token-delegate.md`](docs/proposals/api-token-delegate.md) — hosted-API (API-token) implementer/reviewer delegate design (#548)
 
 ## Development

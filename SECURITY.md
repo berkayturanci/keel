@@ -24,10 +24,8 @@ We aim to acknowledge within 48 hours when possible.
 keel is a workflow core. The deterministic `keel` CLI (`validate`, `plan`, `run-gates`,
 `window`, `init`, `install-adapter`) only reads your `.keel/project.yaml` + extensions and
 runs the **gate commands you configured** through a thin subprocess wrapper, and ships a
-single runtime dependency (PyYAML). It sends **no telemetry**. The only outbound activity is
-deliberate and named: a live `ship` / `merge` reaches GitHub for the pull request's evidence,
-`keel doctor` checks PyPI for the latest release (skip it with `--offline`), and the gate and
-agent commands you configure reach out exactly as you set them.
+single runtime dependency (PyYAML). It sends **no telemetry**. Its outbound network calls
+are listed under [Outbound network calls](#outbound-network-calls) below.
 
 Be aware that:
 
@@ -46,19 +44,58 @@ Be aware that:
 
 ## Security Audits
 
-Periodic security audit reports are published under
-[`docs/security/`](docs/security/). Each report covers source-level trust
-boundaries, static analysis (`bandit`), dependency scanning (`pip-audit`),
-workflow/permission review, and the repository's GitHub security settings:
+Security audit reports are published under [`docs/security/`](docs/security/). Each
+one names the release line it reviewed and, where the report records it, what produced
+it. Three of the five were written by AI models acting as the reviewing security
+engineer, as the reports themselves state.
 
-- [2026-06-11](docs/security/2026-06-11-security-audit.md) — v1.2.1 line; no findings,
-  prior follow-ups verified resolved.
-- [2026-06-09](docs/security/2026-06-09-security-audit.md) — v1.0.1 line; secret
-  scanning and consumer-neutrality follow-ups (resolved).
-- [2026-06-08](docs/security/2026-06-08-security-audit.md)
+- **2026-09** — no report. The security fixes from that month's review rounds are listed
+  under `### Security` in the [CHANGELOG](CHANGELOG.md): 1.23.1 (#1219, #1223 — `keel merge`
+  merges the head it checked, and the capture landing resolves refs exactly and goes only
+  through a configured remote) and 1.24.0 (#1247 — a host-scoped remote-endpoint opt-in,
+  the capture-commit exemption confined to the base repository, `keel gc` through a
+  symlink, inspection commands running checkout code).
+- [2026-08-15](docs/security/2026-08-15-security-audit.md) — v1.14.2 line; produced by
+  Google Antigravity (Gemini 3.7 Flash). It covers the swarm subsystem only and reports no
+  critical, high or medium finding. Read it with that scope in mind: swarm is experimental
+  and its live path has never worked end to end
+  ([#1281](https://github.com/berkayturanci/keel/issues/1281)), so the report says nothing
+  about a swarm run that lands work. It reports no `bandit` or `pip-audit` run.
+- [2026-06-15](docs/security/2026-06-15-security-audit.md) — v1.3.0 line; produced by
+  Claude (Opus 4.8). Focus: the new `keel-visual` and `website/` surfaces; no critical,
+  high or medium finding.
+- [2026-06-11](docs/security/2026-06-11-security-audit.md) — v1.2.1 line; produced by
+  Claude (Fable 5). No critical, high or medium finding; prior follow-ups verified
+  resolved.
+- [2026-06-09](docs/security/2026-06-09-security-audit.md) — v1.0.1 line; the report does
+  not record what produced it. Secret scanning and consumer-neutrality follow-ups
+  (resolved).
+- [2026-06-08](docs/security/2026-06-08-security-audit.md) — initial audit (v0.6.1 source
+  state); the report does not record what produced it. Trust boundaries, `bandit`,
+  `pip-audit`, workflow and permission review.
+
+## Outbound network calls
+
+keel makes a network call only when a command you run needs one:
+
+- **GitHub**, through your authenticated `gh` (or the GitHub MCP transport, when `gh` is
+  not authenticated — see [`docs/keel/github-transport.md`](docs/keel/github-transport.md)),
+  when a command reads or writes a pull request or issue — a live `ship` / `merge` reaching
+  the pull request's evidence, for one.
+- **Your git remote**, when a lesson is landed: `keel capture-land --write` fetches the
+  pull request's branch and pushes the lesson commit onto it.
+- **PyPI**, for `keel doctor`'s latest-release check. Skip it with `--offline`.
+- **Hosted-API delegates**, when you choose one. `anthropic-api:`, `openai-api:` and
+  `google-api:` send the delegate's brief — the prompt file, which can carry the issue
+  text and the diff — to `api.anthropic.com`, `api.openai.com` and
+  `generativelanguage.googleapis.com`; an `openai-compatible` profile sends it to the
+  endpoint the profile names (a non-loopback endpoint needs `KEEL_ALLOW_REMOTE_ENDPOINT`).
+- **The gate commands and agent CLIs you configure**, which reach out exactly as you set
+  them.
+
+A local Ollama is reached on loopback only (`127.0.0.1:11434`).
 
 ## Telemetry
 
 keel collects and transmits **no telemetry** of any kind — no analytics, no usage
-reporting, no phone-home. The deterministic core makes no network requests; the only
-outbound activity comes from the gate commands and agent CLIs you explicitly configure.
+reporting, no phone-home. Its network calls are the ones listed above.

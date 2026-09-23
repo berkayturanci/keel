@@ -988,5 +988,210 @@ class TheStatedIntegrationCountIsTheNumberOfCards(unittest.TestCase):
         self.assertNotIn("azure-openai", ids)
 
 
+def _public_pages() -> dict[str, str]:
+    """The prose a visitor reads: README, SECURITY, AGENTS, `docs/keel/`, and the site.
+
+    Not the CHANGELOG, which quotes old wording to say what changed, and not
+    `docs/security/`, whose reports are records of their day.
+    """
+    paths = [REPO_ROOT / "README.md", REPO_ROOT / "SECURITY.md", REPO_ROOT / "AGENTS.md"]
+    paths += sorted((REPO_ROOT / "docs" / "keel").glob("*.md"))
+    paths += sorted(p for p in SITE.glob("*") if p.suffix in {".html", ".js", ".txt"})
+    return {
+        str(p.relative_to(REPO_ROOT)): " ".join(p.read_text(encoding="utf-8").split())
+        for p in paths
+    }
+
+
+def _readme_first_screen() -> str:
+    """The README down to its first `##` heading — what a visitor sees before scrolling."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    return readme[: readme.index("\n## ")]
+
+
+class TestLaunchCopyClaimsOnlyWhatKeelDoes(unittest.TestCase):
+    """The pre-launch audit of 2026-09-23 found public copy claiming more than keel does.
+
+    Each test pins one claim to the fact it rests on, and fails on the wording it
+    replaced.
+    """
+
+    def test_the_readme_first_screen_cites_no_statistic_and_promises_no_production(self):
+        """#1318: an unsourced "over 70%… ~11-15%" and "lands safely in production".
+
+        keel merges pull requests; it does not deploy. `100%` is keel's own coverage.
+        """
+        screen = _readme_first_screen()
+        percentages = set(re.findall(r"\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?\s*%", screen))
+        self.assertLessEqual(percentages, {"100%"}, "a statistic on the first screen")
+        self.assertNotIn("production", screen.lower())
+
+    def test_the_site_does_not_say_keel_delivers_to_production(self):
+        """#1318, the site's copy of the same claim ("from backlog to production")."""
+        for page in ("content.js", "index.html", "llms.txt"):
+            with self.subTest(page=page):
+                text = (SITE / page).read_text(encoding="utf-8").lower()
+                self.assertNotIn("to production", text)
+                self.assertNotIn("vision-to-production", text)
+
+    def test_nothing_calls_the_evidence_chain_tamper_evident(self):
+        """#1327: nothing is signed or hash-chained; the evidence is SHA-bound and auditable."""
+        for where, text in _public_pages().items():
+            with self.subTest(page=where):
+                self.assertIsNone(
+                    re.search(r"tamper[- ](evident|proof)", text, re.I),
+                    "say 'commit-SHA-bound and auditable' — nothing here is signed",
+                )
+
+    def test_no_agent_session_wording_is_published(self):
+        """#1323: sentences from inside a verification session leaked into the docs.
+
+        Whitespace is collapsed first: install.md broke "from a CLI" and "session"
+        across two lines.
+        """
+        leaked = re.compile(
+            r"this session (did|could|was|has)|from a CLI session|did not establish", re.I
+        )
+        for where, text in _public_pages().items():
+            with self.subTest(page=where):
+                found = leaked.search(text)
+                self.assertIsNone(found, found and found.group(0))
+
+    def test_the_architecture_proposal_says_it_is_historical(self):
+        """#1331: a June proposal, still naming `ai-infra` and `/ship`, linked as the design."""
+        head = (REPO_ROOT / "docs" / "proposals" / "keel-architecture.md").read_text(
+            encoding="utf-8"
+        )[:1500]
+        self.assertIn("Historical design proposal", head)
+        self.assertIn("](../keel/)", head, "the banner must point at the current docs")
+
+    def test_every_link_to_the_architecture_proposal_calls_it_historical(self):
+        """#1331: README, AGENTS.md and the entry points introduced it as "full design"."""
+        for name in ("README.md", "AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+            text = (REPO_ROOT / name).read_text(encoding="utf-8")
+            paragraphs = [
+                p for p in re.split(r"\n\s*\n|\n(?=- )", text) if "keel-architecture.md" in p
+            ]
+            with self.subTest(page=name):
+                self.assertTrue(paragraphs, f"{name} no longer links the proposal")
+                for paragraph in paragraphs:
+                    self.assertIn("historical", paragraph, paragraph)
+                    self.assertNotIn("full design", paragraph, paragraph)
+
+
+class TestSecurityPageListsWhatKeelActuallyDoes(unittest.TestCase):
+    """SECURITY.md and the site's Security view, held to `docs/security/` and the code."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.security = (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        cls.index = (SITE / "index.html").read_text(encoding="utf-8")
+        cls.content = (SITE / "content.js").read_text(encoding="utf-8")
+        cls.reports = sorted((REPO_ROOT / "docs" / "security").glob("*-security-audit.md"))
+
+    def _section(self, text: str, heading: str) -> str:
+        start = text.index(heading)
+        end = text.find("\n## ", start + 1)
+        return text[start:] if end == -1 else text[start:end]
+
+    def test_every_published_audit_report_is_listed_everywhere(self):
+        """#1325: SECURITY.md and the site listed three of the five reports."""
+        self.assertGreaterEqual(len(self.reports), 5)
+        audits = self._section(self.security, "## Security Audits")
+        view = self.index[self.index.index('id="view-security"') :]
+        view = view[: view.index("</section>")]
+        docs = self.content[self.content.index('slug: "security-audits"') :]
+        docs = docs[: docs.index("source:")]
+        for report in self.reports:
+            date = report.name[: len("YYYY-MM-DD")]
+            with self.subTest(report=report.name):
+                self.assertIn(f"docs/security/{report.name}", audits)
+                self.assertIn(f"<code>{date}</code>", view)
+                self.assertIn(f"<h3>{date}", docs)
+
+    def test_each_listed_report_names_what_produced_it_when_the_report_does(self):
+        """#1325: three reports were written by AI models; the lists must say which."""
+        audits = self._section(self.security, "## Security Audits")
+        named = 0
+        for report in self.reports:
+            # "Conducted by Claude (Opus 4.8, `claude-opus-4-8`) acting as …" → "Opus 4.8".
+            line = re.search(
+                r"Conducted by [^(]+\(([^,)]+)[^)]*\) acting as", report.read_text(encoding="utf-8")
+            )
+            if line is None:
+                continue
+            producer = line.group(1)
+            named += 1
+            with self.subTest(report=report.name):
+                self.assertIn(report.name, audits, "the report is not listed at all")
+                entry = audits[audits.index(report.name) :].split("\n- ")[0]
+                self.assertIn(producer, entry)
+        self.assertGreaterEqual(named, 3, "the producer pattern no longer matches the reports")
+
+    def test_the_ai_written_zero_findings_report_is_not_a_headline(self):
+        """#1325: the site led with the swarm audit's "Zero critical…" in bold."""
+        self.assertNotIn("Zero critical", self.content)
+        self.assertNotIn("Zero critical", self.index)
+
+    def test_the_outbound_list_names_every_hosted_api_host(self):
+        """#1322: SECURITY.md said the core makes no network requests, and left out the
+        hosted-API delegates that send the brief and the diff to a vendor."""
+        from urllib.parse import urlsplit
+
+        from keel import api_delegate
+
+        hosts = {urlsplit(url).hostname for url, _key in api_delegate._VENDORS.values()}
+        self.assertEqual(len(hosts), 3)
+        self.assertIn("## Outbound network calls", self.security)
+        outbound = self._section(self.security, "## Outbound network calls")
+        for host in sorted(hosts):
+            with self.subTest(host=host):
+                self.assertIn(f"`{host}`", outbound)
+        for vendor in sorted(api_delegate._VENDORS):
+            with self.subTest(vendor=vendor):
+                self.assertIn(f"<code>{vendor}:</code>", self.index)
+        self.assertNotIn("makes no network requests", self.security)
+        self.assertNotIn("makes <strong>no network calls</strong>", self.index)
+
+    def test_no_telemetry_stays_said(self):
+        """The owner's call on #1322: the CLI sends no telemetry, and both pages say so."""
+        self.assertIn("no telemetry", self.security.lower())
+        self.assertIn("no telemetry", self.index.lower())
+
+
+class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
+    """#1324: below its own "Experimental" warning the site stated unfinished swarm
+    behaviour as fact, listed `/keel:swarm` beside `/keel:ship` as a flagship, and the
+    hero line led with "multi-agent swarms"."""
+
+    def test_swarm_is_not_a_flagship_command(self):
+        content = (SITE / "content.js").read_text(encoding="utf-8")
+        entry = re.search(r'\{\s*slug: "swarm",[^\n]*', content)
+        self.assertIsNotNone(entry)
+        self.assertNotIn("flagship: true", entry.group(0))
+        self.assertNotIn('group: "Flagship"', entry.group(0))
+
+    def test_every_hero_line_that_names_swarms_says_experimental(self):
+        heroes = sorted((REPO_ROOT / "docs" / "assets").glob("hero*.svg"))
+        heroes += sorted((SITE / "assets").glob("hero-*.svg"))
+        self.assertGreaterEqual(len(heroes), 4)
+        for hero in heroes:
+            texts = re.findall(r"<t(?:ext|span)\b[^>]*>([^<]*)<", hero.read_text(encoding="utf-8"))
+            for text in texts:
+                if "swarm" in text.lower():
+                    with self.subTest(hero=hero.name, text=text):
+                        self.assertIn("experimental", text.lower())
+
+    def test_the_swarm_view_states_no_unbuilt_guarantee(self):
+        """#1278 (a worker can fall back to the main checkout) and #1287 (landing never
+        pushes) are open; these three sentences asserted the opposite."""
+        index = (SITE / "index.html").read_text(encoding="utf-8")
+        view = index[index.index('id="view-swarm"') :]
+        view = view[: view.index("</section>")]
+        for claim in ("Workers never collide", "No branch lands until", "lands batches safely"):
+            with self.subTest(claim=claim):
+                self.assertNotIn(claim, view)
+
+
 if __name__ == "__main__":
     unittest.main()

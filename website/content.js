@@ -62,13 +62,6 @@ window.KEEL = {
         "Select → branch → implement → CI → review → test → merge → capture → close. The full flow: per-round review, inline file:line comments, --delegate / --review-delegate (incl. hosted-API anthropic-api:MODEL / openai-api:MODEL / google-api:MODEL — no agent CLI, just an API key; plus generic OpenAI-compatible and CLI profiles), --reviewers N, the <a href='https://github.com/berkayturanci/ai-jury' target='_blank' rel='noopener'>ai-jury</a> gate, the timezone-aware merge window + mkdir merge lock, and vendor+model attribution. <b>--compound</b> selects the compound-engineering profile — same backbone and safety primitives, with implement / review / fixloop / capture (s4·s7·s9·s11) as compound step overrides. <b>--tdd</b> (<code>knobs.implement_mode: tdd</code>) selects the test-first s4 profile: a test-only commit carrying the issue's acceptance criteria, then the implementation, verified at s8 by the blocking <code>tdd-order</code> gate. <b>--loop</b> (<code>knobs.loop</code>) iterates s4 with the gates as the judge, up to <code>max_iterations</code>. <b>--team</b> and <b>--effort</b> staff the run from a named <code>knobs.team</code> bench.",
     },
     {
-      slug: "swarm", name: "/keel:swarm", group: "Flagship", flagship: true, featured: true, scene: "swarm",
-      cmd: "keel:swarm",
-      one: "EXPERIMENTAL — multi-agent swarm coordinator: cluster backlog issues, run parallel waves, and batch land.",
-      detail:
-        "EXPERIMENTAL — the planning commands run; a live run cannot produce a commit or a pull request. The child keel ship is a dry assessment that never commits in any mode, and swarm-run --live is refused, since its workers could not pass keel ship --live's operator-consent gate (#1269); scope cannot be given per issue — the scope flags are shared by every issue — so a multi-issue plan returns one flat wave, or, when the shared text or label names a path, serialises every issue behind it (#1274). Audit epic: #1281. Clusters backlog issues into disjoint execution waves based on static file-overlap of predicted scopes. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before sequential git merge --no-ff landing under the merge lock.",
-    },
-    {
       slug: "implement", name: "/keel:implement", group: "Per-step", featured: true, scene: "implement",
       one: "Delegate one issue to the right implementer — the s4 step, standalone.",
       detail:
@@ -121,6 +114,13 @@ window.KEEL = {
       one: "Unattended overnight work block, keyed on the merge window.",
       detail:
         "Time-aware merge mode keyed on the merge window; runs /keel:ship over the queue until the window closes, then writes a session / morning report.",
+    },
+    {
+      slug: "swarm", name: "/keel:swarm", group: "Daily rhythm", featured: true, scene: "swarm",
+      cmd: "keel:swarm",
+      one: "EXPERIMENTAL — a multi-agent swarm coordinator designed to cluster backlog issues into parallel waves and batch-land them; today it plans and dry-runs.",
+      detail:
+        "EXPERIMENTAL — the planning commands run; a live run cannot produce a commit or a pull request. The child keel ship is a dry assessment that never commits in any mode, and swarm-run --live is refused, since its workers could not pass keel ship --live's operator-consent gate (#1269); scope cannot be given per issue — the scope flags are shared by every issue — so a multi-issue plan returns one flat wave, or, when the shared text or label names a path, serialises every issue behind it (#1274). Audit epic: #1281. Clusters backlog issues into disjoint execution waves based on static file-overlap of predicted scopes. Spawns parallel workers across isolated git worktrees (.keel/worktrees/<swarm_id>/<cluster_id>/), supports cross-model agent routing (Claude, Gemini, Codex, DeepSeek, Local Ollama), reviews each cluster inside its own keel ship — which on tier-3 can be the cross-vendor AI Jury panel — and holds every branch behind a per-branch review-evidence check before sequential git merge --no-ff landing under the merge lock.",
     },
     {
       slug: "wrap", name: "/keel:wrap", group: "Daily rhythm", featured: true, scene: "report",
@@ -294,7 +294,7 @@ window.KEEL = {
       group: "Start here", title: "What keel is", slug: "what-keel-is",
       summary: "A project-neutral, multi-agent workflow core: one fixed backbone, projects set values and snap in Lego.",
       body:
-        "<p><b>keel</b> closes the <b>vision-to-production gap</b> in agentic AI. While most coding agents stop at opening a PR, keel is a project-neutral, multi-agent <b>workflow backbone</b> that drives a unit of work from backlog to production: branch → implement → CI → review → test → merge → capture → close. Projects never fork the backbone; they set per-project <b>values</b> in <code>project.yaml</code> and snap their own <b>Lego pieces</b> into named extension slots.</p>" +
+        "<p>Most coding agents stop at opening a PR. <b>keel</b> is a project-neutral, multi-agent <b>workflow backbone</b> that drives a unit of work from backlog to a merged pull request: branch → implement → CI → review → test → merge → capture → close. Projects never fork the backbone; they set per-project <b>values</b> in <code>project.yaml</code> and snap their own <b>Lego pieces</b> into named extension slots.</p>" +
         "<p>The keel is a ship's backbone — the fixed spine every project builds on. The flagship command is <code>/keel:ship</code>; keel is where ships are built.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md",
     },
@@ -308,7 +308,7 @@ window.KEEL = {
         "<tr><td>Layer 2</td><td>CONFIG</td><td><code>project.yaml</code> — per-project values (branch, build cmd, globs, agents…)</td></tr>" +
         "<tr><td>Layer 1</td><td>BACKBONE</td><td>keel-core — fixed ordered step machine + invariants</td></tr>" +
         "</tbody></table>",
-      source: "https://github.com/berkayturanci/keel/blob/main/docs/proposals/keel-architecture.md",
+      source: "https://github.com/berkayturanci/keel/blob/main/README.md#three-layers",
     },
     {
       group: "Start here", title: "Install", slug: "install",
@@ -379,9 +379,9 @@ window.KEEL = {
     },
     {
       group: "Architecture", title: "Evidence chain & auditability", slug: "evidence",
-      summary: "How keel guarantees commit-SHA-bound review provenance, model attribution, and auditable exceptions.",
+      summary: "How keel binds review provenance to the commit SHA, records model attribution, and audits exceptions.",
       body:
-        "<p>Every PR merged through Keel carries an unbroken, tamper-evident record of reviewer verdicts, test results, and agent attribution. Approvals are pinned to the exact <code>HEAD_SHA</code> commit to prevent approval drift across subsequent pushes — a lesson <code>keel capture-land</code> lands is the one commit they survive — with fully audited exception tracking via <code>--deferral</code>.</p>",
+        "<p>Every PR merged through Keel carries a commit-SHA-bound, auditable record of reviewer verdicts, test results, and agent attribution. Approvals are pinned to the exact <code>HEAD_SHA</code> commit to prevent approval drift across subsequent pushes — a lesson <code>keel capture-land</code> lands is the one commit they survive — with fully audited exception tracking via <code>--deferral</code>.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/docs/keel/evidence.md",
     },
     {
@@ -408,7 +408,7 @@ window.KEEL = {
         "<li><b>Documentation / Scripts</b>: Codex (<code>codex</code> / <code>openai-api:</code>)</li>" +
         "<li><b>Local / Offline Worktrees</b>: Local Ollama / vLLM (<code>ollama:qwen2.5-coder</code>)</li>" +
         "</ul>" +
-        "<p>Each cluster is reviewed inside its own <b>keel ship</b> run — on tier-3 work that can be the cross-vendor <b>AI Jury</b> panel (e.g. Anthropic + OpenAI + Google) — and no branch lands until it clears the review-evidence gate, whichever model authored it.</p>" +
+        "<p>Each cluster is meant to be reviewed inside its own <b>keel ship</b> run — on tier-3 work that can be the cross-vendor <b>AI Jury</b> panel (e.g. Anthropic + OpenAI + Google). <code>swarm-land</code> holds a cluster until an open pull request whose head matches the cluster branch clears the review-evidence gate, whichever model authored it — then lands it with a local merge, and never pushes or merges that pull request (<a href='https://github.com/berkayturanci/keel/issues/1287'>#1287</a>).</p>" +
         "<h3>3. Single-Writer Batch Landing</h3>" +
         "<p>Swarm lands every wave the same way under the single-writer <code>merge_lock</code>:</p>" +
         "<ul>" +
@@ -503,13 +503,17 @@ window.KEEL = {
     },
     {
       group: "Operating", title: "Security audits", slug: "security-audits",
-      summary: "Published security audit reports — scope, verdicts, and follow-up status for each release line.",
+      summary: "Published security audit reports — scope, what produced each, verdicts, and follow-up status.",
       body:
-        "<p>keel ships with recurring security audits, published in the repository under <code>docs/security/</code>. Each report covers source-level vulnerability classes (command injection, path traversal, unsafe deserialization, secret leakage), data-flow from untrusted GitHub inputs to dangerous sinks, dependency exposure (<code>pip-audit</code>), static analysis (<code>bandit</code>), and GitHub Actions / repository-settings review.</p>" +
-        "<h3>2026-08-15 — Swarm Milestone 12 Line</h3>" +
-        "<p><b>Zero critical, high, or medium findings (40/40 tests passed).</b> Comprehensive security and fuzzing audit of multi-agent swarm orchestration, worktree filesystem isolation, single-writer atomic mutex under heavy load, command injection defenses across subprocess runners, and ReDoS-resilient redaction. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-08-15-security-audit.md'>full report →</a></p>" +
+        "<p>Security audit reports are published in the repository under <code>docs/security/</code>. Each names the release line it reviewed and, where the report records it, what produced it: three of the five were written by AI models acting as the reviewing security engineer. The June reports cover source-level vulnerability classes (command injection, path traversal, unsafe deserialization, secret leakage), data-flow from untrusted GitHub inputs to dangerous sinks, dependency exposure (<code>pip-audit</code>), static analysis (<code>bandit</code>), and GitHub Actions / repository-settings review; the August report covers the swarm subsystem only.</p>" +
+        "<h3>2026-09 — no report</h3>" +
+        "<p>The security fixes from September's review rounds are listed under <b>Security</b> in the <a href='https://github.com/berkayturanci/keel/blob/main/CHANGELOG.md'>CHANGELOG</a>: 1.23.1 (#1219, #1223 — <code>keel merge</code> merges the head it checked, and the capture landing resolves refs exactly and goes only through a configured remote) and 1.24.0 (#1247 — a host-scoped remote-endpoint opt-in, the capture-commit exemption confined to the base repository, <code>keel gc</code> through a symlink, inspection commands running checkout code).</p>" +
+        "<h3>2026-08-15 — v1.14.2 line, swarm subsystem</h3>" +
+        "<p>Produced by Google Antigravity (Gemini 3.7 Flash). It reports no critical, high or medium finding in the swarm modules' subprocess, path-containment and redaction handling. Read it with its scope in mind: swarm is <b>experimental</b> and its live path has never worked end to end (<a href='https://github.com/berkayturanci/keel/issues/1281'>#1281</a>), so the report says nothing about a swarm run that lands work, and it reports no <code>bandit</code> or <code>pip-audit</code> run. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-08-15-security-audit.md'>full report →</a></p>" +
+        "<h3>2026-06-15 — v1.3.0 line</h3>" +
+        "<p>Produced by Claude (Opus 4.8). Focused on the new <code>keel-visual</code> and <code>website/</code> surfaces; no critical, high, or medium-severity finding. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-15-security-audit.md'>full report →</a></p>" +
         "<h3>2026-06-11 — v1.2.1 line</h3>" +
-        "<p><b>No critical, high, or medium-severity finding.</b> The core remains deterministic, uses <code>yaml.safe_load</code> exclusively, keeps all <code>git</code>/<code>gh</code> calls on argv wrappers (no shell), enforces path containment for checkpoint/ledger/worktree paths, and redacts capture artifacts before durability. Both follow-ups from the previous audit are confirmed resolved: secret scanning + push protection enabled, and required PR approvals enforced by branch protection. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-11-security-audit.md'>full report →</a></p>" +
+        "<p>Produced by Claude (Fable 5). <b>No critical, high, or medium-severity finding.</b> The core remains deterministic, uses <code>yaml.safe_load</code> exclusively, keeps all <code>git</code>/<code>gh</code> calls on argv wrappers (no shell), enforces path containment for checkpoint/ledger/worktree paths, and redacts capture artifacts before durability. Both follow-ups from the previous audit are confirmed resolved: secret scanning + push protection enabled, and required PR approvals enforced by branch protection. <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-11-security-audit.md'>full report →</a></p>" +
         "<h3>2026-06-09 — v1.0.1 line</h3>" +
         "<p>No critical or high-severity finding; follow-ups raised on GitHub secret scanning and consumer-neutrality (both since resolved). <a href='https://github.com/berkayturanci/keel/blob/main/docs/security/2026-06-09-security-audit.md'>full report →</a></p>" +
         "<h3>2026-06-08 — initial audit</h3>" +
@@ -550,7 +554,7 @@ window.KEEL = {
         "<p>keel is an <b>agentic work-ownership backbone</b>. Its job is not to be another isolated coding command, review bot, or merge queue — it is to make an agent <b>accountable for the whole path</b> a strong software teammate would normally own.</p>" +
         "<p>That path starts before code is written: read the issue, decide whether the scope is ready, ask for clarification when it is not, cut an isolated branch, implement, keep CI and tests green, get reviewed, fix feedback, merge inside policy, close the loop, and record what should be remembered next time.</p>" +
         "<p><b>One issue, a work block, or a backlog.</b> Hand keel one issue or a bounded work block and get the same quality loop every time (<code>swarm</code> splits a backlog into dependency waves across parallel worktrees, but it is <b>experimental</b> and lands nothing yet — see <a href='https://github.com/berkayturanci/keel/issues/1281'>#1281</a>): readiness before mutation, isolated worktree, deterministic gates + capability checks, independent review and optional jury, merge-window + merge-lock safety, structured ledger, closeout + capture hooks, and morning/wrap visibility. The point isn't autonomy for its own sake — it's work that is observable, recoverable, reviewable, and governed by policy while the agent owns the execution details.</p>",
-      source: "https://github.com/berkayturanci/keel/blob/main/README.md#the-vision-to-production-gap-in-agentic-ai",
+      source: "https://github.com/berkayturanci/keel/blob/main/README.md#from-i-opened-a-pr-to-merged",
     },
     {
       group: "Operating", title: "Capture & learning", slug: "capture-learning",

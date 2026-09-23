@@ -45,8 +45,9 @@
       name: "Gemini CLI",
       category: "assistants",
       badge: "AI Assistant",
-      desc: "Shared skill commands in .agents/skills/keel-* with native Gemini multimodal & code reasoning.",
-      cmd: "keel ship .keel/project.yaml --host-agent gemini",
+      desc: "Not an install host \u2014 keel documents no Gemini CLI plugin path. It can be wrapped as a generic CLI delegate profile, which keel does not test; Gemini models are also reachable through google-api: or Antigravity.",
+      cmd: "keel implement .keel/project.yaml 101 --delegate gemini",
+      note: "Needs a <code>knobs.delegate_profiles.gemini</code> entry naming the <code>gemini</code> binary \u2014 keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/gemini-cli.svg"
     },
     {

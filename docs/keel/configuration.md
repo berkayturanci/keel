@@ -1169,7 +1169,7 @@ The contract, which `/keel:ship` drives and `keel loop brief` decides:
   configured the contract has said the contract is the policy.
 
 Why this shape and not another: a host stop hook (the Ralph loop) exists in one host and
-leaves no record, while keel runs inside Claude Code, Codex, Gemini CLI and Antigravity
+leaves no record, while keel runs inside Claude Code, Codex, Cursor and Antigravity
 through one backbone; s9 is post-PR and post-review with a seat ladder, and folding a
 compile error into it would spend review budget on what `make test` already said; and a
 third `implement_mode` value would make `tdd` and the loop mutually exclusive, when the

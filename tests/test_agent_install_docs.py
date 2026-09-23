@@ -476,5 +476,91 @@ class ThePluginPageAgreesWithTheInstallPage(unittest.TestCase):
         self.assertIn("plugin.md", INSTALL_DOC.read_text(encoding="utf-8"))
 
 
+#: A `- [Name](#anchor)` Contents entry, keeping the link text.
+CONTENTS_NAME = re.compile(r"^- \[([^\]]+)\]\(#[a-z0-9-]+\)", re.M)
+
+#: A name a host list could wrongly carry: Gemini is a model and a provider
+#: (`docs/keel/models.md`), not a host keel installs into (#1333).
+NOT_A_HOST = ("Gemini",)
+
+
+def install_page_hosts() -> tuple[str, ...]:
+    """The hosts `install.md` measures, by display name, from its own Contents list.
+
+    `Antigravity (`agy`)` reads as `Antigravity`: the parenthesis names the binary.
+    """
+    text = INSTALL_DOC.read_text(encoding="utf-8")
+    contents = text[text.index("## Contents") : text.index("---", text.index("## Contents"))]
+    return tuple(re.sub(r"\s*\(.*\)$", "", name) for name in CONTENTS_NAME.findall(contents))
+
+
+def host_clauses(snippet: str) -> list[str]:
+    """The clauses of a snippet that name Claude Code — where a host list lives."""
+    flat = " ".join(snippet.split())
+    return [c for c in re.split(r"(?<=[.;:])\s", flat) if "Claude Code" in c]
+
+
+class OneHostListEverywhere(unittest.TestCase):
+    """#1333: the README and llms.txt said "Codex, Antigravity, Gemini" and left out
+    Cursor; the site's meta and og descriptions said "Claude Code, Codex and Gemini";
+    only `install.md` named the four hosts keel actually installs into. Every public
+    host list is held to the install page's Contents, the list someone measured."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hosts = install_page_hosts()
+        readme = README.read_text(encoding="utf-8")
+        llms = (REPO_ROOT / "website" / "llms.txt").read_text(encoding="utf-8")
+        index = (REPO_ROOT / "website" / "index.html").read_text(encoding="utf-8")
+        marketplace = (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(
+            encoding="utf-8"
+        )
+
+        def one(pattern: str, text: str, where: str) -> str:
+            found = re.search(pattern, text, re.S)
+            if found is None:
+                raise AssertionError(f"{where}: no match for {pattern!r}")
+            return found.group(1)
+
+        cls.surfaces = {
+            "README.md 'One backbone' bullet": one(
+                r"\n- \*\*One backbone(.*?)\n- \*\*", readme, "README.md"
+            ),
+            "website/llms.txt summary": one(r"\A# keel\n\n((?:> .*\n)+)", llms, "llms.txt"),
+            "index.html meta description": one(
+                r'<meta name="description" content="([^"]+)"', index, "index.html"
+            ),
+            "index.html og:description": one(
+                r'<meta property="og:description" content="([^"]+)"', index, "index.html"
+            ),
+            "index.html 'One backbone' card": one(
+                r"<b>One backbone[^<]*</b><span>(.*?)</span>", index, "index.html"
+            ),
+            "index.html integrations heading": one(
+                r'id="view-integrations".*?<p>(.*?)</p>', index, "index.html"
+            ),
+            ".claude-plugin/marketplace.json": one(
+                r'"description": "([^"]+)"', marketplace, "marketplace.json"
+            ),
+        }
+
+    def test_the_install_page_lists_the_four_hosts(self):
+        """Vacuity, and the one place the list is typed: the install page itself."""
+        self.assertEqual(self.hosts, ("Claude Code", "Codex", "Antigravity", "Cursor"))
+
+    def test_every_public_host_list_names_exactly_the_install_page_hosts(self):
+        for where, snippet in self.surfaces.items():
+            with self.subTest(surface=where):
+                clauses = host_clauses(snippet)
+                self.assertTrue(clauses, f"{where} no longer names its hosts")
+                for clause in clauses:
+                    named = {h for h in (*self.hosts, *NOT_A_HOST) if h in clause}
+                    self.assertEqual(
+                        named,
+                        set(self.hosts),
+                        f"{where} names {sorted(named)} as hosts: {clause!r}",
+                    )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

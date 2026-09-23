@@ -1,5 +1,14 @@
 # keel — architecture & extension contract
 
+> **Historical design proposal (June 2026) — not maintained.** It is kept for the reasoning
+> behind the fixed backbone and the extension model, and parts of it no longer describe
+> keel: the repository was still called `ai-infra` when it was written, the command it calls
+> `/ship` is `/keel:ship`, and the roadmap in section 3 is the plan as it stood then.
+> **Current behaviour is documented in [`docs/keel/`](../keel/)** — start with
+> [configuration](../keel/configuration.md), [extensions](../keel/extensions.md) and the
+> [CLI reference](../keel/cli.md). The step machine's source of truth is
+> [`src/keel/model.py`](../../src/keel/model.py).
+
 > Status: **proposal** (design tour for example-android#2035, Phase 2.5).
 > Canonical home for the workflow core's design. The example-android#2035 issue is the
 > cross-repo **coordination** point and links here; this doc is the **spec**.

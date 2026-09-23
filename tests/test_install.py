@@ -685,6 +685,15 @@ class TestClaudeCodePlugin(unittest.TestCase):
         self.assertEqual(entries["keel"]["source"], "./")
         self.assertTrue(entries["keel"]["description"])
 
+    def test_marketplace_description_says_what_keel_is_not_how_to_set_it_up(self):
+        """#1339: `/plugin` listings showed "Set up keel in a project with config,
+        adapters, validation, and plan rendering." — a setup tool, not the product."""
+        entries = {p["name"]: p for p in self._read_marketplace()["plugins"]}
+        description = entries["keel"]["description"]
+        self.assertIn("work owners", description)
+        self.assertIn("merged PR", description)
+        self.assertNotIn("Set up keel", description)
+
     def test_committed_plugin_command_bodies_remain_consumer_neutral(self):
         offenders: list[str] = []
         for path in sorted((REPO_ROOT / install.PLUGIN_COMMANDS_DIR).glob("*.md")):

@@ -200,7 +200,7 @@ or temporary gate waivers).
 Rather than offering an unmonitored backdoor, Keel makes exceptions **first-class and auditable**:
 * **`--deferral` / `keel:evidence-waived`**: An operator can explicitly waive specific requirements.
 * **Audit Record**: Every waiver requires an explicit `--operator` attribution and records a durable
-  entry in the `.keel/state/` run ledger and GitHub issue timeline, creating a tamper-evident record.
+  entry in the `.keel/state/` run ledger and GitHub issue timeline, creating an auditable record.
 
 ### 7. Header-Anchored Marker Classification
 What a comment *is* — a review verdict, a jury verdict, a closure comment, a ship-provenance stamp,
