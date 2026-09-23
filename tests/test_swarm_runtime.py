@@ -257,7 +257,7 @@ class TestSwarmOrchestration(unittest.TestCase):
                         create_worktrees=True,
                     )
             except RuntimeError as exc:
-                self.fail(f"a worker's exception ended the run: {exc}")
+                raise AssertionError(f"a worker's exception ended the run: {exc}") from exc
             # The traceback is kept: the failure may be keel's own bug.
             self.assertIn("Traceback", err.getvalue())
             self.assertIn("RuntimeError: boom in 302", err.getvalue())
