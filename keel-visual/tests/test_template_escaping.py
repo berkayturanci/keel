@@ -27,7 +27,10 @@ TEMPLATES = ("board.html", "dashboard.html", "runviz.html", "swarm.html")
 
 # A literal builds markup when its static text opens or closes a tag.
 _MARKUP = re.compile(r"</?[A-Za-z]")
-_SCRIPT = re.compile(r"<script(\s[^>]*)?>(.*?)</script>", re.S)
+# HTML tag names are case-insensitive and a browser ends a script at `</script` whatever
+# follows before `>`, so `<SCRIPT>` and `</script foo>` are script blocks too; missing
+# them would leave a whole block unscanned.
+_SCRIPT = re.compile(r"<script(\s[^>]*)?>(.*?)</script[^>]*>", re.S | re.I)
 _SAFE_CALL = re.compile(r"(esc|statusClass)\(")
 # Expressions that are safe without esc(), each for a reason the test can state:
 # the two mode values are one of two string constants, and the two *Html values are
@@ -45,7 +48,7 @@ ALLOWED = {
 
 
 def inline_scripts(html: str) -> list[str]:
-    return [m.group(2) for m in _SCRIPT.finditer(html) if "src=" not in (m.group(1) or "")]
+    return [m.group(2) for m in _SCRIPT.finditer(html) if "src=" not in (m.group(1) or "").lower()]
 
 
 def _skip_quoted(src: str, i: int) -> int:
@@ -199,8 +202,14 @@ class TestTemplateEscaping(unittest.TestCase):
         self.assertEqual(raw_interpolations("x.html", html), [])
 
     def test_external_scripts_are_skipped(self) -> None:
-        html = '<script src="x.js">`<b>${a}</b>`</script>'
-        self.assertEqual(inline_scripts(html), [])
+        for html in ('<script src="x.js">`<b>${a}</b>`</script>', '<SCRIPT SRC="x.js"></SCRIPT>'):
+            with self.subTest(html=html):
+                self.assertEqual(inline_scripts(html), [])
+
+    def test_script_tags_are_matched_in_any_case(self) -> None:
+        html = "<SCRIPT>`<b>${a}</b>`</Script foo>"
+        self.assertEqual(inline_scripts(html), ["`<b>${a}</b>`"])
+        self.assertEqual(raw_interpolations("x.html", html), ["a"])
 
 
 if __name__ == "__main__":
