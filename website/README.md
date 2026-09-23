@@ -52,7 +52,8 @@ by CI.
 
 - `favicon.svg` (+ `favicon-32.png`, `apple-touch-icon.png`) — the dot-spine logo
 - `assets/og-banner.png` — social card (1200×630), referenced as an **absolute URL**
-  by all pages' OG/Twitter tags
+  by all pages' OG/Twitter tags. It is rendered from `docs/assets/og-banner.html` with
+  headless Chrome at 1200×630; edit the HTML and re-render rather than editing the PNG
 - `assets/hero-dark.svg` / `assets/hero-light.svg` — README hero banners (1200×300).
   Use in the repo README with:
   ```html

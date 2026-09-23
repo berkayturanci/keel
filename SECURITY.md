@@ -56,8 +56,8 @@ engineer, as the reports themselves state.
   the capture-commit exemption confined to the base repository, `keel gc` through a
   symlink, inspection commands running checkout code).
 - [2026-08-15](docs/security/2026-08-15-security-audit.md) — v1.14.2 line; produced by
-  Google Antigravity (Gemini 3.7 Flash). It covers the swarm subsystem only and reports no
-  critical, high or medium finding. Read it with that scope in mind: swarm is experimental
+  Google Antigravity (Gemini 3.7 Flash). It is centred on the swarm subsystem, with a re-check of core invariants (redaction, the remote-endpoint gate, ReDoS, the merge lock), and reports no critical, high or
+  medium finding. Read it with that scope in mind: swarm is experimental
   and its live path has never worked end to end
   ([#1281](https://github.com/berkayturanci/keel/issues/1281)), so the report says nothing
   about a swarm run that lands work. It reports no `bandit` or `pip-audit` run.
@@ -78,10 +78,11 @@ engineer, as the reports themselves state.
 
 keel makes a network call only when a command you run needs one:
 
-- **GitHub**, through your authenticated `gh` (or the GitHub MCP transport, when `gh` is
-  not authenticated — see [`docs/keel/github-transport.md`](docs/keel/github-transport.md)),
-  when a command reads or writes a pull request or issue — a live `ship` / `merge` reaching
-  the pull request's evidence, for one.
+- **GitHub**, through your authenticated `gh`, when a command reads or writes a pull
+  request or issue — a live `ship` / `merge`, `post-comment`, `review`, `capture-land` and
+  `swarm-land` among them. When `gh` is not authenticated, keel only reports the
+  `github-mcp` capability; any MCP calls are made by the host agent, not by keel
+  ([`docs/keel/github-transport.md`](docs/keel/github-transport.md)).
 - **Your git remote**, when a lesson is landed: `keel capture-land --write` fetches the
   pull request's branch and pushes the lesson commit onto it.
 - **PyPI**, for `keel doctor`'s latest-release check. Skip it with `--offline`.
@@ -90,10 +91,15 @@ keel makes a network call only when a command you run needs one:
   text and the diff — to `api.anthropic.com`, `api.openai.com` and
   `generativelanguage.googleapis.com`; an `openai-compatible` profile sends it to the
   endpoint the profile names (a non-loopback endpoint needs `KEEL_ALLOW_REMOTE_ENDPOINT`).
+- **The `jury` gate**, when `jury` is listed in `gates:` and ai-jury is installed: keel runs
+  the `jury` CLI on the change's diff, and ai-jury sends that diff to the reviewer
+  providers it is configured with.
 - **The gate commands and agent CLIs you configure**, which reach out exactly as you set
   them.
 
-A local Ollama is reached on loopback only (`127.0.0.1:11434`).
+A local Ollama is reached on loopback only (`127.0.0.1:11434`). The optional companion
+`keel-visual` looks up issue and pull-request titles through `gh`, and its 3D pages load
+three.js (r128, SRI-pinned) from `cdnjs.cloudflare.com` in your browser when they open.
 
 ## Telemetry
 

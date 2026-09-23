@@ -296,7 +296,7 @@ class TestTheEnumeratedCommandsAreTheShippedOnes(unittest.TestCase):
 
 
 class TestTheSiteStatesTheRealBackboneShape(unittest.TestCase):
-    """`13 steps` and `28 extension slots` are printed in nine places across the site.
+    """`13 steps` and `28 extension slots` are printed in several places across the site.
 
     Both are hero numbers: they appear in the README's hero and in the site's body copy
     (the social-card alt text used to carry them too), and every one of them is
@@ -1151,6 +1151,28 @@ class TestSecurityPageListsWhatKeelActuallyDoes(unittest.TestCase):
         self.assertNotIn("makes no network requests", self.security)
         self.assertNotIn("makes <strong>no network calls</strong>", self.index)
 
+    def test_the_outbound_list_names_the_jury_gate(self):
+        """Round-1 review of #1322: a listed `jury` gate hands the diff to ai-jury, which
+        sends it to its own reviewer providers — an outbound path the list left out."""
+        self.assertIn("## Outbound network calls", self.security)
+        outbound = self._section(self.security, "## Outbound network calls")
+        self.assertIn("**The `jury` gate**", outbound)
+        self.assertIn("reviewer", outbound[outbound.index("**The `jury` gate**") :])
+        view = self.index[self.index.index('id="view-security"') :]
+        self.assertIn("the <code>jury</code> gate", view[: view.index("</section>")])
+
+    def test_the_august_report_is_not_called_swarm_only(self):
+        """Round-1 review of #1325: the 2026-08-15 report's own scope re-checks
+        redaction, the remote-endpoint gate, ReDoS and the merge lock."""
+        for where, text in (
+            ("SECURITY.md", self.security),
+            ("index.html", self.index),
+            ("content.js", self.content),
+        ):
+            with self.subTest(page=where):
+                self.assertNotIn("swarm subsystem only", text)
+                self.assertIn("re-check of core invariants", text)
+
     def test_no_telemetry_stays_said(self):
         """The owner's call on #1322: the CLI sends no telemetry, and both pages say so."""
         self.assertIn("no telemetry", self.security.lower())
@@ -1181,14 +1203,48 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
                         self.assertIn("experimental", text.lower())
 
     def test_the_swarm_view_states_no_unbuilt_guarantee(self):
-        """#1278 (a worker can fall back to the main checkout) and #1287 (landing never
-        pushes) are open; these three sentences asserted the opposite."""
+        """#1278 (worktree lifecycle gaps, and a dry run has no worktrees) and #1287
+        (landing never pushes) are open; these three sentences asserted the opposite."""
         index = (SITE / "index.html").read_text(encoding="utf-8")
         view = index[index.index('id="view-swarm"') :]
         view = view[: view.index("</section>")]
         for claim in ("Workers never collide", "No branch lands until", "lands batches safely"):
             with self.subTest(claim=claim):
                 self.assertNotIn(claim, view)
+
+
+class TestTheDogfoodTerminalIsTheDryAssessment(unittest.TestCase):
+    """#1335 follow-up: the site's "keel ships itself" section introduces the dry
+    assessment, and its terminal ran `keel ship --issue 142` to "MERGED — issue #142
+    closed". A dry assessment decides MERGE or BLOCK and changes nothing."""
+
+    @classmethod
+    def setUpClass(cls):
+        scenes = (SITE / "scenes.js").read_text(encoding="utf-8")
+        start = scenes.index("function termFor(")
+        cls.reveal = scenes[start : scenes.index("function buildReveal(", start)]
+        cls.render = scenes[scenes.index("function buildReveal(") :]
+        index = (SITE / "index.html").read_text(encoding="utf-8")
+        view = index[index.index('id="view-ship"') :]
+        cls.view = view[: view.index("</section>")]
+
+    def test_every_terminal_command_is_a_dry_run(self):
+        # The whole `<span class="cmd">…</span>` source, across the JS concatenation.
+        commands = re.findall(r'class="cmd">\$ keel ship.*?</span>', self.reveal)
+        commands += re.findall(r'class="term-title">([^<]*)<', self.view)
+        self.assertTrue(commands)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn("--dry-run", command)
+
+    def test_nothing_in_the_section_says_merged(self):
+        for where, text in (
+            ("scenes.js reveal", self.reveal + self.render),
+            ("index.html", self.view),
+        ):
+            with self.subTest(where=where):
+                self.assertNotIn("MERGED", text)
+                self.assertNotIn("merged + closed", text)
 
 
 if __name__ == "__main__":

@@ -476,8 +476,8 @@ class ThePluginPageAgreesWithTheInstallPage(unittest.TestCase):
         self.assertIn("plugin.md", INSTALL_DOC.read_text(encoding="utf-8"))
 
 
-#: A `- [Name](#anchor)` Contents entry, keeping the link text.
-CONTENTS_NAME = re.compile(r"^- \[([^\]]+)\]\(#[a-z0-9-]+\)", re.M)
+#: A `- [Name](#anchor)` Contents entry, keeping the link text and the anchor.
+CONTENTS_NAME = re.compile(r"^- \[([^\]]+)\]\(#([a-z0-9-]+)\)", re.M)
 
 #: A name a host list could wrongly carry: Gemini is a model and a provider
 #: (`docs/keel/models.md`), not a host keel installs into (#1333).
@@ -487,17 +487,33 @@ NOT_A_HOST = ("Gemini",)
 def install_page_hosts() -> tuple[str, ...]:
     """The hosts `install.md` measures, by display name, from its own Contents list.
 
-    `Antigravity (`agy`)` reads as `Antigravity`: the parenthesis names the binary.
+    Only the entries whose anchor is one of `AGENTS` count: a `Troubleshooting` or
+    `FAQ` entry is a section, not a host. `Antigravity (`agy`)` reads as
+    `Antigravity`: the parenthesis names the binary.
     """
     text = INSTALL_DOC.read_text(encoding="utf-8")
     contents = text[text.index("## Contents") : text.index("---", text.index("## Contents"))]
-    return tuple(re.sub(r"\s*\(.*\)$", "", name) for name in CONTENTS_NAME.findall(contents))
+    return tuple(
+        re.sub(r"\s*\(.*\)$", "", name)
+        for name, anchor in CONTENTS_NAME.findall(contents)
+        if anchor in AGENTS
+    )
 
 
-def host_clauses(snippet: str) -> list[str]:
-    """The clauses of a snippet that name Claude Code — where a host list lives."""
+def named_in(clause: str, names: tuple[str, ...]) -> set[str]:
+    """Which of `names` a clause names, as whole words."""
+    return {name for name in names if re.search(rf"\b{re.escape(name)}\b", clause)}
+
+
+def host_enumerations(snippet: str, names: tuple[str, ...]) -> list[str]:
+    """The clauses of a snippet that enumerate hosts: two or more of `names` in one clause.
+
+    A clause naming one host ("Claude Code also gets the plugin marketplace.",
+    "Cursor is partial: …") says something about that host, not which hosts keel has,
+    so it is not held to the list.
+    """
     flat = " ".join(snippet.split())
-    return [c for c in re.split(r"(?<=[.;:])\s", flat) if "Claude Code" in c]
+    return [c for c in re.split(r"(?<=[.;:])\s", flat) if len(named_in(c, names)) >= 2]
 
 
 class OneHostListEverywhere(unittest.TestCase):
@@ -549,12 +565,13 @@ class OneHostListEverywhere(unittest.TestCase):
         self.assertEqual(self.hosts, ("Claude Code", "Codex", "Antigravity", "Cursor"))
 
     def test_every_public_host_list_names_exactly_the_install_page_hosts(self):
+        names = (*self.hosts, *NOT_A_HOST)
         for where, snippet in self.surfaces.items():
             with self.subTest(surface=where):
-                clauses = host_clauses(snippet)
-                self.assertTrue(clauses, f"{where} no longer names its hosts")
-                for clause in clauses:
-                    named = {h for h in (*self.hosts, *NOT_A_HOST) if h in clause}
+                lists = host_enumerations(snippet, names)
+                self.assertTrue(lists, f"{where} no longer lists its hosts")
+                for clause in lists:
+                    named = named_in(clause, names)
                     self.assertEqual(
                         named,
                         set(self.hosts),

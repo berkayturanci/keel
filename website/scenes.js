@@ -595,40 +595,52 @@
   /* ============================================================
      3) FINAL REVEAL — keel ships itself
      ============================================================ */
-  /* four example runs, looped */
+  /* four example runs, looped. Each is `keel ship … --dry-run` on keel's own
+     config: the assessment CI runs on every push. Its shape is the real output
+     (measured against keel 1.24.2); the numbers are examples. A dry assessment
+     decides — it never merges, which is the job of the /keel:ship adapter. */
   var RUNS = [
-    { n: 142, title: "stale-prs rebase guard", tier: 3, fix: false },
-    { n: 155, title: "keel status --json progress snapshot", tier: 2, fix: false },
-    { n: 149, title: "stabilize flaky test_window", tier: 1, fix: true },
-    { n: 163, title: "capture redaction deny patterns", tier: 2, fix: false },
+    { n: 142, title: "stale-prs rebase guard", tier: 3, files: 4, lintFail: false },
+    { n: 155, title: "keel status --json progress snapshot", tier: 2, files: 3, lintFail: false },
+    { n: 149, title: "stabilize flaky test_window", tier: 1, files: 1, lintFail: true },
+    { n: 163, title: "capture redaction deny patterns", tier: 2, files: 2, lintFail: false },
   ];
+  function row(k, v) { return '<span class="head">  ' + k + '</span>' + v; }
   function termFor(s) {
     var lines = [
-      ['<span class="cmd">$ keel ship --issue ' + s.n + ' .keel/project.yaml --root .</span>', 0],
-      ['<span class="dim">keel ship — keel-core  (base main)</span>', 460],
-      ['<span class="head">  resolving config…</span> <span class="ok">ok</span>  <span class="dim">core ^1.0 · TZ Europe/Istanbul</span>', 700],
-      ['<span class="head">  s1 select</span>   issue #' + s.n + ' · ' + s.title, 520],
-      ['<span class="head">  s3 guard</span>    preflight rules <span class="ok">ok</span>', 460],
-      ['<span class="head">  s4 implement</span> <span class="brass">[agent]</span> patch written', 500],
-      ['<span class="head">  s5 classify</span>  risk tier <span class="brass">TIER-' + s.tier + '</span> → ' + s.tier + ' reviewer(s)', 500],
-      ['<span class="head">  s6 ci</span>        workflows green', 460],
-      ['<span class="head">  s7 review</span>   ' + s.tier + ' reviewer(s) · jury gate <span class="ok">pass</span>', 500],
-      ['<span class="head">  s8 test</span>     gate build <span class="ok">ok</span> · gate lint ' + (s.fix ? '<span class="bad">fail</span>' : '<span class="ok">ok</span>'), 500],
+      ['<span class="cmd">$ keel ship .keel/project.yaml --root . --issue ' + s.n + ' --dry-run</span>', 0],
+      ['<span class="dim">keel ship — keel  (base main)</span>', 460],
+      [row("changed files :", " " + s.files), 380],
+      [row("profile       :", " standard"), 300],
+      [row("risk tier     :", ' <span class="brass">TIER-' + s.tier + '</span>  → ' + s.tier + ' reviewer(s)'), 460],
+      [row("review posts  :", " inline"), 300],
+      [row("jury          :", " off (default)"), 300],
+      [row("merge window  :", ' <span class="ok">OPEN</span>'), 380],
+      [row("consent       :", " not-required-dry-run"), 380],
+      [row("gate build    ", '      <span class="ok">ok</span>'), 520],
+      [row("gate lint     ", "      " + (s.lintFail ? '<span class="bad">FAIL</span>' : '<span class="ok">ok</span>')), 520],
+      [row("gate bandit   ", '      <span class="ok">ok</span>'), 520],
+      [row("decision      :", s.lintFail
+        ? ' <span class="bad">BLOCK — blocking findings from gate(s): lint</span>'
+        : ' <span class="ok">MERGE — clear to merge</span>'), 560],
+      ['<span class="dim">  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).</span>', 420],
     ];
-    if (s.fix) lines.push(['<span class="head">  s9 fixloop</span>  round 1 → gate lint <span class="ok">ok</span>', 560]);
-    lines.push(['<span class="head">  s10 merge</span>   window <span class="ok">OPEN</span> · lock held', 500]);
-    lines.push(['<span class="dim">  ───────────────────────────────</span>', 420]);
-    lines.push(['<span class="ok">  merged + closed — issue #' + s.n + ' ✓</span>', 480]);
     return lines;
   }
+  function decisionFor(s) {
+    return s.lintFail
+      ? "BLOCK — lint failed; issue #" + s.n + " cannot merge"
+      : "MERGE — clear to merge; nothing merged in a dry run";
+  }
   function assessFor(s) {
+    var ok = '<span class="assess-v"><span class="chk">✓</span> ok</span>';
     return [
       ['risk tier', '<span class="pill-tier">TIER-' + s.tier + '</span>', 0],
       ['reviewers', '<span class="assess-v">' + s.tier + ' <span class="dim" style="color:var(--faint)">required</span></span>', 1],
       ['merge window', '<span class="pill-open">OPEN</span>', 2],
-      ['gate · build', '<span class="assess-v"><span class="chk">✓</span> ok</span>', 3],
-      ['gate · lint', s.fix ? '<span class="assess-v"><span class="chk">✓</span> ok <span class="dim" style="color:var(--faint)">after round 1</span></span>' : '<span class="assess-v"><span class="chk">✓</span> ok</span>', 4],
-      ['jury gate', '<span class="assess-v"><span class="chk">✓</span> pass</span>', 5],
+      ['gate · build', ok, 3],
+      ['gate · lint', s.lintFail ? '<span class="assess-v" style="color:var(--red)">✗ FAIL</span>' : ok, 4],
+      ['gate · bandit', ok, 5],
     ];
   }
 
@@ -646,9 +658,10 @@
       timers.forEach(clearTimeout); timers = [];
       var s = RUNS[runIdx % RUNS.length];
       var TERM = termFor(s), ASSESS = assessFor(s);
-      if (title) title.textContent = "keel ship --issue " + s.n + " · keel-core";
-      if (decision) decision.innerHTML = dsvg + " MERGED — issue #" + s.n + " closed";
+      if (title) title.textContent = "keel ship --issue " + s.n + " --dry-run · keel";
+      if (decision) decision.innerHTML = dsvg + " " + decisionFor(s);
       body.innerHTML = ""; assess.innerHTML = ""; decision.classList.remove("show", "pulse");
+      decision.classList.toggle("block", s.lintFail);
       var lineEls = TERM.map(function (tl) { var l = el("span", "cl", tl[0]); body.appendChild(l); return l; });
       var assessEls = ASSESS.map(function (a) {
         var r = el("div", "assess-row", '<span class="assess-k">' + a[0] + "</span>" + a[1]); assess.appendChild(r); return r;

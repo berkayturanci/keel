@@ -2803,8 +2803,9 @@ byte-identical to the generator's output. Neither repo-level target is written b
 `install-adapter all`, which installs the per-project surfaces only.
 
 The `skills` surface is a **single** universal skill set (`keel-<cmd>`), not a dir per agent:
-non-Claude agents all read `.agents/skills/`, so one copy serves Codex, Antigravity and Gemini
-together. The skill body is the same project-neutral adapter, wrapped with skill frontmatter.
+it is written once under `.agents/skills/` for any non-Claude agent that discovers skills
+there, instead of one copy per agent. The skill body is the same project-neutral adapter,
+wrapped with skill frontmatter.
 Generated skill frontmatter intentionally contains only `name: keel-<cmd>` and `description`.
 Claude-only command metadata such as `argument-hint` and `allowed-tools` remains on the
 packaged command body / Claude command surface and is intentionally not copied into
