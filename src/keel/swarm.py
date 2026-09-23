@@ -238,6 +238,31 @@ class SwarmRunState:
         }
 
 
+#: How much of one child `keel ship`'s output a swarm keeps per cluster (#1280). The
+#: whole stdout used to go into `SwarmRunResult.wave_results` — which `swarm-run --json`
+#: re-emits — and a failing cluster's into the state file as its `details`, so a
+#: 20-cluster run wrote a multi-megabyte blob. The tail is what is kept: a failing
+#: child states why at the end.
+CHILD_OUTPUT_TAIL_CHARS = 4096
+
+
+def tail_child_output(text: str) -> str:
+    """Return ``text`` bounded to its last ``CHILD_OUTPUT_TAIL_CHARS`` characters.
+
+    Output within the cap comes back unchanged. Longer output keeps its tail behind a
+    one-line marker that says how many earlier characters were dropped, so a reader
+    never mistakes the kept part for the whole — or tries to parse it as the child's
+    JSON document, which it no longer is.
+    """
+    if len(text) <= CHILD_OUTPUT_TAIL_CHARS:
+        return text
+    dropped = len(text) - CHILD_OUTPUT_TAIL_CHARS
+    return (
+        f"[keel: {dropped} earlier chars of child output dropped; "
+        f"last {CHILD_OUTPUT_TAIL_CHARS} kept]\n{text[-CHILD_OUTPUT_TAIL_CHARS:]}"
+    )
+
+
 @dataclass(frozen=True)
 class SwarmRunResult:
     """Outcome summary for a complete or partial swarm execution."""
@@ -1034,6 +1059,9 @@ def render_swarm_status_dashboard(state: SwarmRunState | None) -> str:
         "passed": "[PASSED ✓]",
         "failed": "[FAILED ✗]",
         "merged": "[MERGED 🚢]",
+        # Landing kept the cluster back — its review evidence did not verify — so it
+        # is neither failed nor merged (#1280).
+        "held": "[HELD ⏸️]",
     }
 
     start_str = state.started_at[:19] if state.started_at else "pending"

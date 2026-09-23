@@ -15,6 +15,7 @@ from keel import team as team_module
 from keel.cli import main
 from keel.config import Knobs, ProjectConfig
 from keel.swarm import (
+    CHILD_OUTPUT_TAIL_CHARS,
     AssignmentOverrides,
     Difficulty,
     IssueScope,
@@ -38,6 +39,7 @@ from keel.swarm import (
     scopes_intersect,
     score_difficulty,
     ship_handoff_args,
+    tail_child_output,
     update_worker_state,
     worker_seed,
 )
@@ -434,6 +436,24 @@ class TestSwarmStateAndDashboard(unittest.TestCase):
         self.assertIn("[MERGED 🚢]", rendered)
         self.assertIn("[QUEUED ⏳]", rendered)
 
+    def test_a_held_worker_has_its_own_badge(self):
+        """#1280: `held` — landing kept the cluster back for missing review evidence —
+        is in the status vocabulary but had no badge, so it fell through to the
+        generic upper-cased `[HELD]` the board draws for a status it does not know."""
+        held = SwarmWorkerStatus(
+            cluster_id="cluster-1-102", issue=102, role="core", step="s10", status="held"
+        )
+        state = SwarmRunState(swarm_id="swarm-held", total_workers=1, workers=(held,))
+        rendered = render_swarm_status_dashboard(state)
+        self.assertIn("[HELD ⏸️]", rendered)
+        self.assertNotIn("[HELD]", rendered)
+
+    def test_a_status_the_board_does_not_know_still_renders(self):
+        """The counterweight: the generic fallback stays for anything unnamed."""
+        odd = SwarmWorkerStatus(cluster_id="c", issue=1, role="core", status="paused")
+        state = SwarmRunState(swarm_id="swarm-odd", total_workers=1, workers=(odd,))
+        self.assertIn("[PAUSED]", render_swarm_status_dashboard(state))
+
     def test_save_and_load_swarm_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             resolve_swarm_state_dir(tmpdir)
@@ -495,8 +515,11 @@ class TestSwarmStateAndDashboard(unittest.TestCase):
                 except Exception as exc:  # noqa: BLE001 - the defect is that it raises
                     self.fail(f"{type(exc).__name__} escaped: {exc}")
                 self.assertIsNone(loaded)
-                self.assertEqual(code, 0)
+                # Unreadable is not "nothing in flight": it fails the gate (#1280) and
+                # does not print the empty board that says no run exists.
+                self.assertEqual(code, 1)
                 self.assertIn("odd.json is not the shape keel writes", err.getvalue())
+                self.assertNotIn("no active or recent swarm run found", out.getvalue())
 
     def test_a_well_formed_state_draws_no_warning(self):
         """The counterweight."""
@@ -507,6 +530,97 @@ class TestSwarmStateAndDashboard(unittest.TestCase):
             with redirect_stdout(io.StringIO()), redirect_stderr(err):
                 main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
             self.assertEqual(err.getvalue(), "")
+
+
+class TheChildOutputIsBounded(unittest.TestCase):
+    """#1280: a swarm stored each child's whole `keel ship --json` output."""
+
+    def test_output_within_the_cap_is_kept_verbatim(self):
+        self.assertEqual(tail_child_output(""), "")
+        exact = "x" * CHILD_OUTPUT_TAIL_CHARS
+        self.assertEqual(tail_child_output(exact), exact)
+
+    def test_longer_output_keeps_the_tail_and_says_how_much_was_dropped(self):
+        # The head and the tail differ, so a helper that kept the head fails here.
+        text = "H" * 1000 + "x" * (CHILD_OUTPUT_TAIL_CHARS - 5) + "ERROR"
+        capped = tail_child_output(text)
+        marker, _, kept = capped.partition("\n")
+        self.assertEqual(kept, text[-CHILD_OUTPUT_TAIL_CHARS:])
+        self.assertTrue(kept.endswith("ERROR"))
+        self.assertNotIn("H", kept)
+        self.assertEqual(
+            marker,
+            f"[keel: 1000 earlier chars of child output dropped; last "
+            f"{CHILD_OUTPUT_TAIL_CHARS} kept]",
+        )
+
+
+class SwarmStatusIsAGate(unittest.TestCase):
+    """#1280: `swarm-status` exited 0 for every outcome and `--json` printed `{}` both for
+    "no run" and for "the run exists but cannot be read", so it could not gate anything."""
+
+    def _run(self, root: str, *extra: str) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["swarm-status", ".keel/project.yaml", "--root", root, *extra])
+        return code, out.getvalue(), err.getvalue()
+
+    def _unreadable(self, root: str, name: str = "torn") -> None:
+        state_dir = Path(root) / ".keel" / "state" / "swarm"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / f"{name}.json").write_text("{bad json", encoding="utf-8")
+
+    def test_nothing_in_flight_is_an_answer(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertEqual(self._run(tmpdir, "--json")[:2], (0, "{}\n"))
+
+    def test_an_unreadable_newest_state_fails_and_json_does_not_say_no_run(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._unreadable(tmpdir)
+            code, out, err = self._run(tmpdir, "--json")
+            self.assertEqual(code, 1)
+            self.assertIn("torn.json is not the shape keel writes", err)
+            payload = json.loads(out)
+            self.assertNotEqual(payload, {})
+            self.assertEqual(
+                (payload.get("error_code"), payload.get("swarm_id")), ("unreadable-state", "torn")
+            )
+            self.assertIn("torn.json", payload.get("error", ""))
+
+    def test_an_explicit_unreadable_state_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._unreadable(tmpdir)
+            code, out, _ = self._run(tmpdir, "--swarm-id", "torn")
+            self.assertEqual(code, 1)
+            self.assertEqual(out, "")
+
+    def test_an_explicit_swarm_id_with_no_state_fails_and_names_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Another, readable run exists: asking for a specific one that does not
+            # must not fall back to "nothing in flight" or to the other run.
+            save_swarm_state(
+                SwarmRunState(swarm_id="other", total_workers=0, workers=()), root=tmpdir
+            )
+            code, out, err = self._run(tmpdir, "--swarm-id", "swarm-gone")
+            self.assertEqual(code, 1)
+            self.assertIn("swarm-gone", err)
+            self.assertEqual(out, "")
+
+            code, out, err = self._run(tmpdir, "--swarm-id", "swarm-gone", "--json")
+            self.assertEqual(code, 1)
+            payload = json.loads(out)
+            self.assertEqual(
+                (payload.get("error_code"), payload.get("swarm_id")),
+                ("unknown-swarm", "swarm-gone"),
+            )
+            self.assertIn("swarm-gone", err)
+
+    def test_the_help_states_the_exit_codes(self):
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit):
+            main(["swarm-status", "--help"])
+        self.assertIn("exit codes", out.getvalue())
+        self.assertIn("--swarm-id names no run", out.getvalue())
 
 
 class TestSwarmCLI(unittest.TestCase):

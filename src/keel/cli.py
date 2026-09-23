@@ -7283,13 +7283,38 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
 
     state = swarm.load_swarm_state(swarm_id, root=args.root) if swarm_id else None
     state_file = Path(args.root) / ".keel" / "state" / "swarm" / f"{swarm_id}.json"
+    # Three answers, and only "nothing in flight" is a clean one when nothing was asked
+    # for. The command exited 0 for all of them and `--json` printed `{}` for both "no
+    # run" and "unreadable", so it could not gate anything (#1280).
+    error_code: str | None = None
+    message = ""
     if swarm_id and state is None and state_file.exists():
         # A run that exists but cannot be read is not "no run": say which file, so the
         # recovery tool does not tell an operator nothing is in flight (#1273).
-        print(
-            f"warning: swarm state {state_file} is not the shape keel writes; inspect or remove it",
-            file=sys.stderr,
+        error_code = "unreadable-state"
+        message = (
+            f"warning: swarm state {state_file} is not the shape keel writes; inspect or remove it"
         )
+    elif swarm_id and state is None:
+        # Only reachable through `--swarm-id`: a discovered id always has its file. The
+        # operator asked for one run, and "nothing in flight" would be an answer about
+        # a question they did not ask.
+        error_code = "unknown-swarm"
+        message = f"no swarm run {swarm_id!r}: {state_file} does not exist"
+
+    if error_code is not None:
+        print(message, file=sys.stderr)
+        if args.json:
+            # The shape `keel delegate wait` reports a failed lookup in: an object with
+            # `error_code` + `error`, never the `{}` that means "no run".
+            print(
+                json.dumps(
+                    {"swarm_id": swarm_id, "error_code": error_code, "error": message},
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return 1
 
     if args.json:
         print(json.dumps(state.to_dict() if state else {}, indent=2))
@@ -9849,6 +9874,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_ss = sub.add_parser(
         "swarm-status",
         help="display live/recent swarm execution status and cluster dashboard",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "exit codes:\n"
+            "  0  the run was read, or no --swarm-id was given and no run exists\n"
+            "     (nothing in flight; --json prints {})\n"
+            "  1  the run's state file exists but cannot be read, or --swarm-id names no run\n"
+            "     (--json prints {swarm_id, error_code, error}, never {}); or the config\n"
+            "     does not load"
+        ),
     )
     p_ss.add_argument("path", help="path to project.yaml")
     p_ss.add_argument("--root", default=".", help="repo root for state")

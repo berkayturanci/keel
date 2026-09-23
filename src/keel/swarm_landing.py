@@ -24,40 +24,6 @@ from .swarm import (
 from .swarm_runtime import SubprocessRunner, default_runner
 
 
-def parse_conflict_hunks(text: str) -> list[dict[str, str]]:
-    """Parse standard git conflict markers (<<<<<<<, =======, >>>>>>>) into hunks."""
-    lines = text.splitlines(keepends=True)
-    hunks: list[dict[str, str]] = []
-    in_conflict = False
-    in_theirs = False
-    ours_lines: list[str] = []
-    theirs_lines: list[str] = []
-
-    for line in lines:
-        if line.startswith("<<<<<<<"):
-            in_conflict = True
-            in_theirs = False
-            ours_lines = []
-            theirs_lines = []
-        elif in_conflict and line.startswith("======="):
-            in_theirs = True
-        elif in_conflict and line.startswith(">>>>>>>"):
-            in_conflict = False
-            hunks.append(
-                {
-                    "ours": "".join(ours_lines),
-                    "theirs": "".join(theirs_lines),
-                }
-            )
-        elif in_conflict:
-            if in_theirs:
-                theirs_lines.append(line)
-            else:
-                ours_lines.append(line)
-
-    return hunks
-
-
 def is_safe_declarative_chunk(lines: list[str]) -> bool:
     """Check if lines consist entirely of safe declarative items."""
     for line in lines:

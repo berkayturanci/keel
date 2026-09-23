@@ -3020,6 +3020,20 @@ keel swarm-status .keel/project.yaml --root .
 keel swarm-status .keel/project.yaml --root . --swarm-id swarm-2026-08-15 --json
 ```
 
+Without `--swarm-id` it reads the most recently written run under `.keel/state/swarm/`. The exit
+code makes it usable as a gate ([#1280](https://github.com/berkayturanci/keel/issues/1280)):
+
+| Exit | When | `--json` prints |
+|---|---|---|
+| `0` | the run was read | the run's state |
+| `0` | no `--swarm-id` was given and no run exists — nothing is in flight | `{}` |
+| `1` | the run's state file exists but cannot be read (a warning on stderr names the file) | `{"swarm_id", "error_code": "unreadable-state", "error"}` |
+| `1` | `--swarm-id` names a run that has no state file (stderr names it) | `{"swarm_id", "error_code": "unknown-swarm", "error"}` |
+| `1` | the config does not load | nothing |
+
+`{}` therefore always means "no run", never "a run keel could not read"; the text board is not
+printed in either failure.
+
 ## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 > **Experimental — `--live` is refused.** Its workers are handed `--live`

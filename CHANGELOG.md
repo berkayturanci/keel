@@ -8,6 +8,12 @@ All notable changes to keel are documented here. The format follows
 
 ### Changed
 - **A shared link to keel-ship.dev now previews the README's pitch** (#1297): the homepage's `og:title` ("AI Code Review & PR Automation for Coding Agents — keel") and `twitter:title` ("AI Code Review & PR Automation — keel") were the search-engine copy, so a link pasted into Slack, LinkedIn or X led with a keyword list instead of what keel is. Both now read "keel — turn coding agents into work owners: issue to merged PR": the README's lead, plus the noun a stranger needs on the cards that show a title with no description. `<title>` is unchanged on purpose: that is what a search result shows, and it keeps the terms people type. `tests/test_site_seo.py` pins both halves, requires each tag exactly once (some scrapers read the last one), and checks the README still carries the sentence the preview quotes.
+### Fixed
+- **Four smaller swarm audit findings** (#1280, items 2 (badge only), 3, 4 and 6; the rest stay open).
+  - **`keel swarm-status` can gate.** It exited 0 for every outcome, and `--json` printed `{}` both for "no run" and for "a run keel cannot read". It now exits 1 when the run's state file exists but does not load (the #1273 warning still names the file) and when `--swarm-id` names a run with no state file (stderr names it); `--json` then prints `{"swarm_id", "error_code", "error"}` — the shape `keel delegate wait` reports a failed lookup in — and the text board is not drawn. No `--swarm-id` and no run at all is still exit 0 with `{}`: nothing in flight is an answer. The exit codes are in `--help` and the CLI reference.
+  - **A `held` worker has a badge on the status board**, `[HELD ⏸️]`, instead of the generic `[HELD]` an unknown status falls through to.
+  - **A swarm keeps only the tail of each child's output.** `wave_results` held every cluster's whole `keel ship --json` stdout, `swarm-run --json` re-emitted it, and a failing cluster's went into the state file as `details`. Both now keep the last `CHILD_OUTPUT_TAIL_CHARS` (4096) characters behind a `[keel: N earlier chars of child output dropped; last 4096 kept]` line, applied once where every origin of the output meets both stores. Nothing parsed the stored output as JSON.
+  - **The unused `parse_conflict_hunks` is gone** from `swarm_landing.py`; `resolve_conflict_content` walks the same markers. Its test now runs the column-0 fixture through `resolve_conflict_content`, which is why `tests/test_no_conflict_markers.py` still skips that file.
 
 ## [1.24.2] - 2026-09-23
 

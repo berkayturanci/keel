@@ -13,10 +13,10 @@ human caught it by eye). This test makes that failure visible in the same
 offline suite every PR already runs.
 
 `tests/test_swarm_landing.py` intentionally embeds real, unindented marker
-lines inside a triple-quoted fixture string (`parse_conflict_hunks` needs
-genuine conflict text to parse) — it is excluded by name below rather than by
-trying to distinguish "real" markers from fixture ones, which is exactly the
-distinction a merge tool cannot make either.
+lines inside a triple-quoted fixture string (`resolve_conflict_content` only
+recognises markers at column 0, the way git writes them) — it is excluded by
+name below rather than by trying to distinguish "real" markers from fixture
+ones, which is exactly the distinction a merge tool cannot make either.
 """
 
 from __future__ import annotations
@@ -39,9 +39,10 @@ CONFLICT_MARKER = re.compile(r"^(<{7}|={7}|>{7})( |$)")
 #: it is a statement that a human looked at the lines and confirmed they are
 #: fixture content, not a real merge left half-done.
 SKIP = {
-    # `TestConflictHealing.test_parse_conflict_hunks` builds its sample from
-    # an unindented triple-quoted string, so `<<<<<<< HEAD` / `=======` /
-    # `>>>>>>> feat/new-feature` sit at column 0 on their own physical lines.
+    # `TestConflictHealing.test_resolve_conflict_content_on_markers_as_git_writes_them`
+    # builds its sample from an unindented triple-quoted string, so
+    # `<<<<<<< HEAD` / `=======` / `>>>>>>> feat/new-feature` sit at column 0
+    # on their own physical lines.
     "tests/test_swarm_landing.py",
 }
 

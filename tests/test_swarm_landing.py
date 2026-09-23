@@ -33,7 +33,6 @@ from keel.swarm_landing import (
     is_safe_declarative_chunk,
     land_wave_clusters,
     merge_cluster_branch,
-    parse_conflict_hunks,
     rebase_and_heal_cluster_branch,
     resolve_adjacent_conflict,
     resolve_conflict_content,
@@ -45,7 +44,11 @@ class TestConflictHealing(unittest.TestCase):
         self.assertTrue(is_safe_declarative_chunk(["   ", "import os", "from sys import path"]))
         self.assertFalse(is_safe_declarative_chunk(["x = 1"]))
 
-    def test_parse_conflict_hunks(self):
+    def test_resolve_conflict_content_on_markers_as_git_writes_them(self):
+        """Git writes its markers at column 0 on their own lines, and the parser only
+        recognises them there (`line.startswith`), so this fixture keeps them unindented
+        rather than escaped into one string. `tests/test_no_conflict_markers.py` skips
+        this file by name for exactly these lines."""
         sample = """
 header line
 <<<<<<< HEAD
@@ -57,10 +60,10 @@ import math
 >>>>>>> feat/new-feature
 footer line
 """
-        hunks = parse_conflict_hunks(sample)
-        self.assertEqual(len(hunks), 1)
-        self.assertIn("import os", hunks[0]["ours"])
-        self.assertIn("import json", hunks[0]["theirs"])
+        self.assertEqual(
+            resolve_conflict_content(sample),
+            "\nheader line\nimport os\nimport sys\nimport json\nimport math\nfooter line\n",
+        )
 
     def test_resolve_adjacent_conflict_empty_keeps_a_declarative_side(self):
         # One branch added an import, the other added nothing there. Safe, and

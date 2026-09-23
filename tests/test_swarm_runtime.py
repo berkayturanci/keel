@@ -16,6 +16,7 @@ from unittest.mock import patch
 from keel.cli import build_parser, main
 from keel.runner import CommandResult
 from keel.swarm import (
+    CHILD_OUTPUT_TAIL_CHARS,
     IssueScope,
     SwarmPlan,
     SwarmRunState,
@@ -389,6 +390,51 @@ class TestSwarmOrchestration(unittest.TestCase):
             self.assertEqual(result.failed_count, 1)
             # Second wave had only c2 (issue 101), which was pruned by rebalance, so only 1 wave ran
             self.assertEqual(len(result.wave_results), 1)
+
+
+class TheStoredChildOutputIsBounded(unittest.TestCase):
+    """#1280: every cluster's whole child stdout went into `wave_results` (re-emitted by
+    `swarm-run --json`), and a failing cluster's went into the state file too."""
+
+    def test_passing_and_failing_outputs_keep_only_the_tail(self):
+        big = "noise\n" * 2000  # 12 000 chars, well over the cap
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s1 = IssueScope(issue=401, title="Passes", predicted_files=("src/a.py",))
+            s2 = IssueScope(issue=402, title="Fails", predicted_files=("src/b.py",))
+            plan = build_swarm_plan([s1, s2], swarm_id="swarm-big")
+
+            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
+                if "401" in cmd:
+                    return CommandResult(ok=True, code=0, output=big + "ALL GREEN")
+                return CommandResult(ok=False, code=1, output=big + "FATAL: gate failed")
+
+            result = run_swarm_orchestration(
+                plan,
+                ".keel/project.yaml",
+                root=tmpdir,
+                dry_run=True,
+                max_workers=2,
+                runner=mock_runner,
+                create_worktrees=False,
+                base_branch="main",
+            )
+            outputs = {
+                r["issue"]: r["output"]
+                for w in result.wave_results
+                for r in w["cluster_results"].values()
+            }
+            for issue, tail in ((401, "ALL GREEN"), (402, "FATAL: gate failed")):
+                with self.subTest(issue=issue):
+                    self.assertLess(len(outputs[issue]), CHILD_OUTPUT_TAIL_CHARS + 200)
+                    self.assertTrue(outputs[issue].endswith(tail))
+                    self.assertIn("earlier chars of child output dropped", outputs[issue])
+
+            state = load_swarm_state("swarm-big", root=tmpdir)
+            assert state is not None
+            failed = next(w for w in state.workers if w.issue == 402)
+            self.assertLess(len(failed.details), CHILD_OUTPUT_TAIL_CHARS + 200)
+            self.assertTrue(failed.details.endswith("FATAL: gate failed"))
+            self.assertIn("earlier chars of child output dropped", failed.details)
 
 
 class AFailedWaveDoesNotSkipTheNext(unittest.TestCase):

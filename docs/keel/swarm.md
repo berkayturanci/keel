@@ -338,6 +338,11 @@ that state, not a live feed; re-run it to refresh:
 keel swarm-status .keel/project.yaml --root .
 ```
 
+It exits `0` when it read the run, or when no `--swarm-id` was given and there is no run at all;
+it exits `1` when the run's state file cannot be read or `--swarm-id` names a run that does not
+exist, and `--json` then prints an object with an `error_code` instead of the `{}` that means "no
+run". The table is in [the CLI reference](cli.md#keel-swarm-status-projectyaml---root-dir---swarm-id-id---json).
+
 ---
 
 ## 4. Landing (`keel swarm-land`)

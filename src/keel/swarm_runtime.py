@@ -26,6 +26,7 @@ from .swarm import (
     rebalance_swarm_plan,
     save_swarm_state,
     ship_handoff_args,
+    tail_child_output,
     update_worker_state,
     worker_seed,
 )
@@ -314,6 +315,11 @@ def run_swarm_orchestration(
                         "code": 1,
                         "output": f"worker raised {type(exc).__name__}: {exc}",
                     }
+                # Bounded once, here, where every origin of `output` — the child's
+                # stdout, a worktree failure, a raised worker — meets both places it is
+                # kept: this wave record and, on failure, the state file's `details`
+                # (#1280).
+                worker_res = {**worker_res, "output": tail_child_output(worker_res["output"])}
                 wave_record["cluster_results"][c_id] = worker_res
                 issue_val = worker_res.get("issue", 0)
 
