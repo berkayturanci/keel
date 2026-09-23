@@ -350,17 +350,15 @@ def _normalize_path(p: str) -> str:
     plan normalises twice, and a second pass used to eat the `)` the first exposed
     (`docs/(draft)/` → `docs/(draft)` → `docs/(draft`, #1279). The whole pass is
     repeated to a fixed point, since `normpath` can itself expose new end
-    punctuation (`(docs/draft)/` → `(docs/draft)`). Each round only shortens the
-    string or turns `\\` into `/`, so it ends; the bound is a guard, not a limit
-    a real path reaches."""
-    for _ in range(64):
+    punctuation (`(docs/draft)/` → `(docs/draft)`). It ends: after the first round
+    no `\\` is left, and every later change only shortens the string."""
+    while True:
         cleaned = _strip_path_punctuation(p)
         cleaned = cleaned.replace("\\", "/").removeprefix("./").removeprefix("/")
         cleaned = posixpath.normpath(cleaned) if cleaned else ""
         if cleaned == p:
             return cleaned
         p = cleaned
-    return p  # pragma: no cover - unreachable, see the docstring
 
 
 def extract_predicted_paths(text: str) -> list[str]:

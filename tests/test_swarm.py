@@ -115,6 +115,14 @@ class TestSwarmPathExtraction(unittest.TestCase):
             once = _normalize_path(raw)
             self.assertEqual(_normalize_path(once), once, f"not a fixed point: {raw!r}")
 
+    def test_a_long_run_of_exposed_punctuation_still_ends_canonical(self):
+        """Each round peels one exposed end; a fixed round cap returned a non-canonical
+        value for 64+ layers (#1311 review)."""
+        raw = "a" + ",/" * 200
+        once = _normalize_path(raw)
+        self.assertEqual(once, "a")
+        self.assertEqual(_normalize_path(once), once)
+
     def test_a_final_dot_segment_is_a_path_step(self):
         self.assertEqual(_normalize_path("src/a/.."), "src")
         self.assertEqual(_normalize_path("src/a/."), "src/a")
