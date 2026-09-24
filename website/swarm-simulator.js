@@ -212,12 +212,14 @@
       );
     });
 
+    var ariaToggleLabel = state.running ? "Pause the simulation" : (state.step > 0 ? "Resume the simulation" : "Start the simulation");
+
     html.push(
       '      </div>',
       '    </div>',
       '    <div class="sim-controls">',
-      '      <button type="button" class="sim-btn sim-btn-primary" id="sim-toggle-btn">' + btnLabel + '</button>',
-      '      <button type="button" class="sim-btn sim-btn-secondary" id="sim-reset-btn"><span aria-hidden="true">⟳</span> Reset</button>',
+      '      <button type="button" class="sim-btn sim-btn-primary" id="sim-toggle-btn" aria-label="' + ariaToggleLabel + '">' + btnLabel + '</button>',
+      '      <button type="button" class="sim-btn sim-btn-secondary" id="sim-reset-btn" aria-label="Reset the simulation"><span aria-hidden="true">⟳</span> Reset</button>',
       '      <div class="sim-speed-box" role="radiogroup" aria-label="Animation speed">',
       '        <span>Speed:</span>',
       '        <button type="button" class="sim-speed-btn ' + (state.speed === 1 ? 'active' : '') + '" data-speed="1" role="radio" aria-checked="' + (state.speed === 1) + '">1x</button>',
