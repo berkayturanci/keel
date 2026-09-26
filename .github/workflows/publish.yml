@@ -40,7 +40,7 @@ jobs:
       # more: the formula is rendered below and attached to the release instead
       # of being repaired in a follow-up pull request (#1023, #990).
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v4.0.0
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -376,7 +376,7 @@ jobs:
       PYPI_WAIT_ATTEMPTS: "20"
       PYPI_WAIT_SECONDS: "15"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v4.0.0
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
