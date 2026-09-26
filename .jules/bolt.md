@@ -103,3 +103,6 @@ to `tdd.is_test_path` was opened twice, two days apart, and closed twice:
   from `tdd.check_order`, once per `tdd-order` gate: counted on three merged branches
   (keel#1206, keel#1220, keel#1228) it ran 5–19 times, so the saving is 0.5–2 µs per
   run, beside a `git log` subprocess of ≈ 17 000 µs in the same gate.
+## 2025-02-23 - Micro-optimizing Cold Paths
+**Learning:** In this codebase, parsing environment variables (`config.py`) or listed models (`providers.py`) are cold paths. Refactoring generators into loops or string replacements in these files is a premature optimization that yields no measurable app-wide impact, and string replacements for alphanumerics can introduce edge-case bugs for all-underscore strings.
+**Action:** Focus performance optimizations strictly on identified hot paths or bottlenecks (e.g., tight loops in runners or parsers over large datasets) rather than optimizing startup or configuration paths.
