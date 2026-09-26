@@ -192,6 +192,7 @@
 
     // Header & stats
     var btnLabel = state.running ? "<span aria-hidden=\"true\">⏸</span> Pause" : (state.step > 0 ? "<span aria-hidden=\"true\">▶</span> Resume" : "<span aria-hidden=\"true\">▶</span> Run Swarm Simulation");
+    var ariaLabel = state.running ? "Pause simulation" : (state.step > 0 ? "Resume simulation" : "Run swarm simulation");
     var lockClass = state.lock.indexOf("LOCKED") >= 0 ? "lock-active" : "lock-idle";
 
     var html = [
@@ -216,7 +217,7 @@
       '      </div>',
       '    </div>',
       '    <div class="sim-controls">',
-      '      <button type="button" class="sim-btn sim-btn-primary" id="sim-toggle-btn">' + btnLabel + '</button>',
+      '      <button type="button" class="sim-btn sim-btn-primary" id="sim-toggle-btn" aria-label="' + ariaLabel + '">' + btnLabel + '</button>',
       '      <button type="button" class="sim-btn sim-btn-secondary" id="sim-reset-btn"><span aria-hidden="true">⟳</span> Reset</button>',
       '      <div class="sim-speed-box" role="radiogroup" aria-label="Animation speed">',
       '        <span>Speed:</span>',

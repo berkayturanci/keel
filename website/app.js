@@ -83,6 +83,9 @@
     btn.addEventListener("click", function () {
       var next = root.getAttribute("data-theme") === "light" ? "dark" : "light";
       root.setAttribute("data-theme", next); store.set("theme", next);
+      document.querySelectorAll(".theme-toggle").forEach(function (b) {
+        b.setAttribute("aria-label", next === "dark" ? "Switch to light theme" : "Switch to dark theme");
+      });
       try { var tc = JSON.parse(localStorage.getItem("keel-colors-v2") || "null"); if (tc && window.__keelApplyColors) window.__keelApplyColors(tc, false); } catch (e) {}
     });
   });
