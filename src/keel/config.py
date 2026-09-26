@@ -622,9 +622,7 @@ def config_hash(config: ProjectConfig) -> str:
 
 def _is_env_var_name(value: str) -> bool:
     """Cheap shape check that ``api_key_env`` is a *name*, not a pasted secret."""
-    # ⚡ Bolt: Using C-level .replace().isalnum() is ~3.5x faster (0.146s to 0.041s in benchmarks)
-    # than iterating characters with an all() generator expression.
-    return bool(value) and not value[0].isdigit() and value.replace("_", "").isalnum()
+    return bool(value) and not value[0].isdigit() and all(ch.isalnum() or ch == "_" for ch in value)
 
 
 BLOCKED_METADATA_HOSTS = frozenset(
