@@ -42,8 +42,8 @@ import shlex
 import tempfile
 import tomllib
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 from keel import (
     cli,
@@ -2264,7 +2264,7 @@ class TheWorkflowPageMatchesThisRepositorysJuryPolicy(unittest.TestCase):
         for mode in ("advisory", "gating"):
             with (
                 self.subTest(mode=mode),
-                mock.patch.object(type(self), "_mode", lambda self, m=mode: m),
+                unittest.mock.patch.object(type(self), "_mode", lambda self, m=mode: m),
             ):
                 if (mode == "advisory") == claims_advisory:
                     self.test_the_page_names_the_mode_this_repository_sets()
