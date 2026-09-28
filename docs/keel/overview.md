@@ -30,7 +30,7 @@ The bottleneck in agentic coding is rarely code generation—it is **work owners
 
 Most coding agents stop at *"I opened a PR."* Without an invariant delivery backbone, agent-written code stalls in review loops, introduces silent regressions, causes merge collisions, or bypasses compliance.
 
-**Keel closes that gap.** It provides the fixed backbone (`s0`–`s12`) that drives every unit of work through scope validation, multi-agent adversarial reviews, commit-bound evidence verification, timezone-aware merge locks, and post-merge proof, so work either merges into the base branch or halts at a named step with its reason recorded; optional pieces that are missing (the jury CLI, a capture path) are logged as degraded rather than stopping the run.
+**Keel closes that gap.** It provides the fixed backbone (`s0`–`s12`) that drives every unit of work through scope validation, multi-agent adversarial reviews, commit-bound evidence verification, timezone-aware merge locks, and post-merge proof, so work either merges into the base branch or halts at a named step with its reason recorded; a capture path that cannot be written is logged as degraded rather than stopping the run, while a missing jury CLI still leaves a tier-3 merge owing its `jury-verdict` unless the run passes `--no-jury`.
 
 > keel uses a thin-consumer model: the core is installed + pinned, never copied, so the
 > drift/overwrite class of bug is structurally gone. Background: the original design
@@ -56,9 +56,11 @@ Most coding agents stop at *"I opened a PR."* Without an invariant delivery back
   `knobs.tier3_globs`), and the evidence gate then requires a `jury-verdict`. Below tier 3 it is
   off unless a run passes `--jury` or `knobs.team` makes the panel the review; `--no-jury` turns
   it off below a panel tier. Listing `jury` in `gates:` also runs it as a
-  `keel run-gates` gate at s8, at every tier. It is a fail-soft no-op when the `jury` binary is not installed. Core resolves the
-  mode from the panel that actually ran: a cross-vendor gate needs ≥2 distinct vendors, so a
-  short panel downgrades to advisory instead of blocking on a jury that never convened.
+  `keel run-gates` gate at s8, at every tier. Without the `jury` binary the s8 run is a
+  no-op, but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
+  it relaxes to advisory only when a posted verdict (or `--jury-vendors`) reports fewer than
+  2 vendors. Core resolves the mode from the panel that actually ran: a cross-vendor gate
+  needs ≥2 distinct vendors, so a short panel downgrades to advisory instead of blocking.
 - **…or the panel *is* the review** — set `knobs.team.review.by_tier."3": jury` and s7 dispatches
   ai-jury **once** instead of running host reviewers beside it. `keel review --from-jury
   <report.json>` turns each panelist's ballot into a head-pinned `keel.review-verdict.v1` with the

@@ -23,8 +23,11 @@
    `/keel:ship <issue>`; the agent writes the code, opens the pull request and dispatches
    the reviewers.
 2. **keel's CLI enforces the backbone.** At each of the fixed steps `s0`–`s12` the agent
-   asks `keel` for the plan, the gates, the reviewers and the evidence it owes. The CLI
-   itself never commits, pushes or opens a pull request.
+   asks `keel` for the plan, the gates, the reviewers and the evidence it owes. `keel ship`
+   is a dry assessment: the agent commits, pushes and opens the pull request. The CLI's own
+   writes are the merge, the lesson commit `keel capture-land` pushes onto the pull
+   request's branch, and the verdict and closure comments `keel post-comment` and
+   `keel review` post.
 3. **A merge happens only through `keel merge`**, which takes the merge lock, re-checks the
    merge window, reads the live CI rollup and verifies the head-pinned review evidence first.
 
@@ -32,11 +35,11 @@
 
 | Practice for long agent runs | What keel does |
 |---|---|
-| Define "done" first | An issue with no objective, deliverable or acceptance criteria comes back `needs-input` with questions, and `/keel:ship` stops before it cuts a branch (`intake.py`, ship Step 0) |
+| Define "done" first | An issue with no deliverable or no acceptance criteria comes back `needs-input` with questions, and `/keel:ship` stops before it cuts a branch (`intake.py`, ship Step 0) |
 | Name the stops | A live run declares its consent scopes (`filesystem`, `git`, `github`, …) before it acts; merges go only through `keel merge`, inside the merge window (an audited `--hotfix` is the one bypass) |
 | Keep state in a file | A resumable checkpoint (`keel checkpoint`, `keel resume`) and an append-only run ledger (`.keel/state/run-ledger.jsonl`) |
 | Fan out, then check | `/keel:regression` runs parallel reviewers and keeps low-confidence findings as review-only instead of filing them |
-| Review before a person does | Review verdicts are pinned to the head SHA; reviewers can run on another vendor, and `knobs.evidence_require_distinct_vendors` makes that a requirement |
+| Review before a person does | Review verdicts are pinned to the head SHA; reviewers can run on another vendor, and `knobs.evidence_require_distinct_vendors` makes distinct reviewer vendors a requirement |
 | Read what's blocked first | `/keel:morning` puts the cross-session deferrals at the top of the briefing |
 
 These map to the long-run advice in Anthropic's
@@ -124,15 +127,19 @@ keel ship — my-project  (base main)
   note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).
 ```
 
-**Your first issue.** Write it with three headings keel's intake reads: `## Objective`,
-`## Deliverable` and `## Acceptance criteria` (a bulleted list). Then open the repository in
+**Your first issue.** keel's intake needs two sections besides the title: a deliverable
+(`## Deliverable`, or `Scope`, `Proposal`, `Proposed direction`, `Implementation`) and
+acceptance criteria as a bulleted list (`## Acceptance criteria`, or `Acceptance`,
+`Definition of done`, `Done when`, `DoD`). The objective is an `## Objective`, `Problem`,
+`Summary` or `Context` section when there is one, and the title otherwise. Then open the repository in
 your agent host and run `/keel:ship <issue-number>`, or the `keel-ship` skill on a host that
 reads skills. What you will see:
 
 1. The agent stops once and asks you to approve the run's consent scopes (`filesystem`,
    `git`, `github`): `keel setup` writes `consent_mode: "explicit"`.
-2. If the issue is missing one of the three headings, the agent posts keel's questions and
-   stops before it cuts a branch.
+2. If the issue has no deliverable or no acceptance criteria, or reads as undecided (`TBD`,
+   `unclear`, `not sure`, …), the agent posts keel's questions and stops before it cuts a
+   branch.
 3. Otherwise it works in its own git worktree, opens a pull request, waits on CI and gets
    reviewed (two reviewers at TIER-2 by default), then runs the gates.
 4. The run ends in one of two ways: `keel merge` merges the pull request and the issue is
@@ -148,15 +155,18 @@ merges out of the night. The one-command setup and what to check afterwards are 
 ### Requirements
 
 - **Python 3.11 or newer**, and `git`.
-- **An authenticated `gh`** (`gh auth login`) for a live run: issues, pull requests, CI
-  status and merges all go through GitHub.
+- **An authenticated `gh`** (`gh auth login`) for a live run. Every GitHub call the CLI
+  makes goes through `gh`: `keel merge`, `keel evidence-verify`, `keel post-comment` and the
+  CI rollup all need it.
 - **Something to implement.** An agent host to follow `/keel:ship`: Claude Code, Codex,
   Antigravity, or Cursor (partial, [#1332](https://github.com/berkayturanci/keel/issues/1332)).
   The implement and review seats it dispatches can be the host itself, another agent CLI,
   or a hosted-API delegate (`--delegate anthropic-api:MODEL`, `openai-api:MODEL`,
   `google-api:MODEL`) that needs only that provider's API key.
-- **Optional:** [ai-jury](https://github.com/berkayturanci/ai-jury) for the cross-vendor
-  jury. Without it, a tier-3 change's jury is a fail-soft no-op.
+- **For tier-3 changes:** [ai-jury](https://github.com/berkayturanci/ai-jury), or `--no-jury`.
+  Without the `jury` binary the s8 run is a no-op, but a tier-3 merge still requires a
+  `jury-verdict` unless the run passes `--no-jury`; it relaxes to advisory only when a posted
+  verdict (or `--jury-vendors`) reports fewer than 2 vendors.
 
 The dry commands in the Quickstart need only Python and git.
 
@@ -174,8 +184,10 @@ and 400 completion tokens: read it as a count of runs, not as a bill.
 
 ### Limits
 
-- **GitHub only.** Issues, pull requests, CI rollups and merges are read and written through
-  GitHub (`gh`, or an MCP transport).
+- **GitHub only.** Issues, pull requests, CI rollups and merges live on GitHub. The CLI
+  reaches it through `gh` alone; the `mcp` transport describes what an agent host's own
+  GitHub MCP server can do for its reads and comments, and marks merges and check rollups
+  as degraded there ([transport](docs/keel/github-transport.md)).
 - **Swarm is experimental.** `/keel:swarm` plans waves, but a live run cannot produce a commit
   or a pull request yet ([#1281](https://github.com/berkayturanci/keel/issues/1281)). Use
   `/keel:ship` for work you need merged.
@@ -372,9 +384,10 @@ or the reference it points at.
   turns on the [ai-jury](https://github.com/berkayturanci/ai-jury) panel, and the evidence gate
   then requires its verdict. Below tier 3 it is off unless a run passes `--jury` or
   `knobs.team` makes the panel the review; `--no-jury` turns it off below a panel tier, and
-  listing `jury` in `gates:` also runs it at s8. Without the `jury` binary, or with fewer than
-  two vendors on the panel, it degrades to advisory
-  ([details](docs/keel/overview.md#what-you-get)).
+  listing `jury` in `gates:` also runs it at s8. Without the `jury` binary the s8 run is a
+  no-op, but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
+  it relaxes to advisory only when a posted verdict (or `--jury-vendors`) reports fewer than
+  2 vendors ([details](docs/keel/overview.md#what-you-get)).
 - **Safe merges** — `keel merge` claims the lock, re-checks the window, reads the live CI
   rollup and verifies the evidence before it merges, over GraphQL or REST
   ([reference](docs/keel/cli.md#keel-merge-projectyaml---pr-n---root-dir---method-squashmergerebase---transport-autographqlrest---dry-run---effort-lowmediumhigh---team-profile)).

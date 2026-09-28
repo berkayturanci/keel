@@ -42,7 +42,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keel import cli, cost, extensions, install, model, providers, ship
+from keel import cli, cost, extensions, install, intake, model, providers, ship
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -1251,6 +1251,17 @@ class TestTheDogfoodTerminalIsTheDryAssessment(unittest.TestCase):
                 self.assertNotIn("merged + closed", text)
 
 
+def _prose(name: str, text: str) -> str:
+    """A page's words, whitespace collapsed; a site page's tags are stripped first.
+
+    Only the site's: a Markdown page's `<N>` or `<report.json>` would pair with a later
+    `>` and swallow the sentences between them, which is how a check goes vacuous.
+    """
+    if name.startswith("website/"):
+        text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.split())
+
+
 def _readme_sections() -> dict[str, str]:
     """The README's `##` sections by title, each running to the next `##` heading."""
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -1299,11 +1310,50 @@ class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
         self.assertEqual(sorted(lines), lines, dict(zip(self._ORDER, lines, strict=True)))
 
     def test_the_first_screen_says_who_does_the_work(self):
-        """#1321: the agent runs /keel:ship, the CLI enforces, `keel merge` merges."""
+        """#1321: the agent runs /keel:ship, the CLI enforces, `keel merge` merges.
+
+        Round 1 of #1360: "the CLI itself never commits, pushes or opens a pull request"
+        was false — `keel capture-land --write` builds a commit and pushes it onto the PR
+        branch, and `keel merge` merges. The claim is narrowed to `keel ship`, and the
+        CLI's own writes are named.
+        """
         screen = " ".join(_readme_first_screen().split())
-        for claim in ("/keel:ship", "never commits", "only through `keel merge`"):
+        for claim in (
+            "/keel:ship",
+            "`keel ship` is a dry assessment",
+            "the agent commits, pushes and opens the pull request",
+            "`keel capture-land`",
+            "only through `keel merge`",
+        ):
             with self.subTest(claim=claim):
                 self.assertTrue(claim in screen, f"the first screen never says {claim!r}")
+        self.assertIsNone(re.search(r"CLI itself never commits", screen))
+
+    def test_every_intake_heading_the_quickstart_names_is_one_intake_reads(self):
+        """Round 1 of #1360: the Quickstart said all three headings were required.
+
+        `intake.assess_issue` falls back to the title for the objective, and accepts
+        aliases for the other two. Every alias the README names must make an issue
+        `ready` in its slot, and dropping either slot must not.
+        """
+        quickstart = self.section("Quickstart")
+        self.assertTrue("**Your first issue.**" in quickstart, "no first-issue paragraph")
+        para = quickstart.split("**Your first issue.**", 1)[1].split("Then open", 1)[0]
+        groups = [re.findall(r"`(?:## )?([^`]+)`", g) for g in re.findall(r"\(([^()]*)\)", para)]
+        self.assertGreaterEqual(len(groups), 2, groups)
+        deliverables, acceptances = groups[0], groups[1]
+        self.assertIn("Scope", deliverables)
+        for heading in deliverables:
+            with self.subTest(deliverable=heading):
+                body = f"## {heading}\nA function.\n\n## Acceptance criteria\n- it returns 1\n"
+                self.assertEqual("ready", intake.assess_issue(title="t", body=body)["status"])
+        for heading in acceptances:
+            with self.subTest(acceptance=heading):
+                body = f"## Deliverable\nA function.\n\n## {heading}\n- it returns 1\n"
+                self.assertEqual("ready", intake.assess_issue(title="t", body=body)["status"])
+        for body in ("## Deliverable\nA function.\n", "## Acceptance criteria\n- it returns 1\n"):
+            with self.subTest(missing=body[:20]):
+                self.assertEqual("needs-input", intake.assess_issue(title="t", body=body)["status"])
 
     def test_every_command_the_long_run_table_names_exists(self):
         """#1337: each row was checked against the code; this keeps the names real."""
@@ -1415,7 +1465,7 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
         for page in ("README.md", "website/index.html", "website/content.js"):
             self.assertIn(page, pages)
         for where, text in pages.items():
-            prose = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+            prose = _prose(where, text)
             for pattern in self._WRONG_DEFAULT:
                 with self.subTest(page=where, pattern=pattern.pattern[:30]):
                     found = pattern.search(prose)
@@ -1430,6 +1480,49 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
         for claim in ("**tier-3** change", "leaving it out does not keep the jury off"):
             with self.subTest(claim=claim):
                 self.assertTrue(claim in gates, f"the `gates` reference never says {claim!r}")
+
+    #: The one sentence about a missing `jury` binary, as each surface words it.
+    _VERDICT_OWED = (
+        "a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`"
+    )
+    _NO_BINARY = {
+        "README.md": _VERDICT_OWED,
+        "docs/keel/configuration.md": _VERDICT_OWED,
+        "docs/keel/overview.md": _VERDICT_OWED,
+        "website/index.html": "the merge still needs a jury verdict",
+        "website/content.js": (
+            "a tier-3 merge still requires a jury verdict "
+            "unless the run passes <code>--no-jury</code>"
+        ),
+    }
+    #: Every shape the wrong sentence took: "a fail-soft no-op without the `jury` binary",
+    #: "Without the `jury` binary … it degrades to advisory", "a tier-3 change's jury is a
+    #: fail-soft no-op". Tags are stripped first. `the tool binary` (a preset) is not it.
+    _WAIVED = re.compile(
+        r"fail-soft[^.;]{0,60}\b(the|jury)`? binary"
+        r"|jury`? binary[^.;]{0,80}(fail-soft|degrades to advisory)"
+        r"|jury is a fail-soft",
+        re.I,
+    )
+
+    def test_every_surface_says_a_missing_binary_does_not_waive_the_verdict(self):
+        """Round 1 of #1360: "fail-soft" / "degrades to advisory" without the binary.
+
+        Measured: with no `jury` on PATH a tier-3 `keel ship --json` still reports the
+        jury `gating (tier-3 auto)` and lists `jury-verdict` in the required evidence.
+        Only the s8 run is a no-op; a posted verdict's vendor count is what relaxes it.
+        """
+        for name, sentence in self._NO_BINARY.items():
+            text = " ".join((REPO_ROOT / name).read_text(encoding="utf-8").split())
+            with self.subTest(page=name, check="says the verdict is still owed"):
+                self.assertTrue(sentence in text, f"{name} does not say {sentence!r}")
+            with self.subTest(page=name, check="does not call it fail-soft"):
+                found = self._WAIVED.search(_prose(name, text))
+                self.assertIsNone(found, found and found.group(0))
+        tier3 = ship.resolve_jury(tier=3)
+        self.assertEqual(("gating", True), (tier3["mode"], tier3["enabled"]))
+        short = ship.resolve_jury(tier=3, participating_vendors=1)
+        self.assertEqual("advisory", short["mode"])
 
     def test_the_readme_says_tier_three_turns_it_on(self):
         bullet = re.search(
