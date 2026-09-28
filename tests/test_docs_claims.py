@@ -996,7 +996,7 @@ def _public_pages() -> dict[str, str]:
     paths += sorted((REPO_ROOT / "docs" / "keel").glob("*.md"))
     paths += sorted(p for p in SITE.glob("*") if p.suffix in {".html", ".js", ".txt"})
     return {
-        str(p.relative_to(REPO_ROOT)): " ".join(p.read_text(encoding="utf-8").split())
+        p.relative_to(REPO_ROOT).as_posix(): " ".join(p.read_text(encoding="utf-8").split())
         for p in paths
     }
 
