@@ -1869,6 +1869,15 @@ reported as one more outcome, `FAIL  gates`, with the `major` finding `no gate c
 gates: in .keel/project.yaml plans nothing to run …`, whatever the `--phases` scope; it
 used to print nothing and exit 0. Both outcomes carry `unconfigured: true` in `--json`.
 
+**A jury that cannot run judges nothing** (#1369). With no `jury` binary on the host, or an
+empty diff, the `jury` gate has nothing to judge with: it used to report `ok  jury`. Beside
+another gate it stays the documented s8 no-op — it does not hold the merge — but reads
+`SKIPPED  jury` with the `nit` finding `jury:not-run: jury did not run: …` naming why. When
+it is the only gate planned, nothing judged the change, so it is `FAIL  jury`
+(`unconfigured: true`) with the `major` finding `no gate judged this change: jury is the
+only gate planned and it did not run …`; `--gate-result jury=pass` cannot clear it, since
+keel executed the gate. A tier-3 merge still requires a `jury-verdict` either way.
+
 A gate that exceeds its wall-clock limit is killed and reported as a third, distinct
 outcome — `TIMEOUT` rather than `FAIL` — so a slow host does not read as a broken test.
 It **still blocks**: a hanging command is a real defect. The limit is
@@ -1879,13 +1888,14 @@ Under `implement_mode: tdd` — or with `--tdd` for one run — the gate list al
 pure **`tdd-order`** gate, evaluated after all the others because its verdict includes
 theirs. See [`knobs.implement_mode`](configuration.md#implement_mode).
 
-There are four outcome labels, and the difference between the last two matters:
+There are five outcome labels, and the difference between the last two matters:
 
 | label | meaning |
 |---|---|
 | `ok` | the gate ran and passed |
 | `FAIL` | the gate ran and failed |
 | `TIMEOUT` | the gate was killed by its wall-clock limit before producing a verdict — still blocks |
+| `SKIPPED` | the gate reached its runner and judged nothing — a jury that could not run, or a soft gate that errored; it does not block, and is labelled apart from `ok` because nothing was checked |
 | `NOT-RUN` | **this command did not execute the gate at all** |
 
 `NOT-RUN` is what an `agentic` gate reports here: the command-only runner does not dispatch

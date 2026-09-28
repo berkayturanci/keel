@@ -57,7 +57,7 @@ Most coding agents stop at *"I opened a PR."* Without an invariant delivery back
   off unless a run passes `--jury` or `knobs.team` makes the panel the review; `--no-jury` turns
   it off below a panel tier. Listing `jury` in `gates:` also runs it as a
   `keel run-gates` gate at s8, at every tier. Without the `jury` binary the s8 run is a
-  no-op, but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
+  no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
   it relaxes to advisory only when a posted verdict (or `--jury-vendors`) reports fewer than
   2 vendors. Core resolves the mode from the panel that actually ran: a cross-vendor gate
   needs ≥2 distinct vendors, so a short panel downgrades to advisory instead of blocking.

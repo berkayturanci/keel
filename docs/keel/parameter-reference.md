@@ -1591,8 +1591,8 @@ plan with no gate at all adds a failed `gates` outcome (`no gate configured: gat
 distinct `TIMEOUT` instead of `FAIL` and its finding says no pass/fail result was produced
 — it still blocks, exactly as a failure does. The built-in `jury` gate (when `gates:`
 includes `jury`) runs the ai-jury CLI on `git diff base...HEAD` in **gating** mode here,
-with its own `knobs.jury_timeout_s` limit (default 600s). A missing `jury` CLI makes this
-run a no-op; it does not waive a tier-3 `jury-verdict` (see `--no-jury` below). Three outcomes mean no review was produced — a diff over 1 MB
+with its own `knobs.jury_timeout_s` limit (default 600s). A missing `jury` CLI, or an empty diff, makes this
+run a no-op reported `SKIPPED  jury` with a `nit` (`jury:not-run`), and a `FAIL` when `jury` is the only gate planned (#1369); it does not waive a tier-3 `jury-verdict` (see `--no-jury` below). Three outcomes mean no review was produced — a diff over 1 MB
 (`jury:skipped-oversize`), a run killed by the limit, and a run with no parseable verdict
 (`jury:incomplete-run`) — and in gating mode each is a blocking `major`, so `run-gates`
 blocks on all three (advisory mode, which `keel ship` may resolve to, downgrades them to
@@ -2294,7 +2294,7 @@ ran: a run with fewer than `MINIMUM_JURY_VENDORS` (2) distinct participating ven
 downgraded to advisory, and a run where no agent returned output is zero vendors. That
 downgrade needs the count to be reported, by a posted verdict or by `--jury-vendors`;
 until then the mode stays gating. So a missing jury does not waive anything: without the
-`jury` binary the s8 gate is a no-op, but a tier-3 merge still requires a `jury-verdict`
+`jury` binary the s8 gate is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a `jury-verdict`
 unless the run passes `--no-jury`, and it relaxes to advisory only when a posted verdict
 (or `--jury-vendors`) reports fewer than 2 vendors. Supply the count with
 [`evidence-verify --jury-vendors`](cli.md); the resolved `jury.mode` is what the evidence
