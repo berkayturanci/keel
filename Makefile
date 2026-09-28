@@ -60,6 +60,8 @@ validate:
 site:
 	PYTHONPATH=src $(PY) -m coverage run -m unittest discover -s tests
 	PYTHONPATH=src $(PY) -m coverage html -d website/coverage
+	PYTHONPATH=src $(PY) -m coverage json -o coverage.json
+	$(PY) scripts/coverage_page_data.py coverage.json website/coverage-summary.json
 	@echo "serving keel site at http://localhost:8000  (Ctrl-C to stop)"
 	cd website && $(PY) -m http.server 8000
 

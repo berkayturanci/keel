@@ -266,20 +266,9 @@ window.KEEL = {
     ["What do I need installed?", "Python 3.11+, <code>git</code>, and PyYAML — that's the one runtime dependency (on Windows, also tzdata for the timezone database). A live run (<code>--live</code>) also needs an authenticated <code>gh</code> (<code>gh auth login</code>); a dry run does not. It runs on Linux, macOS, and Windows. The pure core is stdlib-first. Adapters install the /keel:&lt;command&gt; workflows into the surfaces your agents already read."],
   ],
 
-  /* ---- Coverage (pure core held at 100% line + branch) ----------- */
-  coverage: {
-    overall: { line: 100, branch: 100, statements: 1840, missing: 0, branches: 612, partial: 0 },
-    gate: "fail_under = 100",
-    modules: [
-      ["src/keel/config.py", 100, 100, 214],
-      ["src/keel/model.py", 100, 100, 268],
-      ["src/keel/extensions.py", 100, 100, 196],
-      ["src/keel/findings.py", 100, 100, 142],
-      ["src/keel/gates.py", 100, 100, 233],
-      ["src/keel/orchestrator.py", 100, 100, 411],
-      ["src/keel/cli.py", 100, 100, 376],
-    ],
-  },
+  /* Coverage figures are not kept here: coverage.html fetches
+     coverage-summary.json, which scripts/coverage_page_data.py writes from the
+     coverage run at site-build time (#1320). */
 
   /* ============================================================
      DOCS — data-driven. Each entry becomes:
@@ -523,9 +512,9 @@ window.KEEL = {
     },
     {
       group: "Operating", title: "Coverage", slug: "coverage-doc",
-      summary: "The pure core is held at 100% line + branch coverage; the gate is fail_under = 100 in CI.",
+      summary: "Every module under src/keel/ except the python -m entry shim is held at 100% line + branch coverage; the gate is fail_under = 100 in CI.",
       body:
-        "<p>The pure core (<code>config</code>, <code>model</code>, <code>extensions</code>, <code>findings</code>, <code>gates</code>, <code>orchestrator</code>, <code>cli</code>) is held at <b>100% line + branch coverage</b>; the coverage gate (<code>fail_under = 100</code>) runs in CI. See the <a href='coverage.html'>live coverage report →</a></p>",
+        "<p>Every module under <code>src/keel/</code> except the <code>python -m</code> entry shim (<code>__main__.py</code>, which <code>pyproject.toml</code> omits) — the pure core and the thin I/O wrappers alike — is held at <b>100% line + branch coverage</b>; the coverage gate (<code>fail_under = 100</code>) runs in CI. The <a href='coverage.html'>coverage page →</a> shows the figures from the coverage run the site was built with.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md",
     },
     {
