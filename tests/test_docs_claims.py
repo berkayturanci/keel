@@ -1333,15 +1333,42 @@ _GIT_WRITES = frozenset(
 )
 
 
-def _argv_writes(node: ast.AST) -> bool:
-    """Is ``node`` a literal ``["git"|"gh", …]`` argv whose command writes?"""
+#: `gh api` options that send a request body. With one and no `-X`, gh sends a POST.
+_GH_BODY_FLAGS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
+
+_MUTATION = re.compile(r"\bmutation\b")
+
+
+def _strings_in(node: ast.AST, consts: dict[str, str]) -> list[str]:
+    """The string literals ``node`` carries, with module-level constants it names resolved."""
+    out: list[str] = []
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            out.append(sub.value)
+        elif isinstance(sub, ast.Name) and sub.id in consts:
+            out.append(consts[sub.id])
+    return out
+
+
+def _argv_writes(node: ast.AST, consts: dict[str, str] | None = None) -> bool:
+    """Is ``node`` a literal ``["git"|"gh", …]`` argv whose command writes?
+
+    ``gh api`` writes with a non-GET ``-X``, or with a body flag and no ``-X`` (gh's
+    default is then POST) — except ``gh api graphql``, which always POSTs, and writes only
+    when its query is a ``mutation``. ``consts`` resolves a query held in a module-level
+    string constant.
+    """
     if not isinstance(node, ast.List) or not node.elts:
         return False
     toks = [e.value if isinstance(e, ast.Constant) else None for e in node.elts]
     if toks[0] == "gh":
+        if toks[1:3] == ["api", "graphql"]:
+            return any(_MUTATION.search(s) for s in _strings_in(node, consts or {}))
         if "-X" in toks:
             method = toks[toks.index("-X") + 1 :][:1]
             return method not in ([], [None], ["GET"])
+        if toks[1:2] == ["api"]:
+            return bool(_GH_BODY_FLAGS.intersection(toks))
         return tuple(toks[1:3]) in _GH_WRITES
     if toks[0] != "git":
         return False
@@ -1355,45 +1382,149 @@ def _argv_writes(node: ast.AST) -> bool:
     return bool(rest) and rest[0] in _GIT_WRITES
 
 
-def _cli_write_commands() -> dict[str, str]:
-    """Every `keel` subcommand that can reach a git or GitHub write, read from the code.
+def _refused_calls(unit: ast.AST) -> set[int]:
+    """The ``id()`` of each callee a flag refusal keeps in its dry run.
 
-    A call graph over `src/keel/`: each top-level function's references to other
-    functions (``module.func`` attributes, and bare names within its own module), and
-    the functions that build a writing ``git``/``gh`` argv themselves. A subcommand
-    writes when its ``set_defaults(func=…)`` handler reaches one. It over-approximates
-    — a dry-run arm counts — which is the right direction for a list that says what the
-    CLI *may* write: the README names the flag that turns each write on.
+    A refusal is a top-level ``if args.<flag>: … return <nonzero>`` in a function's body.
+    A later call that passes ``dry_run=not args.<flag>`` can then only run dry, so its
+    callee is not counted as a write: `swarm-run --live` is refused before
+    `run_swarm_orchestration(…, dry_run=not args.live)`, whose worktrees are
+    ``not dry_run`` only (#1367 review). It relies on the callee honouring ``dry_run``,
+    which is that keyword's contract.
+    """
+    if not isinstance(unit, ast.FunctionDef | ast.AsyncFunctionDef):
+        return set()
+    refused: dict[str, int] = {}
+    for stmt in unit.body:
+        test = stmt.test if isinstance(stmt, ast.If) else None
+        last = stmt.body[-1] if isinstance(stmt, ast.If) else None
+        if (
+            isinstance(test, ast.Attribute)
+            and isinstance(test.value, ast.Name)
+            and test.value.id == "args"
+            and isinstance(last, ast.Return)
+            and isinstance(last.value, ast.Constant)
+            and last.value.value not in (0, None, False)
+        ):
+            refused.setdefault(test.attr, stmt.lineno)
+    skipped: set[int] = set()
+    for call in ast.walk(unit):
+        if not isinstance(call, ast.Call):
+            continue
+        for kw in call.keywords:
+            value = kw.value
+            if (
+                kw.arg == "dry_run"
+                and isinstance(value, ast.UnaryOp)
+                and isinstance(value.op, ast.Not)
+                and isinstance(value.operand, ast.Attribute)
+                and isinstance(value.operand.value, ast.Name)
+                and value.operand.value.id == "args"
+                and refused.get(value.operand.attr, call.lineno) < call.lineno
+            ):
+                skipped.add(id(call.func))
+    return skipped
+
+
+def _write_graph(sources: dict[str, str]) -> tuple[dict[str, set[str]], set[str]]:
+    """A reference graph over ``sources`` (module name → source), and its writing nodes.
+
+    Nodes are top-level functions (``m.f``), classes (``m.C``, which reach their methods),
+    methods (``m.C.f``) and module-level assignments (``m.TABLE``), so a dispatch table
+    reaches the handlers it holds. Edges are every reference a node makes: ``mod.f``
+    attributes — through ``from . import mod as alias`` — and bare names, which resolve
+    to the node's own module or to a ``from .mod import f [as g]``. Inside a class,
+    ``self.f`` / ``cls.f`` resolve to that class's method. A callee a flag refusal pins
+    to its dry run (:func:`_refused_calls`) is not an edge.
     """
     graph: dict[str, set[str]] = {}
     writers: set[str] = set()
-    for path in sorted((REPO_ROOT / "src" / "keel").glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        local = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
-        for fn in tree.body:
-            if not isinstance(fn, ast.FunctionDef):
-                continue
-            name, refs = f"{path.stem}.{fn.name}", set()
-            for node in ast.walk(fn):
-                if _argv_writes(node):
-                    writers.add(name)
+    for mod, source in sources.items():
+        tree = ast.parse(source)
+        consts = {
+            t.id: n.value.value
+            for n in tree.body
+            if isinstance(n, ast.Assign)
+            and isinstance(n.value, ast.Constant)
+            and isinstance(n.value.value, str)
+            for t in n.targets
+            if isinstance(t, ast.Name)
+        }
+        modules: dict[str, str] = {}  # alias -> module
+        names: dict[str, str] = {}  # bare name -> "module.name"
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 1:
+                for alias in node.names:
+                    bound = alias.asname or alias.name
+                    if node.module is None:
+                        modules[bound] = alias.name
+                    else:
+                        names[bound] = f"{node.module}.{alias.name}"
+        units: list[tuple[str, ast.AST, str | None]] = []
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                units.append((node.name, node, None))
+            elif isinstance(node, ast.ClassDef):
+                methods = [
+                    m for m in node.body if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)
+                ]
+                graph[f"{mod}.{node.name}"] = {f"{mod}.{node.name}.{m.name}" for m in methods}
+                units += [(f"{node.name}.{m.name}", m, node.name) for m in methods]
+            elif isinstance(node, ast.Assign | ast.AnnAssign):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                units += [(t.id, node, None) for t in targets if isinstance(t, ast.Name)]
+        local = {name for name, _, owner in units if owner is None} | {
+            n.name for n in tree.body if isinstance(n, ast.ClassDef)
+        }
+        for name, unit, owner in units:
+            qualified, refs = f"{mod}.{name}", set()
+            refused = _refused_calls(unit)
+            for node in ast.walk(unit):
+                if _argv_writes(node, consts):
+                    writers.add(qualified)
+                if id(node) in refused:
+                    continue
                 if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-                    refs.add(f"{node.value.id}.{node.attr}")
-                elif isinstance(node, ast.Name) and node.id in local and node.id != fn.name:
-                    refs.add(f"{path.stem}.{node.id}")
-            graph[name] = refs
+                    base = node.value.id
+                    if owner and base in ("self", "cls"):
+                        refs.add(f"{mod}.{owner}.{node.attr}")
+                    else:
+                        refs.add(f"{modules.get(base, base)}.{node.attr}")
+                elif isinstance(node, ast.Name) and node.id != name:
+                    if node.id in local:
+                        refs.add(f"{mod}.{node.id}")
+                    elif node.id in names:
+                        refs.add(names[node.id])
+            graph[qualified] = refs
+    return graph, writers
 
-    def reaches(start: str) -> bool:
-        seen, todo = set(), [start]
-        while todo:
-            name = todo.pop()
-            if name in writers:
-                return True
-            if name not in seen:
-                seen.add(name)
-                todo.extend(graph.get(name, ()))
-        return False
 
+def _reaches(graph: dict[str, set[str]], writers: set[str], start: str) -> bool:
+    seen: set[str] = set()
+    todo = [start]
+    while todo:
+        name = todo.pop()
+        if name in writers:
+            return True
+        if name not in seen:
+            seen.add(name)
+            todo.extend(graph.get(name, ()))
+    return False
+
+
+def _cli_write_commands() -> dict[str, str]:
+    """Every `keel` subcommand that can reach a git or GitHub write, read from the code.
+
+    :func:`_write_graph` over `src/keel/`; a subcommand writes when its
+    ``set_defaults(func=…)`` handler reaches a writing node. It over-approximates — a
+    dry-run arm counts — which is the right direction for a list that says what the CLI
+    *may* write: the README says what turns each write on or off.
+    """
+    sources = {
+        path.stem: path.read_text(encoding="utf-8")
+        for path in sorted((REPO_ROOT / "src" / "keel").glob("*.py"))
+    }
+    graph, writers = _write_graph(sources)
     out: dict[str, str] = {}
 
     def walk(parser, prefix: str) -> None:
@@ -1404,11 +1535,98 @@ def _cli_write_commands() -> dict[str, str]:
                     walk(sub, f"{prefix}{sub_name} ")
                     continue
                 handler = f"{func.__module__.rsplit('.', 1)[-1]}.{func.__name__}"
-                if reaches(handler):
+                if _reaches(graph, writers, handler):
                     out[f"{prefix}{sub_name}"] = handler
 
     walk(cli.build_parser(), "")
     return out
+
+
+class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
+    """The README's write list is only as complete as :func:`_write_graph` (#1367 review).
+
+    Each case hides one write behind one resolution rule, in synthetic sources.
+    """
+
+    PUSH = "def push():\n    return ['git', 'push', 'origin', 'x']\n"
+
+    def reaches(self, sources: dict[str, str], start: str) -> bool:
+        return _reaches(*_write_graph(sources), start)
+
+    def test_a_direct_argv(self):
+        self.assertTrue(self.reaches({"w": self.PUSH}, "w.push"))
+        self.assertFalse(self.reaches({"w": "def f():\n    return ['git', 'status']\n"}, "w.f"))
+
+    def test_an_aliased_module_import(self):
+        caller = "from . import w as ww\n\ndef h():\n    ww.push()\n"
+        self.assertTrue(self.reaches({"w": self.PUSH, "c": caller}, "c.h"))
+
+    def test_a_function_imported_by_name(self):
+        caller = "from .w import push as p\n\ndef h():\n    p()\n"
+        self.assertTrue(self.reaches({"w": self.PUSH, "c": caller}, "c.h"))
+
+    def test_gh_api_with_a_body_and_no_method_is_a_post(self):
+        post = "def f():\n    return ['gh', 'api', 'repos/o/r/labels', '-f', 'name=x']\n"
+        get = "def f():\n    return ['gh', 'api', '-X', 'GET', 'repos/o/r', '-f', 'q=1']\n"
+        bare = "def f():\n    return ['gh', 'api', 'repos/o/r/labels']\n"
+        self.assertTrue(self.reaches({"w": post}, "w.f"))
+        self.assertFalse(self.reaches({"w": get}, "w.f"))
+        self.assertFalse(self.reaches({"w": bare}, "w.f"))
+
+    def test_a_graphql_mutation_and_not_a_query(self):
+        shape = "Q = {!r}\n\ndef f():\n    return ['gh', 'api', 'graphql', '-f', f'query={{Q}}']\n"
+        mutation = shape.format("mutation { addComment(input: {}) { clientMutationId } }")
+        self.assertTrue(self.reaches({"w": mutation}, "w.f"))
+        self.assertFalse(self.reaches({"w": shape.format("query { viewer { login } }")}, "w.f"))
+
+    def test_a_class_method(self):
+        source = (
+            "class K:\n"
+            "    def run(self):\n        return self._w()\n"
+            "    def _w(self):\n        return ['git', 'push']\n\n"
+            "def h():\n    return K().run()\n"
+        )
+        self.assertTrue(self.reaches({"w": source}, "w.h"), "through the class")
+        self.assertTrue(self.reaches({"w": source}, "w.K.run"), "through self._w")
+
+    def test_a_module_level_dispatch_table(self):
+        source = self.PUSH + "\nTABLE = {'x': push}\n\ndef h(key):\n    return TABLE[key]()\n"
+        self.assertTrue(self.reaches({"w": source}, "w.h"))
+
+    def test_a_call_a_refusal_keeps_dry_is_not_a_write(self):
+        """`swarm-run --live` is refused before its only call, which passes
+        ``dry_run=not args.live``: the call can only run dry (#1367 review)."""
+        worker = "def run(*, dry_run=True):\n    if not dry_run:\n        return ['git', 'push']\n"
+        refused = (
+            "from . import w\n\ndef h(args):\n    if args.live:\n        return 1\n"
+            "    return w.run(dry_run=not args.live)\n"
+        )
+        after = (
+            "from . import w\n\ndef h(args):\n    w.run(dry_run=not args.live)\n"
+            "    if args.live:\n        return 1\n"
+        )
+        unguarded = "from . import w\n\ndef h(args):\n    return w.run(dry_run=not args.live)\n"
+        self.assertFalse(self.reaches({"w": worker, "c": refused}, "c.h"))
+        self.assertTrue(self.reaches({"w": worker, "c": after}, "c.h"), "refused too late")
+        self.assertTrue(self.reaches({"w": worker, "c": unguarded}, "c.h"))
+
+    def test_the_cli_writes_from_exactly_nine_commands(self):
+        """The hardening found nothing new, and the refusal rule drops `swarm-run`,
+        whose `--live` is refused before anything starts (#1281)."""
+        self.assertEqual(
+            {
+                "merge",
+                "capture-land",
+                "post-comment",
+                "review",
+                "doctor",
+                "swarm-land",
+                "worktree-remove",
+                "rollback",
+                "canary",
+            },
+            set(_cli_write_commands()),
+        )
 
 
 class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
@@ -1469,9 +1687,10 @@ class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
         """#1361: the list of the CLI's own writes left out `keel doctor --fix`.
 
         It named the merge, `capture-land`, `post-comment` and `review`. The code also
-        creates labels (`doctor --fix`), and in the local checkout adds and removes
-        worktrees and branches (`swarm-run --live`, `worktree-remove`), rebases and merges
-        (`swarm-land --live`) and commits reverts (`rollback`, `canary --auto-revert`).
+        creates labels (`doctor --fix`), and in the local checkout removes worktrees
+        (`worktree-remove`), rebases and merges (`swarm-land --live`) and commits reverts
+        (`rollback`, `canary --auto-revert`). `swarm-run --live` is refused before its
+        worktrees are made, so it is not one (#1367 review).
         The list is compared with :func:`_cli_write_commands`, not with a list typed here.
         """
         screen = " ".join(_readme_first_screen().split())
@@ -1738,6 +1957,87 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
     #: "the optional jury verdict" (evidence.py) and "optional jury-verdict comments"
     #: (github-actions.md): at tier 3 it is required by default, binary or no binary.
     _OPTIONAL_VERDICT = re.compile(r"\boptional `?jury`?[- ]verdict", re.I)
+
+    #: The flags a jury-panel tier records and does not apply, as `resolve_jury` spells them.
+    _PANEL_IGNORES = (("--no-jury", "no_jury"), ("--jury-advisory", "jury_advisory"))
+
+    def _sentence(self, name: str, pattern: str, *, whole: bool = False) -> str:
+        """The adapter's first sentence matching ``pattern`` (case-insensitive): all of it
+        when ``whole``, otherwise from the match to the sentence's end.
+
+        A sentence ends at a full stop followed by whitespace, so `team.jury.mode` does not
+        end one; `;` does not either, so a sentence keeps its second clause.
+        """
+        for sentence in re.split(r"(?<=\.)\s+", self._surface_text(name)):
+            found = re.search(pattern, sentence, re.I)
+            if found:
+                return sentence if whole else sentence[found.start() :]
+        self.fail(f"{name} has no sentence matching {pattern!r}")
+
+    def _panel_clause(self, name: str) -> str:
+        """What the adapter says about a jury-panel tier, to the end of that sentence."""
+        return self._sentence(name, r"on a tier whose review is the jury panel\b")
+
+    def test_the_adapter_names_every_flag_a_panel_tier_ignores(self):
+        """#1367 review: "`--jury-advisory` never requires the verdict" was unscoped.
+
+        `resolve_jury` applies `--jury-advisory` below a panel tier and ignores it on one,
+        so the adapter must scope the relaxation and list the flag with the ignored ones.
+        """
+        for flag, kwarg in self._PANEL_IGNORES:
+            with self.subTest(flag=flag, check="ignored on a panel tier"):
+                panel = ship.resolve_jury(tier=3, panel_is_jury=True, **{kwarg: True})
+                self.assertEqual("gating", panel["mode"])
+        self.assertEqual("advisory", ship.resolve_jury(tier=3, jury_advisory=True)["mode"])
+        for name in self._SHIP_ADAPTERS:
+            clause = self._panel_clause(name)
+            for flag, _ in self._PANEL_IGNORES:
+                with self.subTest(page=name, flag=flag):
+                    self.assertIn(f"`{flag}`", clause)
+            relax = self._sentence(
+                name, r"`--jury-advisory` never requires the verdict", whole=True
+            )
+            with self.subTest(page=name, check="the relaxation is scoped"):
+                self.assertIn("off a jury-panel tier", relax.lower())
+
+    def test_the_adapter_names_the_fallback_that_turns_a_panel_tier_off(self):
+        """#1367 review: the case list read as complete and left out the one path that
+        turns a panel tier's jury off without `--no-jury` (ship.py's `panel_unavailable`)."""
+        fallback = ship.resolve_jury(tier=3, panel_is_jury=True, panel_unavailable=True)
+        self.assertEqual((False, "off"), (fallback["enabled"], fallback["mode"]))
+        for name in self._SHIP_ADAPTERS:
+            with self.subTest(page=name):
+                self.assertIn("`team.jury.on_unavailable: fallback`", self._panel_clause(name))
+
+    def test_the_adapter_says_an_unreported_count_downgrades_nothing(self):
+        """#1367 review: "a run where no agent returned output is simply zero vendors, so
+        … a jury that did not complete cleanly does not gate" at the evidence check.
+
+        `resolve_jury` downgrades only a *reported* count, and
+        `evidence.jury_participating_vendors` reports nothing when no verdict is posted:
+        with no count the mode stays gating and the verdict stays required.
+        """
+        unreported = ship.resolve_jury(tier=3, participating_vendors=None)
+        self.assertEqual(("gating", False), (unreported["mode"], unreported["downgraded"]))
+        self.assertEqual("advisory", ship.resolve_jury(tier=3, participating_vendors=0)["mode"])
+        self.assertIsNone(evidence.jury_participating_vendors([], [], head_sha="a" * 40))
+        self.assertIn(
+            "jury-verdict",
+            {
+                item.id
+                for item in evidence.required_items(
+                    {"jury": unreported}, phase=evidence.PHASE_PRE_MERGE
+                )
+            },
+        )
+        for name in self._SHIP_ADAPTERS:
+            zero = self._sentence(name, r"no agent returned output", whole=True)
+            with self.subTest(page=name, check="zero counts only once reported"):
+                self.assertIn("reported", zero)
+            none = self._sentence(name, r"with no count at all", whole=True)
+            with self.subTest(page=name, check="no count keeps the verdict required"):
+                self.assertIn("no downgrade", none)
+                self.assertIn("`jury-verdict`", none)
 
     def test_no_surface_calls_the_jury_verdict_optional(self):
         """#1361: the evidence module and the Actions guide called the verdict optional."""

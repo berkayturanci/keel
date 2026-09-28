@@ -29,10 +29,10 @@
    `keel capture-land` pushes onto the pull request's branch (the base branch without
    `--onto`), the verdict and closure comments `keel post-comment` and `keel review --live`
    post or update, and the missing labels `keel doctor --fix` creates. In the local
-   checkout: `keel swarm-run --live` creates (or resets) a branch and a worktree per
-   cluster and removes the worktree afterwards, `keel swarm-land --live` rebases cluster
-   branches and merges them into the base branch with `--no-ff`, `keel worktree-remove`
-   removes a worktree, and `keel rollback` (or `keel canary --auto-revert`) commits a revert.
+   checkout: `keel swarm-land --live` rebases existing cluster branches and merges them
+   into the base branch with `--no-ff`, `keel worktree-remove` removes a worktree, and
+   `keel rollback` (or `keel canary --auto-revert`) commits a revert. (`swarm-run --live`
+   is refused before it starts, so it writes nothing.)
 3. **A pull request merges only through `keel merge`**, which takes the merge lock,
    re-checks the merge window, reads the live CI rollup and verifies the head-pinned review
    evidence first.
