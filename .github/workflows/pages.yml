@@ -44,6 +44,8 @@ jobs:
           coverage run -m unittest discover -s tests
           coverage html -d website/coverage
           coverage json -o coverage.json
+          # The coverage page's figures (#1320): written from this run, never typed.
+          python scripts/coverage_page_data.py coverage.json website/coverage-summary.json
           python - <<'PY'
           import json
           pct = round(json.load(open("coverage.json"))["totals"]["percent_covered"], 2)

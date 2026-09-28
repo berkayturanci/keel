@@ -13,7 +13,7 @@
 
 - [Home](https://keel-ship.dev/): overview, positioning, and quick start
 - [Documentation](https://keel-ship.dev/docs.html): commands, config, extension slots, and the fixed backbone
-- [Coverage report](https://keel-ship.dev/coverage.html): live test-coverage dashboard
+- [Coverage report](https://keel-ship.dev/coverage.html): test-coverage dashboard, generated from the coverage run each time the site is built
 
 ## Source
 
