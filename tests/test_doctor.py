@@ -1776,8 +1776,7 @@ class TestGithubCliCheck(unittest.TestCase):
         facts = {"gh": "/bin/gh", "authenticated": False, "reason": "not logged in"}
         check = _check(_doctor(github_cli=facts), "github_cli")
         self.assertEqual(check["status"], "warn")
-        self.assertIn("not authenticated", check["summary"])
-        self.assertIn("not logged in", check["summary"])
+        self.assertIn("gh auth status failed (not logged in)", check["summary"])
         self.assertIn("gh auth login", check["summary"])
 
     def test_authenticated_is_ok(self):
@@ -1867,6 +1866,19 @@ class TestDoctorGithubCliFacts(unittest.TestCase):
             facts["reason"],
             "You are not logged into any GitHub hosts. To log in, run: gh auth login",
         )
+
+    def test_a_timeout_is_unknown_not_unauthenticated(self):
+        # Lead review of #1365: a gh that never answered was reported "not authenticated
+        # — run gh auth login". It is a check that could not look.
+        timed_out = cli.github.CommandResult(False, 124, "timed out after 10s", timed_out=True)
+        with patch.object(cli.github, "auth_status", return_value=timed_out):
+            facts = cli._doctor_github_cli(root=".", offline=False, _which=_gh_on_path)
+        self.assertIsNone(facts["authenticated"])
+        self.assertIn("did not answer in 10s", facts["reason"])
+        check = _check(_doctor(github_cli=facts), "github_cli")
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("did not answer in 10s", check["summary"])
+        self.assertNotIn("gh auth login", check["summary"])
 
     def test_a_silent_failure_still_has_a_reason(self):
         failed = cli.github.CommandResult(False, 4, "")

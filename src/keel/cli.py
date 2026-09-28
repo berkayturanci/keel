@@ -6634,6 +6634,15 @@ def _doctor_github_cli(
     result = github.auth_status(cwd=root, **_kw(_run))
     if result.ok:
         return {"gh": gh, "authenticated": True, "reason": ""}
+    if result.timed_out:
+        # No answer is not a "no": the login state is unknown, so this is a check that
+        # could not look, reported as such rather than as "run gh auth login".
+        return {
+            "gh": gh,
+            "authenticated": None,
+            "reason": f"gh auth status did not answer in {github.AUTH_STATUS_TIMEOUT_S}s — "
+            "login state unknown (is GitHub reachable?)",
+        }
     reason = _short(result.output) or f"gh auth status exited {result.code}"
     return {"gh": gh, "authenticated": False, "reason": reason}
 
@@ -9659,7 +9668,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument(
         "--offline",
         action="store_true",
-        help="skip the PyPI latest-version check (report latest as unknown)",
+        help="skip the network reads: the PyPI latest-version check (latest reported as "
+        "unknown), `gh auth status` and the repository-label read (both reported skipped)",
     )
     p_doctor.add_argument(
         "--strict",

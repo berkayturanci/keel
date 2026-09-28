@@ -1950,11 +1950,14 @@ capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
 ## `keel doctor [project.yaml] [--root DIR] [--offline] [--providers] [--registry FILE] [--strict] [--fix] [--approve-scope SCOPE] [--operator NAME] [--consent-mode MODE] [--json]`
 
 Run a diagnostic pass over the installed keel and its adapter surfaces. Read-only unless
-you pass `--fix`: `doctor` reads versions, markers, on-disk state and (with a config) the
-repository's labels, then classifies each check as `ok` / `skipped` / `warn` / `fail`. A
-check that *could not look* — no config, no `gh`, `--offline` — reports `skipped` rather
-than claiming `ok`, and never moves the roll-up. The roll-up `status` is the worst of the
-checks that did look.
+you pass `--fix`: `doctor` reads versions, markers, on-disk state, PATH, the answer of one
+`gh auth status` and (with a config) the repository's labels, then classifies each check as
+`ok` / `skipped` / `warn` / `fail`. A check that *could not look* — no config, `--offline`,
+a `gh auth status` that timed out, or (for `policy_labels`, which needs `gh` to read the
+labels) no `gh` — reports `skipped` rather than claiming `ok`, and never moves the roll-up.
+Where the missing thing is itself the finding, the check does look and says so: no `gh` on
+PATH is `github_cli`'s `warn`, and no agent host on PATH is `agent_hosts`'. The roll-up
+`status` is the worst of the checks that did look.
 
 ```bash
 keel doctor                                   # CLI, adapters, gh auth, agent hosts
@@ -2019,11 +2022,14 @@ The checks are:
   `gh label list` is all it costs — `--offline`, no `gh` on PATH, or an unauthenticated or
   unreachable GitHub each report `skipped` with the reason.
 - **`github_cli`** — whether a live run can reach GitHub: `gh` on PATH, and `gh auth
-  status` succeeding (#1334). `ok` when it does; a missing or logged-out `gh` is a `warn`
-  that says to install it / run `gh auth login`, **never a `fail`** — a dry run needs no
-  `gh`. `gh auth status` goes to GitHub, so `--offline` does not ask it and reports
-  `skipped` (the PATH lookup still runs). Its output is never printed on success, and keel
-  never passes `--show-token`.
+  status` succeeding (#1334). `ok` when it does. A missing `gh` is a `warn` that says to
+  install it, and a failing `gh auth status` a `warn` that quotes what it said — **never a
+  `fail`**, since a dry run needs no `gh`. Note that `gh auth status` exits 1 when **any**
+  configured host has a bad token, so a stale GitHub Enterprise login warns here even while
+  `github.com` works; the quoted output names the host. `gh auth status` goes to GitHub, so
+  `--offline` does not ask it, and one that does not answer within 10 s is reported as
+  unknown ("did not answer in 10s"); both are `skipped` (the PATH lookup still runs). Its
+  output is never printed on success, and keel never passes `--show-token`.
 - **`agent_hosts`** — which agent host CLIs are on PATH: `claude`, `codex`,
   `cursor-agent`, `agy` (#1334). A PATH lookup only — nothing is executed, so it runs on
   every invocation, `--offline` included. `ok` when at least one is found; `warn` when
@@ -2719,10 +2725,17 @@ files (`Cargo.toml`→Rust, `go.mod`→Go, `pom.xml`→Java, `pubspec.yaml`→Fl
 `keel validate`. Refuses to overwrite an existing config unless `--force`.
 
 A generic project gets `build_gate_cmd: "make test"` only when its Makefile has a `test`
-rule. Otherwise keel has no command to name, so it writes none: `init` prints `build gate
-: not configured — set knobs.build_gate_cmd …`, the file carries the same note above
-`knobs:`, and the `build` gate [blocks every run](configuration.md#build_gate_cmd) until
-you set it (#1328). `keel setup` prints the same line under `validate`.
+rule. Otherwise keel has no command to name, so it writes none, and three texts say so,
+each where it is read. `init` prints
+
+```text
+  build gate   : not configured — set knobs.build_gate_cmd in .keel/project.yaml to the command that runs your tests; until then the build gate blocks every run
+```
+
+(`keel setup` prints the same line under `validate`); the file carries a comment above
+`knobs:` that says `build_gate_cmd is not set` and shows an example; and the `build` gate
+[blocks every run](configuration.md#build_gate_cmd) with the finding `no build gate
+configured: set knobs.build_gate_cmd …` until you set it (#1328).
 
 `--force` replaces `.keel/project.yaml`; it does not delete or rewrite `.keel/extensions/*`.
 Use it only when intentionally regenerating project config.

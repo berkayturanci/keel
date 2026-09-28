@@ -1619,5 +1619,19 @@ class TheQuickstartDescribesTheFirstRunKeelHas(unittest.TestCase):
         self.assertLessEqual({"cli_version", "adapter_version", "github_cli", "agent_hosts"}, names)
 
 
+class TheInitReferenceQuotesInitsOwnLine(unittest.TestCase):
+    """`cli.md` quotes the line `keel init` prints for an unset build gate, whole (#1365 review).
+
+    It was a code span broken across two source lines, which Markdown renders with one
+    space where the output has three (`build gate   :`), so a reader searching for what
+    they saw found nothing. The quote is now the exact line, checked against the constant
+    `init` prints.
+    """
+
+    def test_the_whole_line_is_quoted_verbatim(self):
+        text = CLI_DOC.read_text(encoding="utf-8")
+        self.assertIn(f"  build gate   : {cli._UNSET_BUILD_NOTE}\n", text)
+
+
 if __name__ == "__main__":
     unittest.main()

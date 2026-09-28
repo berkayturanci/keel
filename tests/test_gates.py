@@ -7,6 +7,7 @@ from keel import config as cfg
 from keel import gates, model, tdd
 from keel.extensions import Extension
 from keel.findings import Finding, summarize
+from keel.runner import command_gate_runner
 
 
 def _config(gates_list=("build", "lint"), lint=True):
@@ -216,9 +217,10 @@ class TestRun(unittest.TestCase):
 class AnUnconfiguredCommandGateBlocks(unittest.TestCase):
     """A ``command`` gate with no command is a failure that says what to set (#1328).
 
-    The build gate of a scaffold that found no test command is planned without one.
-    It must neither be handed to the runner (``make test`` by another name) nor read
-    as a pass: it blocks, and its finding names the knob.
+    The build gate of a scaffold that found no test command is planned without one. The
+    command runner owns the verdict: it runs nothing, fails the gate and names the knob.
+    It is the runner and not :func:`gates.run_gates` because a gate outside a run's
+    ``--phases`` scope must stay ``not_run`` (tests/test_scaffold_generic_gate.py).
     """
 
     def _unset_build(self):
@@ -237,11 +239,11 @@ class AnUnconfiguredCommandGateBlocks(unittest.TestCase):
             [(s.id, s.kind, s.on_fail, s.run) for s in specs], [("build", "command", "block", None)]
         )
 
-    def test_it_blocks_with_the_knob_named_and_never_reaches_the_runner(self):
-        def runner(spec):
-            raise AssertionError("an unconfigured gate must not be run")
+    def test_the_command_runner_blocks_it_with_the_knob_named_and_runs_nothing(self):
+        def no_process(*_a, **_kw):
+            raise AssertionError("an unconfigured gate must not run a command")
 
-        [outcome] = gates.run_gates(self._unset_build(), runner)
+        [outcome] = gates.run_gates(self._unset_build(), command_gate_runner(_run=no_process))
         self.assertFalse(outcome.ok)
         self.assertFalse(outcome.not_run)
         self.assertIsNone(outcome.error)
@@ -253,17 +255,15 @@ class AnUnconfiguredCommandGateBlocks(unittest.TestCase):
 
     def test_any_other_command_gate_without_a_command_names_itself(self):
         spec = gates.GateSpec("smoke", "command", "test", "suggest", run=None)
-        [outcome] = gates.run_gates([spec], lambda s: (True, []))
-        self.assertFalse(outcome.ok)
-        [finding] = outcome.findings
+        finding = gates.unconfigured_finding(spec)
         self.assertEqual(finding.severity, "minor")
         self.assertIn("'smoke'", finding.message)
         self.assertIn("no command configured", finding.message)
 
-    def test_non_command_gates_still_reach_the_runner(self):
+    def test_a_non_command_gate_is_still_not_the_command_runners(self):
         spec = gates.GateSpec("jury", "builtin", "test", "block")
-        [outcome] = gates.run_gates([spec], lambda s: (True, []))
-        self.assertTrue(outcome.ok)
+        [outcome] = gates.run_gates([spec], command_gate_runner())
+        self.assertTrue(outcome.not_run)
 
 
 class TestGateTimeoutResolution(unittest.TestCase):

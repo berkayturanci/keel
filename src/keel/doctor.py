@@ -558,7 +558,8 @@ def _check_github_cli(facts: dict[str, object] | None) -> CheckResult:
 
     Never a ``fail``: a dry run needs no ``gh`` at all, so a missing or logged-out one
     is a ``warn`` that says what to do. ``--offline`` leaves the auth question
-    unasked (it goes to GitHub) and reports ``skipped``.
+    unasked (it goes to GitHub) and reports ``skipped``, as does a ``gh auth status``
+    that timed out: neither looked, so neither may claim a login state.
     """
     if facts is None:
         return CheckResult("github_cli", _SKIPPED, "gh not probed", {})
@@ -577,11 +578,13 @@ def _check_github_cli(facts: dict[str, object] | None) -> CheckResult:
         reason = str(facts.get("reason") or "gh auth status not run")
         return CheckResult("github_cli", _SKIPPED, f"gh at {gh}; {reason}", detail)
     if not authenticated:
+        # "Failed", not "not logged in": `gh auth status` exits 1 when *any* configured
+        # host has a bad token, and its output says which — so it is quoted, not guessed.
         return CheckResult(
             "github_cli",
             _WARN,
-            f"gh at {gh} is not authenticated ({facts.get('reason')}) — run gh auth login "
-            "before a live run",
+            f"gh at {gh}: gh auth status failed ({facts.get('reason')}) — fix what it names "
+            "(usually gh auth login) before a live run",
             detail,
         )
     return CheckResult("github_cli", _OK, f"gh at {gh} is authenticated", detail)
