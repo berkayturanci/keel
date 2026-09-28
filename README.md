@@ -174,7 +174,7 @@ merges out of the night. The one-command setup and what to check afterwards are 
   or a hosted-API delegate (`--delegate anthropic-api:MODEL`, `openai-api:MODEL`,
   `google-api:MODEL`) that needs only that provider's API key.
 - **For tier-3 changes:** [ai-jury](https://github.com/berkayturanci/ai-jury), or `--no-jury`.
-  Without the `jury` binary the s8 run is a no-op, but a tier-3 merge still requires a
+  Without the `jury` binary the s8 run is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a
   `jury-verdict` unless the run passes `--no-jury`; it relaxes to advisory only when a posted
   verdict (or `--jury-vendors`) reports fewer than 2 vendors.
 
@@ -404,7 +404,7 @@ or the reference it points at.
   then requires its verdict. Below tier 3 it is off unless a run passes `--jury` or
   `knobs.team` makes the panel the review; `--no-jury` turns it off below a panel tier, and
   listing `jury` in `gates:` also runs it at s8. Without the `jury` binary the s8 run is a
-  no-op, but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
+  no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
   it relaxes to advisory only when a posted verdict (or `--jury-vendors`) reports fewer than
   2 vendors ([details](docs/keel/overview.md#what-you-get)).
 - **Safe merges** — `keel merge` claims the lock, re-checks the window, reads the live CI

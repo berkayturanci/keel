@@ -93,11 +93,20 @@ class TestAvailable(unittest.TestCase):
 
 
 class TestRunGate(unittest.TestCase):
-    def test_no_diff_is_noop(self):
-        self.assertEqual(jury.run_gate("", _run=_jury_ok), (True, [], False))
+    def test_no_diff_is_a_noop_that_says_it_judged_nothing(self):
+        # Still a no-op for the merge (ok), but never a silent one (#1369).
+        ok, findings, timed_out = jury.run_gate("", _run=_jury_ok)
+        self.assertEqual((ok, timed_out), (True, False))
+        self.assertEqual([(f.severity, f.source) for f in findings], [("nit", "jury:not-run")])
+        self.assertIn(jury.NOT_RUN_EMPTY_DIFF, findings[0].message)
+        self.assertTrue(jury.could_not_run(findings))
 
-    def test_absent_is_noop(self):
-        self.assertEqual(jury.run_gate("a diff", _run=_jury_absent), (True, [], False))
+    def test_absent_is_a_noop_that_says_it_judged_nothing(self):
+        ok, findings, timed_out = jury.run_gate("a diff", _run=_jury_absent)
+        self.assertEqual((ok, timed_out), (True, False))
+        self.assertEqual([(f.severity, f.source) for f in findings], [("nit", "jury:not-run")])
+        self.assertIn(jury.NOT_RUN_NO_CLI, findings[0].message)
+        self.assertTrue(jury.could_not_run(findings))
 
     def test_oversized_diff_skips_cli_but_emits_advisory(self):
         def fail_if_called(argv, **kw):
@@ -204,9 +213,13 @@ class TestIncompleteRun(unittest.TestCase):
         self.assertEqual([f.source for f in fs if f.source == "jury:incomplete-run"], [])
         self.assertEqual(len(fs), 3)
 
-    def test_absent_cli_is_still_a_clean_no_op(self):
-        # keel does not depend on ai-jury; an uninstalled CLI is not an incomplete run.
-        self.assertEqual(jury.run_gate("diff", mode="gating", _run=_jury_absent), (True, [], False))
+    def test_absent_cli_is_still_a_no_op_not_an_incomplete_run(self):
+        # keel does not depend on ai-jury; an uninstalled CLI is not an incomplete run. It
+        # does not block on its own; it says it judged nothing (#1369).
+        ok, findings, timed_out = jury.run_gate("diff", mode="gating", _run=_jury_absent)
+        self.assertEqual((ok, timed_out), (True, False))
+        self.assertEqual([f.source for f in findings], [jury.NOT_RUN_SOURCE])
+        self.assertEqual(findings[0].severity, "nit")
 
     def test_clean_run_with_zero_findings_is_a_pass(self):
         # The inverse failure, and the costlier one: if "no findings" were mistaken for

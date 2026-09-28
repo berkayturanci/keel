@@ -71,9 +71,9 @@ UNCONFIGURED_BUILD_GATE = (
 NO_GATES_ID = "gates"
 #:
 #: The remedy names only gates that judge wherever they run. ``jury`` is not one of them:
-#: with no ``jury`` binary on the host, or an empty diff, the jury gate is a no-op that
-#: reports ``ok`` — so "list jury" would clear this block while nothing is judged (#1368
-#: review).
+#: with no ``jury`` binary on the host, or an empty diff, the jury gate judges nothing
+#: (#1368 review) — it reports ``SKIPPED``, and a plan with no other gate blocks on it
+#: (:func:`lone_jury_cannot_judge`, #1369).
 NO_GATES_PLANNED = (
     "no gate configured: gates: in .keel/project.yaml plans nothing to run and no "
     "extension adds a gate — list build (with knobs.build_gate_cmd) or lint (with "
@@ -164,13 +164,16 @@ class GateOutcome:
     unconfigured: bool = False
 
 
-# runner(spec) -> (ok, findings[, timed_out[, not_run]]). May raise; run_gates handles
-# it fail-soft. The shorter forms stay supported for runners that cannot time out or
-# that execute every gate they are given.
+# runner(spec) -> (ok, findings[, timed_out[, not_run[, skipped]]]). May raise; run_gates
+# handles it fail-soft. The shorter forms stay supported for runners that cannot time out,
+# that execute every gate they are given, or whose gates always judge. ``skipped`` is a
+# gate that reached its runner and judged nothing (the jury with no CLI, #1369): reported
+# ``SKIPPED``, never ``ok``, and honoured only on a passing result.
 GateRunner = Callable[
     [GateSpec],
     "tuple[bool, list[Finding]] | tuple[bool, list[Finding], bool] "
-    "| tuple[bool, list[Finding], bool, bool]",
+    "| tuple[bool, list[Finding], bool, bool] "
+    "| tuple[bool, list[Finding], bool, bool, bool]",
 ]
 
 
@@ -390,6 +393,51 @@ def nothing_to_judge(specs: Sequence[GateSpec]) -> GateOutcome | None:
     return GateOutcome(NO_GATES_ID, False, (finding,), unconfigured=True)
 
 
+#: The id of the built-in jury gate, as ``gates:`` lists it.
+JURY_ID = "jury"
+
+#: The finding a jury that could not run blocks with when no other gate is planned (#1369).
+#: Its remedy names the same gates :data:`NO_GATES_PLANNED` does, for the same reason.
+LONE_JURY_JUDGED_NOTHING = (
+    "no gate judged this change: jury is the only gate planned and it did not run — list "
+    "build (with knobs.build_gate_cmd) or lint (with knobs.lint_cmd) beside it in gates:"
+)
+
+
+def lone_jury_cannot_judge(
+    specs: Sequence[GateSpec], outcomes: Sequence[GateOutcome]
+) -> list[GateOutcome]:
+    """Fail a jury that could not run when it is the only gate planned (#1369).
+
+    ``specs`` are the gates this run executed (the ``now`` half of :func:`split_deferred`)
+    and ``outcomes`` their results, in the same order. The jury builtin with no ``jury``
+    CLI on the host, or on an empty diff, judges nothing and comes back ``skipped``.
+    Beside another gate that stays the documented s8 no-op: the other gate judged, the
+    jury's ``nit`` says it did not, and the run reads ``SKIPPED  jury``. With **no** other
+    gate, nothing judged the change — the #1364 case of a plan with nothing to judge,
+    reached through a gate that is planned but cannot run — so its outcome becomes a
+    ``FAIL`` that cannot judge (``unconfigured``): a ``major`` naming what to list beside
+    it, ahead of the runner's ``nit`` saying why the jury did not run.
+
+    Keyed on the plan, like :func:`nothing_to_judge`: any other gate counts, a soft or a
+    ``not_run`` one included (a plan of soft gates alone is a separate question), and
+    ``tdd-order`` is not in ``specs`` — it reads the other gates' verdict.
+    """
+    result = list(outcomes)
+    if len(specs) != 1:
+        return result
+    spec, outcome = specs[0], result[0]
+    if spec.kind != "builtin" or spec.id != JURY_ID or not outcome.skipped or outcome.error:
+        return result
+    # The runner's own finding stays beside the new one: it says *why* the jury did not run.
+    found = (Finding(_ON_FAIL_SEVERITY["block"], LONE_JURY_JUDGED_NOTHING, JURY_ID),)
+    return [
+        GateOutcome(
+            JURY_ID, False, found + outcome.findings, on_fail=outcome.on_fail, unconfigured=True
+        )
+    ]
+
+
 def run_gates(
     specs,
     runner: GateRunner,
@@ -414,6 +462,7 @@ def run_gates(
             ok, found = result[0], result[1]
             timed_out = result[2] is True if len(result) > 2 else False
             not_run = result[3] is True if len(result) > 3 else False
+            skipped = result[4] is True if len(result) > 4 else False
         except Exception as exc:  # noqa: BLE001 - fail-soft is the contract
             if not fail_soft:
                 raise
@@ -440,7 +489,9 @@ def run_gates(
             )
         found = tuple(found)
         if ok:
-            return GateOutcome(spec.id, True, found, not_run=not_run, on_fail=spec.on_fail)
+            return GateOutcome(
+                spec.id, True, found, skipped=skipped, not_run=not_run, on_fail=spec.on_fail
+            )
         if not found:
             sev = _ON_FAIL_SEVERITY[spec.on_fail]
             found = (Finding(sev, f"gate {spec.id!r} failed", spec.id),)

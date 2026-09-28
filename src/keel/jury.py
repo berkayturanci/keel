@@ -2,7 +2,8 @@
 
 keel does **not** depend on ai-jury. If the ``jury`` CLI is on PATH, this gate runs it on
 the change's diff and maps its findings into keel :class:`~keel.findings.Finding`s. Without
-the ``jury`` binary the s8 run is a no-op, but a tier-3 merge still requires a
+the ``jury`` binary the s8 run is a no-op (reported ``SKIPPED``, and blocking when ``jury`` is
+the only gate planned), but a tier-3 merge still requires a
 ``jury-verdict`` unless the run passes ``--no-jury``; it relaxes to advisory only when a
 posted verdict (or ``--jury-vendors``) reports fewer than 2 vendors. That requirement is
 not decided here: :func:`keel.ship.resolve_jury` resolves the mode, and
@@ -163,6 +164,39 @@ def _oversize_finding(size: int, *, severity: str = "nit") -> Finding:
     )
 
 
+#: The source of the finding a jury gate that **could not run** reports (#1369): no ``jury``
+#: CLI on the host, or an empty diff. It judged nothing, so it must never read as ``ok``.
+#: :func:`could_not_run` reads it back; :func:`keel.gates.lone_jury_cannot_judge` turns it
+#: into a blocking outcome when the jury is the only gate planned.
+NOT_RUN_SOURCE = "jury:not-run"
+
+#: Why the jury could not run, as the finding says it.
+NOT_RUN_NO_CLI = "the jury CLI is not available (`jury --version` failed; install ai-jury)"
+NOT_RUN_EMPTY_DIFF = "the diff against the base branch is empty"
+
+
+def _not_run_finding(reason: str) -> Finding:
+    """Record that the jury gate judged nothing, and why (#1369).
+
+    ``nit``: beside another gate that judges, a jury that could not run stays the
+    documented s8 no-op and does not hold the merge. It is reported rather than silent,
+    and it is what marks the outcome ``SKIPPED`` rather than ``ok``.
+    """
+    return Finding(
+        severity="nit",
+        message=f"jury did not run: {reason}; nothing was judged.",
+        source=NOT_RUN_SOURCE,
+        path=None,
+        line=None,
+        anchorable=False,
+    )
+
+
+def could_not_run(findings) -> bool:
+    """Did this jury gate result come back without running (no CLI, or an empty diff)?"""
+    return any(f.source == NOT_RUN_SOURCE for f in findings)
+
+
 def run_gate(
     diff_text: str,
     *,
@@ -177,8 +211,11 @@ def run_gate(
     (critical/major) or when the run produced no verdict at all in gating mode.
     No-op when there is no diff or the ``jury`` CLI is not installed — keel does not
     depend on ai-jury, so an absent CLI is a legitimate no-op *for this run*, distinct
-    from a run that started and did not finish. It waives nothing downstream: a gating
-    jury's ``jury-verdict`` is still required at merge (see the module docstring).
+    from a run that started and did not finish. A no-op is not a pass: it returns one
+    ``nit`` finding from :data:`NOT_RUN_SOURCE` saying why nothing was judged, so the
+    outcome reads ``SKIPPED`` and a plan with no other gate blocks (#1369). It waives
+    nothing downstream: a gating jury's ``jury-verdict`` is still required at merge (see
+    the module docstring).
 
     Three ways a run can end without a review, all handled alike — gating fails closed
     with a blocking ``major``, advisory surfaces a ``minor``:
@@ -205,14 +242,14 @@ def run_gate(
             False,
         )
     if not diff_text:
-        return True, [], False
+        return True, [_not_run_finding(NOT_RUN_EMPTY_DIFF)], False
     size = len(diff_text.encode("utf-8"))
     if size > MAX_DIFF_BYTES:
         if mode == "gating":
             return False, [_oversize_finding(size, severity="major")], False
         return True, [_oversize_finding(size)], False
     if not available(cwd=cwd, _run=_run):
-        return True, [], False
+        return True, [_not_run_finding(NOT_RUN_NO_CLI)], False
     fd, path = tempfile.mkstemp(suffix=".diff")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
