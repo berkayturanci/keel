@@ -319,5 +319,68 @@ class TheTapReportCannotFailTheRelease(TheWorkflow):
         self.assertIn("::notice::", code)
 
 
+class TheReleaseBodyOpensWithTheHighlights(TheWorkflow):
+    """#1342: the release body was GitHub's generated list of pull-request titles.
+
+    `scripts/release_notes.py` renders the CHANGELOG's highlight lines into a file,
+    and the release step opens its body with that file. Its parser and command line
+    are held by `tests/test_release_notes.py`; these hold the wiring, which is where
+    a working script quietly stops reaching the release.
+    """
+
+    NOTES = "scripts/release_notes.py"
+    BODY = "${RUNNER_TEMP}/release-notes.md"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.steps = cls.jobs["build-n-publish"]["steps"]
+        # No `assert` here: a step deleted outright must fail a test as an assertion,
+        # not error the whole class out in setUpClass.
+        cls.found = [i for i, s in enumerate(cls.steps) if cls.NOTES in (s.get("run") or "")]
+        cls.index = cls.found[0] if cls.found else len(cls.steps)
+        cls.step = cls.steps[cls.found[0]] if cls.found else {}
+        cls.code = code_of(cls.step.get("run", ""))
+        cls.release = next(s for s in cls.steps if "action-gh-release" in (s.get("uses") or ""))
+
+    def test_exactly_one_step_renders_the_highlights(self):
+        self.assertEqual(len(self.found), 1, f"steps running {self.NOTES}: {self.found}")
+
+    def test_it_renders_the_tag_being_released_into_the_body_file(self):
+        self.assertIn('--tag "$GITHUB_REF_NAME"', self.code)
+        self.assertIn('--repo "$GITHUB_REPOSITORY"', self.code)
+        self.assertIn(f'--out "{self.BODY}"', self.code)
+
+    def test_the_release_step_opens_its_body_with_that_file(self):
+        self.assertEqual(
+            self.release["with"].get("body_path"), "${{ runner.temp }}/release-notes.md"
+        )
+
+    def test_the_generated_list_still_follows_it(self):
+        """Highlights on top, not instead: the full list stays below them."""
+        self.assertIs(self.release["with"].get("generate_release_notes"), True)
+
+    def test_the_body_file_is_not_a_release_asset(self):
+        """Every `files` glob reads `release/`; the body is written outside it."""
+        files = self.release["with"]["files"].split()
+        self.assertTrue(all(f.startswith("release/") for f in files), files)
+        self.assertNotIn("release/", self.BODY)
+
+    def test_it_only_runs_where_there_is_a_tag(self):
+        """A manual dispatch is the TestPyPI rehearsal: no tag, and no release."""
+        self.assertEqual(self.step.get("if"), self.release.get("if"))
+
+    def test_it_runs_before_anything_is_built_or_uploaded(self):
+        """A failure after the PyPI upload would leave a version with no release."""
+        build = next(
+            i for i, s in enumerate(self.steps) if "python -m build" in (s.get("run") or "")
+        )
+        upload = next(
+            i for i, s in enumerate(self.steps) if "gh-action-pypi-publish" in (s.get("uses") or "")
+        )
+        self.assertLess(self.index, build)
+        self.assertLess(self.index, upload)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

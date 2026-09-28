@@ -9,7 +9,7 @@ version, or a ``keel-visual`` marker two releases behind (#796) cannot be fixed 
 only yanked and re-released.
 
 So the same assertions run again in ``publish.yml``'s build job, before the build
-step, and locally as ``make release-check``. Four guards:
+step, and locally as ``make release-check``. Five guards:
 
 ``declared version``
     ``pyproject.toml`` and ``src/keel/__init__.py`` agree.
@@ -19,6 +19,14 @@ step, and locally as ``make release-check``. Four guards:
     the one that catches a tag whose CHANGELOG was never renamed from
     ``## [Unreleased]``: the top released section is then still the *previous*
     release, which no longer equals what the tree declares.
+
+``release highlights``
+    The declared version's CHANGELOG section opens with one to three
+    plain-language ``- `` highlight lines, which ``publish.yml`` puts at the top
+    of the GitHub Release (#1342). Required of every version after
+    ``release_notes.LAST_WITHOUT_HIGHLIGHTS``; past releases are not rewritten.
+    Parsed by ``release_notes.py``, the script that renders them, so the check
+    and the release cannot disagree about what counts.
 
 ``release surfaces``
     Every surface in :data:`release_surfaces.RELEASE_SURFACES` — the plugin
@@ -34,7 +42,7 @@ step, and locally as ``make release-check``. Four guards:
     ``release_bump.VISUAL_EDITS`` — the list the bumper rewrites — rather than
     restated here.
 
-With ``--tag v<x.y.z>`` a fifth guard runs: the tag names the declared version.
+With ``--tag v<x.y.z>`` a sixth guard runs: the tag names the declared version.
 The publish workflow passes it on a tag push, so a tag pushed at the wrong commit
 fails before the build.
 
@@ -60,6 +68,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from release_bump import VISUAL_EDITS, current_version  # noqa: E402
+from release_notes import parse_highlights, requires_highlights  # noqa: E402
 from release_surfaces import RELEASE_SURFACES, versions_in  # noqa: E402
 
 #: Repo root = parent of this script's directory (scripts/..).
@@ -141,6 +150,22 @@ def check_changelog(root: Path) -> Check:
             "before tagging"
         )
     return Check("changelog lockstep", problems)
+
+
+def check_highlights(root: Path) -> Check:
+    """The declared version's section must open with highlights the release can carry.
+
+    Checked against the *declared* version rather than the top released section:
+    when the two differ, ``changelog lockstep`` already refuses, and this guard
+    then says the one further thing it knows — that the section it would publish
+    does not exist.
+    """
+    declared = current_version(root)
+    if not requires_highlights(declared):
+        return Check("release highlights", [])
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    _highlights, problems = parse_highlights(changelog, declared)
+    return Check("release highlights", problems)
 
 
 def check_surfaces(root: Path) -> Check:
@@ -246,6 +271,7 @@ def run_checks(root: Path, tag: str | None = None) -> list[Check]:
     checks = [
         check_declared_version(root),
         check_changelog(root),
+        check_highlights(root),
         check_surfaces(root),
         check_visual_markers(root),
     ]

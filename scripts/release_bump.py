@@ -300,7 +300,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             "Next: `make plugin && make adapters` (regenerate keel_version markers), "
-            "add a CHANGELOG.md entry, then follow docs/keel/release.md to tag."
+            "add a CHANGELOG.md entry opening with 1-3 highlight lines, then follow "
+            "docs/keel/release.md to tag."
         )
     return 0
 

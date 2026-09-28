@@ -17,11 +17,18 @@ shape of the whole section.
 from __future__ import annotations
 
 import collections
+import importlib.util
 import re
 import unittest
 from pathlib import Path
 
 CHANGELOG = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
+
+_spec = importlib.util.spec_from_file_location(
+    "release_notes", CHANGELOG.parent / "scripts" / "release_notes.py"
+)
+release_notes = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(release_notes)
 
 #: Keep a Changelog's six, plus the four this project has actually used.
 #:
@@ -135,6 +142,52 @@ class EachSectionAppearsOnce(unittest.TestCase):
             [],
             f"released versions carry no sections, so their notes are blank: {empty}",
         )
+
+
+def releases_missing_highlights(text: str) -> dict[str, list[str]]:
+    """Every version released after ``release_notes.LAST_WITHOUT_HIGHLIGHTS`` whose
+    section does not open with valid highlights, mapped to what is wrong with it."""
+    offenders = {}
+    for version in re.findall(r"(?m)^## \[([^\]]+)\]", text):
+        if not release_notes.requires_highlights(version):
+            continue
+        _highlights, problems = release_notes.parse_highlights(text, version)
+        if problems:
+            offenders[version] = problems
+    return offenders
+
+
+class EachReleaseOpensWithHighlights(unittest.TestCase):
+    """#1342: the lines that head the GitHub Release.
+
+    `make release-check` and `publish.yml` refuse a tag without them; this runs
+    on the release pull request itself, so the gap is caught before anyone tags.
+    """
+
+    def test_every_release_after_the_convention_carries_highlights(self):
+        offenders = releases_missing_highlights(CHANGELOG.read_text(encoding="utf-8"))
+        self.assertEqual(
+            offenders,
+            {},
+            f"released sections without valid highlights, so the GitHub Release opens "
+            f"with pull-request titles alone: {offenders}",
+        )
+
+    def test_a_release_cut_without_highlights_is_caught(self):
+        """Non-vacuity: today no release is past the line, so the test above is
+        empty by construction until the next one is cut."""
+        text = (
+            "## [Unreleased]\n\n## [1.25.0] - 2026-10-01\n\n### Fixed\n- a thing\n\n"
+            "## [1.24.2] - 2026-09-23\n\n### Fixed\n- an older thing\n"
+        )
+        self.assertEqual(list(releases_missing_highlights(text)), ["1.25.0"])
+
+    def test_one_with_them_passes_and_older_releases_are_exempt(self):
+        text = (
+            "## [Unreleased]\n\n## [1.25.0] - 2026-10-01\n\n- What changed for you.\n\n"
+            "### Fixed\n- a thing\n\n## [1.24.2] - 2026-09-23\n\n### Fixed\n- older\n"
+        )
+        self.assertEqual(releases_missing_highlights(text), {})
 
 
 class NoConflictMarkers(unittest.TestCase):

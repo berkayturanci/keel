@@ -14,7 +14,8 @@
 #                  the same adapter frontmatter — also locked byte-for-byte by a drift test
 #   make release-check
 #                  refuse a release that does not agree with itself: CHANGELOG top
-#                  released section == declared version, every release surface in
+#                  released section == declared version and opens with 1-3 highlight
+#                  lines (they head the GitHub Release), every release surface in
 #                  scripts/release_surfaces.py on that version, keel-visual markers
 #                  in step. Same guards publish.yml runs before it builds anything.
 #   make release-bump VERSION=x.y.z
@@ -82,7 +83,7 @@ release-bump:
 	$(PY) scripts/release_bump.py "$(VERSION)" --strict
 	$(MAKE) plugin
 	$(MAKE) adapters
-	@echo "release-bump done. Add a CHANGELOG.md entry for $(VERSION), run the gates, then follow docs/keel/release.md to tag."
+	@echo "release-bump done. Add a CHANGELOG.md entry for $(VERSION) opening with 1-3 highlight lines, run the gates, then follow docs/keel/release.md to tag."
 
 doctor-python:
 	@echo "interpreter : $(PY)"
