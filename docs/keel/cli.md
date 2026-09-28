@@ -1890,7 +1890,9 @@ PR content, issue text, or prior agent output.
 If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturanci/ai-jury)
 `jury` CLI is installed, the jury gate runs it on the diff (`git diff base...HEAD`) and maps
 its findings (file/line/severity) into keel findings (critical/major block). If `jury` is
-not installed the gate is a **fail-soft no-op** — the flow runs with or without jury. Its
+not installed the s8 gate is a **no-op**, but that does not waive the evidence: a tier-3
+merge still requires a `jury-verdict` unless the run passes `--no-jury`, and it relaxes to
+advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors. Its
 wall-clock limit is [`knobs.jury_timeout_s`](configuration.md#jury_timeout_s) (default
 600s), separate from `gate_timeout_s` because a cross-vendor panel and a test suite have
 unrelated runtimes.

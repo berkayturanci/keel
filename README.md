@@ -13,188 +13,41 @@
 [![Python](https://img.shields.io/pypi/pyversions/keel-workflow)](https://pypi.org/project/keel-workflow/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-> **Keel turns coding agents into work owners.** It is a project-neutral,
-> multi-agent **workflow backbone** that drives a unit of work — a GitHub issue —
-> from intake to done: understand readiness, branch, implement, wait on CI, review,
-> test, merge safely, run capture hooks, and close. Projects never fork the
-> backbone: they set per-project **values** in `project.yaml` and snap their own
-> **Lego pieces** into named extension slots.
+> **Keel turns coding agents into work owners.** keel is a project-neutral workflow
+> backbone that takes one GitHub issue from intake to a merged pull request, or stops it
+> at a named step with the reason recorded.
 
-The keel is a ship's backbone — the fixed spine every project builds on. Work is driven
-by `keel:ship`; `keel:swarm` aims the same backbone at a whole backlog as parallel waves,
-but it is **experimental** and does not land work yet ([#1281](https://github.com/berkayturanci/keel/issues/1281)). keel is where
-ships and fleets are built.
+**How a run happens**
 
-Keel is based on the work pattern of a strong teammate in a real engineering team:
-take an issue from the queue, decide whether it is ready, own the implementation,
-get it reviewed, keep the quality gates green, merge inside policy, and leave useful
-memory behind for the next session. keel focuses on one agent owning work end to end.
+1. **Your agent host does the work.** In Claude Code, Codex, Cursor or Antigravity you run
+   `/keel:ship <issue>`; the agent writes the code, opens the pull request and dispatches
+   the reviewers.
+2. **keel's CLI enforces the backbone.** At each of the fixed steps `s0`–`s12` the agent
+   asks `keel` for the plan, the gates, the reviewers and the evidence it owes. `keel ship`
+   is a dry assessment: the agent commits, pushes and opens the pull request. The CLI's own
+   writes are the merge, the lesson commit `keel capture-land` pushes onto the pull
+   request's branch, and the verdict and closure comments `keel post-comment` and
+   `keel review` post.
+3. **A merge happens only through `keel merge`**, which takes the merge lock, re-checks the
+   merge window, reads the live CI rollup and verifies the head-pinned review evidence first.
 
-### From "I opened a PR" to merged
+## Built for long unattended runs
 
-The bottleneck in agentic coding is rarely code generation—it is **work ownership and delivery governance**.
+| Practice for long agent runs | What keel does |
+|---|---|
+| Define "done" first | An issue with no deliverable or no acceptance criteria comes back `needs-input` with questions, and `/keel:ship` stops before it cuts a branch (`intake.py`, ship Step 0) |
+| Name the stops | A live run declares its consent scopes (`filesystem`, `git`, `github`, …) before it acts; merges go only through `keel merge`, inside the merge window (an audited `--hotfix` is the one bypass) |
+| Keep state in a file | A resumable checkpoint (`keel checkpoint`, `keel resume`) and an append-only run ledger (`.keel/state/run-ledger.jsonl`) |
+| Fan out, then check | `/keel:regression` runs parallel reviewers and keeps low-confidence findings as review-only instead of filing them |
+| Review before a person does | Review verdicts are pinned to the head SHA; reviewers can run on another vendor, and `knobs.evidence_require_distinct_vendors` makes distinct reviewer vendors a requirement |
+| Read what's blocked first | `/keel:morning` puts the cross-session deferrals at the top of the briefing |
 
-Most coding agents stop at *"I opened a PR."* Without an invariant delivery backbone, agent-written code stalls in review loops, introduces silent regressions, causes merge collisions, or bypasses compliance.
+These map to the long-run advice in Anthropic's
+[*Getting the most out of Opus 5.5*](https://claude.dev/blog/getting-the-most-out-of-opus-5-5/)
+guide; they hold for any agent. keel is independent and not affiliated with Anthropic.
 
-**Keel closes that gap.** It provides the fixed backbone (`s0`–`s12`) that drives every unit of work through scope validation, multi-agent adversarial reviews, commit-bound evidence verification, timezone-aware merge locks, and post-merge proof, so work either merges into the base branch or halts at a named step with its reason recorded; optional pieces that are missing (the jury CLI, a capture path) are logged as degraded rather than stopping the run.
-
-> keel uses a thin-consumer model: the core is installed + pinned, never copied, so the
-> drift/overwrite class of bug is structurally gone. Background: the original design
-> proposal, [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md)
-> (historical; current behaviour is documented in [`docs/keel/`](docs/keel/)).
-
-## Three layers
-
-```
-Layer 3  EXTENSIONS   project-owned Lego pieces, ADD-ONLY into named slots
-Layer 2  CONFIG       project.yaml — per-project values (branch, build cmd, globs, agents…)
-Layer 1  BACKBONE     keel-core — fixed ordered step machine + invariants (this package)
-```
-
-Changing the backbone is a keel-core change. Projects only ever touch layers 2–3.
-
-### What you get
-
-- **One backbone, four hosts** — keel installs into Claude Code, Codex, Cursor and Antigravity
-  ([per-host steps](docs/keel/install.md)); `/keel:<command>` runs as native Claude commands
-  *and* as a single shared skill set under `.agents/skills/` for agents that read skills there.
-  Cursor is partial: its commands arrive only through the marketplace route, and a local
-  install registers one skill ([#1332](https://github.com/berkayturanci/keel/issues/1332)).
-- **High-concurrency Swarm orchestration** (**experimental**) — cluster entire backlogs into topological dependency waves, execute disjoint clusters in isolated git worktrees, and land them under a single-writer merge lock with sequential `git merge --no-ff` ([guide](docs/keel/swarm.md)). The planning commands run; **a live run cannot produce a commit or a pull request**. The child `keel ship` is a dry assessment that never commits or opens a PR in any mode — keel's design has the *agent* implement by following `/keel:ship` — and `swarm-run --live` is refused, since its workers could not pass `keel ship --live`'s operator-consent gate ([#1269](https://github.com/berkayturanci/keel/issues/1269)); scope cannot be given per issue, so a multi-issue plan returns one flat wave, or a fully serial one when a shared `--declared-file` puts every issue in the same scope ([#1274](https://github.com/berkayturanci/keel/issues/1274)). Audit epic: [#1281](https://github.com/berkayturanci/keel/issues/1281). Use `/keel:ship` for work you need merged.
-- **Project Lego + policy packs** — snap gates/steps into named hooks (`guard`, `tester`,
-  `pre-merge`, …) and keep labels, path policy, health sources, local commands, and
-  workflow preferences in `policy_pack` data instead of packaged command prose.
-- **Security presets** — declarative `policy_pack.presets: ["bandit", "gitleaks", "semgrep", "trivy"]`
-  automatically slot SAST, secret scanning, and vulnerability auditing into the pipeline.
-- **Opt-in `jury` gate** — add `jury` to your project's `gates:` list (off by default). Once
-  listed, it runs the [ai-jury](https://github.com/berkayturanci/ai-jury) multi-agent reviewer on
-  the diff when the `jury` binary is installed, or is a fail-soft no-op otherwise. Core resolves the
-  mode from the panel that actually ran: a cross-vendor gate needs ≥2 distinct vendors, so a short
-  panel downgrades to advisory instead of blocking on a jury that never convened.
-- **…or the panel *is* the review** — set `knobs.team.review.by_tier."3": jury` and s7 dispatches
-  ai-jury **once** instead of running host reviewers beside it. `keel review --from-jury
-  <report.json>` turns each panelist's ballot into a head-pinned `keel.review-verdict.v1` with the
-  vendor and model that produced it, posts the jury verdict as the consensus record, and hands the
-  fix loop the panel's *verified* findings. The evidence gate then requires one verdict per ballot
-  (the panel declares its own size) plus that verdict. Too few participating vendors relaxes
-  neither: on a panel tier the verdict stays required and the thin span is refused as
-  `review-vendor-distinctness`, because a short panel may not excuse itself from the record
-  that says it was short. The bench is a function of config alone, so every surface of a run
-  agrees on it. Needs ai-jury's ballot report (`jury --format json`, schema 1.1+); keel still
-  never imports it.
-- **Headless with just an API key** — the hosted-API delegates
-  (`--delegate anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`) drive the implement/review steps
-  with only `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` in the environment — no agent CLI
-  installed. Connect any OpenAI-compatible provider (OpenRouter, DeepSeek, Groq, local vLLM/Ollama) or custom CLI
-  via `knobs.delegate_profiles` ([design](docs/proposals/api-token-delegate.md)), or keep operator-owned
-  entries out of the repository entirely in the machine-level
-  [provider registry](docs/keel/configuration.md#provider-registry) (`~/.keel/providers.yaml`).
-- **A team, not a delegate** — `knobs.team` states who implements (per issue role, with model
-  and reasoning effort), who gives the gate review from a *different* vendor, who reviews at
-  each risk tier — or `jury`, when the cross-vendor panel **is** the review — and who applies
-  the findings ([reference](docs/keel/configuration.md#team)). `keel plan`/`keel ship --json`
-  render it as one resolved `assignment` so every host runs the same team, and `keel validate`
-  refuses a policy keel cannot execute: an unknown provider, an effort a vendor cannot honour, or
-  a gate reviewer that is the implementer. The reviewer count and the jury mode are enforced by
-  the evidence gate; the **gate review is emit-only** — core publishes the seat and the adapter
-  dispatches it, with no evidence item behind it, the same boundary operator consent sits behind.
-- **Test-first when you want it** — `knobs.implement_mode: tdd` (or `--tdd` for a single run)
-  splits s4 into two phases: a **test-only commit** carrying the issue's acceptance criteria,
-  then the implementation. s8 gains the pure, blocking **`tdd-order`** gate, which checks that
-  commit order against the `policy_pack.test_groups` paths, so "tests first" is verified rather
-  than asserted. The resolved profile is published as `contract.implement_mode`
-  (`{"mode": "tdd", "gate": "tdd-order", "phases": ["tests", "implementation"], …}`) and
-  recorded in the ledger, and `--phase-implementer tests=…` / `implementation=…` records a run
-  where the two phases were written by different seats
-  ([reference](docs/keel/configuration.md#implement_mode)).
-- **Iterate s4 with the gates as the judge** — `knobs.loop` (or `--loop` for a single run)
-  wraps the implement pass in a **bounded, gate-verified loop**: after each iteration the
-  command gates run; green ends the loop, red starts the next iteration with the same brief
-  plus the gate output, up to `max_iterations`. The completion criterion is the gate run,
-  never the implementer's own "done" — the Ralph loop's iteration without its judge or its
-  amnesia: every iteration is one commit the ledger names, published as
-  `contract.implement_mode.loop` and rendered in the closure comment. It composes with
-  `--tdd` (the loop wraps phase B only) and runs on every host keel runs in
-  ([reference](docs/keel/configuration.md#loop)).
-- **Every merge can leave a lesson the next run reads** — with `policy_pack.capture.learning.sink`
-  set, an applied `create-learning` capture writes one Markdown learning: the issue, the gate
-  results on the head it merges, and a link to every file it changed, so a knowledge-graph
-  builder gets the edges ([reference](docs/keel/configuration.md#policy_packcapturelearningsink)).
-  With an in-repo sink, s10 runs `keel capture-land --write --onto "$BRANCH"`, which commits that
-  lesson onto the pull request itself, so the same squash carries it into the base branch: a
-  protected base never sees a direct push, and there is no second pull request to forget
-  ([reference](docs/keel/cli.md#--write-the-lesson-is-written-here-and-recorded-at-s11)). The
-  review still holds for the head that landing produces — the evidence gate accepts a pin across
-  a commit with one parent, the `keel.capture-land.v1` marker and exactly one added or modified
-  file inside the sink, and across nothing else. `keel plan` and `keel ship` read matching
-  lessons back into the implement and review briefs, at most five
-  ([reference](docs/keel/configuration.md#policy_packcapturelearningsource)).
-- **Know which providers this machine can actually dispatch to** — `keel doctor --providers [--json]`
-  probes every provider keel supports (agent CLIs, hosted APIs, local Ollama models, delegate profiles
-  and registry entries) and reports `available` / `reason` / transport / capabilities / model list for
-  each. Probes are time-boxed and fail-soft, and print key *names* only, never values
-  ([reference](docs/keel/runtime-capabilities.md#probing-providers-keel-doctor---providers)).
-- **Auditable evidence chain & compliance** — every PR merged through Keel carries a
-  commit-SHA-bound, auditable record of reviewer verdicts, test results, and model
-  attributions ([guide](docs/keel/evidence.md)). Approvals are locked to the exact HEAD commit,
-  preventing approval drift across subsequent pushes — a lesson `keel capture-land` lands is the one
-  commit they survive, under the rule above — with first-class, audited exception tracking.
-- **Safe merges by construction** — the core-owned `keel merge` path (resource claim,
-  window re-check, live CI rollup, and evidence verification before the merge), timezone-aware
-  night no-merge window, risk-tier → reviewer count, hotfix bypass with an audit line,
-  vendor+model attribution. The PR evidence gate arms from ship provenance by default —
-  only the operator-applied `keel:evidence-waived` label disarms it, and a gate that never
-  armed now **blocks** rather than reporting a pass having checked nothing. Requirements are
-  split by phase, so the merge gate asks for the review/jury evidence that exists at s10 and
-  not the closure comments s11 writes after it. Where a host's egress proxy blocks GitHub's
-  GraphQL endpoint, `keel merge` asks the same questions over REST
-  (`--transport auto|graphql|rest`) — the claim, window, rollup, evidence and SHA-pinned
-  gates-pass are unchanged — and its read-only drift check, `keel verify-merge`, takes the same
-  flag ([reference](docs/keel/cli.md#transport-graphql-or-rest-when-the-endpoint-is-blocked)).
-
-### How Keel compares
-
-Keel sits between three established tool categories:
-
-| category | examples | where they usually stop | what Keel adds |
-|---|---|---|---|
-| Coding agents | OpenHands, SWE-agent, Copilot coding agent, Devin | create or update a PR | intake, review gates, merge policy, closeout, capture hooks |
-| PR reviewers | CodeRabbit, Qodo / PR-Agent, Greptile, Cursor Bugbot | review an existing PR | implementation loop, tests, merge lock/window, closeout capture |
-| Merge queues | GitHub Merge Queue, Mergify, Graphite, Trunk | serialize tested PRs | issue ownership before the PR exists |
-
-Keel is not trying to replace those tools. It is the work-ownership backbone that can use
-coding agents, reviewers, gates, and merge policy in one lifecycle. See
-[`docs/keel/comparison.md`](docs/keel/comparison.md) for the source-backed comparison and
-the ideas Keel should borrow.
-
-### The backbone
-
-| step | name | primary hooks | |
-|---|---|---|---|
-| s0 | config | `after:config` | |
-| s1 | select | `before:select`, `select`, `after:select` | |
-| s2 | branch | `before:branch`, `after:branch` | |
-| s3 | guard | `guard` | |
-| s4 | implement | `before:implement`, `after-implement` | agent |
-| s5 | classify | `classify`, `after:classify` | agent |
-| s6 | ci | `before:ci`, `after:ci` | |
-| s7 | review | `reviewers`, `after:review` | agent |
-| s8 | test | `tester`, `test`, `after:test` | |
-| s9 | fixloop | `before:fixloop`, `fixloop`, `after:fixloop` | |
-| s10 | merge | `pre-merge`, `after:merge` | |
-| s11 | capture | `capture`, `post-merge` | |
-| s12 | close | `before:close`, `on-close`, `after:close` | |
-
-Invariants the backbone always preserves: merge lock, night no-merge window, fail-soft,
-orchestrator-only-writes, vendor+model attribution.
-
-The capture step has a core marker/verifier contract:
-`compound-learning: pr=<N> status=<applied|deferred|skipped:reason>`. Projects provide
-capture content and destinations through `capture` / `post-merge` extensions; keel owns the
-marker, fail-soft semantics, redaction-before-durability, offline `capture-verify`, and the
-learning-quality decision recorded in `capture.learning`. Durable learning is optional:
-policy can choose `create-learning`, `marker-only`, or `defer`, while duplicate candidates
-are suppressed by stable fingerprints so routine merges do not flood the learning surface.
+Why the merge gets its own checks:
+[a squash merge silently reverted our release, and CI stayed green](https://keel-ship.dev/silent-revert.html).
 
 ## Install
 
@@ -217,6 +70,7 @@ curl -fsSL https://raw.githubusercontent.com/berkayturanci/keel/main/scripts/ins
 ### PyPI / pipx / uv
 ```bash
 pipx install keel-workflow                                    # isolated global CLI tool
+uv tool install keel-workflow                                 # the same, with uv
 pip install keel-workflow                                     # from PyPI (provides the `keel` command)
 pip install "git+https://github.com/berkayturanci/keel@v1.24.2"  # or pin an existing git tag
 ```
@@ -224,78 +78,149 @@ pip install "git+https://github.com/berkayturanci/keel@v1.24.2"  # or pin an exi
 In a cloud agent session, install it from a `SessionStart` hook (or add keel to the
 session's repo scope) so the selected core ref is available before a run.
 
-Release maintainers should follow [`docs/keel/release.md`](docs/keel/release.md) and run
-`python scripts/release_smoke.py` before tagging or announcing a package.
+`keel setup` (below) writes the workflows into your project for Claude Code and for agents
+that read `.agents/skills/`. To install keel into an agent as a plugin instead, see
+[Install into an agent](#install-into-an-agent).
 
 ## Quickstart
 
-**Prerequisites:** Python **3.11+**, `git`, and — for a live run (`keel ship --live`) — an
-authenticated `gh` (`gh auth login`). A dry run needs only Python and git.
+In a git repository whose issues live on GitHub:
 
 ```bash
 keel setup --root .                          # add keel config + adapters to this project
-#   or, to pick the team interactively instead: keel setup --root . --wizard
-#   (on a project that is already set up, --force re-runs it and overwrites .keel/project.yaml)
 keel validate .keel/project.yaml --root .    # validate the config setup just wrote
-keel plan     .keel/project.yaml --root .    # show the backbone plan for this project
-keel doctor   .keel/project.yaml --root .    # check versions, adapters, gh auth and agent hosts
-keel version
+keel run-gates .keel/project.yaml --root .   # run the build gate once
 ```
 
-`keel setup` wraps first-run onboarding (`init` + `install-adapter` + strict `validate` +
-`plan`) for a consumer project. It picks the build gate from the stack it detects; when it
-detects none and the project has no Makefile `test` rule, it writes **no** build command and
-prints `build gate   : not configured` — set `knobs.build_gate_cmd` in
-`.keel/project.yaml` to the command that runs your tests, or every run blocks on that gate. With `--wizard` it also runs a **team step**: it probes
-which agent CLIs, hosted APIs and local models are usable on this machine (the same probe
-as `keel doctor --providers`) and writes `knobs.team` from what it found — who implements,
-who gives the mandatory gate review, who reviews at each risk tier. Only providers that
-are actually reachable are offered. `keel ship --wizard` picks the same seats for a single
-run. See [`docs/keel/onboarding.md`](docs/keel/onboarding.md). `keel plan` renders the fixed backbone with each project's
-gates/extensions slotted in — exactly what a dry-run executes:
+`keel setup` detects the stack and writes `.keel/project.yaml`, the `/keel:<command>`
+files under `.claude/commands/keel/`, and the matching `keel-<command>` skills under
+`.agents/skills/`. With `--wizard` it also asks who implements and who reviews; on a project
+that is already set up, `--force` re-runs it and overwrites `.keel/project.yaml`.
 
-```
-keel plan — my-project
-  base_branch: main   core_version: ^1.0
-  backbone:
-     s0  config
-     s1  select
-     s2  branch
-     s3  guard
-     s4  implement  [agent]
-     s5  classify  [agent]
-     s6  ci
-     s7  review  [agent]
-     s8  test
-           - gate: build
-     s9  fixloop
-    s10  merge
-    s11  capture
-    s12  close
+**If `run-gates` fails with `make: *** No rule to make target`**, setup found no stack and fell
+back to `make test` ([#1328](https://github.com/berkayturanci/keel/issues/1328)). Set your
+project's own test command in `.keel/project.yaml` and run the gates again:
+
+```yaml
+knobs:
+  build_gate_cmd: "python3 -m unittest"   # your project's test command
 ```
 
-A project adds its own gates and extensions under each step; the plan above is a
-project with one `build` gate configured. Until `knobs.build_gate_cmd` is set, that line
-reads `- gate: build (not configured: set knobs.build_gate_cmd)`.
-
-## Invocation (`/keel:<command>`)
-
-The agentic workflows ship **with the package** as project-neutral adapters and install into
-the **two surfaces** agents actually read — so the same `/keel:<command>` works in every
-project; only that project's `.keel/project.yaml` + extensions change the behaviour:
+Then ask keel for a dry assessment. It changes nothing:
 
 ```bash
-keel install-adapter claude   # native Claude commands → /keel:ship, /keel:regression, …
-keel install-adapter skills   # one shared keel-<cmd> skill set under .agents/skills/
-#                               (the shared surface for non-Claude hosts)
-keel install-adapter all      # both surfaces
+keel plan  .keel/project.yaml --root .       # the backbone, with this project's gates slotted in
+keel ship  .keel/project.yaml --root .       # risk tier, reviewers, merge window, gates, decision
+keel doctor .keel/project.yaml --root .      # versions, adapters and prerequisites
 ```
 
-### Install into an agent
+```text
+keel ship — my-project  (base main)
+  …
+  risk tier     : TIER-2  → 2 reviewer(s)
+  …
+  jury          : off (default)
+  merge window  : OPEN
+  …
+  gate build          ok
+  decision      : MERGE — clear to merge
+  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).
+```
+
+**Your first issue.** keel's intake needs two sections besides the title: a deliverable
+(`## Deliverable`, or `Scope`, `Proposal`, `Proposed direction`, `Implementation`) and
+acceptance criteria as a bulleted list (`## Acceptance criteria`, or `Acceptance`,
+`Definition of done`, `Done when`, `DoD`). The objective is an `## Objective`, `Problem`,
+`Summary` or `Context` section when there is one, and the title otherwise. Then open the repository in
+your agent host and run `/keel:ship <issue-number>`, or the `keel-ship` skill on a host that
+reads skills. What you will see:
+
+1. The agent stops once and asks you to approve the run's consent scopes (`filesystem`,
+   `git`, `github`): `keel setup` writes `consent_mode: "explicit"`.
+2. If the issue has no deliverable or no acceptance criteria, or reads as undecided (`TBD`,
+   `unclear`, `not sure`, …), the agent posts keel's questions and stops before it cuts a
+   branch.
+3. Otherwise it works in its own git worktree, opens a pull request, waits on CI and gets
+   reviewed (two reviewers at TIER-2 by default), then runs the gates.
+4. The run ends in one of two ways: `keel merge` merges the pull request and the issue is
+   closed, or the run stops at a named step and says why. A stopped run resumes from its
+   checkpoint.
+
+With no `timezone` and `merge_window` set, the merge window is always open; set both to keep
+merges out of the night. The one-command setup and what to check afterwards are in
+[`docs/keel/onboarding.md`](docs/keel/onboarding.md).
+
+## Requirements, cost and limits
+
+### Requirements
+
+- **Python 3.11 or newer**, and `git`.
+- **An authenticated `gh`** (`gh auth login`) for a live run. Every GitHub call the CLI
+  makes goes through `gh`: `keel merge`, `keel evidence-verify`, `keel post-comment` and the
+  CI rollup all need it.
+- **Something to implement.** An agent host to follow `/keel:ship`: Claude Code, Codex,
+  Antigravity, or Cursor (partial, [#1332](https://github.com/berkayturanci/keel/issues/1332)).
+  The implement and review seats it dispatches can be the host itself, another agent CLI,
+  or a hosted-API delegate (`--delegate anthropic-api:MODEL`, `openai-api:MODEL`,
+  `google-api:MODEL`) that needs only that provider's API key.
+- **For tier-3 changes:** [ai-jury](https://github.com/berkayturanci/ai-jury), or `--no-jury`.
+  Without the `jury` binary the s8 run is a no-op, but a tier-3 merge still requires a
+  `jury-verdict` unless the run passes `--no-jury`; it relaxes to advisory only when a posted
+  verdict (or `--jury-vendors`) reports fewer than 2 vendors.
+
+The dry commands in the Quickstart need only Python and git.
+
+### Cost
+
+keel adds no model usage beyond the seats a run dispatches, and those are billed by your agent
+host's plan or by the API provider behind a delegate. Per issue that is the implementer, a
+gate review when `knobs.team.gate` names one, one to three reviewers by risk tier (TIER-1 → 1,
+TIER-2 → 2, TIER-3 → 3, unless `knobs.team` names the seats), any fix-loop rounds, and at
+tier 3 the ai-jury panel.
+
+`keel cost-report --root .` summarises the records under `.keel/activity`. No keel command
+writes token counts into them yet, so it prices each record at a placeholder of 1,500 prompt
+and 400 completion tokens: read it as a count of runs, not as a bill.
+
+### Limits
+
+- **GitHub only.** Issues, pull requests, CI rollups and merges live on GitHub. The CLI
+  reaches it through `gh` alone; the `mcp` transport describes what an agent host's own
+  GitHub MCP server can do for its reads and comments, and marks merges and check rollups
+  as degraded there ([transport](docs/keel/github-transport.md)).
+- **Swarm is experimental.** `/keel:swarm` plans waves, but a live run cannot produce a commit
+  or a pull request yet ([#1281](https://github.com/berkayturanci/keel/issues/1281)). Use
+  `/keel:ship` for work you need merged.
+- **The unit is the issue.** keel has no channel for steering a run in flight: to change
+  direction, change the issue. A run that stops resumes from its checkpoint (`keel resume`).
+- **Consent is emit-only in core.** keel emits the consent contract and the gate-review seat;
+  the agent host is what honours them ([operator consent](docs/keel/operator-consent.md)).
+
+### Uninstall
+
+Remove the CLI the way you installed it:
+
+```bash
+brew uninstall keel                  # Homebrew
+pipx uninstall keel-workflow         # pipx
+uv tool uninstall keel-workflow      # uv
+pip uninstall keel-workflow          # pip
+```
+
+The curl installer uses pipx or uv when it finds them; otherwise it installs into
+`~/.local/share/keel` and links `~/.local/bin/keel`, and removing those two paths removes it.
+
+Then remove what `keel setup` wrote into a project: `.keel/`, `.claude/commands/keel/` and
+`.agents/skills/keel-*/`. A plugin comes out with its host's own command:
+`claude plugin uninstall keel@keel`, `codex plugin remove keel@keel`,
+`agy plugin uninstall keel`. A Cursor local checkout is the directory
+`~/.cursor/plugins/local/keel`.
+
+## Install into an agent
 
 Everything above needs the **CLI on your machine** — [Install](#install) puts it
-there, and `install-adapter` writes files into a project with it. Installing keel
-as a **plugin** is how an agent gets the commands and skills: from this
+there, and `keel setup` / `keel install-adapter` write files into a project with it.
+Installing keel as a **plugin** is how an agent gets the commands and skills: from this
 repository's own marketplace, with no `install-adapter` step. It is **not** a
 replacement for the CLI — the command bodies shell out to `keel`, so it still has
 to be on your `PATH`. Jump to the agent you use:
@@ -444,6 +369,76 @@ flows are additive. The plugin's command files under `commands/` are generated f
 `keel install-adapter plugin`, and a test fails on any drift. The `pip install keel-workflow`
 + `keel install-adapter` path is unchanged.
 
+## What you get
+
+Each line links to the full description in [`docs/keel/overview.md`](docs/keel/overview.md#what-you-get)
+or the reference it points at.
+
+- **One backbone, four hosts** — keel installs into Claude Code, Codex, Cursor and Antigravity
+  ([per-host steps](docs/keel/install.md)); Cursor is partial
+  ([#1332](https://github.com/berkayturanci/keel/issues/1332)).
+- **A team, not a delegate** — `knobs.team` names who implements, who gives the gate review,
+  who reviews at each risk tier, and who applies the findings
+  ([reference](docs/keel/configuration.md#team)).
+- **A cross-vendor jury, on automatically at tier 3** — a change matching `knobs.tier3_globs`
+  turns on the [ai-jury](https://github.com/berkayturanci/ai-jury) panel, and the evidence gate
+  then requires its verdict. Below tier 3 it is off unless a run passes `--jury` or
+  `knobs.team` makes the panel the review; `--no-jury` turns it off below a panel tier, and
+  listing `jury` in `gates:` also runs it at s8. Without the `jury` binary the s8 run is a
+  no-op, but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
+  it relaxes to advisory only when a posted verdict (or `--jury-vendors`) reports fewer than
+  2 vendors ([details](docs/keel/overview.md#what-you-get)).
+- **Safe merges** — `keel merge` claims the lock, re-checks the window, reads the live CI
+  rollup and verifies the evidence before it merges, over GraphQL or REST
+  ([reference](docs/keel/cli.md#keel-merge-projectyaml---pr-n---root-dir---method-squashmergerebase---transport-autographqlrest---dry-run---effort-lowmediumhigh---team-profile)).
+- **An auditable evidence chain** — review verdicts, test results and model attribution,
+  bound to the commit SHA ([guide](docs/keel/evidence.md)).
+- **Test-first and gate-judged loops** — `knobs.implement_mode: tdd` verifies that tests
+  landed first, and `knobs.loop` iterates s4 until the gates are green
+  ([tdd](docs/keel/configuration.md#implement_mode), [loop](docs/keel/configuration.md#loop)).
+- **A lesson from every merge** — a capture sink writes one Markdown learning per merge and
+  reads matching ones back into later briefs
+  ([reference](docs/keel/configuration.md#policy_packcapturelearningsink)).
+- **Headless with an API key** — hosted-API and OpenAI-compatible delegates, local models,
+  and `keel doctor --providers` to see what this machine can reach
+  ([models](docs/keel/models.md)).
+- **Project Lego, policy packs and security presets** — add-only hooks, `policy_pack` data,
+  and `bandit` / `gitleaks` / `semgrep` / `trivy` presets ([extensions](docs/keel/extensions.md)).
+- **Swarm (experimental)** — backlog waves in isolated worktrees; it does not land work yet
+  ([guide](docs/keel/swarm.md)).
+
+How keel compares with coding agents, PR reviewers and merge queues:
+[overview](docs/keel/overview.md#how-keel-compares) and
+[`docs/keel/comparison.md`](docs/keel/comparison.md). Why keel exists:
+[From "I opened a PR" to merged](docs/keel/overview.md#from-i-opened-a-pr-to-merged).
+
+## Three layers
+
+```
+Layer 3  EXTENSIONS   project-owned Lego pieces, ADD-ONLY into named slots
+Layer 2  CONFIG       project.yaml — per-project values (branch, build cmd, globs, agents…)
+Layer 1  BACKBONE     keel-core — fixed ordered step machine + invariants (this package)
+```
+
+Changing the backbone is a keel-core change. Projects only ever touch layers 2–3. The
+step-by-step backbone table and its invariants are in
+[`docs/keel/overview.md`](docs/keel/overview.md#the-backbone). The original design proposal,
+[`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md), is historical;
+current behaviour is documented in [`docs/keel/`](docs/keel/).
+
+## Invocation (`/keel:<command>`)
+
+The agentic workflows ship **with the package** as project-neutral adapters and install into
+the **two surfaces** agents actually read — so the same `/keel:<command>` works in every
+project; only that project's `.keel/project.yaml` + extensions change the behaviour:
+
+```bash
+keel install-adapter claude   # native Claude commands → /keel:ship, /keel:regression, …
+keel install-adapter skills   # one shared keel-<cmd> skill set under .agents/skills/
+#                               (the shared surface for non-Claude hosts)
+keel install-adapter all      # both surfaces
+```
+
 **17 shipped commands** — `ship` (flagship, with a `--compound` profile flag), `implement`,
 `review-cycle`, `review-all-day`, `pr-loop`, `regression`, `triage`, `morning`, `work-block`,
 `overnight`, `swarm`, `wrap`, `ci-check`, `coverage`, `deps-audit`, `flake-audit`, `stale-prs`.
@@ -451,23 +446,15 @@ Each is described in
 [`docs/keel/commands.md`](docs/keel/commands.md). The `keel` CLI does the deterministic work;
 the adapters are the agentic flows (per-round review, inline comments, delegation).
 
-## Dogfooding
+## Companion: keel-visual
 
-keel drives **itself** from `.keel/project.yaml` using the latest `^1.0` core contract
-(Python, `make test` + `make lint` gates), and CI runs keel on keel-core on every push.
-`projects/keel.yaml` remains a seed copy and is tested to stay in sync with the dogfood
-config.
-
-```bash
-keel plan      .keel/project.yaml --root . # render keel's own backbone
-keel run-gates .keel/project.yaml --root . # keel runs its own test + lint gates
-keel ship      .keel/project.yaml --root . # full dry assessment: tier, window, gates, decision
-#   (example output; the tier follows the files a change touches)
-#   risk tier     : TIER-3  → 3 reviewer(s)
-#   decision      : MERGE — clear to merge
-```
-
-If a step's gate fails, keel blocks its own merge — the same backbone every consumer gets.
+[`keel-visual`](https://pypi.org/project/keel-visual/) is an **optional, separately
+installable** animated run visualizer (`pipx install keel-visual`). It *renders* a
+keel run from the ledger/checkpoint keel already writes — it never drives one — for
+**any of the 17 command flows**, in the terminal (`play`, `dash`) or as a web page
+(`render`, `serve`). The core never depends on it. See
+[`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) and
+[its surfaces](docs/keel/overview.md#keel-visual).
 
 ## Docs
 
@@ -475,6 +462,7 @@ If a step's gate fails, keel blocks its own merge — the same backbone every co
   published site is live at <https://keel-ship.dev/> (deployed via the
   `pages.yml` workflow). Locally, `make site` builds the coverage HTML into
   `website/coverage/` and serves it at <http://localhost:8000>.
+- [`docs/keel/overview.md`](docs/keel/overview.md) — why keel exists, the full feature list, the comparison table, the backbone table, dogfooding, and keel-visual
 - [`docs/keel/configuration.md`](docs/keel/configuration.md) — `project.yaml` reference
 - [`docs/keel/evidence.md`](docs/keel/evidence.md) — evidence chain, commit-SHA binding, and compliance auditability
 - [`docs/keel/models.md`](docs/keel/models.md) — supported AI models, providers, and delegate profiles (Claude, OpenAI, Gemini, OpenRouter, DeepSeek, Groq, Ollama, CLI tools)
@@ -515,49 +503,11 @@ make site       # build the coverage report + serve the website at localhost:800
 
 The pure core (`config`, `model`, `extensions`, `findings`, `gates`, `orchestrator`,
 `cli`) is held at **100% line + branch coverage**; the coverage gate (`fail_under = 100`)
-runs in CI.
+runs in CI. keel drives itself from `.keel/project.yaml`
+([dogfooding](docs/keel/overview.md#dogfooding)).
 
-## Companion: keel-visual
-
-[`keel-visual`](https://pypi.org/project/keel-visual/) is an **optional, separately
-installable** animated run visualizer (`pipx install keel-visual`). It *renders* a
-keel run from the ledger/checkpoint keel already writes — it never drives one — for
-**any of the 17 command flows** (`ship` is the s0–s12 backbone; every other command
-renders its own phases).
-
-Four surfaces:
-
-- **`play`** — the run animates in the terminal (flow + wave ribbon, `--loop` for a
-  demo, live `--follow`; `--theater` hands off to [ai-jury](https://github.com/berkayturanci/ai-jury)'s
-  deliberation theater at the review step, then resumes).
-- **`dash`** — a terminal board of every active run; **`dash --all`** aggregates every
-  keel project under a parent folder into one board. It shows `ship` runs *and*
-  non-ship commands (triage, morning, pr-loop …) live via the `keel activity`
-  channel — each with its own phases.
-- **`render`** — a self-contained web page: a **2D flow** and a **3D scene** with five
-  selectable styles (`plexus`/`comet`/`aurora`/`combined`/`line`); **`render --all`**
-  writes a multi-project board with a **2D grid / 3D scene** toggle, automatic
-  **light/dark** theme, and an **all / active** filter that fades finished runs.
-- **`serve` / `serve --all`** — a **live** localhost web dashboard (polls every ~0.5s):
-  a filterable board, and per-run a detail drawer with a **2D / 3D switch** (a live
-  per-run scene with `curve · helix · ring · line · plexus · aurora · comet` styles,
-  drag-orbit + scroll/pinch zoom, theme-aware) and, from the ledger record, the run's
-  command / phase / status, **risk tier**, **merge-window** state, **per-named-gate**
-  status (build / lint / evidence / jury …), **agent attribution** (implementer,
-  reviewers, host — including the hosted-API delegates), and the **jury verdict**
-  itself when ai-jury ran, not just the jury mode.
-
-As of **keel 1.6.4**, the deterministic backbone commands (`keel plan` at Step 0, `keel
-run-gates` at s8, `keel merge` at s10) auto-stamp the `keel activity` board when given a
-`--run-id`, so a run shows up **and advances** even if the agent skips the per-phase
-`keel activity` calls. Since **1.6.5**, `keel merge` stamps the run `merged` (a real merge
-landed) rather than a soft `done`, so the board distinguishes a green confirmed-merge from
-a closed-out run; runs whose `--run-id` ends in their issue/PR (`ship-585`) are labelled
-`#585` even when no explicit issue is passed.
-
-Depends on this core (`keel-workflow >= 1.6.0`); the core never depends on it (it only
-reads records, and probes `shutil.which("jury")` — never imports ai-jury). See
-[`keel-visual/README.md`](keel-visual/README.md).
+Release maintainers should follow [`docs/keel/release.md`](docs/keel/release.md) and run
+`python scripts/release_smoke.py` before tagging or announcing a package.
 
 ## Repo layout
 

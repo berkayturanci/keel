@@ -42,7 +42,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keel import cli, extensions, install, model, providers
+from keel import cli, cost, extensions, install, intake, model, providers, ship
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -996,7 +996,7 @@ def _public_pages() -> dict[str, str]:
     paths += sorted((REPO_ROOT / "docs" / "keel").glob("*.md"))
     paths += sorted(p for p in SITE.glob("*") if p.suffix in {".html", ".js", ".txt"})
     return {
-        str(p.relative_to(REPO_ROOT)): " ".join(p.read_text(encoding="utf-8").split())
+        p.relative_to(REPO_ROOT).as_posix(): " ".join(p.read_text(encoding="utf-8").split())
         for p in paths
     }
 
@@ -1249,6 +1249,297 @@ class TestTheDogfoodTerminalIsTheDryAssessment(unittest.TestCase):
             with self.subTest(where=where):
                 self.assertNotIn("MERGED", text)
                 self.assertNotIn("merged + closed", text)
+
+
+def _prose(name: str, text: str) -> str:
+    """A page's words, whitespace collapsed; a site page's tags are stripped first.
+
+    Only the site's: a Markdown page's `<N>` or `<report.json>` would pair with a later
+    `>` and swallow the sentences between them, which is how a check goes vacuous.
+    """
+    if name.startswith("website/"):
+        text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.split())
+
+
+def _readme_sections() -> dict[str, str]:
+    """The README's `##` sections by title, each running to the next `##` heading."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    parts = re.split(r"^## +(.+?)\s*$", readme, flags=re.M)
+    return dict(zip(parts[1::2], parts[2::2], strict=True))
+
+
+def _readme_heading_line(title: str) -> int | None:
+    """The 1-based line of the README heading `## <title>`, or None when there is none."""
+    lines = (REPO_ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+    return next((n for n, line in enumerate(lines, 1) if line == f"## {title}"), None)
+
+
+class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
+    """#1330, #1321, #1337, #1329: the README buried Install at line 199.
+
+    A newcomer met a metaphor, a statistics paragraph and a hundred lines of feature
+    bullets first, and the Quickstart ended at `keel version` without saying that the agent
+    host, not the CLI, does the work. These pin the order and the claims the new first
+    screen makes, not its wording.
+    """
+
+    #: The launch order, top to bottom. Each title is a `##` heading.
+    _ORDER = (
+        "Built for long unattended runs",
+        "Install",
+        "Quickstart",
+        "Requirements, cost and limits",
+        "What you get",
+    )
+
+    def section(self, title: str) -> str:
+        """A README section, or an assertion failure naming it — never a KeyError."""
+        sections = _readme_sections()
+        self.assertTrue(title in sections, f"the README has no `## {title}` section")
+        return sections[title]
+
+    def test_install_is_on_the_first_screen(self):
+        line = _readme_heading_line("Install")
+        self.assertIsNotNone(line, "the README has no `## Install` heading")
+        self.assertLessEqual(line, 60, f"`## Install` is at line {line}")
+
+    def test_the_sections_come_in_launch_order(self):
+        lines = [_readme_heading_line(title) for title in self._ORDER]
+        self.assertNotIn(None, lines, dict(zip(self._ORDER, lines, strict=True)))
+        self.assertEqual(sorted(lines), lines, dict(zip(self._ORDER, lines, strict=True)))
+
+    def test_the_first_screen_says_who_does_the_work(self):
+        """#1321: the agent runs /keel:ship, the CLI enforces, `keel merge` merges.
+
+        Round 1 of #1360: "the CLI itself never commits, pushes or opens a pull request"
+        was false — `keel capture-land --write` builds a commit and pushes it onto the PR
+        branch, and `keel merge` merges. The claim is narrowed to `keel ship`, and the
+        CLI's own writes are named.
+        """
+        screen = " ".join(_readme_first_screen().split())
+        for claim in (
+            "/keel:ship",
+            "`keel ship` is a dry assessment",
+            "the agent commits, pushes and opens the pull request",
+            "`keel capture-land`",
+            "only through `keel merge`",
+        ):
+            with self.subTest(claim=claim):
+                self.assertTrue(claim in screen, f"the first screen never says {claim!r}")
+        self.assertIsNone(re.search(r"CLI itself never commits", screen))
+
+    def test_every_intake_heading_the_quickstart_names_is_one_intake_reads(self):
+        """Round 1 of #1360: the Quickstart said all three headings were required.
+
+        `intake.assess_issue` falls back to the title for the objective, and accepts
+        aliases for the other two. Every alias the README names must make an issue
+        `ready` in its slot, and dropping either slot must not.
+        """
+        quickstart = self.section("Quickstart")
+        self.assertTrue("**Your first issue.**" in quickstart, "no first-issue paragraph")
+        para = quickstart.split("**Your first issue.**", 1)[1].split("Then open", 1)[0]
+        groups = [re.findall(r"`(?:## )?([^`]+)`", g) for g in re.findall(r"\(([^()]*)\)", para)]
+        self.assertGreaterEqual(len(groups), 2, groups)
+        deliverables, acceptances = groups[0], groups[1]
+        self.assertIn("Scope", deliverables)
+        for heading in deliverables:
+            with self.subTest(deliverable=heading):
+                body = f"## {heading}\nA function.\n\n## Acceptance criteria\n- it returns 1\n"
+                self.assertEqual("ready", intake.assess_issue(title="t", body=body)["status"])
+        for heading in acceptances:
+            with self.subTest(acceptance=heading):
+                body = f"## Deliverable\nA function.\n\n## {heading}\n- it returns 1\n"
+                self.assertEqual("ready", intake.assess_issue(title="t", body=body)["status"])
+        for body in ("## Deliverable\nA function.\n", "## Acceptance criteria\n- it returns 1\n"):
+            with self.subTest(missing=body[:20]):
+                self.assertEqual("needs-input", intake.assess_issue(title="t", body=body)["status"])
+
+    def test_every_command_the_long_run_table_names_exists(self):
+        """#1337: each row was checked against the code; this keeps the names real."""
+        section = self.section("Built for long unattended runs")
+        rows = [line for line in section.splitlines() if line.startswith("| ")][1:]
+        self.assertGreaterEqual(len(rows), 6, rows)
+        knobs = json.loads(
+            (REPO_ROOT / "src/keel/schema/project.schema.json").read_text(encoding="utf-8")
+        )["properties"]["knobs"]["properties"]
+        adapters = {path.stem for path in _adapter_commands()}
+        for row in rows:
+            with self.subTest(row=row[:60]):
+                ticked = re.findall(r"`([^`]+)`", row)
+                named = {
+                    "slash": [t[len("/keel:") :] for t in ticked if t.startswith("/keel:")],
+                    "cli": [t.split()[1] for t in ticked if t.startswith("keel ")],
+                    "module": [t for t in ticked if t.endswith(".py")],
+                    "knob": [t[len("knobs.") :] for t in ticked if t.startswith("knobs.")],
+                }
+                self.assertTrue(any(named.values()), "the row names nothing checkable")
+                for name in named["slash"]:
+                    self.assertIn(name, adapters)
+                for name in named["cli"]:
+                    self.assertIn(name, _subcommands())
+                for name in named["module"]:
+                    self.assertTrue((REPO_ROOT / "src/keel" / name).is_file(), name)
+                for name in named["knob"]:
+                    self.assertIn(name, knobs)
+
+    def test_the_long_run_table_cites_its_source_as_independent(self):
+        """#1337: a link rather than a reproduction, and no implied affiliation."""
+        section = " ".join(self.section("Built for long unattended runs").split())
+        self.assertIn("](https://claude.dev/blog/getting-the-most-out-of-opus-5-5/)", section)
+        self.assertIn("map to", section)
+        self.assertIn("keel is independent and not affiliated with Anthropic", section)
+        self.assertIn("](https://keel-ship.dev/silent-revert.html)", section)
+
+    def test_the_quickstart_reaches_a_first_issue(self):
+        """#1321: set up, run the gates, then `/keel:ship` in the agent host."""
+        quickstart = self.section("Quickstart")
+        for step in ("keel setup", "keel run-gates", "build_gate_cmd", "/keel:ship"):
+            with self.subTest(step=step):
+                self.assertIn(step, quickstart)
+        self.assertNotIn("keel ship --live", quickstart, "#1321: the CLI does not ship work")
+
+    def test_the_requirements_section_covers_cost_limits_and_uninstall(self):
+        """#1329, and the Python floor it states is the one the package declares."""
+        section = self.section("Requirements, cost and limits")
+        for fact in (
+            "keel cost-report",
+            "gh auth login",
+            "### Uninstall",
+            "`.keel/`",
+            "`.claude/commands/keel/`",
+            "`.agents/skills/keel-*/`",
+            "GitHub only",
+        ):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, section)
+        floor = re.search(
+            r'requires-python = ">=(\d+\.\d+)"',
+            (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+        )
+        self.assertIsNotNone(floor)
+        self.assertIn(f"Python {floor.group(1)} or newer", section)
+
+    def test_the_cost_report_caveat_matches_what_keel_records(self):
+        """#1329: the README says no keel command writes token counts, so every record is
+        priced at a placeholder. When something starts writing them, this fails and the
+        caveat has to go."""
+        section = " ".join(self.section("Requirements, cost and limits").split())
+        self.assertIn("1,500 prompt and 400 completion tokens", section)
+        report = cost.calculate_cost_report([{}]).to_dict()
+        self.assertEqual(
+            (1500, 400), (report["total_prompt_tokens"], report["total_completion_tokens"])
+        )
+        writers = sorted(
+            path.name
+            for path in (REPO_ROOT / "src/keel").rglob("*.py")
+            if path.name != "cost.py" and "prompt_tokens" in path.read_text(encoding="utf-8")
+        )
+        self.assertEqual([], writers, "something records token counts now; update the README")
+
+
+class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
+    """#1345: the README called the jury "off by default"; tier 3 turns it on."""
+
+    def test_tier_three_turns_the_jury_on_and_the_gates_list_does_not(self):
+        self.assertEqual(
+            (True, "tier-3 auto"),
+            tuple(ship.resolve_jury(tier=3).get(key) for key in ("enabled", "reason")),
+        )
+        self.assertFalse(ship.resolve_jury(tier=2, gates=("jury",))["enabled"])
+
+    #: The two shapes the wrong sentence took, within one clause of the word "jury":
+    #: "add `jury` to your `gates:` (off by default)" and "the opt-in jury gate".
+    _WRONG_DEFAULT = (
+        re.compile(r"\bjury[^.;]{0,160}\boff by default|\boff by default[^.;]{0,160}\bjury", re.I),
+        re.compile(r"\bopt-in[^.;]{0,40}\bjury|\bjury[^.;]{0,40}\bopt-in", re.I),
+    )
+
+    def test_no_public_page_calls_the_jury_off_by_default_or_opt_in(self):
+        """README, AGENTS, SECURITY, `docs/keel/` and every site page (#1345).
+
+        Tags are stripped first: on the site the word "jury" sits inside a link whose
+        URL has dots in it, which would end the clause before the claim.
+        """
+        pages = _public_pages()
+        for page in ("README.md", "website/index.html", "website/content.js"):
+            self.assertIn(page, pages)
+        for where, text in pages.items():
+            prose = _prose(where, text)
+            for pattern in self._WRONG_DEFAULT:
+                with self.subTest(page=where, pattern=pattern.pattern[:30]):
+                    found = pattern.search(prose)
+                    self.assertIsNone(found, found and found.group(0))
+
+    def test_the_gates_reference_says_the_list_does_not_switch_the_jury(self):
+        """#1345 asked configuration.md for the same correction: `gates: [jury]` adds an s8
+        run, and tier 3 turns the jury on whether or not it is listed."""
+        text = (REPO_ROOT / "docs/keel/configuration.md").read_text(encoding="utf-8")
+        gates = text.split("#### `gates`", 1)[-1].split("\n#### ", 1)[0]
+        gates = " ".join(gates.split())
+        for claim in ("**tier-3** change", "leaving it out does not keep the jury off"):
+            with self.subTest(claim=claim):
+                self.assertTrue(claim in gates, f"the `gates` reference never says {claim!r}")
+
+    #: The one sentence about a missing `jury` binary, as each surface words it.
+    _VERDICT_OWED = (
+        "a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`"
+    )
+    _NO_BINARY = {
+        "README.md": _VERDICT_OWED,
+        "docs/keel/configuration.md": _VERDICT_OWED,
+        "docs/keel/overview.md": _VERDICT_OWED,
+        "docs/keel/cli.md": _VERDICT_OWED,
+        "docs/keel/parameter-reference.md": _VERDICT_OWED,
+        "website/index.html": "the merge still needs a jury verdict",
+        "website/content.js": (
+            "a tier-3 merge still requires a jury verdict "
+            "unless the run passes <code>--no-jury</code>"
+        ),
+    }
+    #: Every shape the wrong sentence took: "a fail-soft no-op without the `jury` binary",
+    #: "Without the `jury` binary … it degrades to advisory", "a tier-3 change's jury is a
+    #: fail-soft no-op", and at the evidence layer "the flow runs with or without jury"
+    #: (cli.md) and "an absent … jury can never manufacture a block" (parameter-reference.md).
+    #: Tags are stripped first. `the tool binary` (a preset) is not it.
+    _WAIVED = re.compile(
+        r"fail-soft[^.;]{0,60}\b(the|jury)`? binary"
+        r"|jury`? binary[^.;]{0,80}(fail-soft|degrades to advisory)"
+        r"|jury is a fail-soft"
+        r"|flow runs with or without jury"
+        r"|can never manufacture a block",
+        re.I,
+    )
+
+    def test_every_surface_says_a_missing_binary_does_not_waive_the_verdict(self):
+        """Round 1 of #1360: "fail-soft" / "degrades to advisory" without the binary.
+
+        Measured: with no `jury` on PATH a tier-3 `keel ship --json` still reports the
+        jury `gating (tier-3 auto)` and lists `jury-verdict` in the required evidence.
+        Only the s8 run is a no-op; a posted verdict's vendor count is what relaxes it.
+        """
+        for name, sentence in self._NO_BINARY.items():
+            text = " ".join((REPO_ROOT / name).read_text(encoding="utf-8").split())
+            with self.subTest(page=name, check="says the verdict is still owed"):
+                self.assertTrue(sentence in text, f"{name} does not say {sentence!r}")
+            with self.subTest(page=name, check="does not call it fail-soft"):
+                found = self._WAIVED.search(_prose(name, text))
+                self.assertIsNone(found, found and found.group(0))
+        tier3 = ship.resolve_jury(tier=3)
+        self.assertEqual(("gating", True), (tier3["mode"], tier3["enabled"]))
+        short = ship.resolve_jury(tier=3, participating_vendors=1)
+        self.assertEqual("advisory", short["mode"])
+
+    def test_the_readme_says_tier_three_turns_it_on(self):
+        bullet = re.search(
+            r"\n- \*\*A cross-vendor jury(.*?)\n- \*\*",
+            (REPO_ROOT / "README.md").read_text(encoding="utf-8"),
+            re.S,
+        )
+        self.assertIsNotNone(bullet, "the README no longer has its jury bullet")
+        text = " ".join(bullet.group(1).split())
+        self.assertIn("automatically at tier 3", text)
+        self.assertIn("`--no-jury`", text)
 
 
 if __name__ == "__main__":

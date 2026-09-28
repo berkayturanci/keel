@@ -503,8 +503,12 @@ def _latest_per_pr(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             latest[number] = record
         else:
             unkeyed.append(record)
-    keep = list(latest.values()) + unkeyed
-    return [record for record in records if any(record is kept for kept in keep)]
+    # Identity, not equality: two equal rows are still two rows. A set of id()s makes
+    # the filter one pass; `any(record is kept for kept in keep)` was records × kept,
+    # and the ledger is append-only, so that product only grows (#1355). Every id is
+    # of an object `records` still holds, so none can be reused mid-comprehension.
+    kept_ids = {id(kept) for kept in [*latest.values(), *unkeyed]}
+    return [record for record in records if id(record) in kept_ids]
 
 
 def capture_health_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
