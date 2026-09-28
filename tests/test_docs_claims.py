@@ -31,6 +31,7 @@ Everything is offline: these are facts about this checkout.
 
 from __future__ import annotations
 
+import ast
 import collections
 import contextlib
 import inspect
@@ -43,7 +44,19 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from keel import cli, cost, doctor, extensions, gates, install, intake, model, providers, ship
+from keel import (
+    cli,
+    cost,
+    doctor,
+    evidence,
+    extensions,
+    gates,
+    install,
+    intake,
+    model,
+    providers,
+    ship,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -1276,6 +1289,128 @@ def _readme_heading_line(title: str) -> int | None:
     return next((n for n, line in enumerate(lines, 1) if line == f"## {title}"), None)
 
 
+#: The AST nodes that carry a docstring besides the module itself.
+_DOCUMENTED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+#: `gh <noun> <verb>` pairs that change something on GitHub. `gh api` is judged by its
+#: `-X` method instead, so a REST merge or comment is caught however it is spelled.
+_GH_WRITES = frozenset(
+    {
+        ("pr", "merge"),
+        ("pr", "create"),
+        ("pr", "comment"),
+        ("pr", "close"),
+        ("pr", "edit"),
+        ("issue", "close"),
+        ("issue", "comment"),
+        ("issue", "edit"),
+        ("label", "create"),
+        ("label", "edit"),
+        ("label", "delete"),
+        ("release", "create"),
+    }
+)
+#: `git <verb>`s that write refs, objects, the index or the work tree. `worktree` and
+#: `hash-object` are judged by their next argument, since `worktree list` and a bare
+#: `hash-object` only read.
+_GIT_WRITES = frozenset(
+    {
+        "push",
+        "commit",
+        "commit-tree",
+        "mktree",
+        "fetch",
+        "revert",
+        "merge",
+        "rebase",
+        "checkout",
+        "add",
+        "update-ref",
+        "reset",
+        "tag",
+        "branch",
+    }
+)
+
+
+def _argv_writes(node: ast.AST) -> bool:
+    """Is ``node`` a literal ``["git"|"gh", …]`` argv whose command writes?"""
+    if not isinstance(node, ast.List) or not node.elts:
+        return False
+    toks = [e.value if isinstance(e, ast.Constant) else None for e in node.elts]
+    if toks[0] == "gh":
+        if "-X" in toks:
+            method = toks[toks.index("-X") + 1 :][:1]
+            return method not in ([], [None], ["GET"])
+        return tuple(toks[1:3]) in _GH_WRITES
+    if toks[0] != "git":
+        return False
+    rest = toks[1:]
+    while rest[:1] == ["-c"]:
+        rest = rest[2:]
+    if rest[:1] == ["worktree"]:
+        return rest[1:2] in (["add"], ["remove"], ["prune"])
+    if rest[:1] == ["hash-object"]:
+        return "-w" in rest
+    return bool(rest) and rest[0] in _GIT_WRITES
+
+
+def _cli_write_commands() -> dict[str, str]:
+    """Every `keel` subcommand that can reach a git or GitHub write, read from the code.
+
+    A call graph over `src/keel/`: each top-level function's references to other
+    functions (``module.func`` attributes, and bare names within its own module), and
+    the functions that build a writing ``git``/``gh`` argv themselves. A subcommand
+    writes when its ``set_defaults(func=…)`` handler reaches one. It over-approximates
+    — a dry-run arm counts — which is the right direction for a list that says what the
+    CLI *may* write: the README names the flag that turns each write on.
+    """
+    graph: dict[str, set[str]] = {}
+    writers: set[str] = set()
+    for path in sorted((REPO_ROOT / "src" / "keel").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        local = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for fn in tree.body:
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            name, refs = f"{path.stem}.{fn.name}", set()
+            for node in ast.walk(fn):
+                if _argv_writes(node):
+                    writers.add(name)
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                    refs.add(f"{node.value.id}.{node.attr}")
+                elif isinstance(node, ast.Name) and node.id in local and node.id != fn.name:
+                    refs.add(f"{path.stem}.{node.id}")
+            graph[name] = refs
+
+    def reaches(start: str) -> bool:
+        seen, todo = set(), [start]
+        while todo:
+            name = todo.pop()
+            if name in writers:
+                return True
+            if name not in seen:
+                seen.add(name)
+                todo.extend(graph.get(name, ()))
+        return False
+
+    out: dict[str, str] = {}
+
+    def walk(parser, prefix: str) -> None:
+        for action in parser._subparsers._group_actions if parser._subparsers else ():  # noqa: SLF001
+            for sub_name, sub in action.choices.items():
+                func = sub.get_default("func")
+                if func is None:
+                    walk(sub, f"{prefix}{sub_name} ")
+                    continue
+                handler = f"{func.__module__.rsplit('.', 1)[-1]}.{func.__name__}"
+                if reaches(handler):
+                    out[f"{prefix}{sub_name}"] = handler
+
+    walk(cli.build_parser(), "")
+    return out
+
+
 class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
     """#1330, #1321, #1337, #1329: the README buried Install at line 199.
 
@@ -1329,6 +1464,38 @@ class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
             with self.subTest(claim=claim):
                 self.assertTrue(claim in screen, f"the first screen never says {claim!r}")
         self.assertIsNone(re.search(r"CLI itself never commits", screen))
+
+    def test_the_first_screen_lists_every_write_the_cli_makes(self):
+        """#1361: the list of the CLI's own writes left out `keel doctor --fix`.
+
+        It named the merge, `capture-land`, `post-comment` and `review`. The code also
+        creates labels (`doctor --fix`), and in the local checkout adds and removes
+        worktrees and branches (`swarm-run --live`, `worktree-remove`), rebases and merges
+        (`swarm-land --live`) and commits reverts (`rollback`, `canary --auto-revert`).
+        The list is compared with :func:`_cli_write_commands`, not with a list typed here.
+        """
+        screen = " ".join(_readme_first_screen().split())
+        start = screen.find("The CLI's own writes")
+        self.assertNotEqual(-1, start, "the first screen no longer lists the CLI's own writes")
+        listed = screen[start : screen.index(" 3. ", start)]
+        named = set(re.findall(r"`keel ([a-z][a-z0-9-]*)", listed))
+        writes = _cli_write_commands()
+        self.assertTrue({"merge", "doctor"} <= set(writes), writes)
+        self.assertEqual({name.split()[0] for name in writes}, named)
+
+    def test_the_first_screen_names_the_flag_behind_doctors_one_write(self):
+        """`keel doctor` reads; only `--fix` creates labels, so the list must say `--fix`."""
+        self.assertIn("if args.fix", inspect.getsource(cli._cmd_doctor))  # noqa: SLF001
+        self.assertIn("doctor", _cli_write_commands())
+        self.assertIn("`keel doctor --fix`", " ".join(_readme_first_screen().split()))
+
+    def test_the_merge_claim_is_about_pull_requests(self):
+        """`keel swarm-land --live` merges cluster branches locally, so "a merge happens
+        only through `keel merge`" was too wide once the write list named it."""
+        screen = " ".join(_readme_first_screen().split())
+        self.assertIn("swarm-land", _cli_write_commands())
+        self.assertIsNone(re.search(r"\bA merge happens only through", screen))
+        self.assertIn("A pull request merges only through `keel merge`", screen)
 
     def test_every_intake_heading_the_quickstart_names_is_one_intake_reads(self):
         """Round 1 of #1360: the Quickstart said all three headings were required.
@@ -1486,6 +1653,22 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
     _VERDICT_OWED = (
         "a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`"
     )
+    #: The whole sentence, which the adapter must carry: its agents act on the relaxation
+    #: clause, and a shorter restatement elsewhere in the same file would satisfy the
+    #: first half alone (#1361).
+    _VERDICT_OWED_IN_FULL = (
+        f"{_VERDICT_OWED}; it relaxes to advisory only when a posted verdict "
+        "(or `--jury-vendors`) reports fewer than 2 vendors"
+    )
+    #: The `ship` adapter's source and every copy `make adapters plugin` generates from it
+    #: (#1361). The drift tests hold the copies to the source byte for byte; they are
+    #: listed so that a stale copy fails here too, naming the file an agent reads.
+    _SHIP_ADAPTERS = (
+        "src/keel/adapters/commands/ship.md",
+        "commands/ship.md",
+        ".claude/commands/keel/ship.md",
+        ".agents/skills/keel-ship/SKILL.md",
+    )
     _NO_BINARY = {
         "README.md": _VERDICT_OWED,
         "docs/keel/configuration.md": _VERDICT_OWED,
@@ -1497,20 +1680,41 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
             "a tier-3 merge still requires a jury verdict "
             "unless the run passes <code>--no-jury</code>"
         ),
+        **dict.fromkeys(_SHIP_ADAPTERS, _VERDICT_OWED_IN_FULL),
+        # Its docstrings only: read through `_surface_text`, RST's ``x`` as Markdown's `x`.
+        "src/keel/jury.py": _VERDICT_OWED_IN_FULL,
     }
     #: Every shape the wrong sentence took: "a fail-soft no-op without the `jury` binary",
     #: "Without the `jury` binary … it degrades to advisory", "a tier-3 change's jury is a
     #: fail-soft no-op", and at the evidence layer "the flow runs with or without jury"
-    #: (cli.md) and "an absent … jury can never manufacture a block" (parameter-reference.md).
-    #: Tags are stripped first. `the tool binary` (a preset) is not it.
+    #: (cli.md, jury.py) and "an absent … jury can never manufacture a block"
+    #: (parameter-reference.md, the ship adapter). #1361 added three: the adapter's
+    #: evidence check that "declines to *require* a verdict from a panel that never ran"
+    #: (it needs the count reported), `run_gate`'s "Fail-soft no-op when … the ``jury``
+    #: CLI is not installed", and parameter-reference.md's "A missing `jury` CLI is a
+    #: fail-soft no-op". Tags are stripped first. `the tool binary` (a preset) is not it.
     _WAIVED = re.compile(
         r"fail-soft[^.;]{0,60}\b(the|jury)`? binary"
         r"|jury`? binary[^.;]{0,80}(fail-soft|degrades to advisory)"
         r"|jury is a fail-soft"
         r"|flow runs with or without jury"
-        r"|can never manufacture a block",
+        r"|can never manufacture a block"
+        r"|verdict from a panel that never ran"
+        r"|fail-soft no-op when[^.;]{0,80}not installed"
+        r"|jury`? CLI is a fail-soft",
         re.I,
     )
+
+    @staticmethod
+    def _surface_text(name: str) -> str:
+        """A surface's words, whitespace collapsed. A Python module contributes its
+        docstrings and nothing else, with RST's double backticks read as single ones."""
+        text = (REPO_ROOT / name).read_text(encoding="utf-8")
+        if name.endswith(".py"):
+            tree = ast.parse(text)
+            nodes = [tree, *(n for n in ast.walk(tree) if isinstance(n, _DOCUMENTED))]
+            text = " ".join(filter(None, map(ast.get_docstring, nodes))).replace("``", "`")
+        return " ".join(text.split())
 
     def test_every_surface_says_a_missing_binary_does_not_waive_the_verdict(self):
         """Round 1 of #1360: "fail-soft" / "degrades to advisory" without the binary.
@@ -1520,7 +1724,7 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
         Only the s8 run is a no-op; a posted verdict's vendor count is what relaxes it.
         """
         for name, sentence in self._NO_BINARY.items():
-            text = " ".join((REPO_ROOT / name).read_text(encoding="utf-8").split())
+            text = self._surface_text(name)
             with self.subTest(page=name, check="says the verdict is still owed"):
                 self.assertTrue(sentence in text, f"{name} does not say {sentence!r}")
             with self.subTest(page=name, check="does not call it fail-soft"):
@@ -1530,6 +1734,39 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
         self.assertEqual(("gating", True), (tier3["mode"], tier3["enabled"]))
         short = ship.resolve_jury(tier=3, participating_vendors=1)
         self.assertEqual("advisory", short["mode"])
+
+    #: "the optional jury verdict" (evidence.py) and "optional jury-verdict comments"
+    #: (github-actions.md): at tier 3 it is required by default, binary or no binary.
+    _OPTIONAL_VERDICT = re.compile(r"\boptional `?jury`?[- ]verdict", re.I)
+
+    def test_no_surface_calls_the_jury_verdict_optional(self):
+        """#1361: the evidence module and the Actions guide called the verdict optional."""
+        pages = dict(_public_pages())
+        for name in (*self._SHIP_ADAPTERS, "src/keel/evidence.py", "src/keel/jury.py"):
+            pages[name] = self._surface_text(name)
+        for page in ("docs/keel/github-actions.md", "src/keel/evidence.py"):
+            self.assertIn(page, pages)
+        for where, text in pages.items():
+            with self.subTest(page=where):
+                found = self._OPTIONAL_VERDICT.search(_prose(where, text))
+                self.assertIsNone(found, found and found.group(0))
+
+    def test_the_pre_merge_phase_names_the_jury_verdict(self):
+        """#1361: evidence.md's phase contract listed the review verdicts and the gate
+        results before s10 and left out the one artifact a gating jury adds to them."""
+        self.assertIn(
+            "jury-verdict",
+            {
+                item.id
+                for item in evidence.required_items(
+                    {"jury": ship.resolve_jury(tier=3)}, phase=evidence.PHASE_PRE_MERGE
+                )
+            },
+        )
+        text = (REPO_ROOT / "docs/keel/evidence.md").read_text(encoding="utf-8")
+        bullet = re.search(r"\* \*\*Pre-Merge Phase.*?(?=\n\* |\n\n)", text, re.S)
+        self.assertIsNotNone(bullet, "evidence.md has no Pre-Merge Phase bullet")
+        self.assertIn("`jury-verdict`", bullet.group(0))
 
     def test_the_readme_says_tier_three_turns_it_on(self):
         bullet = re.search(

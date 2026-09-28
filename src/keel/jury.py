@@ -1,9 +1,13 @@
-"""The ``jury`` built-in gate — run the ai-jury CLI on the diff (optional, fail-soft).
+"""The ``jury`` built-in gate — run the ai-jury CLI on the diff at s8.
 
 keel does **not** depend on ai-jury. If the ``jury`` CLI is on PATH, this gate runs it on
-the change's diff and maps its findings into keel :class:`~keel.findings.Finding`s; if it is
-absent, the gate is a fail-soft no-op (the flow runs with or without jury). Parsing is pure
-and unit-tested; the subprocess is behind the injectable ``_run`` seam.
+the change's diff and maps its findings into keel :class:`~keel.findings.Finding`s. Without
+the ``jury`` binary the s8 run is a no-op, but a tier-3 merge still requires a
+``jury-verdict`` unless the run passes ``--no-jury``; it relaxes to advisory only when a
+posted verdict (or ``--jury-vendors``) reports fewer than 2 vendors. That requirement is
+not decided here: :func:`keel.ship.resolve_jury` resolves the mode, and
+:func:`keel.evidence.required_items` demands the verdict from it. Parsing is pure and
+unit-tested; the subprocess is behind the injectable ``_run`` seam.
 """
 
 from __future__ import annotations
@@ -171,9 +175,10 @@ def run_gate(
 
     Returns ``(ok, findings, timed_out)``. ``ok`` is False when a finding blocks
     (critical/major) or when the run produced no verdict at all in gating mode.
-    Fail-soft no-op when there is no diff or the ``jury`` CLI is not installed — keel
-    does not depend on ai-jury, so an absent CLI is a legitimate no-op, distinct from
-    a run that started and did not finish.
+    No-op when there is no diff or the ``jury`` CLI is not installed — keel does not
+    depend on ai-jury, so an absent CLI is a legitimate no-op *for this run*, distinct
+    from a run that started and did not finish. It waives nothing downstream: a gating
+    jury's ``jury-verdict`` is still required at merge (see the module docstring).
 
     Three ways a run can end without a review, all handled alike — gating fails closed
     with a blocking ``major``, advisory surfaces a ``minor``:

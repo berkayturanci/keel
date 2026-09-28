@@ -25,11 +25,17 @@
 2. **keel's CLI enforces the backbone.** At each of the fixed steps `s0`–`s12` the agent
    asks `keel` for the plan, the gates, the reviewers and the evidence it owes. `keel ship`
    is a dry assessment: the agent commits, pushes and opens the pull request. The CLI's own
-   writes are the merge, the lesson commit `keel capture-land` pushes onto the pull
-   request's branch, and the verdict and closure comments `keel post-comment` and
-   `keel review` post.
-3. **A merge happens only through `keel merge`**, which takes the merge lock, re-checks the
-   merge window, reads the live CI rollup and verifies the head-pinned review evidence first.
+   writes are these. On GitHub: the merge `keel merge` makes, the lesson commit
+   `keel capture-land` pushes onto the pull request's branch (the base branch without
+   `--onto`), the verdict and closure comments `keel post-comment` and `keel review --live`
+   post or update, and the missing labels `keel doctor --fix` creates. In the local
+   checkout: `keel swarm-run --live` creates (or resets) a branch and a worktree per
+   cluster and removes the worktree afterwards, `keel swarm-land --live` rebases cluster
+   branches and merges them into the base branch with `--no-ff`, `keel worktree-remove`
+   removes a worktree, and `keel rollback` (or `keel canary --auto-revert`) commits a revert.
+3. **A pull request merges only through `keel merge`**, which takes the merge lock,
+   re-checks the merge window, reads the live CI rollup and verifies the head-pinned review
+   evidence first.
 
 ## Built for long unattended runs
 

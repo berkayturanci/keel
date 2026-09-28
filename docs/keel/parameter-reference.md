@@ -1586,8 +1586,8 @@ Each configured command gate runs its shell command; non-zero exit becomes a blo
 distinct `TIMEOUT` instead of `FAIL` and its finding says no pass/fail result was produced
 — it still blocks, exactly as a failure does. The built-in `jury` gate (when `gates:`
 includes `jury`) runs the ai-jury CLI on `git diff base...HEAD` in **gating** mode here,
-with its own `knobs.jury_timeout_s` limit (default 600s). A missing `jury` CLI is a
-fail-soft no-op. Three outcomes mean no review was produced — a diff over 1 MB
+with its own `knobs.jury_timeout_s` limit (default 600s). A missing `jury` CLI makes this
+run a no-op; it does not waive a tier-3 `jury-verdict` (see `--no-jury` below). Three outcomes mean no review was produced — a diff over 1 MB
 (`jury:skipped-oversize`), a run killed by the limit, and a run with no parseable verdict
 (`jury:incomplete-run`) — and in gating mode each is a blocking `major`, so `run-gates`
 blocks on all three (advisory mode, which `keel ship` may resolve to, downgrades them to

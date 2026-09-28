@@ -30,8 +30,8 @@ On the hosted runner it:
 5. posts that assessment as a **PR comment**;
 6. runs **`keel evidence-verify .keel/project.yaml --root . --pr <N>`**, which reads the
    live PR changed files/head SHA and fails until the PR and linked issue have the
-   required closure, reviewer-verdict, and optional jury-verdict comments for the current
-   tier and head.
+   required closure and reviewer-verdict comments for the current tier and head, plus a
+   jury-verdict comment whenever the jury gates (a tier-3 change by default).
 
 ```yaml
 permissions:
