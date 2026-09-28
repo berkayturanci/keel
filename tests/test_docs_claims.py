@@ -1973,7 +1973,7 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
             found = re.search(pattern, sentence, re.I)
             if found:
                 return sentence if whole else sentence[found.start() :]
-        self.fail(f"{name} has no sentence matching {pattern!r}")
+        raise self.failureException(f"{name} has no sentence matching {pattern!r}")
 
     def _panel_clause(self, name: str) -> str:
         """What the adapter says about a jury-panel tier, to the end of that sentence."""
