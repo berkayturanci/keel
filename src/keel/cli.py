@@ -253,6 +253,11 @@ def _run_planned_gates(
         return outcomes, None
     phase_of = {spec.id: spec.phase for spec in now}
     judged = [o for o in outcomes if phase_of.get(o.gate) in loop.JUDGED_PHASES]
+    if empty is not None:
+        # No gate in any phase is red in every phase, the order gate's input included.
+        # `phase_of` has no entry for it — it is not a planned spec — so without this a
+        # test-first history beside `FAIL gates` certified `tdd-order` green (#1368 review).
+        judged.append(empty)
     green = not fnd.summarize(gates.collect_findings(judged)).blocked
     outcome, result = _tdd_order_outcome(later[0], config, root, gates_green=green)
     outcomes.append(outcome)

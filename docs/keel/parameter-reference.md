@@ -1584,7 +1584,7 @@ keel run-gates <project.yaml> [--root DIR] [--tdd] [--defer-jury] [--json]
 
 Each configured command gate runs its shell command; non-zero exit becomes a blocking
 `gate:<name>` finding, output tail captured. A command gate with no command or a blank one
-runs nothing and fails with a finding naming the key, whichever runner executed it, and a
+runs nothing and fails with a finding naming what to set (`knobs.build_gate_cmd` for `build`, `knobs.lint_cmd` for `lint`, `run:` in the file for an extension gate), whichever runner executed it, and a
 plan with no gate at all adds a failed `gates` outcome (`no gate configured: gates: in
 .keel/project.yaml plans nothing to run …`) under any `--phases` scope (#1364). A gate killed by its wall-clock limit
 (`knobs.gate_timeout_s`, default 600s; per-gate `timeout:` frontmatter wins) renders as a

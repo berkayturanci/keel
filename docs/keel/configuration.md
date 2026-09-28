@@ -143,7 +143,8 @@ Every gate run now reports an extra outcome named `gates`, failed, with the `maj
 `--phases` scope, because no scope holds a gate — and `--gate-result` cannot clear it. The
 test is on the plan, not the key: `gates: []` beside a `tester` extension still runs that
 extension and is not blocked. The `tdd-order` gate alone does not count, since it reads the
-other gates' verdict and there are none. The schema does not refuse `gates: []`: leaving
+other gates' verdict and there are none — and it reads the failed `gates` outcome as one of
+them, so it fails beside it rather than certifying a test-first history. The schema does not refuse `gates: []`: leaving
 the key out is the same config, and project gates may legitimately come from extensions.
 
 Listing `jury` here adds the ai-jury run to `keel run-gates` at s8. It is **not** what turns
@@ -179,7 +180,7 @@ contracts, but executable project behavior remains in extension files or project
 | knob | type | required | description |
 |---|---|---|---|
 | `build_gate_cmd` | string | | command the `build` gate runs; unset, the gate blocks every run (see below) |
-| `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent) |
+| `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent, empty or blank) |
 | `implementer_agents` | map role→agent | | **deprecated** by `team.implement.by_role`: role to local agent mapping (still accepted and mapped onto it) |
 | `team.lead` | seat | | seat that coordinates a batch of ships; workers report through it |
 | `team.by_difficulty` | map band→bench | | `easy`/`standard`/`hard` → the bench that staffs work of that weight |
@@ -220,7 +221,9 @@ whichever runner executes it.
 
 #### `lint_cmd`
 
-Command run by the built-in `lint` gate. If absent, the lint gate is skipped.
+Command run by the built-in `lint` gate. If absent, empty or blank (whitespace only), the lint
+gate is skipped: a blank command is not a command, so `lint_cmd: " "` means the same as
+leaving it out rather than planning a gate that could only fail.
 
 #### `implementer_agents`
 

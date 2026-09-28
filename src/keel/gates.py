@@ -69,11 +69,33 @@ UNCONFIGURED_BUILD_GATE = (
 #: ship`` say MERGE, while ``keel merge`` refused the empty record. The id is the config
 #: key, so the finding reads ``gates: …`` wherever findings are printed.
 NO_GATES_ID = "gates"
+#:
+#: The remedy names only gates that judge wherever they run. ``jury`` is not one of them:
+#: with no ``jury`` binary on the host, or an empty diff, the jury gate is a no-op that
+#: reports ``ok`` — so "list jury" would clear this block while nothing is judged (#1368
+#: review).
 NO_GATES_PLANNED = (
     "no gate configured: gates: in .keel/project.yaml plans nothing to run and no "
-    "extension adds a gate — list build (with knobs.build_gate_cmd), lint (with "
-    "knobs.lint_cmd) or jury, or add a gate extension"
+    "extension adds a gate — list build (with knobs.build_gate_cmd) or lint (with "
+    "knobs.lint_cmd), or add a gate extension"
 )
+
+#: The finding an unconfigured built-in ``lint`` gate fails with. :func:`plan_gates` does
+#: not plan ``lint`` without a command, so only a spec built elsewhere reaches it; it names
+#: the knob all the same, as every knob-backed command gate's finding does.
+UNCONFIGURED_LINT_GATE = (
+    "no lint command configured: set knobs.lint_cmd in .keel/project.yaml "
+    "to the command that lints your code, or remove lint from gates:"
+)
+
+#: Built-in command gates whose command is a knob -> the finding naming that knob.
+_UNCONFIGURED_BUILTIN: dict[str, str] = {
+    "build": UNCONFIGURED_BUILD_GATE,
+    "lint": UNCONFIGURED_LINT_GATE,
+}
+
+#: ``GateSpec.source`` prefixes keel itself writes; any other source is an extension file.
+_KEEL_SOURCES: tuple[str, ...] = ("builtin", "policy_pack:", "implement_mode:")
 
 # A failed gate with no explicit findings is reported at this severity.
 _ON_FAIL_SEVERITY: dict[str, str] = {"block": "major", "suggest": "minor", "warn": "nit"}
@@ -235,7 +257,10 @@ def plan_gates(
                 )
             )
         elif name == "lint":
-            if config.knobs.lint_cmd:  # lint is optional
+            # lint is optional: absent, empty or blank means off. A blank command is not a
+            # command, and planning one only to fail it would block every run for a key
+            # that says "no lint" (#1368 review).
+            if (config.knobs.lint_cmd or "").strip():
                 specs.append(
                     GateSpec(
                         "lint",
@@ -319,12 +344,17 @@ def unconfigured_finding(spec: GateSpec) -> Finding:
     returns (#1364): a gate outside the run's ``--phases`` scope has to stay ``not_run``
     like any other, so the verdict belongs after the scope test, which only the runner
     sees — but a runner that answers "ok, ran" for such a gate must not make it a pass.
+
+    It names what to set: the knob for a knob-backed built-in (``build`` ->
+    ``knobs.build_gate_cmd``, ``lint`` -> ``knobs.lint_cmd``), and ``run:`` in the file for
+    an extension gate. A spec keel did not plan from either has nothing to name.
     """
-    message = (
-        UNCONFIGURED_BUILD_GATE
-        if spec.id == "build"
-        else f"gate {spec.id!r} has no command configured"
-    )
+    if spec.source == "builtin" and spec.id in _UNCONFIGURED_BUILTIN:
+        message = _UNCONFIGURED_BUILTIN[spec.id]
+    elif not spec.source.startswith(_KEEL_SOURCES):
+        message = f"gate {spec.id!r} has no command configured: set run: in {spec.source}"
+    else:
+        message = f"gate {spec.id!r} has no command configured"
     return Finding(_ON_FAIL_SEVERITY[spec.on_fail], message, spec.id)
 
 

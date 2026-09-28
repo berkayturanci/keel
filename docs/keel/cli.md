@@ -1861,7 +1861,7 @@ Each gate runs its configured shell command; a non-zero exit becomes a blocking 
 
 **A gate that cannot judge is a `FAIL`, never an `ok`** (#1364). A command gate with no
 command, or a blank one (`" "` — `sh -c ' '` exits 0), runs nothing and fails with a
-finding naming what to set; `keel.gates.run_gates` re-applies that verdict after whichever
+finding naming what to set (`knobs.build_gate_cmd` for `build`, `knobs.lint_cmd` for `lint`, `run:` in the file for an extension gate); `keel.gates.run_gates` re-applies that verdict after whichever
 runner executed the gate, so a runner that answers "passed" for every spec cannot pass it
 (a gate the runner scoped out with `--phases` is still `NOT-RUN`). A plan with **no gate
 at all** — `gates: []` or no `gates:` key, with no extension or preset adding one — is

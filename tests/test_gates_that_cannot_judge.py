@@ -316,6 +316,139 @@ class RunGatesRechecksAfterTheRunner(unittest.TestCase):
         self.assertFalse(outcome.unconfigured)
 
 
+class TheRemedyNamesOnlyGatesThatJudge(_Project):
+    """The empty-plan finding must not advise a gate that is a no-op here (#1368 review).
+
+    ``gates: [jury]`` on a host without the ``jury`` binary, or on an empty diff, reports
+    ``ok jury`` and a dry ship says MERGE — so following "list jury" would clear the block
+    while nothing is judged.
+    """
+
+    def test_the_remedy_does_not_offer_jury(self):
+        self.assertNotIn("jury", gates.NO_GATES_PLANNED)
+        self.assertIn("knobs.build_gate_cmd", gates.NO_GATES_PLANNED)
+        self.assertIn("knobs.lint_cmd", gates.NO_GATES_PLANNED)
+
+
+class ABlankLintCommandIsOff(_Project):
+    """``lint_cmd: " "`` plans no lint gate, exactly as ``lint_cmd: ""`` does (#1368 review)."""
+
+    def _ids(self, lint):
+        config = cfg.parse_config(
+            _data(gates=["build", "lint"], knobs={"build_gate_cmd": "true", "lint_cmd": lint})
+        )
+        return [spec.id for spec in gates.plan_gates(config, {})]
+
+    def test_blank_and_empty_plan_no_lint_and_a_command_does(self):
+        for blank in ("", " ", "\t "):
+            with self.subTest(lint=blank):
+                self.assertEqual(self._ids(blank), ["build"])
+        self.assertEqual(self._ids("make lint"), ["build", "lint"])
+
+    def test_run_gates_does_not_fail_a_lint_gate_it_was_told_is_off(self):
+        project = self.project("gates: [build, lint]", '  build_gate_cmd: "true"\n  lint_cmd: " "')
+        rc, out, _ = run(["run-gates", project, "--root", str(self.root)])
+        self.assertEqual(rc, 0, out)
+        self.assertIn("ok  build", out)
+        self.assertNotIn("lint", out)
+
+    def test_config_hash_is_unchanged_for_a_blank_lint_command(self):
+        # Measured on origin/main 341586a2: planning changed, the canonical config did not.
+        config = cfg.parse_config(
+            _data(gates=["build", "lint"], knobs={"build_gate_cmd": "true", "lint_cmd": " "})
+        )
+        self.assertEqual(
+            cfg.config_hash(config),
+            "4f14561dc92b9613f8f1511cbd6564b3691d7282dea4e66520bef232bcad810e",
+        )
+
+
+class TheUnconfiguredFindingNamesWhatToSet(unittest.TestCase):
+    """Every command gate backed by a knob names that knob; an extension names its file."""
+
+    def test_build_names_its_knob(self):
+        spec = gates.GateSpec("build", "command", "test", "block", run=None)
+        self.assertIn("knobs.build_gate_cmd", gates.unconfigured_finding(spec).message)
+
+    def test_lint_names_its_knob(self):
+        spec = gates.GateSpec("lint", "command", "test", "block", run=" ")
+        finding = gates.unconfigured_finding(spec)
+        self.assertEqual(finding.message, gates.UNCONFIGURED_LINT_GATE)
+        self.assertIn("knobs.lint_cmd", finding.message)
+        self.assertEqual(finding.severity, "major")
+
+    def test_an_extension_gate_names_run_in_its_file(self):
+        source = ".keel/extensions/smoke.md"
+        spec = gates.GateSpec("smoke", "command", "test", "suggest", run=" ", source=source)
+        finding = gates.unconfigured_finding(spec)
+        self.assertIn("'smoke'", finding.message)
+        self.assertIn(f"set run: in {source}", finding.message)
+        self.assertEqual(finding.severity, "minor")
+
+    def test_an_extension_called_build_is_not_the_builtin(self):
+        spec = gates.GateSpec("build", "command", "test", "block", run=" ", source="build.md")
+        message = gates.unconfigured_finding(spec).message
+        self.assertNotIn("knobs.build_gate_cmd", message)
+        self.assertIn("set run: in build.md", message)
+
+    def test_a_spec_keel_planned_from_nothing_names_nothing_it_cannot(self):
+        spec = gates.GateSpec(
+            "semgrep", "command", "test", "suggest", run=None, source="policy_pack:preset:x"
+        )
+        self.assertEqual(
+            gates.unconfigured_finding(spec).message, "gate 'semgrep' has no command configured"
+        )
+
+
+class TheOrderGateCannotBeGreenBesideAnEmptyPlan(unittest.TestCase):
+    """``gates: []`` under ``implement_mode: tdd`` plans only ``tdd-order`` (#1368 review).
+
+    The failing ``gates`` outcome is not a planned spec, so the order gate's "other gates
+    green" input skipped it and a test-first history certified ``tdd-order`` as passed
+    beside ``FAIL gates``. It is red in every phase, so it is red for the order gate too.
+    """
+
+    def test_a_test_first_history_does_not_pass_the_order_gate(self):
+        from keel import tdd
+
+        config = cfg.parse_config(
+            _data(
+                gates=[],
+                knobs={"build_gate_cmd": "true", "implement_mode": "tdd"},
+                policy_pack={
+                    "name": "p",
+                    "test_groups": {
+                        "unit": {
+                            "command": "true",
+                            "paths": ["tests/**"],
+                            "test_paths": ["tests/**"],
+                        }
+                    },
+                },
+            )
+        )
+        specs = gates.plan_gates(config, {})
+        self.assertEqual([spec.id for spec in specs], [tdd.GATE_ID])
+        log = (
+            f"{tdd.RECORD_SEP}aaa1{tdd.FIELD_SEP}base{tdd.FIELD_SEP}test: pin it\n"
+            "A\ttests/test_x.py\n"
+            f"{tdd.RECORD_SEP}bbb2{tdd.FIELD_SEP}aaa1{tdd.FIELD_SEP}feat: do it\n"
+            "M\tsrc/x.py\n"
+        )
+        with (
+            patch("keel.cli._ship_base_ref", return_value="origin/main"),
+            patch("keel.cli.git.commit_log", return_value=log),
+        ):
+            outcomes, result = cli._run_planned_gates(
+                specs, lambda _spec: (True, []), config=config, root="."
+            )
+        by_gate = {outcome.gate: outcome for outcome in outcomes}
+        self.assertEqual(list(by_gate), [gates.NO_GATES_ID, tdd.GATE_ID])
+        self.assertFalse(by_gate[gates.NO_GATES_ID].ok)
+        self.assertFalse(by_gate[tdd.GATE_ID].ok)
+        self.assertFalse(result.ok)
+
+
 class TheLoopStopsOnAGateThatCannotJudge(unittest.TestCase):
     """An unconfigured gate ends the s4 loop at once instead of spending the budget."""
 
