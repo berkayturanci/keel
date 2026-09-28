@@ -705,9 +705,12 @@ red gate run is its proof). When `enabled` is true:
    ```
 
    `decision.status` is the whole verdict: `done` (every blocking gate the loop judges green
-   — proceed to s5), `continue` (dispatch iteration K+1 with the rendered brief), or
+   — proceed to s5), `continue` (dispatch iteration K+1 with the rendered brief),
    `budget-exhausted` (non-zero exit — the issue is **blocked**; do not iterate again and do
-   not ask the implementer whether it is finished). `run-gates`'s own exit code is not the
+   not ask the implementer whether it is finished), or `unconfigured` (non-zero exit, at any
+   iteration — a gate in `decision.unconfigured` has no command, or no gate is planned, so no
+   iteration can turn it green; the issue is **blocked** until the key the gate's finding
+   names is set in `.keel/project.yaml` — do not iterate again). `run-gates`'s own exit code is not the
    verdict, but with `--phases guard,test` it reflects only the gates this run judged: a
    deferred `pre-merge` gate is `not_run`, not red, so the fence no longer has to tolerate
    a non-zero exit. An unreadable report fails at `keel loop brief`, visibly. An agentic Lego, the jury and a `pre-merge` gate come back **deferred**

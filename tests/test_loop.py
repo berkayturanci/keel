@@ -273,6 +273,7 @@ class TestDecide(unittest.TestCase):
                 "budget": 3,
                 "blocking": ["build"],
                 "deferred": [],
+                "unconfigured": [],
                 "next_iteration": 2,
                 "blocked": False,
             },
@@ -650,7 +651,9 @@ class TestContract(unittest.TestCase):
     def test_the_contract_names_the_judge_and_the_statuses(self):
         contract = loop.contract_as_dict()
         self.assertEqual(contract["schema_version"], "keel.loop.v1")
-        self.assertEqual(contract["statuses"], ["continue", "done", "budget-exhausted"])
+        self.assertEqual(
+            contract["statuses"], ["continue", "done", "budget-exhausted", "unconfigured"]
+        )
         self.assertIn("gate run", contract["judge"])
         self.assertEqual(contract["judged_phases"], ["guard", "test"])
         json.dumps(contract)

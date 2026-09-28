@@ -50,7 +50,10 @@ SPAWN_ATTEMPTS: list[list[str]] = []
 
 #: Tools `runtime.detect` may find on PATH. Deliberately not "everything": reporting a
 #: `jury` binary would let the built-in jury gate dispatch a real cross-vendor review.
-_ON_PATH = {"git": "/usr/bin/git", "gh": "/usr/bin/gh"}
+#: `sh` is reported because the fixtures plan the `build` gate (`build_gate_cmd: "true"`):
+#: a plan with no gate blocks every run (#1364), and these fixtures always meant to run
+#: that one. `true` touches no network and no credential.
+_ON_PATH = {"git": "/usr/bin/git", "gh": "/usr/bin/gh", "sh": "/bin/sh"}
 
 
 def _recording_run_argv(argv, **_kwargs):
@@ -149,6 +152,7 @@ core_version: "^1.0"
 base_branch: main
 owner: acme
 repo: widget
+gates: [build]
 knobs:
   build_gate_cmd: "true"
   tier3_globs: ["src/**"]
@@ -165,6 +169,7 @@ core_version: "^1.0"
 base_branch: main
 owner: acme
 repo: widget
+gates: [build]
 knobs:
   build_gate_cmd: "true"
   tier3_globs: ["src/**"]
@@ -188,6 +193,7 @@ core_version: "^1.0"
 base_branch: main
 owner: acme
 repo: widget
+gates: [build]
 knobs:
   build_gate_cmd: "true"
   tier3_globs: ["src/**"]
@@ -205,6 +211,7 @@ core_version: "^1.0"
 base_branch: main
 owner: acme
 repo: widget
+gates: [build]
 knobs:
   build_gate_cmd: "true"
   tier3_globs: ["src/**"]

@@ -1430,6 +1430,7 @@ function of the iteration number, the outcomes and the policy:
 | `done` | every blocking gate the loop judges passed — the loop is over, proceed to s5 | 0 |
 | `continue` | a judged blocking gate failed and the budget allows another iteration — the next brief is rendered | 0 |
 | `budget-exhausted` | a judged blocking gate is still red after `max_iterations` — the issue is blocked | 1 |
+| `unconfigured` | a judged blocking gate **cannot judge** (`unconfigured: true` — no command, or no gate planned), at any iteration — the issue is blocked at once, since no iteration can turn it green; `decision.unconfigured` names the gates | 1 |
 
 The loop judges the gates `keel ship` runs on the tree before a pull request exists — the
 guard and test phases, of kind `command` or built-in — and that is what the packaged recipe
@@ -1858,6 +1859,16 @@ default `ship`) — so a run moves forward on the board without the agent's per-
 Each gate runs its configured shell command; a non-zero exit becomes a blocking finding
 (`gate:<name>`), a zero exit a pass. The command's output tail is captured for context.
 
+**A gate that cannot judge is a `FAIL`, never an `ok`** (#1364). A command gate with no
+command, or a blank one (`" "` — `sh -c ' '` exits 0), runs nothing and fails with a
+finding naming what to set (`knobs.build_gate_cmd` for `build`, `knobs.lint_cmd` for `lint`, `run:` in the file for an extension gate); `keel.gates.run_gates` re-applies that verdict after whichever
+runner executed the gate, so a runner that answers "passed" for every spec cannot pass it
+(a gate the runner scoped out with `--phases` is still `NOT-RUN`). A plan with **no gate
+at all** — `gates: []` or no `gates:` key, with no extension or preset adding one — is
+reported as one more outcome, `FAIL  gates`, with the `major` finding `no gate configured:
+gates: in .keel/project.yaml plans nothing to run …`, whatever the `--phases` scope; it
+used to print nothing and exit 0. Both outcomes carry `unconfigured: true` in `--json`.
+
 A gate that exceeds its wall-clock limit is killed and reported as a third, distinct
 outcome — `TIMEOUT` rather than `FAIL` — so a slow host does not read as a broken test.
 It **still blocks**: a hanging command is a real defect. The limit is
@@ -1908,7 +1919,7 @@ used as-is.
 
 `--json` emits the machine report the [s4 loop](configuration.md#loop) reads — `keel.run-gates.v1`:
 the planned `gates` (id, kind, phase, severity) beside the `gate_outcomes` (each with `ok`,
-`on_fail`, `not_run`, findings), `jury_run`, and `blocked`; the exit code is unchanged, and
+`on_fail`, `not_run`, `unconfigured`, findings), `jury_run`, and `blocked`; the exit code is unchanged, and
 the human listing is not printed. `--phases guard,test` scopes the run to what the loop
 judges: a gate at another phase is reported `not_run` with its `on_fail` and its command is
 never executed, so the exit code reflects only the judged gates and the loop recipe no longer

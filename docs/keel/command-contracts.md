@@ -495,7 +495,7 @@ round has a different actor from the implementer, and the closure has to be able
 `keel loop brief` publishes `keel.loop.v1`: the pure-core answer to *is this s4 iteration
 done, and if not, what does the next one read?*
 
-- the **decision** — `done`, `continue` or `budget-exhausted`, a pure function of the
+- the **decision** — `done`, `continue`, `budget-exhausted` or `unconfigured`, a pure function of the
   iteration number, the gate outcomes and the policy. The loop judges the gates it can make
   green — the guard- and test-phase gates the command runner executed (`judged_phases`) — and
   `done` needs every blocking one of them green; a soft gate that failed does not hold the
@@ -503,7 +503,10 @@ done, and if not, what does the next one read?*
   are **deferred** (named in `decision.deferred`, never counted green, never holding the loop
   open — the phase that runs them decides); an empty report is refused; a judged blocking
   gate still red at `max_iterations` is `budget-exhausted`, which exits non-zero and blocks
-  the issue rather than ending the loop as a pass. The gate run is the judge, never the
+  the issue rather than ending the loop as a pass; a judged blocking gate whose outcome says
+  `unconfigured: true` (no command, or no gate planned) is `unconfigured` at any iteration —
+  no iteration can turn it green — which also exits non-zero and names the gates in
+  `decision.unconfigured` (#1364). The gate run is the judge, never the
   implementer's text.
 - the **brief** — the base brief verbatim plus one appended section carrying the gate output
   as quoted data (blockquoted, a leading `#` or `>` escaped, the comment delimiters

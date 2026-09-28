@@ -26,8 +26,9 @@ if TYPE_CHECKING:  # pragma: no cover
 #
 # `gates` is the lower-level module: it owns `GateSpec`, and it imports nothing
 # from here, so this edge is one-way and creates no cycle.
-# `unconfigured_finding` rides the same import and is used here, not re-exported.
-from .gates import GateRunner, unconfigured_finding  # noqa: E402  (after TYPE_CHECKING)
+# `command_unset` and `unconfigured_finding` ride the same import and are used here,
+# not re-exported.
+from .gates import GateRunner, command_unset, unconfigured_finding  # noqa: E402
 
 __all__ = ["GateRunner", "CommandResult", "run_argv", "command_gate_runner"]
 
@@ -195,10 +196,11 @@ def command_gate_runner(
             # `not_run` so this can never be recorded as "ran and passed"; `ok` stays
             # True so a soft gate does not spuriously fail a command-only run.
             return True, [], False, True
-        if not spec.run:
-            # A command gate with nothing to run (an unset `knobs.build_gate_cmd`, #1328)
-            # is ours and it fails, naming the knob. "not_run" would read as "record a
-            # result for this gate" rather than "configure it".
+        if command_unset(spec):
+            # A command gate with nothing to run (an unset `knobs.build_gate_cmd`, #1328,
+            # or a blank one, #1364 — `sh -c ' '` exits 0) is ours and it fails, naming
+            # the knob. "not_run" would read as "record a result for this gate" rather
+            # than "configure it".
             return False, [unconfigured_finding(spec)], False, False
         limit = timeout if spec.timeout is None else spec.timeout
         result = run_command(spec.run, cwd=repo_root, timeout=limit, _run=_run)
