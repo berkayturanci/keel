@@ -43,6 +43,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from keel import (
     cli,
@@ -2178,17 +2179,40 @@ class TheWorkflowPageMatchesThisRepositorysJuryPolicy(unittest.TestCase):
     what that file sets rather than only what the default policy does.
     """
 
-    def test_the_page_names_the_mode_this_repository_sets(self):
-        config = (REPO_ROOT / ".keel" / "project.yaml").read_text(encoding="utf-8")
-        mode = re.search(r"^\s+jury:\n(?:\s+#[^\n]*\n)*\s+mode:\s*(\w+)", config, re.M)
-        self.assertIsNotNone(mode, "no team.jury.mode in .keel/project.yaml")
-        page = " ".join(
+    _ADVISORY_HERE = ("sets `team.jury.mode: advisory`", "so here the jury never requires one")
+
+    def _mode(self) -> str:
+        from keel.config import load_config
+
+        return load_config(REPO_ROOT / ".keel" / "project.yaml").knobs.team.jury_mode
+
+    def _page(self) -> str:
+        return " ".join(
             (REPO_ROOT / "docs" / "keel" / "github-actions.md").read_text(encoding="utf-8").split()
         )
+
+    def test_the_page_names_the_mode_this_repository_sets(self):
+        page = self._page()
         self.assertIn("evidence-verify .keel/project.yaml", page)
-        if mode.group(1) == "advisory":
-            self.assertIn("sets `team.jury.mode: advisory`", page)
-            self.assertIn("so here the jury never requires one", page)
+        advisory_here = [phrase in page for phrase in self._ADVISORY_HERE]
+        if self._mode() == "advisory":
+            self.assertEqual(advisory_here, [True, True])
+        else:
+            self.assertEqual(advisory_here, [False, False], "the page claims advisory; it is not")
+
+    def test_the_check_holds_in_both_directions(self):
+        page = self._page()
+        claims_advisory = all(phrase in page for phrase in self._ADVISORY_HERE)
+        for mode in ("advisory", "gating"):
+            with (
+                self.subTest(mode=mode),
+                mock.patch.object(type(self), "_mode", lambda self, m=mode: m),
+            ):
+                if (mode == "advisory") == claims_advisory:
+                    self.test_the_page_names_the_mode_this_repository_sets()
+                else:
+                    with self.assertRaises(AssertionError):
+                        self.test_the_page_names_the_mode_this_repository_sets()
 
 
 if __name__ == "__main__":
