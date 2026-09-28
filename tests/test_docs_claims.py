@@ -1489,6 +1489,8 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
         "README.md": _VERDICT_OWED,
         "docs/keel/configuration.md": _VERDICT_OWED,
         "docs/keel/overview.md": _VERDICT_OWED,
+        "docs/keel/cli.md": _VERDICT_OWED,
+        "docs/keel/parameter-reference.md": _VERDICT_OWED,
         "website/index.html": "the merge still needs a jury verdict",
         "website/content.js": (
             "a tier-3 merge still requires a jury verdict "
@@ -1497,11 +1499,15 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
     }
     #: Every shape the wrong sentence took: "a fail-soft no-op without the `jury` binary",
     #: "Without the `jury` binary … it degrades to advisory", "a tier-3 change's jury is a
-    #: fail-soft no-op". Tags are stripped first. `the tool binary` (a preset) is not it.
+    #: fail-soft no-op", and at the evidence layer "the flow runs with or without jury"
+    #: (cli.md) and "an absent … jury can never manufacture a block" (parameter-reference.md).
+    #: Tags are stripped first. `the tool binary` (a preset) is not it.
     _WAIVED = re.compile(
         r"fail-soft[^.;]{0,60}\b(the|jury)`? binary"
         r"|jury`? binary[^.;]{0,80}(fail-soft|degrades to advisory)"
-        r"|jury is a fail-soft",
+        r"|jury is a fail-soft"
+        r"|flow runs with or without jury"
+        r"|can never manufacture a block",
         re.I,
     )
 
