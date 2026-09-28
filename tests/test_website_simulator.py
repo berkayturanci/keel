@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -128,6 +129,56 @@ class TestReplayButtonAccessibleName(unittest.TestCase):
     def test_the_decorative_glyph_is_not_part_of_the_name(self):
         """If the `↻` ever loses `aria-hidden`, the assertions above stop holding."""
         self.assertNotIn("\u21bb", self._button("replay").visible)
+
+
+class TestSimulatorControlNames(unittest.TestCase):
+    """Pause, Resume and Reset say what they act on, and still start with what they show.
+
+    Bare "Pause" and "Reset" do not say *what* is paused or reset, so each carries an
+    `aria-label` naming the simulation. An `aria-label` replaces the visible text as
+    the accessible name, so it must begin with that text (WCAG 2.5.3, the rule
+    :class:`TestReplayButtonAccessibleName` pins for the replay button). Palette
+    #1347 named the first state "Start the simulation" while the button showed "Run
+    Swarm Simulation", so "click Run Swarm Simulation" would have stopped working;
+    that state's visible text already names the simulation and it gets no label.
+    """
+
+    def setUp(self):
+        self.source = (REPO_ROOT / "website" / "swarm-simulator.js").read_text(encoding="utf-8")
+
+    def _states(self) -> list[tuple[str, str]]:
+        return re.findall(r'\{ glyph: "[^"]*", text: "([^"]*)", name: "([^"]*)" \}', self.source)
+
+    def test_there_are_three_toggle_states(self):
+        self.assertEqual(
+            [text for text, _ in self._states()], ["Pause", "Resume", "Run Swarm Simulation"]
+        )
+
+    def test_every_toggle_label_starts_with_its_visible_text(self):
+        for text, name in self._states():
+            with self.subTest(text=text):
+                if name:
+                    self.assertTrue(name.lower().startswith(text.lower()), (text, name))
+                    self.assertIn("simulation", name.lower())
+                else:
+                    self.assertIn("simulation", text.lower())
+
+    def test_the_toggle_is_named_only_through_its_state(self):
+        start = self.source.index('id="sim-toggle-btn"')
+        tag = self.source[start : self.source.index(">", start)]
+        self.assertNotIn("aria-label", tag)
+        self.assertIn("toggleName", tag)
+        self.assertIn("toggle.name ? ' aria-label=\"' + toggle.name + '\"' : \"\"", self.source)
+
+    def test_the_reset_label_starts_with_its_visible_text(self):
+        start = self.source.index('id="sim-reset-btn"')
+        button = self.source[start : self.source.index("</button>", start)]
+        label = re.search(r'aria-label="([^"]*)"', button).group(1)
+        visible = re.sub(
+            r'<span aria-hidden="true">[^<]*</span>', "", button.split(">", 1)[1]
+        ).strip()
+        self.assertEqual(visible, "Reset")
+        self.assertTrue(label.startswith(visible), label)
 
 
 class TestSimulatorSpeedButtons(unittest.TestCase):
