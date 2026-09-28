@@ -19,7 +19,7 @@
 
 **How a run happens**
 
-1. **Your agent host does the work.** In Claude Code, Codex, Cursor or Antigravity you run
+1. **Your agent host does the work.** In Claude Code, Codex, Cursor (partial) or Antigravity you run
    `/keel:ship <issue>`; the agent writes the code, opens the pull request and dispatches
    the reviewers.
 2. **keel's CLI enforces the backbone.** At each of the fixed steps `s0`–`s12` the agent
@@ -241,7 +241,7 @@ to be on your `PATH`. Jump to the agent you use:
 [![Claude Code](https://img.shields.io/badge/Claude_Code-install-D97757?style=flat-square)](#claude-code)
 [![Codex](https://img.shields.io/badge/Codex-install-000000?style=flat-square)](#codex)
 [![Antigravity](https://img.shields.io/badge/Antigravity-install-4285F4?style=flat-square)](#antigravity)
-[![Cursor](https://img.shields.io/badge/Cursor-install-6E56CF?style=flat-square)](#cursor)
+[![Cursor (partial)](https://img.shields.io/badge/Cursor-partial-6E56CF?style=flat-square)](#cursor)
 
 Each badge jumps to that agent's box; open it for the commands. (A browser scrolls
 to a collapsed `<details>`; it does not expand one.)
@@ -324,7 +324,13 @@ re-run the install after a release that adds a component directory.
 
 <a id="cursor"></a>
 <details>
-<summary><b>Cursor</b> — two routes, and they differ</summary>
+<summary><b>Cursor</b> — partial: two routes, and they differ</summary>
+
+**Partial** ([#1332](https://github.com/berkayturanci/keel/issues/1332)). The marketplace
+route registers the `/keel:<command>` set. A local checkout registers one skill,
+`keel-onboard`: `.cursor-plugin/plugin.json` names `./skills`, and the workflow skills
+live in `.agents/skills/`, which no manifest names. Whether Cursor registers them when
+the manifest names `.agents/skills` too is not verified in a running Cursor.
 
 Cursor has **no CLI install command** — `cursor-agent plugin` exposes only
 `marketplace` — and the two routes do not register the same things.
@@ -387,9 +393,9 @@ flows are additive. The plugin's command files under `commands/` are generated f
 Each line links to the full description in [`docs/keel/overview.md`](docs/keel/overview.md#what-you-get)
 or the reference it points at.
 
-- **One backbone, four hosts** — keel installs into Claude Code, Codex, Cursor and Antigravity
-  ([per-host steps](docs/keel/install.md)); Cursor is partial
-  ([#1332](https://github.com/berkayturanci/keel/issues/1332)).
+- **One backbone, four hosts** — keel installs into Claude Code, Codex, Cursor (partial,
+  [#1332](https://github.com/berkayturanci/keel/issues/1332)) and Antigravity
+  ([per-host steps](docs/keel/install.md)).
 - **A team, not a delegate** — `knobs.team` names who implements, who gives the gate review,
   who reviews at each risk tier, and who applies the findings
   ([reference](docs/keel/configuration.md#team)).
@@ -480,7 +486,7 @@ keel run from the ledger/checkpoint keel already writes — it never drives one 
 - [`docs/keel/evidence.md`](docs/keel/evidence.md) — evidence chain, commit-SHA binding, and compliance auditability
 - [`docs/keel/models.md`](docs/keel/models.md) — supported AI models, providers, and delegate profiles (Claude, OpenAI, Gemini, OpenRouter, DeepSeek, Groq, Ollama, CLI tools)
 - [`docs/keel/parameter-reference.md`](docs/keel/parameter-reference.md) — exhaustive per-flag reference for every CLI command and the `/keel:ship` adapter arguments
-- [`docs/keel/install.md`](docs/keel/install.md) — installing keel **into an agent** (Claude Code, Codex, Antigravity, Cursor), with the update path for each
+- [`docs/keel/install.md`](docs/keel/install.md) — installing keel **into an agent** (Claude Code, Codex, Antigravity, Cursor (partial)), with the update path for each
 - [`docs/keel/onboarding.md`](docs/keel/onboarding.md) — one-command consumer setup and follow-up checks
 - [`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) — the live run board (`dash`/`render`/`serve`, the per-run 2D/3D drawer, `--all` multi-project, the auto-stamped `keel activity` channel)
 - [`docs/keel/extensions.md`](docs/keel/extensions.md) — authoring Lego extensions

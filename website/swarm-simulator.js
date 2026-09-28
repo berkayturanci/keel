@@ -47,9 +47,6 @@
     timer: null,
     step: 0,
     speed: 1,
-    tokens: 0,
-    costUsd: 0.0,
-    savingsUsd: 0.0,
     wave: 1,
     lock: "UNLOCKED",
     issuesState: {}
@@ -66,9 +63,6 @@
     }
     state.running = false;
     state.step = 0;
-    state.tokens = 0;
-    state.costUsd = 0.0;
-    state.savingsUsd = 0.0;
     state.wave = 1;
     state.lock = "UNLOCKED";
     state.issuesState = {};
@@ -121,9 +115,6 @@
 
       if (st.status === "running") {
         st.progress += Math.floor(Math.random() * 18 + 12);
-        state.tokens += Math.floor(Math.random() * 3200 + 1500);
-        state.costUsd += 0.0028;
-        state.savingsUsd += 0.0165;
 
         if (st.progress >= 100) {
           st.progress = 100;
@@ -237,9 +228,6 @@
       '  </div>',
       '  <p class="sim-desc">' + preset.description + '</p>',
       '  <div class="sim-metrics-bar">',
-      '    <div class="sim-metric"><span class="m-val">' + state.tokens.toLocaleString() + '</span><span class="m-lbl">Tokens Processed</span></div>',
-      '    <div class="sim-metric"><span class="m-val">$' + state.costUsd.toFixed(4) + '</span><span class="m-lbl">Estimated Spend</span></div>',
-      '    <div class="sim-metric green"><span class="m-val">$' + state.savingsUsd.toFixed(4) + '</span><span class="m-lbl">Routing Savings</span></div>',
       '    <div class="sim-metric"><span class="m-val ' + lockClass + '">' + state.lock + '</span><span class="m-lbl">Merge Lock State</span></div>',
       '    <div class="sim-metric"><span class="m-val">Wave ' + state.wave + ' of 2</span><span class="m-lbl">DAG Wave Phase</span></div>',
       '  </div>',
