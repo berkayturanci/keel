@@ -1,7 +1,7 @@
 """Deterministic pre-merge evidence verification.
 
 The ship adapter is agentic, but the artifacts it must leave behind are not:
-reviewer verdict comments/reviews, the optional jury verdict, and the stable
+reviewer verdict comments/reviews, the jury verdict a gating jury requires, and the stable
 closure comment marker. This module keeps the check pure so CI can enforce it
 without trusting prose in an agent prompt.
 

@@ -1092,20 +1092,35 @@ separate reading.
 When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdict_template`
 is available, use that canonical shape for the posted jury verdict and preserve
 `keel.jury-verdict.v1` plus `head: <sha>`.
-The **`jury` gate** runs the ai-jury CLI read-only on the PR diff when present (and a no-op
-fail-soft otherwise) using the committed panel; it never passes `--strict`. In **gating**
+The **`jury` gate** runs the ai-jury CLI read-only on the PR diff using the committed panel;
+it never passes `--strict`. Without the `jury` binary the s8 run is a no-op, but a tier-3
+merge still requires a `jury-verdict` unless the run passes `--no-jury`; it relaxes to
+advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors.
+That is the default policy. Off a jury-panel tier, `team.jury.mode: advisory` or
+`--jury-advisory` never requires the verdict, and `team.jury.min_vendors` may raise the 2.
+On a tier whose review is the jury panel, neither `--no-jury`, `--jury-advisory` nor a
+short panel relaxes it; only `team.jury.on_unavailable: fallback`, after a measured probe
+finds the panel unstaffable, turns that tier's jury off and seats a host bench (see "When
+the panel cannot be staffed here" above). A missing binary is therefore
+not a pass: post the verdict, or report that the jury could not run. In **gating**
 mode the depth is the full verified run; only **verified consensus**
 `critical`/`major`/`minor` findings fold into s9 (`critical`/`major` ⇒ block, `minor` ⇒
 gated suggestion, `nit` ⇒ advisory; a jury-driven fix consumes one round). **Core resolves
-the effective mode from the panel that actually ran** — a run with fewer than
-`ship.MINIMUM_JURY_VENDORS` (2) distinct *participating* vendors is downgraded to advisory,
-and a run where no agent returned output is simply zero vendors, so at **this layer** — the
-pre-merge evidence check — a jury that did not complete cleanly does not gate. Do not
+the effective mode from the panel count it is given** — off a jury-panel tier, a *reported*
+count of distinct *participating* vendors below `team.jury.min_vendors` (default and floor
+`ship.MINIMUM_JURY_VENDORS`, 2) downgrades a gating jury to advisory, and a run where no
+agent returned output counts as zero only once that zero is reported, through
+`--jury-vendors 0` or a posted verdict's `vendors: 0`. With no count at all — no verdict
+posted and no `--jury-vendors` — there is no downgrade: the mode stays gating and the
+pre-merge evidence check still requires the `jury-verdict`. So at **this layer** a jury
+that did not complete cleanly stops gating only when its count is reported. Do not
 re-derive or override that downgrade: report the count and let core decide. Note this is
 distinct from the **s8 gate layer**: there a jury run that produced no verdict (killed by
 `knobs.jury_timeout_s`, or output with no parseable report) is a blocking `major` in gating
 mode. The gate refuses to call a non-review a pass; the evidence check separately declines
-to *require* a verdict from a panel that never ran. Pass the distinct participating vendors — those that actually
+to *require* a verdict from a panel that is **reported** short — a count of zero or one
+reaches it only through a posted verdict or `--jury-vendors`, and with no count at all the
+verdict stays required. Pass the distinct participating vendors — those that actually
 returned output, not those merely configured — via `keel evidence-verify --jury-vendors <N>`,
 and post a verdict whose declared mode matches the resolved `jury.mode`, which the evidence
 gate reads to decide whether a `jury-verdict` is required at all. A verdict rendered by keel
@@ -1581,11 +1596,13 @@ surface that to the operator rather than retrying with a guess.
 The only merge path is `keel merge` at s10 (claim, window, CI rollup, and evidence checks
 run in core) · never merge
 in the night no-merge window except a blocker / audited `--hotfix` · fail-soft (a missing
-CLI/gate/jury/capture-path degrades, never crashes the run; an absent/erroring jury can
-never manufacture a block) · the **orchestrator owns all writes** (reviewers are
+CLI/gate/jury/capture-path degrades, never crashes the run — but a degraded jury waives no
+evidence: without the `jury` binary the s8 run is a no-op, but a tier-3 merge still requires
+a `jury-verdict` unless the run passes `--no-jury`, and a gating jury run that produced no
+verdict is a blocking `major`) · the **orchestrator owns all writes** (reviewers are
 findings-only, every vendor) · never push directly to `base_branch` · the status-done label
 is set in exactly one place (s12, post-merge) · attribute the **effective** vendor+model
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.24.2 source_sha256=7df96646cf8f9dca3ee0112ad18acc6567aa2b597e3d36be37109431a79d9b85 generated_sha256=7df96646cf8f9dca3ee0112ad18acc6567aa2b597e3d36be37109431a79d9b85 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.24.2 source_sha256=6769970d9ee28e25aa17c43bbfbc8046a615061986498da45d9813aec5648cd6 generated_sha256=6769970d9ee28e25aa17c43bbfbc8046a615061986498da45d9813aec5648cd6 -->
