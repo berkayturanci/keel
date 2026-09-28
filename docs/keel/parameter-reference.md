@@ -2286,9 +2286,12 @@ reviewer count. In gating mode only **verified consensus** findings fold into s9
 (critical/major ⇒ block, minor ⇒ gated suggestion, nit ⇒ advisory; a jury-driven fix
 consumes one fix round). Core resolves the effective mode from the panel that actually
 ran: a run with fewer than `MINIMUM_JURY_VENDORS` (2) distinct participating vendors is
-downgraded to advisory, and a run where no agent returned output is zero vendors, so a
-jury that did not complete cleanly never gates (fail-soft: an absent or erroring jury can
-never manufacture a block). Supply the count with
+downgraded to advisory, and a run where no agent returned output is zero vendors. That
+downgrade needs the count to be reported, by a posted verdict or by `--jury-vendors`;
+until then the mode stays gating. So a missing jury does not waive anything: without the
+`jury` binary the s8 gate is a no-op, but a tier-3 merge still requires a `jury-verdict`
+unless the run passes `--no-jury`, and it relaxes to advisory only when a posted verdict
+(or `--jury-vendors`) reports fewer than 2 vendors. Supply the count with
 [`evidence-verify --jury-vendors`](cli.md); the resolved `jury.mode` is what the evidence
 gate reads to decide whether a `jury-verdict` is required. The single jury verdict comment
 is posted through `keel post-comment --artifact jury-verdict`.
