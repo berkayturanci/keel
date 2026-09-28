@@ -6,6 +6,52 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-28
+
+- `keel-visual swarm` is in the published package: render a swarm run's waves, clusters and
+  workers as an HTML page, or serve it on localhost.
+- The live board no longer shows abandoned runs as running, and run data that contains
+  markup is shown as text instead of running in the page.
+
+### Added
+- **`keel-visual swarm`** (#721, #727). Renders a swarm run as a 2D DAG of its waves and
+  clusters, a pseudo-3D multi-wave topology (drag to rotate, scroll to zoom) and a worker
+  matrix with each cluster's state (`queued`/`running`/`passed`/`failed`/`merged`/`held`),
+  role and recorded details. It reads the latest run under `.keel/state/swarm/` (or
+  `--swarm-id ID`), writes `--out FILE` (default `keel-swarm.html`), serves the page with
+  `--serve [--host] [--port]` (default `127.0.0.1:8766`), prints the resolved data with
+  `--json`, and renders an offline fixture with `--swarm-json FILE`. The page is a snapshot of
+  the run state; re-run it to refresh. The documented usage is in keel's
+  `docs/keel/swarm.md` §5 and `docs/keel/cli.md`.
+
+### Changed
+- **keel-visual now needs keel core ≥ 1.15.0** (was ≥ 1.6.0). `keel-visual swarm` imports
+  `keel.swarm`, which first shipped in `keel-workflow` 1.15.0; against 1.14.2 the command
+  died with `ImportError: cannot import name 'swarm' from 'keel'`. Measured: the 0.9.0 wheel's
+  suite passes against `keel-workflow` 1.15.0 and 1.24.2 from PyPI and fails on the swarm
+  tests against 1.14.2. The other commands still work on older cores, but the dependency now
+  states what the whole package needs.
+
+### Fixed
+- **Abandoned runs render as stale, never as running** (#823, #824). A session that died
+  without stamping `keel activity --done` left a record that the board drew exactly like a
+  live run. The record file's modification time is now the last-seen signal: a run that is
+  neither done nor merged and was last seen more than six hours ago renders as grey
+  "stale · last seen 63d ago", leaves the active view and sorts with the finished runs. The
+  web dashboard also shows "loading runs…" at once instead of a blank page until the first
+  `/board.json` arrives. A long-lived `serve` keeps running the code it started with, so
+  restart it after upgrading.
+- **`keel_visual.__version__` names the installed version** (#796, #797). It said `0.6.0`
+  through the 0.7.0 and 0.8.0 releases. Both version markers are now written by
+  `scripts/release_bump.py --package keel-visual`, and a test fails if they disagree.
+- **`keel-visual dash` no longer crashes on a Windows console** (#953, #954). The board's
+  box-drawing characters and status glyphs raised `UnicodeEncodeError` under the cp1252
+  console default before anything printed; the output stream is now switched to UTF-8, and a
+  glyph a terminal cannot draw shows as a placeholder.
+- **A swarm state file of the wrong shape no longer kills `keel-visual swarm`** (#1273,
+  #1307). A document that is not an object, a worker that is not an object, or an issue that
+  is not a whole number (including `1e999`) is skipped, and the rest of the run is drawn.
+
 ### Security
 - **The swarm page escapes every value it interpolates.** `swarm.html` wrote worker
   details, roles, statuses, cluster ids, steps, issue numbers and scope paths into

@@ -1,7 +1,14 @@
 # Releasing keel-visual
 
 keel-visual is a separate distribution from keel core (`keel-workflow`). It
-depends on `keel-workflow >= 1.3.0`, so **release a matching core first**.
+depends on the core floor declared in `keel-visual/pyproject.toml`
+(`keel-workflow>=1.15.0` as of 0.9.0), so **release a matching core first**.
+
+That floor is the first core release carrying every `keel` name keel-visual
+imports. It sat at 1.6.0 while `keel-visual swarm` imported `keel.swarm`, which
+first shipped in 1.15.0. Before each release, grep `keel-visual/src` for
+`from keel` / `import keel`, and run the built wheel against the floor version
+from PyPI (step 3 below) as well as the latest.
 
 ## Recommended: automated trusted publishing (tag → CI)
 
@@ -25,7 +32,8 @@ SBOM + checksums, and a GitHub Release.
 
 1. Bump `keel-visual/pyproject.toml` `[project] version` and merge through the
    normal flow.
-2. Ensure the matching core (`keel-workflow >= 1.3.0`) is already on PyPI.
+2. Ensure the matching core (the `keel-workflow` floor in `pyproject.toml`) is
+   already on PyPI.
 3. Tag and push:
 
    ```
@@ -43,8 +51,8 @@ is configured).
 
 ### Prerequisites
 
-- keel core `1.3.0` (or newer) is published to PyPI, so `pip install keel-visual`
-  can resolve its dependency.
+- keel core at the `pyproject.toml` floor (or newer) is published to PyPI, so
+  `pip install keel-visual` can resolve its dependency.
 - A PyPI account with upload rights and an API token. **The upload step requires
   your credentials — run it yourself; never paste a token into automation you
   do not control.**
@@ -95,6 +103,18 @@ python -m venv /tmp/kv-rel && /tmp/kv-rel/bin/pip install dist/*.whl
 ```
 
 (If core is not yet on PyPI, install it from source into the same venv first.)
+
+Then check the floor: in a second venv, `pip install keel-workflow==<floor>` from
+PyPI, install the wheel with `--no-deps`, and run the suite against it from a
+directory whose `.keel/project.yaml` that core accepts (`keel init` writes one):
+
+```
+python -m unittest discover -s <repo>/keel-visual/tests -t <repo>/keel-visual
+```
+
+The swarm tests load `.keel/project.yaml` from the working directory, so running
+them from the repo root against an older core fails on this repo's newer config
+keys, not on keel-visual.
 
 ### 4. Upload (operator-run)
 

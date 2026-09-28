@@ -16,9 +16,9 @@ pipx install keel-visual          # or: pip install keel-visual
 keel-visual --help
 ```
 
-keel-visual needs **keel core ≥ 1.6.0** (it reads `keel.flows` and the `keel activity`
-channel); installing it pulls in `keel-workflow` automatically. The core never depends on
-keel-visual.
+keel-visual needs **keel core ≥ 1.15.0** (it reads `keel.flows`, the `keel activity`
+channel and, for `swarm`, `keel.swarm`); installing it pulls in `keel-workflow`
+automatically. The core never depends on keel-visual.
 
 ## Surfaces
 
@@ -30,6 +30,7 @@ keel-visual.
 | `render` | a self-contained web page for one run (2D flow + 3D scene) | snapshot |
 | `render --all` | a self-contained web **board** across every project | snapshot |
 | `serve` / `serve --all` | a **live** web dashboard (localhost server, polls every ~0.5s) | yes |
+| `swarm` | a self-contained web page for one swarm run (2D DAG + pseudo-3D topology), or served on localhost with `--serve` — see [swarm.md](swarm.md#5-visual-dashboard-integration-keel-visual-swarm) | snapshot |
 
 ### The board — `dash --all` (terminal, live)
 
