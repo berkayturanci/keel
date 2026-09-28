@@ -11,6 +11,8 @@ dist/
 .coverage.*
 htmlcov/
 website/coverage/
+website/coverage-summary.json
+coverage.json
 .pytest_cache/
 .ruff_cache/
 

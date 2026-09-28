@@ -11,7 +11,7 @@ flow keeps working.
 |---|---|
 | `index.html` | Landing page, workspace-style: Overview, What it is, The backbone, How it compares, Workflow commands (17, each with an animated scene + args/flags), CLI, Configuration, Dogfooding, FAQ |
 | `docs.html` | Documentation — generated entirely from `content.js` (`KEEL.docs[]`) |
-| `coverage.html` | Animated coverage report with a per-module table |
+| `coverage.html` | Animated coverage report with a per-file table, generated at build time |
 | `silent-revert.html` | Article: a squash merge silently reverted a release |
 | `404.html` | Not-found page |
 
@@ -43,10 +43,13 @@ flow keeps working.
 
 ## Coverage data
 
-`coverage.html` reads its table numbers from `coverage.js` (`C.modules`) and links each
-file row into the published htmlcov report at `coverage/` (built by `make site` / CI;
-not in this folder). The coverage badge endpoint is `coverage-badge.json`, also produced
-by CI.
+`coverage.html` fetches its figures from `coverage-summary.json`, which
+`scripts/coverage_page_data.py` writes from `coverage json` when the site is built
+(`make site`, and the Pages workflow). No figure is typed into `content.js` or
+`coverage.js` (#1320). Without that file the page shows the `fail_under = 100` gate and
+the link to the full report, and no numbers. Each file row links into the published
+htmlcov report at `coverage/` (also built by `make site` / CI; not in this folder). The
+coverage badge endpoint is `coverage-badge.json`, also produced by CI.
 
 ## Assets / SEO
 
