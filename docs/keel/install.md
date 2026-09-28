@@ -23,7 +23,7 @@ to end, it says so.
 - [Claude Code](#claude-code)
 - [Codex](#codex)
 - [Antigravity (`agy`)](#antigravity)
-- [Cursor](#cursor)
+- [Cursor (partial)](#cursor)
 
 ---
 
@@ -129,6 +129,12 @@ component directory.
 
 ## Cursor
 
+**Partial** ([#1332](https://github.com/berkayturanci/keel/issues/1332)). The
+marketplace route registers the `/keel:<command>` set; a local checkout registers
+one skill, `keel-onboard`, for the reason given
+[below](#what-each-cursor-route-registers-measured). Whether a running Cursor
+would register the workflow skills if `.cursor-plugin/plugin.json` named
+`.agents/skills` as well is not verified, so the manifest names `./skills` alone.
 
 **Cursor has no CLI install command.** `cursor-agent plugin` exposes only
 `marketplace` (`add`, `list`, `remove`, `update`) — there is no

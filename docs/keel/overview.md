@@ -39,7 +39,7 @@ Most coding agents stop at *"I opened a PR."* Without an invariant delivery back
 
 ## What you get
 
-- **One backbone, four hosts** — keel installs into Claude Code, Codex, Cursor and Antigravity
+- **One backbone, four hosts** — keel installs into Claude Code, Codex, Cursor (partial) and Antigravity
   ([per-host steps](install.md)); `/keel:<command>` runs as native Claude commands
   *and* as a single shared skill set under `.agents/skills/` for agents that read skills there.
   Cursor is partial: its commands arrive only through the marketplace route, and a local
