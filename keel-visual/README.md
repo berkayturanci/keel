@@ -289,6 +289,22 @@ styles never changes what a colour means, only the geometry it is painted on.
 > refuses the script if the CDN ever serves altered bytes. The 2D views never
 > touch the network.
 
+### Swarm runs — `keel-visual swarm`
+
+A swarm run (`keel swarm-*`, experimental in keel core) as one HTML page: a 2D DAG of
+its waves and clusters, a pseudo-3D multi-wave topology (drag to rotate, scroll to
+zoom), and a worker matrix with each cluster's state, role and recorded details.
+
+```
+keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
+keel-visual swarm .keel/project.yaml --root . --serve --port 8766
+```
+
+It reads the newest run under `.keel/state/swarm/` (or `--swarm-id ID`); `--json`
+prints the resolved data instead of writing a page. The page is a snapshot of the
+run state at render time — re-run it to refresh. Details: keel's
+[`docs/keel/swarm.md`](../docs/keel/swarm.md) §5.
+
 ## Colour language
 
 | colour | meaning |
@@ -333,8 +349,8 @@ The handoff runs ai-jury with its own configured style, so set
 
 ## Install
 
-keel-visual needs **keel core ≥ 1.6.0** (it reads `keel.flows`, the ledger, and
-the checkpoint). Both packages are on PyPI — [`keel-visual`](https://pypi.org/project/keel-visual/)
+keel-visual needs **keel core ≥ 1.15.0** (it reads `keel.flows`, the ledger, the
+checkpoint, and — for `swarm` — `keel.swarm`). Both packages are on PyPI — [`keel-visual`](https://pypi.org/project/keel-visual/)
 pulls in [`keel-workflow`](https://pypi.org/project/keel-workflow/) automatically:
 
 ```

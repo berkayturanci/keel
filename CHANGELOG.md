@@ -61,6 +61,9 @@ All notable changes to keel are documented here. The format follows
   - **A swarm keeps only the tail of each child's output.** `wave_results` held every cluster's whole `keel ship --json` stdout, `swarm-run --json` re-emitted it, and a failing cluster's went into the state file as `details`. Both now keep the last `CHILD_OUTPUT_TAIL_CHARS` (4096) characters behind a `[keel: N earlier chars of child output dropped; last 4096 kept]` line, applied once where every origin of the output meets both stores. Nothing parsed the stored output as JSON.
   - **The unused `parse_conflict_hunks` is gone** from `swarm_landing.py`; `resolve_conflict_content` walks the same markers. Its test now runs the column-0 fixture through `resolve_conflict_content`, which is why `tests/test_no_conflict_markers.py` still skips that file.
 
+### Companion
+- **keel-visual 0.9.0 ships `keel-visual swarm`** (#1319). `docs/keel/swarm.md`, `docs/keel/cli.md` and the site documented the command, but the release on PyPI, 0.8.0, predates it and rejected `swarm` as an invalid choice. 0.9.0 ships it, together with the swarm page's escaping fix above (#1317), abandoned runs rendered as stale instead of running (#824), `keel_visual.__version__` matching the package (#797), a `dash` that no longer crashes on a Windows console (#954), and a swarm view that skips a malformed state file instead of dying (#1307). Its core floor rises from `keel-workflow>=1.6.0` to `>=1.15.0`: `keel-visual swarm` imports `keel.swarm`, which first shipped in 1.15.0, and against 1.14.2 it raised `ImportError`. The built wheel's suite passes against 1.15.0 and 1.24.2 from PyPI and fails its swarm tests against 1.14.2. Details in `keel-visual/CHANGELOG.md`.
+
 ## [1.24.2] - 2026-09-23
 
 ### Changed
