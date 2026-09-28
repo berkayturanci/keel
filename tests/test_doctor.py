@@ -693,6 +693,13 @@ class TestPythonToolchainCheck(unittest.TestCase):
         self.assertIn("below the required 3.11", check["summary"])
         self.assertIn("PyYAML is not importable", check["summary"])
 
+    def test_an_unconfigured_gate_is_skipped_and_says_so(self):
+        # #1328: with no build gate, "the build gate runs on <python>" would be false.
+        check = self._run_check(interpreter=None, version=None, yaml=False, configured=False)
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("no build gate configured", check["summary"])
+        self.assertNotIn("runs on", check["summary"])
+
     def test_never_escalates_to_fail(self):
         # keel cannot know a red gate is *this* problem — advisory only.
         report = _doctor(
@@ -772,14 +779,31 @@ class TestDoctorPythonToolchain(unittest.TestCase):
         )
         self.assertEqual(facts["interpreter"], sys.executable)
 
-    def test_an_unset_build_gate_reports_this_interpreter(self):
-        # #1328: a scaffold may leave build_gate_cmd unset; there is no make to resolve.
+    def test_an_unset_build_gate_names_no_interpreter(self):
+        # #1328: a scaffold may leave build_gate_cmd unset. No interpreter runs a gate
+        # that does not exist, so none is named and nothing is probed.
         fake_run, calls = _fake_run()
         facts = cli._doctor_python_toolchain(
             ".", _config(None), _run=fake_run, _which=lambda _: "/usr/bin/python3", _env={}
         )
-        self.assertEqual(facts["interpreter"], sys.executable)
+        self.assertIs(facts.get("configured"), False)
+        self.assertIsNone(facts["interpreter"])
         self.assertEqual(calls, [])
+
+    def test_the_cli_reports_an_unset_gate_as_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d) / "project.yaml"
+            project.write_text(
+                "extends: keel\ncore_version: '^1.0'\nbase_branch: main\n"
+                "knobs: {}\ngates: [build]\n",
+                encoding="utf-8",
+            )
+            rc, out, _ = run(["doctor", str(project), "--root", d, "--offline", "--json"])
+        self.assertEqual(rc, 0)
+        check = _check(json.loads(out), "python_toolchain")
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("no build gate configured", check["summary"])
+        self.assertNotIn("runs on", check["summary"])
 
     def test_an_exported_py_wins_over_the_resolver(self):
         # `PY=` is what the Makefile honours first, so doctor must report it.

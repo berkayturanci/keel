@@ -1999,7 +1999,8 @@ The checks are:
   run. Any other gate runs in this process, so the answer is `sys.executable`. Below
   `requires-python` (3.11) or without PyYAML is a `warn` that names the interpreter — a
   `make test` that dies with a hundred syntax errors is a 3.9 on PATH, not a regression in
-  the tree.
+  the tree. With `knobs.build_gate_cmd` unset there is no gate to run on anything, so the
+  check reports `skipped` and names no interpreter.
 - **`policy_labels`** — whether the labels this project declares actually exist on its
   repository. `ship` and `triage` apply `status:*` / `priority:*` / `role:*` and the
   `agent:*` / `model:*` attribution pair **by name**, and GitHub rejects a label that was

@@ -6512,6 +6512,17 @@ def _doctor_python_toolchain(
     """
     which = shutil.which if _which is None else _which
     env = os.environ if _env is None else _env
+    if config is not None and not config.knobs.build_gate_cmd:
+        # No build gate configured (#1328): no interpreter will run it, so there is
+        # nothing to probe — and naming one would claim a gate that does not exist.
+        return {
+            "interpreter": None,
+            "source": "knobs.build_gate_cmd (unset)",
+            "version": None,
+            "yaml": False,
+            "reason": "",
+            "configured": False,
+        }
     gate = (config.knobs.build_gate_cmd or "") if config is not None else ""
     if gate.split()[:1] != ["make"]:
         return _probe_python(sys.executable, "sys.executable", _run=_run)

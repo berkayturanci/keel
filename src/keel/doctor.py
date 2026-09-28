@@ -306,6 +306,14 @@ def _check_python_toolchain(toolchain: dict[str, object] | None) -> CheckResult:
             {},
         )
     detail = dict(toolchain)
+    if toolchain.get("configured") is False:
+        # Reported, not passed: there is no gate whose interpreter could be checked (#1328).
+        return CheckResult(
+            "python_toolchain",
+            _SKIPPED,
+            "no build gate configured (knobs.build_gate_cmd is unset) — no interpreter to check",
+            detail,
+        )
     interpreter = toolchain.get("interpreter")
     reason = str(toolchain.get("reason") or "no interpreter resolved")
     if not interpreter:
