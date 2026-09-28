@@ -822,6 +822,28 @@ class TestExistingCaptureMarker(unittest.TestCase):
 
         self.assertEqual(summary["record_count"], 2)
 
+    def test_latest_per_pr_keeps_rows_by_identity_in_ledger_order(self):
+        """The filter is by identity and keeps the ledger's order (#1355).
+
+        Two equal rows that name no pull request are two rows, a pull request
+        keeps its last row wherever that sits, and nothing is reordered. A
+        superseded row *equal* to the kept one is still dropped: an equality test
+        would keep it, and only identity tells the two apart.
+        """
+        first_7 = {"pull_request": {"number": 7}, "run_id": "RUN-1"}
+        unkeyed = {"pull_request": None, "run_id": "RUN-X"}
+        twin = dict(unkeyed)
+        pr_8 = {"pull_request": {"number": 8}, "run_id": "RUN-2"}
+        text_number = {"pull_request": {"number": "7"}, "run_id": "RUN-3"}
+        last_7 = {"pull_request": {"number": 7}, "run_id": "RUN-4"}
+        stale_7 = dict(last_7)  # equal to the kept row, but superseded by it
+        records = [stale_7, first_7, unkeyed, twin, pr_8, text_number, last_7]
+
+        kept = ledger._latest_per_pr(records)
+
+        self.assertEqual([id(r) for r in kept], [id(r) for r in records[2:]])
+        self.assertEqual(ledger._latest_per_pr([]), [])
+
     def test_the_deadlock_end_to_end(self):
         """Writer and merge gate agree again — the whole of #1157, in one place."""
         red = _marker_record(pr=7, run_id="RUN-1", head_sha="48681d19")
