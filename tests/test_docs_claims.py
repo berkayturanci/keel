@@ -1825,6 +1825,64 @@ class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
         )
         self.assertEqual([], writers, "something records token counts now; update the README")
 
+    def test_the_readme_names_what_the_report_itself_now_says(self):
+        """#1359: the caveat is in the report's own output, and the README says where."""
+        section = " ".join(self.section("Requirements, cost and limits").split())
+        rendered = " ".join(cost.render_cost_report(cost.calculate_cost_report([{}])).split())
+        claimed = "ESTIMATED at 1,500 prompt / 400 completion tokens per run"
+        self.assertIn(claimed, section)
+        self.assertIn(claimed, rendered)
+        data = cost.calculate_cost_report([{}]).to_dict()
+        for key in ("token_basis", "measured_runs", "estimated_runs", "assumed_tokens_per_run"):
+            with self.subTest(key=key):
+                self.assertIn(f"`{key}`", section)
+                self.assertIn(key, data)
+
+
+class TestTheCostReportDocsMatchItsOutput(unittest.TestCase):
+    """#1359: `cli.md` shows the basis line the report prints, and names every field."""
+
+    @staticmethod
+    def cost_section() -> str:
+        text = (REPO_ROOT / "docs/keel/cli.md").read_text(encoding="utf-8")
+        start = text.index("## `keel cost-report")
+        return text[start : text.index("\n## ", start + 1)]
+
+    def test_the_documented_basis_lines_are_the_ones_the_report_prints(self):
+        section = self.cost_section()
+        fence = re.search(r"```text\n(.*?)```", section, re.S)
+        self.assertIsNotNone(fence, "the cost-report section shows no sample output")
+        rendered = cost.render_cost_report(cost.calculate_cost_report([{}, {}])).splitlines()
+        for line in fence.group(1).splitlines():
+            with self.subTest(line=line):
+                self.assertIn(line, rendered)
+        measured = {"prompt_tokens": 1, "completion_tokens": 1}
+        mixed = cost.render_cost_report(cost.calculate_cost_report([measured] * 3 + [{}] * 2))
+        full = cost.render_cost_report(cost.calculate_cost_report([measured] * 5))
+        for quoted, output in (
+            ("3 measured, 2 ESTIMATED at 1,500 prompt / 400 completion tokens per run", mixed),
+            ("measured (all 5 runs carry token counts)", full),
+        ):
+            with self.subTest(quoted=quoted):
+                self.assertIn(f"`{quoted}`", section)
+                self.assertIn(quoted, output)
+
+    def test_every_added_json_field_is_documented_with_its_value(self):
+        section = self.cost_section()
+        data = cost.calculate_cost_report([{}]).to_dict()
+        for key in ("token_basis", "measured_runs", "estimated_runs", "assumed_tokens_per_run"):
+            with self.subTest(key=key):
+                self.assertIn(f"| `{key}` |", section)
+        self.assertIn(json.dumps(data.get("assumed_tokens_per_run")), section)
+
+    def test_the_site_does_not_advertise_cost_tracking_keel_does_not_do(self):
+        """Three integration cards claimed per-run token cost tracking, an exact token
+        expenditure ledger and token cost analytics. Nothing records a token count."""
+        cards = (REPO_ROOT / "website/integrations.js").read_text(encoding="utf-8").lower()
+        for claim in ("cost tracking", "expenditure ledger", "cost analytics", "exact token"):
+            with self.subTest(claim=claim):
+                self.assertNotIn(claim, cards)
+
 
 class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
     """#1345: the README called the jury "off by default"; tier 3 turns it on."""
