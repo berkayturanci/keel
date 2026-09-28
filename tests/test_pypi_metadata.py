@@ -53,19 +53,45 @@ class TheSummaryIsVendorNeutral(unittest.TestCase):
         ]
         self.assertEqual(named, [], f"the PyPI summary names {named}")
 
-    def test_it_leads_with_the_repositorys_about_line(self):
-        """The summary opens with the sentence the GitHub About line and the plugin
-        marketplace already open with, so the three front doors say one thing."""
+    @staticmethod
+    def _about_line() -> str:
         marketplace = json.loads(
             (ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
         )
-        about = marketplace["plugins"][0]["description"]
-        lead = about.split(".")[0]
+        return marketplace["plugins"][0]["description"]
+
+    def test_it_leads_with_the_about_lines_lead_sentence(self):
+        """The summary opens with the sentence the GitHub About line and the plugin
+        marketplace already open with, so the three front doors say one thing."""
+        lead = self._about_line().split(".")[0]
         self.assertEqual(lead, "Turn coding agents into work owners")
         self.assertTrue(
             PROJECT["description"].startswith(lead),
             f"the PyPI summary does not open with {lead!r}: {PROJECT['description']!r}",
         )
+
+    def test_it_uses_the_about_lines_framing_of_what_keel_is(self):
+        """A backbone that takes an issue to a merged PR — the About line's words."""
+        framing = re.search(
+            r"a vendor-neutral backbone that takes a GitHub issue to a merged",
+            self._about_line(),
+            re.IGNORECASE,
+        )
+        self.assertIsNotNone(framing, "the About line no longer carries its framing")
+        self.assertIn(framing.group(0).lower(), PROJECT["description"].lower())
+
+    def test_it_does_not_say_the_cli_does_the_work(self):
+        """The agent host does the work and `keel ship` is a dry assessment; the CLI
+        enforces the backbone (README, #1335). "A CLI that drives an issue to a
+        merged pull request" claimed the part the host does."""
+        description = PROJECT["description"]
+        self.assertNotRegex(description, r"\bCLI\b")
+        self.assertNotRegex(description, r"(?i)\bdrives?\b")
+
+    def test_it_fits_pypis_summary_limit(self):
+        """PyPI rejects a `Summary` longer than 512 characters, or one with a newline."""
+        self.assertLessEqual(len(PROJECT["description"]), 512)
+        self.assertNotIn("\n", PROJECT["description"])
 
 
 class TheKeywordsNameEveryHost(unittest.TestCase):

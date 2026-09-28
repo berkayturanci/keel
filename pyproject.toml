@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "keel-workflow"
 version = "1.24.2"
-description = "Turn coding agents into work owners: a vendor-neutral CLI that drives a GitHub issue to a merged pull request — readiness check, multi-agent review, CI and evidence gates, merge window."
+description = "Turn coding agents into work owners: a vendor-neutral backbone that takes a GitHub issue to a merged pull request — readiness check, multi-agent review, CI and evidence gates, merge window."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"

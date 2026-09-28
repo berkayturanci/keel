@@ -110,6 +110,22 @@ class TheHighlightsAreTheBulletsAboveTheFirstSection(unittest.TestCase):
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("stray indent", problems[0])
 
+    def test_a_nested_bullet_is_refused_not_folded_into_its_parent(self):
+        for marker in ("-", "*", "+"):
+            with self.subTest(marker=marker):
+                text = _changelog(f"- a\n  {marker} sub\n")
+                highlights, problems = release_notes.parse_highlights(text, "1.25.0")
+                self.assertEqual(highlights, ["a"])
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn(f"{marker} sub", problems[0])
+                self.assertIn("nests", problems[0])
+
+    def test_a_wrapped_line_that_merely_contains_a_dash_still_continues(self):
+        text = _changelog("- one thing\n  and another - with a dash\n")
+        highlights, problems = release_notes.parse_highlights(text, "1.25.0")
+        self.assertEqual(problems, [])
+        self.assertEqual(highlights, ["one thing and another - with a dash"])
+
     def test_a_missing_section_is_its_own_problem(self):
         _, problems = release_notes.parse_highlights(GOOD, "9.9.9")
         self.assertEqual(problems, ["CHANGELOG.md has no `## [9.9.9]` section"])

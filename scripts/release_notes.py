@@ -19,7 +19,8 @@ The convention, in ``CHANGELOG.md``::
 
 The highlights are the ``- `` bullets between the version heading and its first
 ``### `` section, :data:`MIN_HIGHLIGHTS` to :data:`MAX_HIGHLIGHTS` of them. A
-bullet may wrap onto indented continuation lines. Anything else in that space is
+bullet may wrap onto indented continuation lines; a nested bullet may not, since
+it would be folded into its parent's sentence. Anything else in that space is
 refused rather than dropped: a paragraph written there would otherwise vanish
 from the release without a word.
 
@@ -62,6 +63,7 @@ _VERSION_HEADING = re.compile(r"^## \[([^\]]+)\]")
 _SECTION_HEADING = re.compile(r"^### ")
 _BULLET = re.compile(r"^- (\S.*)$")
 _CONTINUATION = re.compile(r"^\s+(\S.*)$")
+_NESTED_BULLET = re.compile(r"^\s+[-*+] ")
 _SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
@@ -116,6 +118,11 @@ def parse_highlights(changelog: str, version: str) -> tuple[list[str], list[str]
         continuation = _CONTINUATION.match(line)
         if bullet:
             highlights.append(bullet.group(1).strip())
+        elif _NESTED_BULLET.match(line):
+            problems.append(
+                f"`## [{version}]` nests {line.strip()!r} under a highlight; a highlight "
+                "is one line, and a nested bullet would be folded into its sentence"
+            )
         elif continuation and highlights:
             highlights[-1] = f"{highlights[-1]} {continuation.group(1).strip()}"
         else:
