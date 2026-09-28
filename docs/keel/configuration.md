@@ -153,7 +153,7 @@ turns the jury on automatically for every **tier-3** change (one matching `knobs
 the evidence gate then requires a `jury-verdict`. Below tier 3 the jury is off unless a run
 passes `--jury` or [`team`](#team) makes the panel a tier's review. `--no-jury` turns it off
 below a panel tier, and so does a panel that `team.jury.on_unavailable` found unstaffable.
-Without the `jury` binary the s8 run is a no-op, but a tier-3 merge still requires a
+Without the `jury` binary the s8 run is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a
 `jury-verdict` unless the run passes `--no-jury`: only a panel tier's jury is probed for
 ([`jury.on_unavailable`](#juryon_unavailable--when-the-panel-cannot-be-staffed-here)). It
 relaxes to advisory beside a host bench only when a posted verdict (or `--jury-vendors`)
@@ -1213,7 +1213,7 @@ The contract, which `/keel:ship` drives and `keel loop brief` decides:
   configured the contract has said the contract is the policy.
 
 Why this shape and not another: a host stop hook (the Ralph loop) exists in one host and
-leaves no record, while keel runs inside Claude Code, Codex, Cursor and Antigravity
+leaves no record, while keel runs inside Claude Code, Codex, Cursor (partial) and Antigravity
 through one backbone; s9 is post-PR and post-review with a seat ladder, and folding a
 compile error into it would spend review budget on what `make test` already said; and a
 third `implement_mode` value would make `tdd` and the loop mutually exclusive, when the

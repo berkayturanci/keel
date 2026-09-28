@@ -5,8 +5,8 @@
 > branch → implement → CI → review → test → merge → capture → close. Projects set
 > their values in `project.yaml` and snap their own logic into named extension
 > slots. Stdlib-first Python CLI, single runtime dependency, 100% test coverage,
-> 17 `/keel` commands. Installs into Claude Code, Codex, Cursor and Antigravity;
-> delegates work to hosted models (Anthropic, OpenAI, Gemini), any OpenAI-compatible
+> 17 `/keel` commands. Installs into Claude Code, Codex, Cursor (partial) and
+> Antigravity; delegates work to hosted models (Anthropic, OpenAI, Gemini), any OpenAI-compatible
 > API, or an agent CLI.
 
 ## Docs
@@ -14,6 +14,11 @@
 - [Home](https://keel-ship.dev/): overview, positioning, and quick start
 - [Documentation](https://keel-ship.dev/docs.html): commands, config, extension slots, and the fixed backbone
 - [Coverage report](https://keel-ship.dev/coverage.html): test-coverage dashboard, generated from the coverage run each time the site is built
+
+## Articles
+
+- [A squash merge silently reverted our release — and CI stayed green](https://keel-ship.dev/silent-revert.html): a stale branch overwrote a published release while every test passed, and the timing check that catches it
+- [Long unattended agent runs: where keel stops them, and why](https://keel-ship.dev/long-runs.html): six practices for long agent runs, what keel does for each, and a real run it stopped at the merge with the missing evidence named
 
 ## Source
 

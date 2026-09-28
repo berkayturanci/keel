@@ -34,8 +34,8 @@
       id: "cursor",
       name: "Cursor",
       category: "assistants",
-      badge: "AI Code Editor",
-      desc: "Integrated via knobs.delegate_profiles, background task sync, and AGENTS.md rules.",
+      badge: "AI Code Editor \u00b7 partial",
+      desc: "Partial install host: the marketplace plugin route registers the /keel: commands, and a local checkout registers one skill, keel-onboard. Also usable as a delegate through knobs.delegate_profiles.",
       cmd: "keel implement .keel/project.yaml 101 --delegate cursor",
       note: "Needs a <code>knobs.delegate_profiles.cursor</code> entry naming <code>cursor-agent</code> — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/cursor.svg"

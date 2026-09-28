@@ -319,9 +319,10 @@ class RunGatesRechecksAfterTheRunner(unittest.TestCase):
 class TheRemedyNamesOnlyGatesThatJudge(_Project):
     """The empty-plan finding must not advise a gate that is a no-op here (#1368 review).
 
-    ``gates: [jury]`` on a host without the ``jury`` binary, or on an empty diff, reports
-    ``ok jury`` and a dry ship says MERGE — so following "list jury" would clear the block
-    while nothing is judged.
+    ``gates: [jury]`` on a host without the ``jury`` binary, or on an empty diff, judges
+    nothing. It used to report ``ok jury`` and a dry ship said MERGE; since #1369 it fails
+    (``tests/test_jury_gate_that_cannot_run.py``), but it still cannot clear this block by
+    judging, so "list jury" would only trade one block for another.
     """
 
     def test_the_remedy_does_not_offer_jury(self):

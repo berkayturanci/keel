@@ -1096,7 +1096,7 @@ When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdi
 is available, use that canonical shape for the posted jury verdict and preserve
 `keel.jury-verdict.v1` plus `head: <sha>`.
 The **`jury` gate** runs the ai-jury CLI read-only on the PR diff using the committed panel;
-it never passes `--strict`. Without the `jury` binary the s8 run is a no-op, but a tier-3
+it never passes `--strict`. Without the `jury` binary the s8 run is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3
 merge still requires a `jury-verdict` unless the run passes `--no-jury`; it relaxes to
 advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors.
 That is the default policy. Off a jury-panel tier, `team.jury.mode: advisory` or
@@ -1600,7 +1600,7 @@ The only merge path is `keel merge` at s10 (claim, window, CI rollup, and eviden
 run in core) · never merge
 in the night no-merge window except a blocker / audited `--hotfix` · fail-soft (a missing
 CLI/gate/jury/capture-path degrades, never crashes the run — but a degraded jury waives no
-evidence: without the `jury` binary the s8 run is a no-op, but a tier-3 merge still requires
+evidence: without the `jury` binary the s8 run is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires
 a `jury-verdict` unless the run passes `--no-jury`, and a gating jury run that produced no
 verdict is a blocking `major`) · the **orchestrator owns all writes** (reviewers are
 findings-only, every vendor) · never push directly to `base_branch` · the status-done label
@@ -1608,4 +1608,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.24.2 source_sha256=6769970d9ee28e25aa17c43bbfbc8046a615061986498da45d9813aec5648cd6 generated_sha256=071e4b42630ee95d2fde9c0ac2507c7b9771c1254c7c291d4d68857cbf5e9b0c -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.24.2 source_sha256=63b2b4c2009c24033894c0f71200530ab0914719711e192b44f453ef288cbbbc generated_sha256=7d630ffb3e4765f3d77012dd788cbc53e919b6da1c455be9e8aa8e913031fb0f -->

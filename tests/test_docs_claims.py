@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import collections
 import contextlib
+import html
 import inspect
 import io
 import json
@@ -1882,6 +1883,132 @@ class TestTheCostReportDocsMatchItsOutput(unittest.TestCase):
         for claim in ("cost tracking", "expenditure ledger", "cost analytics", "exact token"):
             with self.subTest(claim=claim):
                 self.assertNotIn(claim, cards)
+
+
+def _html_text(fragment: str) -> str:
+    """A fragment of the site's HTML as the words a reader sees: tags out, entities in."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", "", fragment)).split())
+
+
+class TheLongRunsArticleClaimsOnlyWhatKeelDoes(unittest.TestCase):
+    """#1338: `website/long-runs.html` carries the README's long-run table and one real
+    run that stopped. The table is held to the README's, whose names are checked against
+    the code above; the run is held to the code that would print it today."""
+
+    ARTICLE = SITE / "long-runs.html"
+
+    @classmethod
+    def setUpClass(cls):
+        page = cls.ARTICLE.read_text(encoding="utf-8")
+        cls.body = page[page.index("<body>") :]
+
+    def test_the_table_is_the_readmes_table(self):
+        article = [
+            (_html_text(practice), _html_text(what))
+            for practice, what in re.findall(
+                r"<tr><td>(.*?)</td><td>(.*?)</td></tr>", self.body, re.S
+            )
+        ]
+        section = _readme_sections()["Built for long unattended runs"]
+        readme = [
+            tuple(" ".join(cell.replace("`", "").split()) for cell in line.split("|")[1:3])
+            for line in section.splitlines()
+            if line.startswith("| ")
+        ][1:]
+        self.assertGreaterEqual(len(readme), 6, readme)
+        self.assertEqual(article, readme)
+
+    def test_it_links_the_guide_rather_than_reproducing_it(self):
+        """The issue's vendor-neutral terms: maps to, a link, independence, no logos."""
+        text = _html_text(self.body)
+        self.assertIn('href="https://claude.dev/blog/getting-the-most-out-of-opus-5-5/"', self.body)
+        self.assertIn("These map to the long-run advice", text)
+        self.assertIn("keel is independent and not affiliated with Anthropic", text)
+        self.assertNotIn("<img", self.body)
+        self.assertNotIn("<svg", self.body)
+
+    def test_the_run_links_its_record(self):
+        for record in ("issues/965", "pull/968", "pull/919", "pull/920", "pull/958", "pull/967"):
+            with self.subTest(record=record):
+                self.assertIn(f'href="https://github.com/berkayturanci/keel/{record}"', self.body)
+
+    def _transcript(self) -> list[str]:
+        block = re.search(r"<pre><code>\$ keel evidence-verify (.*?)</code></pre>", self.body, re.S)
+        self.assertIsNotNone(block, "the article no longer shows the evidence check")
+        return html.unescape(block.group(1)).splitlines()
+
+    def test_the_command_it_shows_is_one_keel_accepts(self):
+        argv = ["evidence-verify", *shlex.split(self._transcript()[0])]
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                args = cli.build_parser().parse_args(argv)
+        except SystemExit:
+            self.fail(f"keel's parser refuses the article's command: keel {' '.join(argv)}")
+        else:
+            self.assertEqual(args.phase, evidence.PHASE_PRE_MERGE)
+
+    def test_the_missing_evidence_it_shows_is_what_tier_3_required(self):
+        """Three reviewers and a gating jury, as tier 3 was on 2026-08-25."""
+        fields = dict(line.split(":", 1) for line in self._transcript()[1:])
+        required = evidence.required_items(
+            {"reviewers": {"count": 3}, "jury": {"enabled": True, "mode": "gating"}},
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+        self.assertEqual(fields["  required "].strip(), str(len(required)))
+        self.assertEqual(
+            [item.strip() for item in fields["  missing  "].split(",")],
+            [item.id for item in required],
+        )
+
+    def test_the_decision_it_reports_is_still_the_workflows(self):
+        """The article says `--no-jury` is still passed at the pre-merge check's ARGS line."""
+        self.assertIn("still passes <code>--no-jury</code> at that call site", self.body)
+        workflow = (REPO_ROOT / ".github/workflows/keel-ship.yml").read_text(encoding="utf-8")
+        calls = [
+            line
+            for line in workflow.splitlines()
+            if line.strip().startswith("ARGS=(") and "--phase pre-merge" in line
+        ]
+        self.assertTrue(calls, "keel-ship.yml no longer runs the pre-merge evidence check")
+        for line in calls:
+            self.assertIn("--no-jury", line)
+
+
+class TheSiteAdvertisesNoTokenOrCostMetering(unittest.TestCase):
+    """Nothing in keel records a token count or a spend (`keel cost-report` prices each run
+    at a placeholder), yet the home page's swarm simulator ran "Tokens Processed",
+    "Estimated Spend" and "Routing Savings" counters off random increments, and three
+    integration cards promised token cost tracking, an expenditure ledger and cost
+    analytics. Every page and script the site serves is read, not a list of them."""
+
+    #: The shapes those claims took, and the obvious neighbours of each.
+    _METERING = re.compile(
+        r"tokens?\s+processed|estimated\s+spend|routing\s+savings|cost\s+tracking"
+        r"|cost\s+analytics|expenditure\s+ledger|exact\s+token|token\s+(?:usage|spend)",
+        re.IGNORECASE,
+    )
+
+    def test_the_old_claims_are_what_the_pattern_matches(self):
+        for claim in (
+            "Tokens Processed",
+            "Estimated Spend",
+            "Routing Savings",
+            "per-run token cost tracking",
+            "exact token expenditure ledger",
+            "token cost analytics",
+        ):
+            with self.subTest(claim=claim):
+                self.assertRegex(claim, self._METERING)
+
+    def test_no_page_or_script_advertises_metering(self):
+        served = sorted([*SITE.glob("*.js"), *SITE.glob("*.html")])
+        self.assertGreater(len(served), 10, "the site's files were not found")
+        found = [
+            f"{path.name}: {match.group(0)!r}"
+            for path in served
+            for match in self._METERING.finditer(path.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual([], found)
 
 
 class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):

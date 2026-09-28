@@ -111,6 +111,10 @@ def _gate_status(outcome) -> str:
     """
     if outcome.not_run:
         return "NOT-RUN"
+    if outcome.skipped:
+        # Reached its runner and judged nothing (a jury with no CLI, #1369; a soft gate
+        # that errored). Not `ok` either: nothing was checked.
+        return "SKIPPED"
     if outcome.ok:
         return "ok"
     return "TIMEOUT" if outcome.timed_out else "FAIL"
@@ -173,7 +177,12 @@ def _gate_runner(
             if not run_jury:
                 return True, [], False, True
             jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
-            return jury.run_gate(diff_text, cwd=root, mode=jury_mode, timeout=jury_limit)
+            ok, found, timed_out = jury.run_gate(
+                diff_text, cwd=root, mode=jury_mode, timeout=jury_limit
+            )
+            # A jury that could not run (no CLI, empty diff) judged nothing: `SKIPPED`,
+            # never `ok` (#1369).
+            return ok, found, timed_out, False, jury.could_not_run(found)
         return commands(spec)
 
     return run
@@ -229,7 +238,8 @@ def _run_planned_gates(
     phases, which is not the same as phases nobody could identify.
     """
     now, later = gates.split_deferred(specs)
-    outcomes = gates.run_gates(now, runner)
+    # A jury that could not run, planned alone, judged nothing: it blocks (#1369).
+    outcomes = gates.lone_jury_cannot_judge(now, gates.run_gates(now, runner))
     # A plan with nothing to judge blocks, naming `gates:` (#1364). Zero gates used to
     # print nothing and exit 0, and a dry `keel ship` said MERGE for a run `keel merge`
     # then refused. Appended here, the one path `run-gates` and `ship` share, so both

@@ -12624,10 +12624,14 @@ class TestGateRunner(unittest.TestCase):
     def test_jury_branch_noop_without_diff(self):
         from keel.gates import GateSpec
 
-        run_gate = cli._gate_runner(".", "")  # empty diff -> jury is a fail-soft no-op
-        ok, findings, _ = run_gate(GateSpec("jury", "builtin", "test", "block"))
-        self.assertTrue(ok)
-        self.assertEqual(findings, [])
+        run_gate = cli._gate_runner(".", "")  # empty diff -> the jury judges nothing
+        ok, findings, timed_out, not_run, skipped = run_gate(
+            GateSpec("jury", "builtin", "test", "block")
+        )
+        self.assertEqual((ok, timed_out, not_run), (True, False, False))
+        # Reported as skipped, never as a clean pass (#1369).
+        self.assertIs(skipped, True)
+        self.assertEqual([f.source for f in findings], ["jury:not-run"])
 
     JURY_CFG = (
         "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: x\n"
