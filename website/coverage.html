@@ -10,7 +10,7 @@
     r.setAttribute("data-motion", ls.getItem("motion") || "balanced"); } catch (e) {} })();
 </script>
 <title>Test coverage — keel</title>
-<meta name="description" content="keel's test coverage report — per-file line and branch coverage for every module under src/keel/, generated from the coverage run each time the site is built.">
+<meta name="description" content="keel's test coverage — per-file line and branch coverage for every module under src/keel/ except the python -m entry shim, from each site build's coverage run.">
 <meta name="theme-color" content="#10b981">
 <link rel="canonical" href="https://keel-ship.dev/coverage.html">
 <meta name="robots" content="index, follow">
@@ -137,7 +137,7 @@
             <div>
               <p class="view-kicker" style="color:var(--green-2)">Coverage report</p>
               <h1>Coverage is gated at 100%</h1>
-              <p>Every module under <code style="font-family:var(--font-mono);color:var(--accent-2)">src/keel/</code> is measured for line and branch coverage, and CI fails any change that takes the total below 100%.</p>
+              <p>Every module under <code style="font-family:var(--font-mono);color:var(--accent-2)">src/keel/</code> except the <code style="font-family:var(--font-mono);color:var(--accent-2)">python -m</code> entry shim (<code style="font-family:var(--font-mono);color:var(--accent-2)">__main__.py</code>) is measured for line and branch coverage, and CI fails any change that takes the total below 100%.</p>
               <span class="gate"><span>● gate: fail_under = 100 · line + branch<span id="cov-gate-state"></span><span class="gate-date" id="cov-date-wrap" hidden> · measured <span id="cov-date"></span></span></span></span>
               <p class="cov-full"><a href="coverage/" target="_blank" rel="noopener">Browse the full per-file coverage report — every file, line by line →</a></p>
             </div>

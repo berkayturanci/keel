@@ -193,6 +193,10 @@ class TestTheBuildWritesWhatThePageReads(unittest.TestCase):
         workflow = yaml.safe_load(
             (REPO_ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
         )
+        # A change to the generator alone must redeploy the page it writes. PyYAML reads
+        # the bare key `on` as True.
+        trigger = workflow.get("on", workflow.get(True))
+        self.assertIn("scripts/coverage_page_data.py", trigger["push"]["paths"])
         job = workflow["jobs"]["build"]
         steps = job["steps"]
         runs = [
@@ -393,6 +397,37 @@ class TestThePageRendersTheGeneratedData(unittest.TestCase):
         self.assertEqual(shown["ring"], "99.83%")  # (4347 + 1200) / (4350 + 1206), floored
         self.assertEqual(shown["ring_caption"], "measured")
         self.assertEqual(shown["gate_state"], " · below the gate")
+
+    def test_a_generated_figure_is_shown_as_given(self):
+        # The generator floors to two decimals; the page must not floor again. In
+        # floating point 0.29 * 100 is 28.999999999999996 and 1.13 * 100 is
+        # 112.99999999999999, so a second floor showed 0.28% and 1.12%.
+        payload = cpd.summarize(_report())
+        payload["totals"] = {**payload["totals"], "line": 0.29, "branch": 1.13, "total": 57.57}
+        payload["files"] = [["src/keel/a.py", 7, 3, 4, 1, 0.29, 1.13]]
+        shown = self._drive("data", payload)
+        self.assertEqual(shown["cards"][0], ["0.29%", "line coverage"])
+        self.assertEqual(shown["cards"][1], ["1.13%", "branch coverage"])
+        self.assertEqual(shown["rows"], [["a.py", "7", "3", "1.13%", "0.29%"]])
+        self.assertEqual(shown["ring"], "57.57%")
+
+    def test_every_two_decimal_percentage_reads_back_unchanged(self):
+        # The whole range the generator can emit, through the page's own formatter.
+        source = (SITE / "coverage.js").read_text(encoding="utf-8")
+        formatter = re.search(r"^\s*function pct\(n\) \{.*\}$", source, re.M).group(0)
+        script = (
+            formatter
+            + "\nconst out = [];"
+            + "\nfor (let i = 0; i <= 10000; i++) out.push(pct(i / 100));"
+            + "\nconsole.log(JSON.stringify(out));"
+        )
+        done = subprocess.run(
+            [NODE, "-e", script], capture_output=True, text=True, timeout=60, check=True
+        )
+        shown = json.loads(done.stdout)
+        want = [f"{i / 100:.2f}".rstrip("0").rstrip(".") + "%" for i in range(10001)]
+        wrong = [(w, g) for w, g in zip(want, shown, strict=True) if w != g]
+        self.assertEqual(wrong[:5], [], f"{len(wrong)} of 10001 percentages misread")
 
     def test_a_full_run_reads_as_passing(self):
         report = _report(

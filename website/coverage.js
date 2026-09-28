@@ -17,7 +17,9 @@
   function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
   function $(id) { return document.getElementById(id); }
   function count(n) { return Math.round(n).toLocaleString("en-US"); }
-  function pct(n) { return (Math.floor(n * 100) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 }) + "%"; }
+  // The generator already floors to two decimals, so a figure is shown as given. Flooring it
+  // again here dropped some by 0.01 through float error: Math.floor(0.29 * 100) is 28.
+  function pct(n) { return n.toFixed(2).replace(/\.?0+$/, "") + "%"; }
   function isCount(n) { return typeof n === "number" && isFinite(n) && n >= 0; }
 
   /* the one shape this page reads; anything else is treated as "no data" */

@@ -512,9 +512,9 @@ window.KEEL = {
     },
     {
       group: "Operating", title: "Coverage", slug: "coverage-doc",
-      summary: "Every module under src/keel/ is held at 100% line + branch coverage; the gate is fail_under = 100 in CI.",
+      summary: "Every module under src/keel/ except the python -m entry shim is held at 100% line + branch coverage; the gate is fail_under = 100 in CI.",
       body:
-        "<p>Every module under <code>src/keel/</code> — the pure core and the thin I/O wrappers alike — is held at <b>100% line + branch coverage</b>; the coverage gate (<code>fail_under = 100</code>) runs in CI. The <a href='coverage.html'>coverage page →</a> shows the figures from the coverage run the site was built with.</p>",
+        "<p>Every module under <code>src/keel/</code> except the <code>python -m</code> entry shim (<code>__main__.py</code>, which <code>pyproject.toml</code> omits) — the pure core and the thin I/O wrappers alike — is held at <b>100% line + branch coverage</b>; the coverage gate (<code>fail_under = 100</code>) runs in CI. The <a href='coverage.html'>coverage page →</a> shows the figures from the coverage run the site was built with.</p>",
       source: "https://github.com/berkayturanci/keel/blob/main/README.md",
     },
     {
