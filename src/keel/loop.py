@@ -24,9 +24,10 @@ This module is the pure half:
   published as ``contract.implement_mode.loop`` by ``keel plan`` / ``keel ship --json``;
 * :func:`parse_gates` — the gate outcomes of one iteration, as ``keel ship --json`` (or
   ``keel run-gates``'s consumer) reports them -> :class:`GateResult` records;
-* :func:`decide` — *continue*, *done* or *budget-exhausted*, from the iteration number,
-  the outcomes and the policy, and nothing else — judging the gates ``keel ship`` runs on
-  the tree (:data:`JUDGED_PHASES`) and deferring the rest to the phases that run them;
+* :func:`decide` — *continue*, *done*, *budget-exhausted* or *unconfigured*, from the
+  iteration number, the outcomes and the policy, and nothing else — judging the gates
+  ``keel ship`` runs on the tree (:data:`JUDGED_PHASES`) and deferring the rest to the
+  phases that run them;
 * :func:`render_brief` — iteration ``k+1``'s prompt: the base brief **verbatim**, plus one
   appended section carrying iteration ``k``'s gate output as quoted data;
 * :func:`iteration_block` — the ledger's ``run_context.implement_loop`` record.
@@ -79,7 +80,14 @@ WRAPS_IMPLEMENTATION = "implementation"
 CONTINUE = "continue"
 DONE = "done"
 BUDGET_EXHAUSTED = "budget-exhausted"
-STATUSES = (CONTINUE, DONE, BUDGET_EXHAUSTED)
+#: A judged blocking gate **cannot judge** — a command gate with no command, or a run that
+#: planned no gate (``unconfigured`` on the outcome). No iteration can turn it green: the
+#: fix is the project's config, which the implementer's worktree does not even read. So
+#: the loop stops at once, blocked, instead of spending its whole budget on it (#1364).
+UNCONFIGURED = "unconfigured"
+STATUSES = (CONTINUE, DONE, BUDGET_EXHAUSTED, UNCONFIGURED)
+#: The statuses that block the issue — the CLI exits non-zero on them.
+_BLOCKED_STATUSES = (BUDGET_EXHAUSTED, UNCONFIGURED)
 
 #: The gate severities that hold the loop open. A soft gate (``suggest`` / ``warn``) that
 #: failed never held a merge either, so it does not keep the implementer iterating.
@@ -215,6 +223,8 @@ class GateResult:
     #: neither and reads as a command gate at the test phase — the loop's own gates.
     kind: str = _DEFAULT_KIND
     phase: str = _DEFAULT_PHASE
+    #: The gate cannot judge (:attr:`keel.gates.GateOutcome.unconfigured`).
+    unconfigured: bool = False
 
     @property
     def judged(self) -> bool:
@@ -328,6 +338,7 @@ def parse_gates(raw: Any) -> tuple[GateResult, ...]:
                 output=tuple(output),
                 kind=_text(entry, spec, "kind", _DEFAULT_KIND),
                 phase=phase,
+                unconfigured=entry.get("unconfigured") is True,
             )
         )
     return tuple(results)
@@ -364,6 +375,8 @@ class LoopDecision:
     blocking: tuple[str, ...] = ()
     #: Gates listed but not judged here — deferred to the phase that runs them.
     deferred: tuple[str, ...] = ()
+    #: Blocking gates that cannot judge — why an :data:`UNCONFIGURED` loop stopped.
+    unconfigured: tuple[str, ...] = ()
 
     @property
     def next_iteration(self) -> int | None:
@@ -371,7 +384,7 @@ class LoopDecision:
 
     @property
     def blocked(self) -> bool:
-        return self.status == BUDGET_EXHAUSTED
+        return self.status in _BLOCKED_STATUSES
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -380,6 +393,7 @@ class LoopDecision:
             "budget": self.budget,
             "blocking": list(self.blocking),
             "deferred": list(self.deferred),
+            "unconfigured": list(self.unconfigured),
             "next_iteration": self.next_iteration,
             "blocked": self.blocked,
         }
@@ -394,6 +408,10 @@ def decide(iteration: int, gates: Sequence[GateResult], policy: LoopPolicy) -> L
     which blocks the issue rather than quietly ending as if it had passed. A deferred gate
     (:attr:`GateResult.deferred`) is named in the decision and never counted green; it is
     not a failure here because no iteration could turn it green.
+
+    A blocking gate that **cannot judge** (:attr:`GateResult.unconfigured`) ends the loop
+    as :data:`UNCONFIGURED` at any iteration, the first included: it is red on a finding
+    no implementer can fix, so iterating against it only spends the budget (#1364).
     """
     if iteration < 1:
         raise LoopError("iteration is 1-based")
@@ -406,6 +424,9 @@ def decide(iteration: int, gates: Sequence[GateResult], policy: LoopPolicy) -> L
     budget = policy.max_iterations
     if not blocking:
         return LoopDecision(DONE, iteration, budget, deferred=deferred)
+    unconfigured = tuple(gate.id for gate in gates if gate.blocking and gate.unconfigured)
+    if unconfigured:
+        return LoopDecision(UNCONFIGURED, iteration, budget, blocking, deferred, unconfigured)
     if iteration >= budget:
         return LoopDecision(BUDGET_EXHAUSTED, iteration, budget, blocking, deferred)
     return LoopDecision(CONTINUE, iteration, budget, blocking, deferred)
@@ -613,6 +634,13 @@ def _next_action(decision: LoopDecision) -> str:
             f"iteration {decision.iteration}: {', '.join(decision.blocking)} red — dispatch "
             f"iteration {decision.next_iteration} of {decision.budget} with the rendered brief"
         )
+    if decision.status == UNCONFIGURED:
+        return (
+            f"iteration {decision.iteration}: {', '.join(decision.unconfigured)} cannot judge "
+            "— no command is configured, or no gate is planned (the gate's finding names the "
+            "key to set in .keel/project.yaml). No iteration can turn it green, so the loop "
+            "stops here and the issue is blocked; configure the gate, do not iterate again"
+        )
     return (
         f"iteration {decision.iteration}: {', '.join(decision.blocking)} red and the budget of "
         f"{decision.budget} is spent — the issue is blocked; do not iterate again"
@@ -690,6 +718,10 @@ def contract_as_dict() -> dict[str, Any]:
             "judged phases: listed, never counted green, never holding the loop open"
         ),
         "statuses": list(STATUSES),
+        "unconfigured": (
+            "a judged blocking gate that cannot judge — no command, or no gate planned: "
+            "the loop stops at once, blocked, whatever the budget"
+        ),
         "default_max_iterations": DEFAULT_MAX_ITERATIONS,
         "max_iterations_limit": MAX_ITERATIONS_LIMIT,
         "wraps": {"default": WRAPS_IMPLEMENT, "tdd": WRAPS_IMPLEMENTATION},

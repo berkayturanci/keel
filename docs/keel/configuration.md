@@ -30,7 +30,7 @@ declared through `required_capabilities`, `policy_pack`, or extension docs.
 | `merge_window` | string `HH:MM-HH:MM` | | open merge window (hours `00`-`23`, the two ends must differ); the complement is the night no-merge window; required with `timezone` |
 | `merge_window_mode` | `freeze` \| `pause` | `freeze` | outside the window: `freeze` blocks the merge but keeps gates/CI running; `pause` halts the pipeline |
 | `consent_mode` | `explicit` \| `standing` \| `agent` | `explicit` | default live-run consent mode for every command |
-| `gates` | string[] | | built-in gates to run: any of `build`, `lint`, `jury` |
+| `gates` | string[] | | built-in gates to run: any of `build`, `lint`, `jury`; a run that plans no gate at all blocks (see below) |
 | `extensions` | object | | add-only Lego pieces keyed by named slot |
 | `extensions_dir` | string | | dir holding extension files (default `.keel/extensions`) |
 | `policy_pack` | object | | durable project-owned policy data (see below) |
@@ -134,6 +134,19 @@ Lists built-in gates that should run in the test stage. Current built-in gates a
 than treated as project-specific code. Project-specific gates should be declared as
 extensions or `policy_pack.test_groups`.
 
+**A run with nothing to judge blocks** (#1364). `gates: []`, a missing `gates:` key (which
+loads the same), or a list that plans nothing — `lint` with no `knobs.lint_cmd` — with no
+extension or policy-pack preset adding a gate, plans zero gates. That used to print nothing,
+exit 0 and let a dry `keel ship` say MERGE, while `keel merge` refused the empty record.
+Every gate run now reports an extra outcome named `gates`, failed, with the `major` finding
+`no gate configured: gates: in .keel/project.yaml plans nothing to run …` — whatever the
+`--phases` scope, because no scope holds a gate — and `--gate-result` cannot clear it. The
+test is on the plan, not the key: `gates: []` beside a `tester` extension still runs that
+extension and is not blocked. The `tdd-order` gate alone does not count, since it reads the
+other gates' verdict and there are none — and it reads the failed `gates` outcome as one of
+them, so it fails beside it rather than certifying a test-first history. The schema does not refuse `gates: []`: leaving
+the key out is the same config, and project gates may legitimately come from extensions.
+
 Listing `jury` here adds the ai-jury run to `keel run-gates` at s8. It is **not** what turns
 the jury on for a run, and leaving it out does not keep the jury off: `ship.resolve_jury`
 turns the jury on automatically for every **tier-3** change (one matching `knobs.tier3_globs`), and
@@ -167,7 +180,7 @@ contracts, but executable project behavior remains in extension files or project
 | knob | type | required | description |
 |---|---|---|---|
 | `build_gate_cmd` | string | | command the `build` gate runs; unset, the gate blocks every run (see below) |
-| `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent) |
+| `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent, empty or blank) |
 | `implementer_agents` | map role→agent | | **deprecated** by `team.implement.by_role`: role to local agent mapping (still accepted and mapped onto it) |
 | `team.lead` | seat | | seat that coordinates a batch of ships; workers report through it |
 | `team.by_difficulty` | map band→bench | | `easy`/`standard`/`hard` → the bench that staffs work of that weight |
@@ -201,11 +214,16 @@ out for a project where they find no test command (no stack detected and no Make
 still planned while it is unset — `keel plan` marks it `(not configured: set
 knobs.build_gate_cmd)` — and every gate run **blocks** on it with the finding `no build
 gate configured: set knobs.build_gate_cmd …`. An unset gate is never a pass; it is a
-failure that names the key to set. An empty string is still refused by `keel validate`.
+failure that names the key to set. An empty string is still refused by `keel validate`,
+and so is a blank one (`" "`, #1364): `sh -c ' '` exits 0 having run nothing, so it used to
+report `ok build`. A command gate whose command is blank fails exactly as an unset one does,
+whichever runner executes it.
 
 #### `lint_cmd`
 
-Command run by the built-in `lint` gate. If absent, the lint gate is skipped.
+Command run by the built-in `lint` gate. If absent, empty or blank (whitespace only), the lint
+gate is skipped: a blank command is not a command, so `lint_cmd: " "` means the same as
+leaving it out rather than planning a gate that could only fail.
 
 #### `implementer_agents`
 
@@ -1155,6 +1173,13 @@ The contract, which `/keel:ship` drives and `keel loop brief` decides:
   whose budget is spent with the gates still red is `budget-exhausted`: `keel loop brief`
   exits non-zero and the issue is blocked, the same exit shape `keel fixloop brief` uses,
   so a spent loop cannot be mistaken for an iteration to run.
+- **A gate that cannot judge stops the loop at once** (#1364). An unset or blank
+  `knobs.build_gate_cmd`, or a run that plans no gate, is red on a finding no implementer
+  can fix — the fix is the project's config, which the worktree does not even read. Its
+  outcome carries `unconfigured: true`, and a judged blocking one ends the loop as
+  `unconfigured` at whatever iteration it appears, the first included: non-zero exit, the
+  issue blocked, no brief rendered, and `decision.unconfigured` naming the gates. A soft
+  unconfigured gate does not stop it, just as a soft red gate does not hold it open.
 - **The brief is fixed; the evidence changes.** Iteration k+1 receives the same brief as
   iteration 1 plus one appended section, **Gate output from iteration k**, rendered by core
   from the gate outcomes — gate id, passed / failed / deferred, the finding text, each

@@ -230,6 +230,13 @@ def _run_planned_gates(
     """
     now, later = gates.split_deferred(specs)
     outcomes = gates.run_gates(now, runner)
+    # A plan with nothing to judge blocks, naming `gates:` (#1364). Zero gates used to
+    # print nothing and exit 0, and a dry `keel ship` said MERGE for a run `keel merge`
+    # then refused. Appended here, the one path `run-gates` and `ship` share, so both
+    # read it; `--gate-result` cannot clear it, because it names no planned gate.
+    empty = gates.nothing_to_judge(specs)
+    if empty is not None:
+        outcomes.append(empty)
     if not later:
         return outcomes, None
     # The other gates' verdict *is* the "last gate run is green" half of the contract:
@@ -246,6 +253,11 @@ def _run_planned_gates(
         return outcomes, None
     phase_of = {spec.id: spec.phase for spec in now}
     judged = [o for o in outcomes if phase_of.get(o.gate) in loop.JUDGED_PHASES]
+    if empty is not None:
+        # No gate in any phase is red in every phase, the order gate's input included.
+        # `phase_of` has no entry for it — it is not a planned spec — so without this a
+        # test-first history beside `FAIL gates` certified `tdd-order` green (#1368 review).
+        judged.append(empty)
     green = not fnd.summarize(gates.collect_findings(judged)).blocked
     outcome, result = _tdd_order_outcome(later[0], config, root, gates_green=green)
     outcomes.append(outcome)

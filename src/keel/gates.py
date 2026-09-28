@@ -62,6 +62,41 @@ UNCONFIGURED_BUILD_GATE = (
     "to the command that runs your tests"
 )
 
+#: The id and finding of the outcome a run with **nothing to judge** blocks with (#1364).
+#: ``gates: []`` (or no ``gates:`` key, which loads the same), or a list whose only entry
+#: plans nothing — ``lint`` with no ``knobs.lint_cmd`` — with no extension or preset
+#: adding a gate, used to run zero gates, print nothing, exit 0, and let a dry ``keel
+#: ship`` say MERGE, while ``keel merge`` refused the empty record. The id is the config
+#: key, so the finding reads ``gates: …`` wherever findings are printed.
+NO_GATES_ID = "gates"
+#:
+#: The remedy names only gates that judge wherever they run. ``jury`` is not one of them:
+#: with no ``jury`` binary on the host, or an empty diff, the jury gate is a no-op that
+#: reports ``ok`` — so "list jury" would clear this block while nothing is judged (#1368
+#: review).
+NO_GATES_PLANNED = (
+    "no gate configured: gates: in .keel/project.yaml plans nothing to run and no "
+    "extension adds a gate — list build (with knobs.build_gate_cmd) or lint (with "
+    "knobs.lint_cmd), or add a gate extension"
+)
+
+#: The finding an unconfigured built-in ``lint`` gate fails with. :func:`plan_gates` does
+#: not plan ``lint`` without a command, so only a spec built elsewhere reaches it; it names
+#: the knob all the same, as every knob-backed command gate's finding does.
+UNCONFIGURED_LINT_GATE = (
+    "no lint command configured: set knobs.lint_cmd in .keel/project.yaml "
+    "to the command that lints your code, or remove lint from gates:"
+)
+
+#: Built-in command gates whose command is a knob -> the finding naming that knob.
+_UNCONFIGURED_BUILTIN: dict[str, str] = {
+    "build": UNCONFIGURED_BUILD_GATE,
+    "lint": UNCONFIGURED_LINT_GATE,
+}
+
+#: ``GateSpec.source`` prefixes keel itself writes; any other source is an extension file.
+_KEEL_SOURCES: tuple[str, ...] = ("builtin", "policy_pack:", "implement_mode:")
+
 # A failed gate with no explicit findings is reported at this severity.
 _ON_FAIL_SEVERITY: dict[str, str] = {"block": "major", "suggest": "minor", "warn": "nit"}
 
@@ -121,6 +156,12 @@ class GateOutcome:
     #: its :class:`GateSpec` so a consumer reading only outcomes can tell whether a
     #: ``not_run`` gate was one the project required.
     on_fail: str = "block"
+    #: True when the gate **cannot judge**: a ``command`` gate with no command (an unset
+    #: or blank ``knobs.build_gate_cmd``), or the :data:`NO_GATES_ID` outcome of a run
+    #: that planned nothing. Always ``ok=False``. Distinct from an ordinary failure
+    #: because no implementer can turn it green — only the project's config can — so the
+    #: s4 loop stops on it at once instead of spending its budget (#1364).
+    unconfigured: bool = False
 
 
 # runner(spec) -> (ok, findings[, timed_out[, not_run]]). May raise; run_gates handles
@@ -216,7 +257,10 @@ def plan_gates(
                 )
             )
         elif name == "lint":
-            if config.knobs.lint_cmd:  # lint is optional
+            # lint is optional: absent, empty or blank means off. A blank command is not a
+            # command, and planning one only to fail it would block every run for a key
+            # that says "no lint" (#1368 review).
+            if (config.knobs.lint_cmd or "").strip():
                 specs.append(
                     GateSpec(
                         "lint",
@@ -283,18 +327,34 @@ def plan_gates(
     return tuple(specs)
 
 
+def command_unset(spec: GateSpec) -> bool:
+    """Is ``spec`` a ``command`` gate with nothing to run — no command, or only whitespace?
+
+    A blank command is not a command: ``sh -c ' '`` exits 0, so a ``" "`` build command
+    used to report ``ok build`` for a gate that ran nothing (#1364). The schema refuses a
+    blank ``knobs.build_gate_cmd`` too; this is the same test for any spec, whoever built it.
+    """
+    return spec.kind == "command" and not (spec.run or "").strip()
+
+
 def unconfigured_finding(spec: GateSpec) -> Finding:
     """The finding a ``command`` gate with no command fails with (#1328).
 
-    Returned by the command runner, not decided here: a gate outside the run's
-    ``--phases`` scope has to stay ``not_run`` like any other, so the verdict belongs
-    after the scope test, which only the runner sees.
+    Returned by the command runner, and re-applied by :func:`run_gates` after any runner
+    returns (#1364): a gate outside the run's ``--phases`` scope has to stay ``not_run``
+    like any other, so the verdict belongs after the scope test, which only the runner
+    sees — but a runner that answers "ok, ran" for such a gate must not make it a pass.
+
+    It names what to set: the knob for a knob-backed built-in (``build`` ->
+    ``knobs.build_gate_cmd``, ``lint`` -> ``knobs.lint_cmd``), and ``run:`` in the file for
+    an extension gate. A spec keel did not plan from either has nothing to name.
     """
-    message = (
-        UNCONFIGURED_BUILD_GATE
-        if spec.id == "build"
-        else f"gate {spec.id!r} has no command configured"
-    )
+    if spec.source == "builtin" and spec.id in _UNCONFIGURED_BUILTIN:
+        message = _UNCONFIGURED_BUILTIN[spec.id]
+    elif not spec.source.startswith(_KEEL_SOURCES):
+        message = f"gate {spec.id!r} has no command configured: set run: in {spec.source}"
+    else:
+        message = f"gate {spec.id!r} has no command configured"
     return Finding(_ON_FAIL_SEVERITY[spec.on_fail], message, spec.id)
 
 
@@ -311,6 +371,23 @@ def split_deferred(
     now = tuple(spec for spec in specs if spec.id != tdd.GATE_ID)
     later = tuple(spec for spec in specs if spec.id == tdd.GATE_ID)
     return now, later
+
+
+def nothing_to_judge(specs: Sequence[GateSpec]) -> GateOutcome | None:
+    """The blocking outcome for a plan with no gate to judge the change, else ``None``.
+
+    Keyed on the **plan**, not on the ``gates:`` key alone: ``gates: []`` beside a
+    ``tester`` extension is a documented way to run project gates, and that run judges.
+    The ``tdd-order`` gate does not count — it reads the *other* gates' verdict, and
+    "green" over no gates is vacuous. Independent of ``--phases``: this is not a gate
+    outside the run's scope but the absence of any gate in every scope, which is why it
+    is reported apart from the planned gates rather than as a ``not_run`` one (#1364).
+    """
+    now, _later = split_deferred(specs)
+    if now:
+        return None
+    finding = Finding(_ON_FAIL_SEVERITY["block"], NO_GATES_PLANNED, NO_GATES_ID)
+    return GateOutcome(NO_GATES_ID, False, (finding,), unconfigured=True)
 
 
 def run_gates(
@@ -349,6 +426,18 @@ def run_gates(
                 spec.id, True, (), error=str(exc), skipped=True, on_fail=spec.on_fail
             )
 
+        if not not_run and command_unset(spec):
+            # Belt and braces (#1364): the unset-command verdict used to live only in
+            # `command_gate_runner`, so any other runner answering `(True, [])` for every
+            # spec would pass a gate that ran nothing. Re-checked here, after the runner,
+            # so a gate the runner scoped out (`--phases`) is still NOT-RUN.
+            return GateOutcome(
+                spec.id,
+                False,
+                (unconfigured_finding(spec),),
+                on_fail=spec.on_fail,
+                unconfigured=True,
+            )
         found = tuple(found)
         if ok:
             return GateOutcome(spec.id, True, found, not_run=not_run, on_fail=spec.on_fail)
