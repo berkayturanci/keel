@@ -122,18 +122,25 @@ Before tagging a release:
   Rename `## [Unreleased]` to `## [<x.y.z>]` — this is the step `make release-check` below
   refuses a release for, because a tag that skipped it publishes notes headed "Unreleased"
   to PyPI and to the GitHub Release, and PyPI files are immutable.
+- **Write the release highlights** directly under the renamed heading, before its first
+  `###` section: two or three plain-language `- ` lines saying what changed for someone
+  who uses keel — what they can now do, or what stopped going wrong — not which pull
+  requests merged. A single-fix patch release may carry one. See
+  [Release highlights](#release-highlights) below; `make release-check` refuses a section
+  without them.
 - **Run the release guards:**
 
   ```bash
   make release-check
   ```
 
-  Four checks, all offline and stdlib-only (`scripts/release_check.py`):
+  Five checks, all offline and stdlib-only (`scripts/release_check.py`):
 
   | Guard | What it refuses |
   |---|---|
   | `declared version` | `pyproject.toml` and `src/keel/__init__.py` naming different versions |
   | `changelog lockstep` | a top released `## [x.y.z]` that is not the declared version — i.e. a CHANGELOG never renamed from `## [Unreleased]` |
+  | `release highlights` | a declared version after 1.24.2 whose section does not open with one to three `- ` highlight lines, or that carries anything else above its first `###` (#1342) |
   | `release surfaces` | any surface in `scripts/release_surfaces.py` left behind: the plugin manifests, the pinned-install references in `README.md` / `keel-ship.yml` / `cutover.md`, the four site fallbacks |
   | `keel-visual markers` | `keel-visual/pyproject.toml` and `keel_visual/__init__.py` disagreeing (#796) |
 
@@ -258,7 +265,48 @@ The workflow must produce:
 - CycloneDX SBOM
 - `SHA256SUMS`
 - build-provenance attestation
-- GitHub Release
+- GitHub Release, whose body opens with the release highlights
+
+### Release highlights
+
+A GitHub Release used to be only GitHub's generated "What's Changed" list: pull-request
+titles, which tell a reader arriving from a link which branches merged rather than what
+changed for them (#1342). Each release body now opens with the highlights written in the
+CHANGELOG, and the generated list follows underneath.
+
+The convention, in `CHANGELOG.md`:
+
+```markdown
+## [1.25.0] - 2026-10-01
+
+- One sentence on what someone using keel can now do, in their words rather than
+  the code's.
+- One sentence on what stopped going wrong for them.
+
+### Fixed
+- ...
+```
+
+- The highlights are the `- ` bullets between the version heading and its first `###`
+  section. A bullet may wrap onto indented continuation lines.
+- Two or three of them; one is fine for a single-fix patch; more than three is refused.
+- Nothing else goes there. A paragraph above the first `###` is refused rather than
+  silently left out of the release.
+- Plain language: what a user can now do, or what stopped going wrong. Issue numbers and
+  file names belong in the sections below.
+
+`scripts/release_notes.py` is the one parser. `make release-check` (the `release highlights`
+guard) uses it to refuse a section without valid highlights, and `publish.yml` uses it in
+the step **Draft the release highlights from the CHANGELOG**, which runs right after the
+release check and before anything is built, writing the body to `$RUNNER_TEMP`. The release
+step passes that file as `body_path` with `generate_release_notes: true`, so the body reads
+`## Highlights`, the bullets, a link to the tagged `CHANGELOG.md`, then GitHub's list.
+`tests/test_changelog_sections.py` also requires highlights in every section released after
+1.24.2, so a release pull request without them fails CI before anyone tags it.
+
+Past releases are not rewritten; the convention starts with the release after 1.24.2
+(`LAST_WITHOUT_HIGHLIGHTS` in `scripts/release_notes.py`, which both checks read), so the
+tree between releases still passes its own `make release-check`.
 
 ### Reproducible builds
 

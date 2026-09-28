@@ -66,6 +66,27 @@ jobs:
             python scripts/release_check.py
           fi
 
+      # The top of the GitHub Release (#1342). GitHub's generated "What's
+      # Changed" is pull-request titles; a reader arriving from a link needs to
+      # know what changed for them. The CHANGELOG section opens with one to three
+      # plain-language highlight lines, which the check above already required,
+      # and this renders them into the body the release step below opens with;
+      # the release action appends the generated list underneath.
+      #
+      # Rendered here, next to the check and before anything is built, rather
+      # than beside the release step: a failure after the PyPI upload would leave
+      # a published version with no GitHub Release. Written to RUNNER_TEMP, not
+      # release/, so no glob in the release step can upload it as an asset.
+      - name: Draft the release highlights from the CHANGELOG
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          python scripts/release_notes.py \
+            --tag "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --out "${RUNNER_TEMP}/release-notes.md"
+          cat "${RUNNER_TEMP}/release-notes.md"
+
       - name: Install build dependencies
         run: |
           # `timeout`, not pip's `--timeout`: that one bounds a single quiet
@@ -308,6 +329,9 @@ jobs:
             release/SHA256SUMS
             release/keel.rb
           name: Release ${{ github.ref_name }}
+          # The highlights drafted above open the body; `generate_release_notes`
+          # appends GitHub's "What's Changed" list below them.
+          body_path: ${{ runner.temp }}/release-notes.md
           draft: false
           prerelease: false
           generate_release_notes: true

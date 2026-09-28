@@ -5,16 +5,35 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "keel-workflow"
 version = "1.24.2"
-description = "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions."
+description = "Turn coding agents into work owners: a vendor-neutral CLI that drives a GitHub issue to a merged pull request — readiness check, multi-agent review, CI and evidence gates, merge window."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Berkay Turancı", email = "berkayturanci@gmail.com" }]
 maintainers = [{ name = "Berkay Turancı", email = "berkayturanci@gmail.com" }]
-keywords = ["workflow", "automation", "ci", "agents", "code-review", "github", "merge-queue", "gemini", "claude", "llm"]
+keywords = [
+    "workflow",
+    "automation",
+    "ci",
+    "agents",
+    "ai-agents",
+    "coding-agents",
+    "code-review",
+    "ai-code-review",
+    "github",
+    "pull-requests",
+    "merge-queue",
+    "claude-code",
+    "codex",
+    "cursor",
+    "antigravity",
+    "gemini",
+    "llm",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Build Tools",
     "Topic :: Software Development :: Quality Assurance",
@@ -41,7 +60,8 @@ Homepage = "https://keel-ship.dev/"
 Repository = "https://github.com/berkayturanci/keel"
 Issues = "https://github.com/berkayturanci/keel/issues"
 Changelog = "https://github.com/berkayturanci/keel/blob/main/CHANGELOG.md"
-Documentation = "https://github.com/berkayturanci/keel/tree/main/docs/keel"
+Documentation = "https://keel-ship.dev/docs.html"
+"Release notes" = "https://github.com/berkayturanci/keel/releases"
 
 [project.optional-dependencies]
 dev = [

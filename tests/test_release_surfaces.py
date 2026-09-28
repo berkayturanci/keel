@@ -441,7 +441,7 @@ class TestTheCommandLine(unittest.TestCase):
         _write_fixture(root, version)
         (root / "CHANGELOG.md").write_text(
             f"# Changelog\n\n## [Unreleased]\n\n## [{version}] - 2026-09-03\n\n"
-            "### Fixed\n- a thing\n",
+            "- What changed for someone using it.\n\n### Fixed\n- a thing\n",
             encoding="utf-8",
         )
         (root / "keel-visual" / "src" / "keel_visual").mkdir(parents=True)

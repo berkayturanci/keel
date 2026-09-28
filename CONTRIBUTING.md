@@ -130,9 +130,11 @@ GitHub Actions are pinned to commit SHAs and the runtime dependency footprint st
 ## Releases
 
 User-visible changes update [CHANGELOG.md](CHANGELOG.md). A release is a version bump in
-`pyproject.toml` + `src/keel/__init__.py`, a promoted CHANGELOG section, and a `vX.Y.Z`
-tag — the tag triggers [`publish.yml`](.github/workflows/publish.yml) (PyPI trusted
-publishing + a GitHub Release with SBOM, checksums, and build provenance).
+`pyproject.toml` + `src/keel/__init__.py`, a promoted CHANGELOG section that opens with one
+to three plain-language highlight lines (they head the GitHub Release — see
+[the runbook](docs/keel/release.md#release-highlights)), and a `vX.Y.Z` tag — the tag
+triggers [`publish.yml`](.github/workflows/publish.yml) (PyPI trusted publishing + a GitHub
+Release with SBOM, checksums, and build provenance).
 
 The version lives in more places than that pair, so use `make release-bump VERSION=x.y.z`
 rather than editing by hand, and check the result:
@@ -142,10 +144,10 @@ make release-check   # offline; refuses a release that does not agree with itsel
 ```
 
 It compares the declared version against the top released `## [x.y.z]` CHANGELOG section
-(the guard for a CHANGELOG never renamed from `## [Unreleased]`), against every surface
-listed in `scripts/release_surfaces.py` — plugin manifests, pinned-install references, the
-site fallbacks — and checks `keel-visual`'s two version markers agree with each other.
-`publish.yml` runs the same command before it builds anything, and verifies the
+(the guard for a CHANGELOG never renamed from `## [Unreleased]`), requires that section's
+highlight lines, compares against every surface listed in `scripts/release_surfaces.py` —
+plugin manifests, pinned-install references, the site fallbacks — and checks
+`keel-visual`'s two version markers agree with each other. `publish.yml` runs the same command before it builds anything, and verifies the
 published package afterwards: a clean-venv install from PyPI, the release
 smoke test, and a SHA256 cross-check against the GitHub Release. See
 [the release runbook](docs/keel/release.md).
