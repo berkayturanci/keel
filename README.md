@@ -37,6 +37,8 @@
    re-checks the merge window, reads the live CI rollup and verifies the head-pinned review
    evidence first.
 
+![Terminal recording: keel run-gates runs a project's build and lint gates on a change that breaks add(); the build gate fails, keel prints BLOCKED and exits 1; after the one-line fix, shown with git diff, the same command passes both gates and exits 0](docs/assets/demo.svg)<br><sub>A real recording: [`scripts/record_demo.py`](scripts/record_demo.py) runs this repository's keel in a scratch repository and regenerates it, and `tests/test_readme_demo.py` fails if it drifts from what keel prints.</sub>
+
 ## Built for long unattended runs
 
 | Practice for long agent runs | What keel does |
