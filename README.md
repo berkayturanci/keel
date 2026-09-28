@@ -97,9 +97,13 @@ files under `.claude/commands/keel/`, and the matching `keel-<command>` skills u
 `.agents/skills/`. With `--wizard` it also asks who implements and who reviews; on a project
 that is already set up, `--force` re-runs it and overwrites `.keel/project.yaml`.
 
-**If `run-gates` fails with `make: *** No rule to make target`**, setup found no stack and fell
-back to `make test` ([#1328](https://github.com/berkayturanci/keel/issues/1328)). Set your
-project's own test command in `.keel/project.yaml` and run the gates again:
+**If setup prints `build gate   : not configured`**, it found no stack and no Makefile `test`
+rule, so it wrote no build command rather than guess one
+([#1328](https://github.com/berkayturanci/keel/issues/1328)); a Makefile with a `test` rule
+gets `make test`. Until you set one, `run-gates` fails the `build` gate with
+`no build gate configured: set knobs.build_gate_cmd …` and every run blocks on it. Replace
+`knobs: {}` in `.keel/project.yaml` with your project's own test command and run the gates
+again:
 
 ```yaml
 knobs:
@@ -111,7 +115,7 @@ Then ask keel for a dry assessment. It changes nothing:
 ```bash
 keel plan  .keel/project.yaml --root .       # the backbone, with this project's gates slotted in
 keel ship  .keel/project.yaml --root .       # risk tier, reviewers, merge window, gates, decision
-keel doctor .keel/project.yaml --root .      # versions, adapters and prerequisites
+keel doctor .keel/project.yaml --root .      # versions, adapters, gh auth and agent hosts
 ```
 
 ```text
@@ -501,9 +505,9 @@ make validate   # validate projects/*.yaml and .keel/project.yaml
 make site       # build the coverage report + serve the website at localhost:8000
 ```
 
-The pure core (`config`, `model`, `extensions`, `findings`, `gates`, `orchestrator`,
-`cli`) is held at **100% line + branch coverage**; the coverage gate (`fail_under = 100`)
-runs in CI. keel drives itself from `.keel/project.yaml`
+Every module under `src/keel/` is held at **100% line + branch coverage**: the coverage gate
+(`fail_under = 100`, run in CI) measures the whole `keel` package and omits only the
+`python -m keel` entry shim, `src/keel/__main__.py`. keel drives itself from `.keel/project.yaml`
 ([dogfooding](docs/keel/overview.md#dogfooding)).
 
 Release maintainers should follow [`docs/keel/release.md`](docs/keel/release.md) and run
