@@ -85,8 +85,19 @@ _TEMPLATES: dict[str, dict] = {
         "lint": "mvn checkstyle:check",
         "globs": ("src/main/**",),
     },
-    "generic": {"platform": "generic", "build": "make test", "lint": None, "globs": ()},
+    # No stack, so no command keel can name (#1328): `make test` only when the Makefile
+    # has that rule (see template_for), else none — the build gate is then unconfigured.
+    "generic": {"platform": "generic", "build": None, "lint": None, "globs": ()},
 }
+
+#: Written above ``knobs:`` when no build command was found (#1328), so the file itself
+#: says what to set.
+_UNSET_BUILD_COMMENT = (
+    "# build_gate_cmd is not set: keel found no test command for this project (no stack",
+    "# detected, and no Makefile `test` rule). Until you set it under knobs, the `build`",
+    "# gate blocks every run. For example:",
+    '#   build_gate_cmd: "./scripts/test.sh"',
+)
 
 
 # A rule line names its targets before a `:` or `::`. `test := x`, `test ::= x` and
@@ -240,7 +251,17 @@ def template_for(stack: str, root: str | Path | None = None) -> dict:
     t = dict(_TEMPLATES.get(stack, _TEMPLATES["generic"]))
     if stack == "python" and root is not None:
         t["build"], t["lint"] = _python_gates(Path(root))
+    elif t["platform"] == "generic" and root is not None:
+        # The one command a stackless project can be shown to have (#1328).
+        if _makefile_has_target(Path(root), "test"):
+            t["build"] = "make test"
     return t
+
+
+def missing_build_gate(text: str) -> bool:
+    """Whether a rendered config leaves ``knobs.build_gate_cmd`` unset (#1328)."""
+    knobs = yaml.load(text).get("knobs") or {}
+    return not knobs.get("build_gate_cmd")
 
 
 def detect_stack(root: str | Path) -> str:
@@ -307,7 +328,7 @@ def render_config(
     owner: str | None = None,
     base_branch: str = "main",
     platform: str = "generic",
-    build_cmd: str = "make test",
+    build_cmd: str | None = "make test",
     lint_cmd: str | None = None,
     tier3_globs: tuple[str, ...] = (),
     timezone: str | None = None,
@@ -351,15 +372,21 @@ def render_config(
         lines.append(f"timezone: {_yaml_scalar(timezone)}")
     if merge_window:
         lines.append(f"merge_window: {_yaml_scalar(merge_window)}")
-    lines += ["", "knobs:", f"  build_gate_cmd: {_yaml_scalar(build_cmd)}"]
+    knobs = [f"  build_gate_cmd: {_yaml_scalar(build_cmd)}"] if build_cmd else []
     if team:
-        lines.append("  team:")
-        lines.extend(_render_mapping(team, 2))
+        knobs.append("  team:")
+        knobs.extend(_render_mapping(team, 2))
     if lint_cmd:
-        lines.append(f"  lint_cmd: {_yaml_scalar(lint_cmd)}")
+        knobs.append(f"  lint_cmd: {_yaml_scalar(lint_cmd)}")
     if tier3_globs:
-        lines.append("  tier3_globs:")
-        lines.extend(_render_sequence(list(tier3_globs), 2))
+        knobs.append("  tier3_globs:")
+        knobs.extend(_render_sequence(list(tier3_globs), 2))
+    lines.append("")
+    if not build_cmd:
+        # No command, but `build` stays in `gates:` below: an unconfigured gate is planned
+        # and blocks with a finding naming the knob, where an absent one would pass (#1328).
+        lines.extend(_UNSET_BUILD_COMMENT)
+    lines += ["knobs:", *knobs] if knobs else ["knobs: {}"]
     gates = "[build, lint]" if lint_cmd else "[build]"
     lines += ["", f"gates: {gates}", "extensions: {}", "extensions_dir: .keel/extensions", ""]
     return "\n".join(lines)
@@ -476,14 +503,17 @@ def wizard(
     base = ask("Base branch", base_default)
     tz, win = merge_window_answers(ask, report)
     mode = ask("Consent mode (explicit, standing, agent)", "explicit") or "explicit"
-    build = ask("Build/test command", t["build"])
+    build_prompt = "Build/test command"
+    if not t["build"]:
+        build_prompt += " (blank leaves it unset: the build gate then blocks until you set it)"
+    build = ask(build_prompt, t["build"] or "")
     lint = ask("Lint command (blank to skip)", t["lint"] or "")
     return render_config(
         repo=repo,
         owner=owner,
         base_branch=base,
         platform=t["platform"],
-        build_cmd=build,
+        build_cmd=build or None,
         lint_cmd=lint or None,
         tier3_globs=t["globs"],
         timezone=tz,

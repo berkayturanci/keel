@@ -26,6 +26,10 @@ Checks
 ``policy_labels``    the labels the project's policy pack (and keel's own
                      attribution vocabulary) declare, vs the labels that exist on
                      the repository (#1021).
+``github_cli``       ``gh`` on PATH and ``gh auth status`` — what a live run needs
+                     to reach GitHub (#1334).
+``agent_hosts``      which agent host CLIs (:data:`AGENT_HOSTS`) are on PATH — a
+                     lookup only; ``--providers`` is the deep probe (#1334).
 """
 
 from __future__ import annotations
@@ -46,6 +50,11 @@ _SKIPPED = "skipped"
 _WARN = "warn"
 _FAIL = "fail"
 _RANK = {_OK: 0, _SKIPPED: 0, _WARN: 1, _FAIL: 2}
+
+#: Agent host CLIs that can drive ``/keel:ship`` — the three built-in CLI vendors
+#: (:data:`keel.vocab.CLI_VENDORS`) plus ``cursor-agent``, whose plugin install
+#: ``docs/keel/install.md`` covers. ``agent_hosts`` only looks each one up on PATH.
+AGENT_HOSTS = ("claude", "codex", "cursor-agent", "agy")
 
 #: a release version: ``MAJOR.MINOR.PATCH`` with optional further dotted parts.
 _VERSION_RE = re.compile(r"^\d+(?:\.\d+)*$")
@@ -536,6 +545,70 @@ def _check_policy_labels(payload: dict[str, object] | None) -> CheckResult:
     )
 
 
+def _check_github_cli(facts: dict[str, object] | None) -> CheckResult:
+    """Can a live run reach GitHub — is ``gh`` on PATH and logged in (#1334)?
+
+    Never a ``fail``: a dry run needs no ``gh`` at all, so a missing or logged-out one
+    is a ``warn`` that says what to do. ``--offline`` leaves the auth question
+    unasked (it goes to GitHub) and reports ``skipped``.
+    """
+    if facts is None:
+        return CheckResult("github_cli", _SKIPPED, "gh not probed", {})
+    detail = dict(facts)
+    gh = facts.get("gh")
+    if not gh:
+        return CheckResult(
+            "github_cli",
+            _WARN,
+            "gh not found on PATH — a live run (keel ship --live) needs it: install the "
+            "GitHub CLI, then gh auth login",
+            detail,
+        )
+    authenticated = facts.get("authenticated")
+    if authenticated is None:
+        reason = str(facts.get("reason") or "gh auth status not run")
+        return CheckResult("github_cli", _SKIPPED, f"gh at {gh}; {reason}", detail)
+    if not authenticated:
+        return CheckResult(
+            "github_cli",
+            _WARN,
+            f"gh at {gh} is not authenticated ({facts.get('reason')}) — run gh auth login "
+            "before a live run",
+            detail,
+        )
+    return CheckResult("github_cli", _OK, f"gh at {gh} is authenticated", detail)
+
+
+def _check_agent_hosts(facts: dict[str, object] | None) -> CheckResult:
+    """Which agent host CLIs are on PATH (#1334)?
+
+    A PATH lookup, nothing executed: this answers "is there anything here to drive
+    ``/keel:ship``", cheaply, on every run. Whether a delegate actually answers is
+    ``--providers``' question. None found is a ``warn``, never a ``fail`` — a host
+    that lives only inside an editor is not on PATH, and doctor cannot see it.
+    """
+    if facts is None:
+        return CheckResult("agent_hosts", _SKIPPED, "agent hosts not probed", {})
+    hosts = list(facts.get("hosts") or [])
+    found = [str(h.get("name")) for h in hosts if h.get("path")]
+    missing = [str(h.get("name")) for h in hosts if not h.get("path")]
+    detail: dict[str, object] = {"hosts": hosts, "found": found, "missing": missing}
+    if not found:
+        return CheckResult(
+            "agent_hosts",
+            _WARN,
+            f"no agent host on PATH (looked for {', '.join(missing)}) — a live /keel:ship "
+            "needs one to drive it; keel doctor --providers probes delegates in depth",
+            detail,
+        )
+    return CheckResult(
+        "agent_hosts",
+        _OK,
+        f"{len(found)} of {len(hosts)} agent host(s) on PATH: {', '.join(found)}",
+        detail,
+    )
+
+
 def run_doctor(
     *,
     installed_version: str,
@@ -549,6 +622,8 @@ def run_doctor(
     python_toolchain: dict[str, object] | None = None,
     policy_labels: dict[str, object] | None = None,
     providers: dict[str, object] | None = None,
+    github_cli: dict[str, object] | None = None,
+    agent_hosts: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Run all diagnostic checks over already-gathered facts (pure, deterministic).
 
@@ -566,6 +641,9 @@ def run_doctor(
         _check_state_paths(state_paths),
         _check_python_toolchain(python_toolchain),
         _check_policy_labels(policy_labels),
+        # Appended, not inserted: the existing checks keep their positions (#1334).
+        _check_github_cli(github_cli),
+        _check_agent_hosts(agent_hosts),
     ]
     # Only when asked for: the provider probe shells out once per CLI vendor and makes
     # one loopback request, which the default run must not pay for on every invocation.

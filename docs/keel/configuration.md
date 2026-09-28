@@ -154,7 +154,7 @@ contracts, but executable project behavior remains in extension files or project
 
 | knob | type | required | description |
 |---|---|---|---|
-| `build_gate_cmd` | string | ✅ | command the `build` gate runs |
+| `build_gate_cmd` | string | | command the `build` gate runs; unset, the gate blocks every run (see below) |
 | `lint_cmd` | string | | command the `lint` gate runs (gate skipped if absent) |
 | `implementer_agents` | map role→agent | | **deprecated** by `team.implement.by_role`: role to local agent mapping (still accepted and mapped onto it) |
 | `team.lead` | seat | | seat that coordinates a batch of ships; workers report through it |
@@ -181,8 +181,15 @@ contracts, but executable project behavior remains in extension files or project
 
 #### `build_gate_cmd`
 
-Command run by the built-in `build` gate. This is required because the build/test gate is
-the minimum deterministic project health check.
+Command run by the built-in `build` gate — the minimum deterministic project health check.
+
+It may be left out, and only means "not chosen yet": `keel init` / `keel setup` leave it
+out for a project where they find no test command (no stack detected and no Makefile
+`test` rule) rather than write a `make test` that cannot run (#1328). The `build` gate is
+still planned while it is unset — `keel plan` marks it `(not configured: set
+knobs.build_gate_cmd)` — and every gate run **blocks** on it with the finding `no build
+gate configured: set knobs.build_gate_cmd …`. An unset gate is never a pass; it is a
+failure that names the key to set. An empty string is still refused by `keel validate`.
 
 #### `lint_cmd`
 

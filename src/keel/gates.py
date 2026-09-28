@@ -52,6 +52,14 @@ POLICY_PACK_PRESETS: dict[str, tuple[str, str, str, str]] = {
     "trivy": ("trivy", "test", "warn", "trivy fs ."),
 }
 
+#: The finding an unconfigured ``build`` gate blocks with (#1328). Also printed by
+#: ``keel init`` / ``keel setup`` when they scaffold a project without one, so the
+#: operator reads the same sentence before the first run as in its result.
+UNCONFIGURED_BUILD_GATE = (
+    "no build gate configured: set knobs.build_gate_cmd in .keel/project.yaml "
+    "to the command that runs your tests"
+)
+
 # A failed gate with no explicit findings is reported at this severity.
 _ON_FAIL_SEVERITY: dict[str, str] = {"block": "major", "suggest": "minor", "warn": "nit"}
 
@@ -303,6 +311,17 @@ def run_gates(
     """
 
     def _run_single(spec: GateSpec) -> GateOutcome:
+        if spec.kind == "command" and not spec.run:
+            # A command gate with nothing to run cannot pass, and must not reach the
+            # runner: the command-only runner reports "not mine" for it, which would read
+            # as "record a result for this gate" rather than "configure it" (#1328).
+            message = (
+                UNCONFIGURED_BUILD_GATE
+                if spec.id == "build"
+                else f"gate {spec.id!r} has no command configured"
+            )
+            finding = Finding(_ON_FAIL_SEVERITY[spec.on_fail], message, spec.id)
+            return GateOutcome(spec.id, False, (finding,), on_fail=spec.on_fail)
         try:
             # tuple() first: the runner contract has always been "any 2-iterable",
             # so indexing the raw return would reject a generator that used to work.

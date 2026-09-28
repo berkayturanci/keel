@@ -76,7 +76,10 @@ keel setup --root . --force
 Review `.keel/project.yaml` and replace generic defaults with project policy values:
 
 - `repo` and `base_branch`;
-- `knobs.build_gate_cmd` and `knobs.lint_cmd`;
+- `knobs.build_gate_cmd` and `knobs.lint_cmd`. When `init` finds no stack and no Makefile
+  `test` rule it writes **no** build command, says so on the terminal and in a comment
+  above `knobs:`, and the `build` gate blocks every run until you set one — see
+  [`build_gate_cmd`](configuration.md#build_gate_cmd);
 - `timezone` and `merge_window`;
 - `knobs.tier3_globs`;
 - optional `policy_pack` entries for labels, paths, health providers, and project commands;

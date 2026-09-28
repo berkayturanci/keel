@@ -6210,7 +6210,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
             print(f"  stack        : {meta['stack']} ({meta['platform']})")
             print(f"  owner/repo   : {(owner + '/' if owner else '') + repo}")
             print(f"  base branch  : {meta['base_branch']}")
-            print(f"  build gate   : {meta['build_cmd']}")
+            print(f"  build gate   : {meta['build_cmd'] or _UNSET_BUILD_NOTE}")
             if meta.get("lint_cmd"):
                 print(f"  lint gate    : {meta['lint_cmd']}")
         elif args.wizard:
@@ -6247,7 +6247,17 @@ def _cmd_init(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     print(f"wrote {target}  (detected stack: {stack})")
+    if not getattr(args, "auto", False) and scaffold.missing_build_gate(text):
+        print(f"  build gate   : {_UNSET_BUILD_NOTE}")
     return 0
+
+
+#: What ``init`` / ``setup`` print for a project scaffolded without a build command (#1328),
+#: so the first blocked run holds no surprise.
+_UNSET_BUILD_NOTE = (
+    "not configured — set knobs.build_gate_cmd in .keel/project.yaml to the command that "
+    "runs your tests; until then the build gate blocks every run"
+)
 
 
 def _derive_owner_repo(root: Path) -> tuple[str | None, str]:
@@ -6502,7 +6512,7 @@ def _doctor_python_toolchain(
     """
     which = shutil.which if _which is None else _which
     env = os.environ if _env is None else _env
-    gate = config.knobs.build_gate_cmd if config is not None else ""
+    gate = (config.knobs.build_gate_cmd or "") if config is not None else ""
     if gate.split()[:1] != ["make"]:
         return _probe_python(sys.executable, "sys.executable", _run=_run)
     override = env.get("PY", "").strip()
@@ -6593,6 +6603,34 @@ def _doctor_policy_labels(
         }
     )
     return facts
+
+
+def _doctor_github_cli(
+    *, root: str = ".", offline: bool = False, _which=None, _run=None
+) -> dict[str, object]:
+    """Is ``gh`` on PATH, and logged in (#1334)? Thin I/O for ``github_cli``.
+
+    One PATH lookup, then one ``gh auth status`` — skipped under ``--offline``, since
+    it goes to GitHub. Fail-soft: every answer is a fact for the pure check, never an
+    exception. ``_which`` and ``_run`` are the seams the offline tests use.
+    """
+    which = shutil.which if _which is None else _which
+    gh = which("gh")
+    if not gh:
+        return {"gh": None, "authenticated": None, "reason": ""}
+    if offline:
+        return {"gh": gh, "authenticated": None, "reason": "--offline: gh auth status not run"}
+    result = github.auth_status(cwd=root, **_kw(_run))
+    if result.ok:
+        return {"gh": gh, "authenticated": True, "reason": ""}
+    reason = _short(result.output) or f"gh auth status exited {result.code}"
+    return {"gh": gh, "authenticated": False, "reason": reason}
+
+
+def _doctor_agent_hosts(*, _which=None) -> dict[str, object]:
+    """Which of :data:`keel.doctor.AGENT_HOSTS` are on PATH (#1334)? Lookups only."""
+    which = shutil.which if _which is None else _which
+    return {"hosts": [{"name": name, "path": which(name)} for name in doctor.AGENT_HOSTS]}
 
 
 def _doctor_fix_labels(
@@ -6703,6 +6741,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         python_toolchain=_doctor_python_toolchain(args.root, config),
         policy_labels=policy_labels,
         providers=providers,
+        github_cli=_doctor_github_cli(root=args.root, offline=args.offline),
+        agent_hosts=_doctor_agent_hosts(),
     )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
@@ -7013,6 +7053,8 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         return 1
 
     print(f"  validate     : OK ({config.repo or '-'}, base {config.base_branch})")
+    if "build" in config.gates and not config.knobs.build_gate_cmd:
+        print(f"  build gate   : {_UNSET_BUILD_NOTE}")
     print("  plan         :")
     rendered = orch.render_plan(config, plan)
     for line in rendered.splitlines():

@@ -11,6 +11,36 @@ from keel.extensions import load_extensions, parse_extension
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"
 
 
+class TheRenderedPlanMarksAnUnconfiguredBuildGate(unittest.TestCase):
+    """`keel plan` (and `keel setup`, which prints it) marks a build gate with no command.
+
+    #1328: an unset `knobs.build_gate_cmd` is flagged where the operator reads the plan.
+    """
+
+    @staticmethod
+    def _config(knobs):
+        return cfg.parse_config(
+            {
+                "extends": "keel",
+                "core_version": "^1.0",
+                "base_branch": "main",
+                "knobs": knobs,
+                "gates": ["build"],
+            }
+        )
+
+    def test_unset_is_marked_with_the_knob_to_set(self):
+        config = self._config({})
+        text = orch.render_plan(config, orch.build_plan(config, {}))
+        self.assertIn("- gate: build (not configured: set knobs.build_gate_cmd)", text)
+
+    def test_a_configured_gate_renders_plainly(self):
+        config = self._config({"build_gate_cmd": "make test"})
+        text = orch.render_plan(config, orch.build_plan(config, {}))
+        self.assertIn("- gate: build\n", text)
+        self.assertNotIn("not configured", text)
+
+
 class TestBuildPlan(unittest.TestCase):
     def test_plan_covers_whole_backbone(self):
         config = cfg.load_config(PROJECTS / "keel.yaml")

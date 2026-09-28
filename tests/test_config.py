@@ -656,12 +656,33 @@ class TestParse(unittest.TestCase):
             cfg.parse_config(bad)
         self.assertIn("not-a-slot", str(ctx.exception))
 
-    def test_knobs_require_build_gate_cmd(self):
+    def test_an_absent_build_gate_cmd_is_unset_not_invalid(self):
+        # #1328: a scaffold that found no test command writes none, rather than a
+        # `make test` that cannot run. The gate is then planned unconfigured and blocks
+        # (see tests/test_gates.py), so being optional here never makes it a pass.
+        data = copy.deepcopy(VALID)
+        data["knobs"] = {"lint_cmd": "x"}
+        self.assertEqual(cfg.validate_data(data), [])
+        self.assertIsNone(cfg.parse_config(data).knobs.build_gate_cmd)
+        data["knobs"] = {}
+        self.assertIsNone(cfg.parse_config(data).knobs.build_gate_cmd)
+
+    def test_an_empty_build_gate_cmd_is_still_refused(self):
         bad = copy.deepcopy(VALID)
-        bad["knobs"] = {"lint_cmd": "x"}
+        bad["knobs"] = {"build_gate_cmd": ""}
         with self.assertRaises(cfg.ConfigError) as ctx:
             cfg.parse_config(bad)
         self.assertIn("build_gate_cmd", str(ctx.exception))
+
+    def test_config_hash_is_unchanged_for_a_config_that_sets_it(self):
+        # Optional now, but a project that always set it must hash as it did: the
+        # canonical form still carries the same string under the same key. Pinned from
+        # the tree before #1328.
+        config = cfg.parse_config(copy.deepcopy(VALID))
+        self.assertEqual(
+            cfg.config_hash(config),
+            "2df4864d074db05c5057956895a31d9def391951c07042c0551891083025ca69",
+        )
 
 
 class TestOpenAICompatibleEndpointGuard(unittest.TestCase):

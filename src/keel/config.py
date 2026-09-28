@@ -259,7 +259,11 @@ class DelegateProfile:
 class Knobs:
     """Per-project values consumed by the (otherwise neutral) backbone steps."""
 
-    build_gate_cmd: str
+    #: ``None`` when the project has not chosen one (#1328): a scaffold that found no test
+    #: command writes none rather than a ``make test`` that cannot run. The ``build`` gate
+    #: is still planned, and :func:`keel.gates.run_gates` blocks it with a finding naming
+    #: this knob — unset is never a pass.
+    build_gate_cmd: str | None
     lint_cmd: str | None = None
     #: **Deprecated** by ``team.implement.by_role`` (#1014); still accepted and mapped
     #: onto it by :func:`keel.team.legacy_seats`.
@@ -488,7 +492,7 @@ def _merge_window_issues(data: dict) -> list[str]:
 def _build(data: dict) -> ProjectConfig:
     k = data["knobs"]
     knobs = Knobs(
-        build_gate_cmd=k["build_gate_cmd"],
+        build_gate_cmd=k.get("build_gate_cmd"),
         lint_cmd=k.get("lint_cmd"),
         implementer_agents=dict(k.get("implementer_agents", {})),
         team=team_policy.parse_team(k.get("team")),

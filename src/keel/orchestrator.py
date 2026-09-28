@@ -107,7 +107,11 @@ def render_plan(config: ProjectConfig, plan: tuple[PlanItem, ...]) -> str:
         marker = "  [agent]" if item.agentic else ""
         lines.append(f"    {item.step_id:>3}  {item.step_name}{marker}")
         for gate in item.gates:
-            lines.append(f"           - gate: {gate}")
+            # The one built-in gate whose command can be absent (#1328): say so here,
+            # where an operator reads the plan, rather than first in a blocked run.
+            unset = gate == "build" and not config.knobs.build_gate_cmd
+            note = " (not configured: set knobs.build_gate_cmd)" if unset else ""
+            lines.append(f"           - gate: {gate}{note}")
         for hook in item.hooks:
             caps = _capability_summary(hook)
             adapter = " adapter-required" if hook.adapter_required else ""

@@ -238,12 +238,15 @@ keel setup --root .                          # add keel config + adapters to thi
 #   (on a project that is already set up, --force re-runs it and overwrites .keel/project.yaml)
 keel validate .keel/project.yaml --root .    # validate the config setup just wrote
 keel plan     .keel/project.yaml --root .    # show the backbone plan for this project
-keel doctor   .keel/project.yaml --root .    # check versions, adapters and prerequisites
+keel doctor   .keel/project.yaml --root .    # check versions, adapters, gh auth and agent hosts
 keel version
 ```
 
 `keel setup` wraps first-run onboarding (`init` + `install-adapter` + strict `validate` +
-`plan`) for a consumer project. With `--wizard` it also runs a **team step**: it probes
+`plan`) for a consumer project. It picks the build gate from the stack it detects; when it
+detects none and the project has no Makefile `test` rule, it writes **no** build command and
+prints `build gate   : not configured` — set `knobs.build_gate_cmd` in
+`.keel/project.yaml` to the command that runs your tests, or every run blocks on that gate. With `--wizard` it also runs a **team step**: it probes
 which agent CLIs, hosted APIs and local models are usable on this machine (the same probe
 as `keel doctor --providers`) and writes `knobs.team` from what it found — who implements,
 who gives the mandatory gate review, who reviews at each risk tier. Only providers that
@@ -272,7 +275,8 @@ keel plan — my-project
 ```
 
 A project adds its own gates and extensions under each step; the plan above is a
-generic project with the default `build` gate.
+project with one `build` gate configured. Until `knobs.build_gate_cmd` is set, that line
+reads `- gate: build (not configured: set knobs.build_gate_cmd)`.
 
 ## Invocation (`/keel:<command>`)
 
