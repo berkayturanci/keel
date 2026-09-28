@@ -1827,7 +1827,7 @@ class TestAgentHostsCheck(unittest.TestCase):
     def test_the_hosts_include_every_built_in_cli_vendor(self):
         from keel import vocab
 
-        self.assertTrue(set(vocab.CLI_VENDORS) <= set(doctor.AGENT_HOSTS))
+        self.assertEqual(set(vocab.CLI_VENDORS) - set(doctor.AGENT_HOSTS), set())
         self.assertIn("cursor-agent", doctor.AGENT_HOSTS)
 
 
