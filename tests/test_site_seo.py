@@ -21,6 +21,7 @@ prose in website/README.md.
 
 from __future__ import annotations
 
+import html.parser
 import pathlib
 import re
 import shutil
@@ -68,6 +69,43 @@ def _articles() -> list[str]:
     page whose structured data carries a publication date.
     """
     return [f.name for f in sorted(SITE.glob("*.html")) if '"datePublished"' in _head(f.name)]
+
+
+class _AfterKpis(html.parser.HTMLParser):
+    """The element right after the first ``.kpis`` block, and the links inside it.
+
+    A parser rather than a regular expression: a pattern over the nested ``.kpi`` cards
+    backtracks exponentially on a long card list (CodeQL py/redos).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.depth = 0
+        self.kpis_at: int | None = None
+        self.closed = False
+        self.next_tag: str | None = None
+        self.hrefs: list[str] = []
+        self._in_next = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if self.closed and self.next_tag is None:
+            self.next_tag = tag
+            self._in_next = tag == "p"
+        elif self._in_next and tag == "a" and attrs.get("href"):
+            self.hrefs.append(attrs["href"])
+        if tag == "div":
+            self.depth += 1
+            if self.kpis_at is None and "kpis" in (attrs.get("class") or "").split():
+                self.kpis_at = self.depth
+
+    def handle_endtag(self, tag):
+        if tag == "p" and self._in_next:
+            self._in_next = False
+        if tag == "div":
+            if self.kpis_at == self.depth and not self.closed:
+                self.closed = True
+            self.depth -= 1
 
 
 class TestSearchFacingFields(unittest.TestCase):
@@ -182,14 +220,10 @@ class TestArticleIsReachable(unittest.TestCase):
         index = (SITE / "index.html").read_text(encoding="utf-8")
         start = index.index('id="view-overview"')
         overview = index[start : index.index("</section>", start)]
-        line = re.search(
-            r'<div class="kpis[^"]*"[^>]*>(?:\s*<div class="kpi">.*?</div>)+\s*</div>\s*'
-            r"<p [^>]*>(.*?)</p>",
-            overview,
-            re.S,
-        )
-        self.assertIsNotNone(line, "no paragraph directly under the overview's .kpis")
-        self.assertIn('href="long-runs.html"', line.group(1))
+        after = _AfterKpis()
+        after.feed(overview)
+        self.assertEqual(after.next_tag, "p", "no paragraph directly under the overview's .kpis")
+        self.assertIn("long-runs.html", after.hrefs)
 
     def test_every_article_carries_article_structured_data(self):
         for page in _articles():

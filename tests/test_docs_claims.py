@@ -1944,7 +1944,8 @@ class TheLongRunsArticleClaimsOnlyWhatKeelDoes(unittest.TestCase):
                 args = cli.build_parser().parse_args(argv)
         except SystemExit:
             self.fail(f"keel's parser refuses the article's command: keel {' '.join(argv)}")
-        self.assertEqual(args.phase, evidence.PHASE_PRE_MERGE)
+        else:
+            self.assertEqual(args.phase, evidence.PHASE_PRE_MERGE)
 
     def test_the_missing_evidence_it_shows_is_what_tier_3_required(self):
         """Three reviewers and a gating jury, as tier 3 was on 2026-08-25."""
