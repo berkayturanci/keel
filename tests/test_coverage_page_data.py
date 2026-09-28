@@ -321,15 +321,34 @@ const document = { getElementById: (id) => nodes[id] || null, createElement: (t)
 const fetch = (url) => {
   fetched.push(url);
   if (mode === "absent") return Promise.resolve({ ok: false, json: () => Promise.reject(0) });
-  return Promise.resolve({ ok: true, json: () => Promise.resolve(JSON.parse(payload)) });
+  // "slow": the body takes 120 ms to parse, as on a loaded CI runner (#1375)
+  const parse = () => {
+    const until = Date.now() + (mode === "slow" ? 120 : 0);
+    while (Date.now() < until) { /* bounded by the deadline above */ }
+    return JSON.parse(payload);
+  };
+  return Promise.resolve({ ok: true, json: () => Promise.resolve().then(parse) });
 };
 const fetched = [];
 const window = {};
+// The page's timers are counted, and the page is read once none is left, not at a
+// fixed moment: a fixed 50 ms raced the rows' own timers on a slow runner (#1375).
+let pending = 0;
+const pageTimeout = (f, ms) => { pending++; return setTimeout(() => { pending--; f(); }, ms); };
 vm.runInNewContext(fs.readFileSync(script, "utf8"), {
-  document, window, fetch, console, setTimeout, Math, JSON, Promise,
-  matchMedia: () => ({ matches: true }), requestAnimationFrame: (f) => setTimeout(f, 0),
+  document, window, fetch, console, setTimeout: pageTimeout, Math, JSON, Promise,
+  matchMedia: () => ({ matches: true }), requestAnimationFrame: (f) => pageTimeout(f, 0),
 });
-setTimeout(() => {
+const settle = (tries) => {
+  if (pending === 0) return report();
+  if (tries >= 200) {
+    console.error(`TIMEOUT: ${pending} page timer(s) still pending after 2 s`);
+    process.exit(3);
+  }
+  setTimeout(() => settle(tries + 1), 10);
+};
+setTimeout(() => settle(0), 0);
+function report() {
   const deep = (n) => n.textContent + n.children.map(deep).join("");
   const rows = nodes["cov-tbody"].querySelectorAll("tr.cov-r");
   console.log(JSON.stringify({
@@ -345,7 +364,7 @@ setTimeout(() => {
     scope: nodes["cov-scope"].textContent,
     rows: rows.map((r) => r.children.map(deep)),
   }));
-}, 50);
+}
 """
 
 NODE = shutil.which("node")
@@ -411,6 +430,13 @@ class TestThePageRendersTheGeneratedData(unittest.TestCase):
         self.assertEqual(shown["cards"][1], ["1.13%", "branch coverage"])
         self.assertEqual(shown["rows"], [["a.py", "7", "3", "1.13%", "0.29%"]])
         self.assertEqual(shown["ring"], "57.57%")
+
+    def test_a_slow_page_is_read_once_it_has_settled(self):
+        # On a loaded runner the body took longer to parse than the old fixed 50 ms
+        # snapshot, which then read every row as 0 (#1375). The driver now waits for the
+        # page's own timers, so a slow parse shows the same figures as a fast one.
+        payload = cpd.summarize(_report())
+        self.assertEqual(self._drive("slow", payload), self._drive("data", payload))
 
     def test_every_two_decimal_percentage_reads_back_unchanged(self):
         # The whole range the generator can emit, through the page's own formatter.
