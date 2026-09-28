@@ -48,7 +48,6 @@
     "knobs": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["build_gate_cmd"],
       "properties": {
         "implementer_agents": {
           "type": "object",
@@ -499,7 +498,11 @@
           },
           "description": "The s4 iteration loop (#1165). After each implement iteration the orchestrator runs the gates the loop can make green (keel run-gates --defer-jury --json: the guard and test phases, command or built-in; agentic, jury and pre-merge gates are deferred to the phases that run them); green ends the loop, red starts the next iteration with the same brief plus the gate output, up to max_iterations. The gate run is the judge, never the implementer's text. Composes with implement_mode: tdd, where it wraps phase B only. --loop selects it for a single run."
         },
-        "build_gate_cmd": { "type": "string", "minLength": 1 },
+        "build_gate_cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command the built-in build gate runs. Leave it out only while you have not chosen one: the build gate is then planned unconfigured and blocks every run with a finding that names this key; it never passes."
+        },
         "lint_cmd": { "type": "string" },
         "tier3_globs": { "type": "array", "items": { "type": "string" } },
         "ci_workflows": {

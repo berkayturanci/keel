@@ -34,6 +34,10 @@ def _doctor(**overrides):
         "orphans": [],
         "core_version": None,
         "state_paths": [],
+        # Probed-and-fine by default (#1334), so a test about another check counts only
+        # its own outcome; the tests of these two checks pass their own facts or None.
+        "github_cli": {"gh": "/bin/gh", "authenticated": True, "reason": ""},
+        "agent_hosts": {"hosts": [{"name": "claude", "path": "/bin/claude"}]},
     }
     base.update(overrides)
     return doctor.run_doctor(**base)
@@ -41,6 +45,24 @@ def _doctor(**overrides):
 
 def _check(report, name):
     return next(c for c in report["checks"] if c["name"] == name)
+
+
+#: `keel doctor` without `--offline` asks `gh auth status`, which reaches GitHub. The
+#: suite is offline (AGENTS.md), so every test gets a canned answer unless it patches
+#: its own; the tests of that check below do.
+_AUTH_STUB = patch.object(
+    cli.github,
+    "auth_status",
+    return_value=cli.github.CommandResult(False, 1, "stubbed: the suite never runs gh"),
+)
+
+
+def setUpModule():
+    _AUTH_STUB.start()
+
+
+def tearDownModule():
+    _AUTH_STUB.stop()
 
 
 class TestConstraintSatisfied(unittest.TestCase):
@@ -411,6 +433,8 @@ class TestDoctorCli(unittest.TestCase):
                 "state_paths",
                 "python_toolchain",
                 "policy_labels",
+                "github_cli",
+                "agent_hosts",
             },
         )
         # --offline => latest unknown.
@@ -669,6 +693,13 @@ class TestPythonToolchainCheck(unittest.TestCase):
         self.assertIn("below the required 3.11", check["summary"])
         self.assertIn("PyYAML is not importable", check["summary"])
 
+    def test_an_unconfigured_gate_is_skipped_and_says_so(self):
+        # #1328: with no build gate, "the build gate runs on <python>" would be false.
+        check = self._run_check(interpreter=None, version=None, yaml=False, configured=False)
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("no build gate configured", check["summary"])
+        self.assertNotIn("runs on", check["summary"])
+
     def test_never_escalates_to_fail(self):
         # keel cannot know a red gate is *this* problem — advisory only.
         report = _doctor(
@@ -747,6 +778,32 @@ class TestDoctorPythonToolchain(unittest.TestCase):
             ".", None, _run=fake_run, _which=lambda _: None, _env={}
         )
         self.assertEqual(facts["interpreter"], sys.executable)
+
+    def test_an_unset_build_gate_names_no_interpreter(self):
+        # #1328: a scaffold may leave build_gate_cmd unset. No interpreter runs a gate
+        # that does not exist, so none is named and nothing is probed.
+        fake_run, calls = _fake_run()
+        facts = cli._doctor_python_toolchain(
+            ".", _config(None), _run=fake_run, _which=lambda _: "/usr/bin/python3", _env={}
+        )
+        self.assertIs(facts.get("configured"), False)
+        self.assertIsNone(facts["interpreter"])
+        self.assertEqual(calls, [])
+
+    def test_the_cli_reports_an_unset_gate_as_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d) / "project.yaml"
+            project.write_text(
+                "extends: keel\ncore_version: '^1.0'\nbase_branch: main\n"
+                "knobs: {}\ngates: [build]\n",
+                encoding="utf-8",
+            )
+            rc, out, _ = run(["doctor", str(project), "--root", d, "--offline", "--json"])
+        self.assertEqual(rc, 0)
+        check = _check(json.loads(out), "python_toolchain")
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("no build gate configured", check["summary"])
+        self.assertNotIn("runs on", check["summary"])
 
     def test_an_exported_py_wins_over_the_resolver(self):
         # `PY=` is what the Makefile honours first, so doctor must report it.
@@ -1691,6 +1748,208 @@ class TheProvidersProbeReadsTheRegistryItWasPointedAt(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("--registry applies only with --providers", err)
         json.loads(out)  # the whole of stdout is one JSON document, or this raises
+
+
+class TestGithubCliCheck(unittest.TestCase):
+    """#1334: a live run needs an authenticated `gh`; doctor now says whether there is one."""
+
+    def test_not_probed_is_skipped(self):
+        check = _check(_doctor(github_cli=None), "github_cli")
+        self.assertEqual(check["status"], "skipped")
+
+    def test_gh_missing_warns_and_says_what_a_live_run_needs(self):
+        check = _check(
+            _doctor(github_cli={"gh": None, "authenticated": None, "reason": ""}), "github_cli"
+        )
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("gh not found on PATH", check["summary"])
+        self.assertIn("gh auth login", check["summary"])
+
+    def test_offline_is_skipped_and_names_the_binary(self):
+        facts = {"gh": "/bin/gh", "authenticated": None, "reason": "--offline: not run"}
+        check = _check(_doctor(github_cli=facts), "github_cli")
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("/bin/gh", check["summary"])
+        self.assertIn("--offline", check["summary"])
+
+    def test_unauthenticated_warns_with_the_reason(self):
+        facts = {"gh": "/bin/gh", "authenticated": False, "reason": "not logged in"}
+        check = _check(_doctor(github_cli=facts), "github_cli")
+        self.assertEqual(check["status"], "warn")
+        self.assertIn("gh auth status failed (not logged in)", check["summary"])
+        self.assertIn("gh auth login", check["summary"])
+
+    def test_authenticated_is_ok(self):
+        facts = {"gh": "/bin/gh", "authenticated": True, "reason": ""}
+        check = _check(_doctor(github_cli=facts), "github_cli")
+        self.assertEqual(check["status"], "ok")
+        self.assertEqual(check["detail"], facts)
+
+    def test_never_escalates_to_fail(self):
+        # A dry run needs no gh at all; a missing one must not fail `--strict`.
+        for facts in (
+            {"gh": None, "authenticated": None, "reason": ""},
+            {"gh": "/bin/gh", "authenticated": False, "reason": "x"},
+        ):
+            self.assertNotEqual(_doctor(github_cli=facts)["status"], "fail")
+
+
+class TestAgentHostsCheck(unittest.TestCase):
+    """#1334: which agent host CLIs are on PATH — a PATH lookup only, no process runs."""
+
+    def test_not_probed_is_skipped(self):
+        self.assertEqual(_check(_doctor(agent_hosts=None), "agent_hosts")["status"], "skipped")
+
+    def test_hosts_found_are_ok_and_named(self):
+        facts = {
+            "hosts": [
+                {"name": "claude", "path": "/bin/claude"},
+                {"name": "codex", "path": None},
+                {"name": "cursor-agent", "path": "/bin/cursor-agent"},
+                {"name": "agy", "path": None},
+            ]
+        }
+        check = _check(_doctor(agent_hosts=facts), "agent_hosts")
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("claude, cursor-agent", check["summary"])
+        self.assertIn("2 of 4", check["summary"])
+        self.assertEqual(check["detail"]["found"], ["claude", "cursor-agent"])
+        self.assertEqual(check["detail"]["missing"], ["codex", "agy"])
+
+    def test_none_found_warns_and_names_every_host_looked_for(self):
+        facts = {"hosts": [{"name": name, "path": None} for name in doctor.AGENT_HOSTS]}
+        check = _check(_doctor(agent_hosts=facts), "agent_hosts")
+        self.assertEqual(check["status"], "warn")
+        for name in doctor.AGENT_HOSTS:
+            self.assertIn(name, check["summary"])
+        self.assertIn("--providers", check["summary"])
+
+    def test_the_hosts_include_every_built_in_cli_vendor(self):
+        from keel import vocab
+
+        self.assertEqual(set(vocab.CLI_VENDORS) - set(doctor.AGENT_HOSTS), set())
+        self.assertIn("cursor-agent", doctor.AGENT_HOSTS)
+
+
+class TestDoctorGithubCliFacts(unittest.TestCase):
+    """Thin I/O for `github_cli`: one PATH lookup, and one `gh auth status` unless offline."""
+
+    def test_gh_absent_runs_nothing(self):
+        with patch.object(cli.github, "auth_status") as auth:
+            facts = cli._doctor_github_cli(root=".", offline=False, _which=lambda _: None)
+        auth.assert_not_called()
+        self.assertEqual(facts, {"gh": None, "authenticated": None, "reason": ""})
+
+    def test_offline_does_not_ask_github(self):
+        with patch.object(cli.github, "auth_status") as auth:
+            facts = cli._doctor_github_cli(root=".", offline=True, _which=_gh_on_path)
+        auth.assert_not_called()
+        self.assertEqual(facts["gh"], "/bin/gh")
+        self.assertIsNone(facts["authenticated"])
+        self.assertIn("--offline", facts["reason"])
+
+    def test_an_authenticated_gh(self):
+        ok = cli.github.CommandResult(True, 0, "Logged in to github.com account op")
+        with patch.object(cli.github, "auth_status", return_value=ok) as auth:
+            facts = cli._doctor_github_cli(root="/r", offline=False, _which=_gh_on_path)
+        self.assertEqual(auth.call_args.kwargs["cwd"], "/r")
+        self.assertEqual(facts, {"gh": "/bin/gh", "authenticated": True, "reason": ""})
+
+    def test_an_unauthenticated_gh_carries_what_it_said(self):
+        failed = cli.github.CommandResult(
+            False, 1, "You are not logged into any GitHub hosts.\nTo log in, run: gh auth login"
+        )
+        with patch.object(cli.github, "auth_status", return_value=failed):
+            facts = cli._doctor_github_cli(root=".", offline=False, _which=_gh_on_path)
+        self.assertFalse(facts["authenticated"])
+        self.assertEqual(
+            facts["reason"],
+            "You are not logged into any GitHub hosts. To log in, run: gh auth login",
+        )
+
+    def test_a_timeout_is_unknown_not_unauthenticated(self):
+        # Lead review of #1365: a gh that never answered was reported "not authenticated
+        # — run gh auth login". It is a check that could not look.
+        timed_out = cli.github.CommandResult(False, 124, "timed out after 10s", timed_out=True)
+        with patch.object(cli.github, "auth_status", return_value=timed_out):
+            facts = cli._doctor_github_cli(root=".", offline=False, _which=_gh_on_path)
+        self.assertIsNone(facts["authenticated"])
+        self.assertIn("did not answer in 10s", facts["reason"])
+        check = _check(_doctor(github_cli=facts), "github_cli")
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("did not answer in 10s", check["summary"])
+        self.assertNotIn("gh auth login", check["summary"])
+
+    def test_a_silent_failure_still_has_a_reason(self):
+        failed = cli.github.CommandResult(False, 4, "")
+        with patch.object(cli.github, "auth_status", return_value=failed):
+            facts = cli._doctor_github_cli(root=".", offline=False, _which=_gh_on_path)
+        self.assertEqual(facts["reason"], "gh auth status exited 4")
+
+
+class TestDoctorAgentHostFacts(unittest.TestCase):
+    def test_one_lookup_per_host_in_order(self):
+        seen = []
+
+        def which(name):
+            seen.append(name)
+            return f"/bin/{name}" if name == "codex" else None
+
+        facts = cli._doctor_agent_hosts(_which=which)
+        self.assertEqual(seen, list(doctor.AGENT_HOSTS))
+        self.assertEqual(
+            facts["hosts"],
+            [
+                {"name": name, "path": "/bin/codex" if name == "codex" else None}
+                for name in doctor.AGENT_HOSTS
+            ],
+        )
+
+
+class TestDoctorLiveRunCli(unittest.TestCase):
+    """End to end: `keel doctor` reports both new checks, and `--offline` keeps its word."""
+
+    def setUp(self):
+        self._real_fetch = cli._fetch_latest_pypi_version
+        cli._fetch_latest_pypi_version = lambda **kw: __version__
+
+    def tearDown(self):
+        cli._fetch_latest_pypi_version = self._real_fetch
+
+    @staticmethod
+    def _which(name):
+        return {"gh": "/bin/gh", "claude": "/bin/claude"}.get(name)
+
+    def test_both_checks_are_reported(self):
+        ok = cli.github.CommandResult(True, 0, "")
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.shutil, "which", self._which):
+                with patch.object(cli.github, "auth_status", return_value=ok):
+                    rc, out, _ = run(["doctor", "--root", d, "--json"])
+        self.assertEqual(rc, 0)
+        report = json.loads(out)
+        self.assertEqual(_check(report, "github_cli")["status"], "ok")
+        hosts = _check(report, "agent_hosts")
+        self.assertEqual(hosts["status"], "ok")
+        self.assertEqual(hosts["detail"]["found"], ["claude"])
+
+    def test_offline_skips_the_auth_call(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.shutil, "which", self._which):
+                with patch.object(cli.github, "auth_status") as auth:
+                    rc, out, _ = run(["doctor", "--root", d, "--offline", "--json"])
+        auth.assert_not_called()
+        self.assertEqual(_check(json.loads(out), "github_cli")["status"], "skipped")
+
+    def test_human_output_names_them(self):
+        failed = cli.github.CommandResult(False, 1, "not logged in")
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(cli.shutil, "which", self._which):
+                with patch.object(cli.github, "auth_status", return_value=failed):
+                    rc, out, _ = run(["doctor", "--root", d, "--strict"])
+        self.assertEqual(rc, 0)  # a warn never fails --strict
+        self.assertIn("WARN  github_cli", out)
+        self.assertIn("  OK  agent_hosts", out)
 
 
 if __name__ == "__main__":

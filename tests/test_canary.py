@@ -90,6 +90,34 @@ class TestCanaryPureLogic(unittest.TestCase):
         self.assertIn("error         : merge conflict on revert", rendered_fail)
 
 
+class TestCanaryWithoutAHealthCommand(unittest.TestCase):
+    """No `--health-cmd` and no `knobs.build_gate_cmd` is reported, not guessed (#1328).
+
+    The old fallback ran `make test`, the command #1328 stopped scaffolding; with no
+    Makefile it "detected a regression" and could auto-revert a healthy merge.
+    """
+
+    def test_reports_not_configured_and_runs_nothing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "project.yaml"
+            cfg_path.write_text(
+                "extends: keel\ncore_version: '^1.0'\nbase_branch: main\nknobs: {}\n",
+                encoding="utf-8",
+            )
+
+            def runner(cmd, cwd):
+                raise AssertionError(f"nothing may run: {cmd}")
+
+            res = run_canary_guard(
+                str(cfg_path), commit_sha="abc", root=tmpdir, auto_revert=True, runner=runner
+            )
+        self.assertFalse(res.passed)
+        self.assertEqual(res.status, "not_configured")
+        self.assertFalse(res.reverted)
+        self.assertIn("--health-cmd", res.details)
+        self.assertIn("knobs.build_gate_cmd", res.details)
+
+
 class TestCanaryThinIO(unittest.TestCase):
     def test_execute_rollback_success_merge_commit(self):
         with tempfile.TemporaryDirectory() as tmpdir:

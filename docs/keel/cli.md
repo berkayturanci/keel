@@ -1950,14 +1950,17 @@ capabilities. See [`runtime-capabilities.md`](runtime-capabilities.md) and
 ## `keel doctor [project.yaml] [--root DIR] [--offline] [--providers] [--registry FILE] [--strict] [--fix] [--approve-scope SCOPE] [--operator NAME] [--consent-mode MODE] [--json]`
 
 Run a diagnostic pass over the installed keel and its adapter surfaces. Read-only unless
-you pass `--fix`: `doctor` reads versions, markers, on-disk state and (with a config) the
-repository's labels, then classifies each check as `ok` / `skipped` / `warn` / `fail`. A
-check that *could not look* — no config, no `gh`, `--offline` — reports `skipped` rather
-than claiming `ok`, and never moves the roll-up. The roll-up `status` is the worst of the
-checks that did look.
+you pass `--fix`: `doctor` reads versions, markers, on-disk state, PATH, the answer of one
+`gh auth status` and (with a config) the repository's labels, then classifies each check as
+`ok` / `skipped` / `warn` / `fail`. A check that *could not look* — no config, `--offline`,
+a `gh auth status` that timed out, or (for `policy_labels`, which needs `gh` to read the
+labels) no `gh` — reports `skipped` rather than claiming `ok`, and never moves the roll-up.
+Where the missing thing is itself the finding, the check does look and says so: no `gh` on
+PATH is `github_cli`'s `warn`, and no agent host on PATH is `agent_hosts`'. The roll-up
+`status` is the worst of the checks that did look.
 
 ```bash
-keel doctor                                   # CLI + adapter health only
+keel doctor                                   # CLI, adapters, gh auth, agent hosts
 keel doctor --root . --json                   # machine-readable report
 keel doctor .keel/project.yaml --root .        # also check core_version, state paths, labels
 keel doctor .keel/project.yaml --offline --strict
@@ -2001,7 +2004,8 @@ The checks are:
   run. Any other gate runs in this process, so the answer is `sys.executable`. Below
   `requires-python` (3.11) or without PyYAML is a `warn` that names the interpreter — a
   `make test` that dies with a hundred syntax errors is a 3.9 on PATH, not a regression in
-  the tree.
+  the tree. With `knobs.build_gate_cmd` unset there is no gate to run on anything, so the
+  check reports `skipped` and names no interpreter.
 - **`policy_labels`** — whether the labels this project declares actually exist on its
   repository. `ship` and `triage` apply `status:*` / `priority:*` / `role:*` and the
   `agent:*` / `model:*` attribution pair **by name**, and GitHub rejects a label that was
@@ -2017,6 +2021,22 @@ The checks are:
   check; **never a `fail`**. Only runs when a config path names an `owner`/`repo`, and one
   `gh label list` is all it costs — `--offline`, no `gh` on PATH, or an unauthenticated or
   unreachable GitHub each report `skipped` with the reason.
+- **`github_cli`** — whether a live run can reach GitHub: `gh` on PATH, and `gh auth
+  status` succeeding (#1334). `ok` when it does. A missing `gh` is a `warn` that says to
+  install it, and a failing `gh auth status` a `warn` that quotes what it said — **never a
+  `fail`**, since a dry run needs no `gh`. Note that `gh auth status` exits 1 when **any**
+  configured host has a bad token, so a stale GitHub Enterprise login warns here even while
+  `github.com` works; the quoted output names the host. `gh auth status` goes to GitHub, so
+  `--offline` does not ask it, and one that does not answer within 10 s is reported as
+  unknown ("did not answer in 10s"); both are `skipped` (the PATH lookup still runs). Its
+  output is never printed on success, and keel never passes `--show-token`.
+- **`agent_hosts`** — which agent host CLIs are on PATH: `claude`, `codex`,
+  `cursor-agent`, `agy` (#1334). A PATH lookup only — nothing is executed, so it runs on
+  every invocation, `--offline` included. `ok` when at least one is found; `warn` when
+  none is, since a live `/keel:ship` needs a host to drive it (one that lives only inside
+  an editor is not on PATH, and doctor cannot see it). Whether each *delegate* actually
+  answers is `--providers`' question, which runs `--version` against each; this check does
+  not duplicate that probe.
 - **`providers`** — only with `--providers`. Probes every provider keel can dispatch to:
   the built-in vendors (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`,
   `google-api`), every `knobs.delegate_profiles` entry when a config path is given, and every
@@ -2024,6 +2044,24 @@ The checks are:
   when at least one is available; `warn` when the registry is malformed or nothing is usable;
   **`fail`** on a registry name clash. Omitted entirely without the flag, so the default run
   stays as cheap as it was.
+
+`github_cli` and `agent_hosts` are the last two checks, after `policy_labels`; the
+existing checks keep their order. A default run on a machine with both looks like this:
+
+```text
+    OK  github_cli        gh at /opt/homebrew/bin/gh is authenticated
+    OK  agent_hosts       2 of 4 agent host(s) on PATH: claude, codex
+```
+
+and under `--json` each carries its facts in `detail`:
+
+```json
+{"name": "github_cli", "status": "ok", "summary": "gh at /opt/homebrew/bin/gh is authenticated",
+ "detail": {"gh": "/opt/homebrew/bin/gh", "authenticated": true, "reason": ""}}
+{"name": "agent_hosts", "status": "ok", "summary": "2 of 4 agent host(s) on PATH: claude, codex",
+ "detail": {"hosts": [{"name": "claude", "path": "/opt/homebrew/bin/claude"}, …],
+            "found": ["claude", "codex"], "missing": ["cursor-agent", "agy"]}}
+```
 
 `--providers` prints a table under the checks — one row per provider with its transport
 (`cli` · `api` · `local`), where the entry came from (`builtin` · `profile` · `registry`), its
@@ -2633,7 +2671,8 @@ recommendations.
 ## `keel canary <project.yaml> [--root DIR] [--pr N] [--commit SHA] [--duration M] [--health-cmd CMD] [--auto-revert] [--json]`
 
 Run the post-merge health probe and, optionally, revert on a regression. The probe is
-`--health-cmd`, falling back to `knobs.build_gate_cmd` and then to `make test`.
+`--health-cmd`, falling back to `knobs.build_gate_cmd`. With neither, nothing runs: the
+result is `not_configured` (exit 1) and nothing is reverted.
 
 ```bash
 keel canary .keel/project.yaml --root . --pr 456
@@ -2684,6 +2723,19 @@ files (`Cargo.toml`→Rust, `go.mod`→Go, `pom.xml`→Java, `pubspec.yaml`→Fl
 `pyproject.toml`/`setup.py`/`requirements.txt`→Python, `package.json`→Node,
 `build.gradle*`→Android, else generic) and writes a config that already passes
 `keel validate`. Refuses to overwrite an existing config unless `--force`.
+
+A generic project gets `build_gate_cmd: "make test"` only when its Makefile has a `test`
+rule. Otherwise keel has no command to name, so it writes none, and three texts say so,
+each where it is read. `init` prints
+
+```text
+  build gate   : not configured — set knobs.build_gate_cmd in .keel/project.yaml to the command that runs your tests; until then the build gate blocks every run
+```
+
+(`keel setup` prints the same line under `validate`); the file carries a comment above
+`knobs:` that says `build_gate_cmd is not set` and shows an example; and the `build` gate
+[blocks every run](configuration.md#build_gate_cmd) with the finding `no build gate
+configured: set knobs.build_gate_cmd …` until you set it (#1328).
 
 `--force` replaces `.keel/project.yaml`; it does not delete or rewrite `.keel/extensions/*`.
 Use it only when intentionally regenerating project config.

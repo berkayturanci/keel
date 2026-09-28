@@ -135,7 +135,18 @@ def run_canary_guard(
 
     # Load config to get default gates/knobs if needed
     cfg = load_config(project_yaml)
-    cmd = health_cmd or getattr(cfg.knobs, "build_gate_cmd", None) or "make test"
+    cmd = health_cmd or cfg.knobs.build_gate_cmd
+    if not cmd:
+        # No probe to run. Guessing `make test` here was #1328's bug in another place: on a
+        # project without that target it "detects a regression" and may auto-revert.
+        return CanaryResult(
+            target=target_desc,
+            passed=False,
+            status="not_configured",
+            health_output="",
+            reverted=False,
+            details="no health command: pass --health-cmd or set knobs.build_gate_cmd",
+        )
 
     # Run health command
     health_res = run(["sh", "-c", cmd], root_path)

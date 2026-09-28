@@ -26,7 +26,8 @@ if TYPE_CHECKING:  # pragma: no cover
 #
 # `gates` is the lower-level module: it owns `GateSpec`, and it imports nothing
 # from here, so this edge is one-way and creates no cycle.
-from .gates import GateRunner  # noqa: E402  (after TYPE_CHECKING by design)
+# `unconfigured_finding` rides the same import and is used here, not re-exported.
+from .gates import GateRunner, unconfigured_finding  # noqa: E402  (after TYPE_CHECKING)
 
 __all__ = ["GateRunner", "CommandResult", "run_argv", "command_gate_runner"]
 
@@ -189,11 +190,16 @@ def command_gate_runner(
     """
 
     def runner(spec: GateSpec) -> tuple[bool, list[Finding], bool, bool]:
-        if spec.kind != "command" or not spec.run:
+        if spec.kind != "command":
             # Not executed here — the agent-dispatch layer runs agentic gates. Flagged
             # `not_run` so this can never be recorded as "ran and passed"; `ok` stays
             # True so a soft gate does not spuriously fail a command-only run.
             return True, [], False, True
+        if not spec.run:
+            # A command gate with nothing to run (an unset `knobs.build_gate_cmd`, #1328)
+            # is ours and it fails, naming the knob. "not_run" would read as "record a
+            # result for this gate" rather than "configure it".
+            return False, [unconfigured_finding(spec)], False, False
         limit = timeout if spec.timeout is None else spec.timeout
         result = run_command(spec.run, cwd=repo_root, timeout=limit, _run=_run)
         if result.ok:
