@@ -52,6 +52,16 @@ POLICY_PACK_PRESETS: dict[str, tuple[str, str, str, str]] = {
     "trivy": ("trivy", "test", "warn", "trivy fs ."),
 }
 
+#: The finding an unconfigured ``build`` gate blocks with (#1328). One of three texts
+#: about the same state, each worded for where it is read: this is the gate's finding;
+#: ``keel init`` / ``keel setup`` print ``cli._UNSET_BUILD_NOTE`` on the terminal; the
+#: scaffolded file carries ``scaffold._UNSET_BUILD_COMMENT`` above ``knobs:``. All three
+#: name ``knobs.build_gate_cmd``.
+UNCONFIGURED_BUILD_GATE = (
+    "no build gate configured: set knobs.build_gate_cmd in .keel/project.yaml "
+    "to the command that runs your tests"
+)
+
 # A failed gate with no explicit findings is reported at this severity.
 _ON_FAIL_SEVERITY: dict[str, str] = {"block": "major", "suggest": "minor", "warn": "nit"}
 
@@ -271,6 +281,21 @@ def plan_gates(
             )
         )
     return tuple(specs)
+
+
+def unconfigured_finding(spec: GateSpec) -> Finding:
+    """The finding a ``command`` gate with no command fails with (#1328).
+
+    Returned by the command runner, not decided here: a gate outside the run's
+    ``--phases`` scope has to stay ``not_run`` like any other, so the verdict belongs
+    after the scope test, which only the runner sees.
+    """
+    message = (
+        UNCONFIGURED_BUILD_GATE
+        if spec.id == "build"
+        else f"gate {spec.id!r} has no command configured"
+    )
+    return Finding(_ON_FAIL_SEVERITY[spec.on_fail], message, spec.id)
 
 
 def split_deferred(

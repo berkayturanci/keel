@@ -617,6 +617,18 @@ def list_labels(*, repo: str | None = None, cwd: str | None = None, _run=None) -
     return run_argv(label_list_argv(repo), cwd=cwd, **_kw(_run))
 
 
+#: Seconds ``keel doctor`` waits for ``gh auth status`` — one round trip to GitHub.
+AUTH_STATUS_TIMEOUT_S = 10
+
+
+def auth_status(*, cwd: str | None = None, _run=None) -> CommandResult:
+    """``gh auth status``: is ``gh`` logged in? Fail-soft; the caller reads ``result.ok``.
+
+    Read-only (no ``--show-token``), so its output names the account, never the token.
+    """
+    return run_argv(["gh", "auth", "status"], cwd=cwd, timeout=AUTH_STATUS_TIMEOUT_S, **_kw(_run))
+
+
 def label_create_argv(name: str, repo: str | None = None) -> list[str]:
     """The exact ``gh label create`` command for one label.
 

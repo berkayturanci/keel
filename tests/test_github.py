@@ -137,6 +137,15 @@ class TestGithubComments(unittest.TestCase):
             ["gh", "label", "list", "--limit", str(github.LABEL_PAGE_LIMIT), "--json", "name"],
         )
 
+    def test_auth_status(self):
+        # #1334: `keel doctor` asks gh itself, through the one module that owns gh argv.
+        mock_runner = MagicMock(return_value=_proc(""))
+        res = github.auth_status(cwd="/repo", _run=mock_runner)
+        self.assertTrue(res.ok)
+        self.assertEqual(mock_runner.call_args[0][0], ["gh", "auth", "status"])
+        self.assertEqual(mock_runner.call_args.kwargs["cwd"], "/repo")
+        self.assertEqual(mock_runner.call_args.kwargs["timeout"], github.AUTH_STATUS_TIMEOUT_S)
+
     def test_create_label(self):
         mock_runner = MagicMock(return_value=_proc(""))
         res = github.create_label("status:done", repo="owner/repo", _run=mock_runner)

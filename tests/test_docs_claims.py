@@ -39,10 +39,11 @@ import json
 import re
 import shlex
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
-from keel import cli, cost, extensions, install, intake, model, providers, ship
+from keel import cli, cost, doctor, extensions, gates, install, intake, model, providers, ship
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -1540,6 +1541,96 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
         text = " ".join(bullet.group(1).split())
         self.assertIn("automatically at tier 3", text)
         self.assertIn("`--no-jury`", text)
+
+
+class TheReadmeCoverageClaimIsTheGate(unittest.TestCase):
+    """The README's coverage sentence describes what `fail_under = 100` measures (#1363 review).
+
+    It said only "the pure core (`config`, `model`, …, `cli`)" was held at 100 %, while
+    `[tool.coverage.run]` measures the whole `keel` package and omits one file, the
+    `python -m keel` shim. A claim smaller than the gate undersells it, and a reader who
+    trusts it treats every other module as uncovered. So the sentence is read against
+    `pyproject.toml`, not against a list retyped here.
+    """
+
+    def setUp(self):
+        with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+            self.coverage = tomllib.load(fh)["tool"]["coverage"]
+        self.readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    def test_the_gate_measures_the_whole_package_at_100(self):
+        self.assertEqual(self.coverage["run"]["source"], ["keel"])
+        self.assertEqual(self.coverage["report"]["fail_under"], 100)
+
+    def test_the_readme_claims_the_whole_package(self):
+        self.assertIn("Every module under `src/keel/` is held at **100% line + branch", self.readme)
+        self.assertNotRegex(self.readme, r"The pure core \([^)]*\) is held at")
+
+    def test_the_readme_names_every_omitted_file(self):
+        omitted = self.coverage["run"]["omit"]
+        self.assertTrue(omitted)
+        for pattern in omitted:
+            self.assertTrue(pattern.startswith("*/keel/"), pattern)
+            with self.subTest(omit=pattern):
+                self.assertIn(f"`src/keel/{pattern.removeprefix('*/keel/')}`", self.readme)
+
+
+class TheQuickstartDescribesTheFirstRunKeelHas(unittest.TestCase):
+    """The Quickstart's first-run advice matches what setup and doctor now do (#1328, #1334).
+
+    #1360 wrote the Quickstart while a stackless project still got `make test`, so it told
+    the reader to expect `make: *** No rule to make target`. Setup now writes no command
+    and says `build gate   : not configured`, and the gate fails with a finding naming the
+    knob. Each quoted string is checked against the code that prints it.
+    """
+
+    def setUp(self):
+        self.readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    def test_no_make_fallback_is_promised(self):
+        self.assertNotIn("No rule to make target", self.readme)
+        self.assertNotIn("fell\nback to `make test`", self.readme)
+        self.assertNotIn("fell back to `make test`", self.readme)
+
+    def test_the_quoted_setup_line_is_what_init_prints(self):
+        quoted = "build gate   : not configured"
+        self.assertIn(f"`{quoted}`", self.readme)
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, err = _run_cli(["init", "--root", d])
+        self.assertEqual(rc, 0, err)
+        self.assertIn(quoted, out)
+
+    def test_the_quoted_finding_is_the_gates(self):
+        head = gates.UNCONFIGURED_BUILD_GATE.split(" in ", 1)[0]
+        self.assertEqual(head, "no build gate configured: set knobs.build_gate_cmd")
+        self.assertIn(f"`{head} …`", self.readme)
+
+    def test_the_doctor_comment_names_checks_doctor_has(self):
+        self.assertIn("# versions, adapters, gh auth and agent hosts", self.readme)
+        report = doctor.run_doctor(
+            installed_version="1.0.0",
+            latest_version=None,
+            adapter_markers=[],
+            orphans=[],
+            core_version=None,
+            state_paths=[],
+        )
+        names = {check["name"] for check in report["checks"]}
+        self.assertLessEqual({"cli_version", "adapter_version", "github_cli", "agent_hosts"}, names)
+
+
+class TheInitReferenceQuotesInitsOwnLine(unittest.TestCase):
+    """`cli.md` quotes the line `keel init` prints for an unset build gate, whole (#1365 review).
+
+    It was a code span broken across two source lines, which Markdown renders with one
+    space where the output has three (`build gate   :`), so a reader searching for what
+    they saw found nothing. The quote is now the exact line, checked against the constant
+    `init` prints.
+    """
+
+    def test_the_whole_line_is_quoted_verbatim(self):
+        text = CLI_DOC.read_text(encoding="utf-8")
+        self.assertIn(f"  build gate   : {cli._UNSET_BUILD_NOTE}\n", text)
 
 
 if __name__ == "__main__":
