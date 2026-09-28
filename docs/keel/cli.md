@@ -2727,6 +2727,39 @@ keel cost-report --root . --json
 A missing or empty activity directory is an empty report, not an error: a project that has
 not stamped any activity has spent nothing keel can see. Always exits 0.
 
+**The figures are estimates, and the report says which.** A record that carries
+`prompt_tokens` / `completion_tokens` is *measured*; one that does not is priced at a
+placeholder of 1,500 prompt and 400 completion tokens and is *estimated*. No keel command
+writes token counts into an activity record today, so every run keel stamps is estimated
+and the dollar figure is a run count times a constant, not a bill (#1359). The text report
+states this on a `Token Basis` line directly under the run count, above the first figure it
+qualifies:
+
+```text
+  Total Runs Tracked    : 2
+  Token Basis           : ESTIMATED at 1,500 prompt / 400 completion tokens per run
+                          No record carries measured token counts, so every figure below rests
+                          on that placeholder. Read it as a run count, not a bill.
+```
+
+When some records carry counts and others do not, the line reads
+`3 measured, 2 ESTIMATED at 1,500 prompt / 400 completion tokens per run`; when every record
+carries them, `measured (all 5 runs carry token counts)`. An empty report prints no basis line.
+
+`--json` keeps every earlier key and adds:
+
+| Key | Meaning |
+| --- | --- |
+| `token_basis` | `none` (no runs), `estimated` (no run measured), `mixed`, or `measured` (every run measured) |
+| `measured_runs` | runs whose record carried its own token counts |
+| `estimated_runs` | runs priced at the placeholder; `measured_runs + estimated_runs == total_runs` |
+| `assumed_tokens_per_run` | the placeholder itself: `{"prompt_tokens": 1500, "completion_tokens": 400}` |
+
+The hosted APIs behind the `anthropic-api`, `openai-api` and `google-api` delegates return
+token usage in each response, but `keel delegate run` reads only the completion text, and
+nothing carries a count into an activity record. Until something does, `measured_runs` is 0
+for every record keel writes.
+
 ## `keel init [--root DIR] [--force] [--wizard] [--auto]`
 
 Scaffold a default `.keel/project.yaml` for the repo. keel detects the stack from marker

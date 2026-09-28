@@ -1,7 +1,15 @@
 """Keel Analytics, Token Usage, and USD Cost Estimation Engine.
 
-Computes exact token expenditures and estimated USD costs per issue, PR, and Swarm wave
+Estimates token usage and USD cost from the activity records under ``.keel/activity``,
 using built-in model pricing tables without any external billing APIs.
+
+**The figures are estimates, and the report says how much of each.** A record that
+carries ``prompt_tokens`` / ``completion_tokens`` is *measured*; one that does not is
+priced at :data:`ASSUMED_PROMPT_TOKENS` / :data:`ASSUMED_COMPLETION_TOKENS` and counted
+as *estimated*. No keel command writes token counts into an activity record today, so
+every run keel stamps is estimated (#1359) — and a report whose dollar figure is a run
+count times a constant must not read as a bill. :class:`CostReport` carries the split,
+and both renderings state it.
 """
 
 from __future__ import annotations
@@ -45,6 +53,13 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
 }
 
 DEFAULT_FALLBACK_PRICE = (1.00, 3.00)
+
+#: The token counts a record without its own is priced at: a placeholder per run, not a
+#: measurement. Named, because the report has to name it — #1359 found the numbers
+#: inlined in the aggregation loop and nowhere in the output, so a report built entirely
+#: from them printed a dollar figure with nothing to say it was one.
+ASSUMED_PROMPT_TOKENS = 1500
+ASSUMED_COMPLETION_TOKENS = 400
 FRONTIER_BENCHMARK_PRICE = (15.00, 75.00)  # Used for computing savings vs Claude Opus/o1
 
 # #930's `_PRICING_KEYS_BY_LENGTH` is gone with the substring scan it ordered.
@@ -231,6 +246,28 @@ class CostReport:
     #: in the totals; they are excluded from the savings figure, and this is the
     #: number that says how much of the report is a guess (#944).
     unpriced_runs: int = 0
+    #: Runs whose record carried its own token counts (#1359).
+    measured_runs: int = 0
+    #: Runs priced at :data:`ASSUMED_PROMPT_TOKENS` / :data:`ASSUMED_COMPLETION_TOKENS`
+    #: because their record carried none. ``measured_runs + estimated_runs ==
+    #: total_runs``.
+    estimated_runs: int = 0
+
+    @property
+    def token_basis(self) -> str:
+        """``none`` | ``measured`` | ``estimated`` | ``mixed`` — what the token totals rest on.
+
+        Keyed on ``measured_runs``, so a report that does not say how many runs were
+        measured reads as ``estimated``: the unflattering direction, as with #944's
+        unpriced runs.
+        """
+        if not self.total_runs:
+            return "none"
+        if not self.measured_runs:
+            return "estimated"
+        if self.measured_runs >= self.total_runs:
+            return "measured"
+        return "mixed"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -243,6 +280,14 @@ class CostReport:
             "model_breakdown": self.model_breakdown,
             "top_performer": self.top_performer,
             "unpriced_runs": self.unpriced_runs,
+            # Additive (#1359): every key above keeps its name and meaning.
+            "token_basis": self.token_basis,
+            "measured_runs": self.measured_runs,
+            "estimated_runs": self.estimated_runs,
+            "assumed_tokens_per_run": {
+                "prompt_tokens": ASSUMED_PROMPT_TOKENS,
+                "completion_tokens": ASSUMED_COMPLETION_TOKENS,
+            },
         }
 
 
@@ -267,6 +312,7 @@ def calculate_cost_report(records: list[dict[str, Any]]) -> CostReport:
     priced_actual_cost = 0.0
     total_benchmark_cost = 0.0
     unpriced_runs = 0
+    estimated_runs = 0
     models_data: dict[str, dict[str, Any]] = {}
 
     for rec in records:
@@ -275,9 +321,11 @@ def calculate_cost_report(records: list[dict[str, Any]]) -> CostReport:
         model = rec.get("model") or ""
 
         if p_tok == 0 and c_tok == 0:
-            # Synthetic conservative estimate per activity phase (1,500 prompt, 400 completion)
-            p_tok = 1500
-            c_tok = 400
+            # No counts on the record: price it at the placeholder, and count it, so the
+            # report can say how much of itself is the placeholder (#1359).
+            p_tok = ASSUMED_PROMPT_TOKENS
+            c_tok = ASSUMED_COMPLETION_TOKENS
+            estimated_runs += 1
 
         total_prompt += p_tok
         total_completion += c_tok
@@ -326,7 +374,41 @@ def calculate_cost_report(records: list[dict[str, Any]]) -> CostReport:
         model_breakdown=models_data,
         top_performer=top_perf,
         unpriced_runs=unpriced_runs,
+        measured_runs=len(records) - estimated_runs,
+        estimated_runs=estimated_runs,
     )
+
+
+def _token_basis_lines(report: CostReport) -> list[str]:
+    """The report's statement of what its token figures rest on (#1359).
+
+    Placed directly under the run count, above the first figure it qualifies, because a
+    caveat printed after the dollar amount is read after the dollar amount.
+    """
+    assumption = (
+        f"{ASSUMED_PROMPT_TOKENS:,} prompt / {ASSUMED_COMPLETION_TOKENS:,} completion "
+        "tokens per run"
+    )
+    indent = " " * 26
+    basis = report.token_basis
+    if basis == "none":
+        return []
+    if basis == "measured":
+        return [
+            f"  Token Basis           : measured (all {report.total_runs} runs carry token counts)"
+        ]
+    if basis == "estimated":
+        return [
+            f"  Token Basis           : ESTIMATED at {assumption}",
+            f"{indent}No record carries measured token counts, so every figure below rests",
+            f"{indent}on that placeholder. Read it as a run count, not a bill.",
+        ]
+    return [
+        f"  Token Basis           : {report.measured_runs} measured, "
+        f"{report.estimated_runs} ESTIMATED at {assumption}",
+        f"{indent}The estimated runs carry no token counts; their share of every figure",
+        f"{indent}below is that assumption, not a measurement.",
+    ]
 
 
 def render_cost_report(report: CostReport) -> str:
@@ -335,6 +417,7 @@ def render_cost_report(report: CostReport) -> str:
         "Keel Efficiency & Cost Ledger",
         "────────────────────────────────────────────────────────",
         f"  Total Runs Tracked    : {report.total_runs}",
+        *_token_basis_lines(report),
         f"  Total Tokens          : {report.total_tokens:,} "
         f"(Prompt: {report.total_prompt_tokens:,} / "
         f"Completion: {report.total_completion_tokens:,})",

@@ -208,5 +208,125 @@ class TestCostThinIOAndCLI(unittest.TestCase):
                 self.assertEqual(rep_empty_dir.total_runs, 0)
 
 
+class TestTheReportSaysWhatItEstimated(unittest.TestCase):
+    """#1359: a report priced at the placeholder token count says so, in its own output."""
+
+    MEASURED = {"model": "gpt-4o", "prompt_tokens": 10_000, "completion_tokens": 2_000}
+    PLACEHOLDER_LINE = "ESTIMATED at 1,500 prompt / 400 completion tokens per run"
+
+    #: Every key `to_dict` produced before #1359. Consumers parse these, so each must keep
+    #: its name; the new fields are additions.
+    PRE_1359_KEYS = (
+        "total_runs",
+        "total_prompt_tokens",
+        "total_completion_tokens",
+        "total_tokens",
+        "total_cost_usd",
+        "estimated_savings_usd",
+        "model_breakdown",
+        "top_performer",
+        "unpriced_runs",
+    )
+
+    @staticmethod
+    def basis(data: dict) -> tuple:
+        """``(token_basis, measured_runs, estimated_runs)``; a missing key reads as None."""
+        return tuple(data.get(key) for key in ("token_basis", "measured_runs", "estimated_runs"))
+
+    def test_a_report_with_no_counts_is_estimated_and_names_the_assumption(self):
+        report = calculate_cost_report([{}, {"model": "gpt-4o"}])
+        data = report.to_dict()
+        self.assertEqual(
+            ("estimated", 0, 2),
+            self.basis(data),
+        )
+        self.assertEqual(
+            {"prompt_tokens": 1500, "completion_tokens": 400}, data.get("assumed_tokens_per_run")
+        )
+        lines = render_cost_report(report).splitlines()
+        basis = next((i for i, line in enumerate(lines) if "Token Basis" in line), None)
+        self.assertIsNotNone(basis, "the report prints no Token Basis line")
+        self.assertIn(self.PLACEHOLDER_LINE, lines[basis])
+        self.assertIn("not a bill", " ".join(lines[basis : basis + 3]))
+        # Above the first figure it qualifies, not after the dollar amount.
+        tokens = next(i for i, line in enumerate(lines) if "Total Tokens" in line)
+        self.assertLess(basis, tokens)
+
+    def test_a_mixed_report_says_how_many_runs_are_measured_and_how_many_estimated(self):
+        report = calculate_cost_report([self.MEASURED, {}, {"model": "gpt-4o"}])
+        data = report.to_dict()
+        self.assertEqual(("mixed", 1, 2), self.basis(data))
+        rendered = render_cost_report(report)
+        self.assertIn(f"Token Basis           : 1 measured, 2 {self.PLACEHOLDER_LINE}", rendered)
+        self.assertIn("not a measurement", rendered)
+
+    def test_a_fully_measured_report_claims_no_estimate(self):
+        report = calculate_cost_report([self.MEASURED, dict(self.MEASURED, prompt_tokens=7)])
+        data = report.to_dict()
+        self.assertEqual(
+            ("measured", 2, 0),
+            self.basis(data),
+        )
+        rendered = render_cost_report(report)
+        self.assertIn("Token Basis           : measured (all 2 runs carry token counts)", rendered)
+        self.assertNotIn("ESTIMATED", rendered)
+
+    def test_an_empty_report_has_no_basis_line(self):
+        report = calculate_cost_report([])
+        self.assertEqual(
+            ("none", 0, 0), (report.token_basis, report.measured_runs, report.estimated_runs)
+        )
+        self.assertNotIn("Token Basis", render_cost_report(report))
+
+    def test_a_report_that_does_not_say_what_it_measured_reads_as_estimated(self):
+        """The unflattering default, as with #944's unpriced runs."""
+        report = cost.CostReport(
+            total_runs=3,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            total_cost_usd=0.0,
+            estimated_savings_usd=0.0,
+            model_breakdown={},
+            top_performer=None,
+        )
+        self.assertEqual("estimated", report.token_basis)
+
+    def test_every_earlier_json_key_keeps_its_name_and_value(self):
+        report = calculate_cost_report([self.MEASURED, {}])
+        data = report.to_dict()
+        for key in self.PRE_1359_KEYS:
+            with self.subTest(key=key):
+                self.assertIn(key, data)
+        self.assertEqual(
+            (2, 11_500, 2_400),
+            (data["total_runs"], data["total_prompt_tokens"], data["total_completion_tokens"]),
+        )
+
+    def test_a_record_keel_itself_stamps_reads_as_estimated_on_the_cli(self):
+        """The record comes from keel's own writer, so this fails the day that writer
+        starts carrying counts and the docs' "measured_runs is 0" has to change."""
+        from keel import activity
+
+        record = activity.build_activity_record(
+            command="ship", run_id="run-1359", phase="s4", status="running"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            act_dir = Path(tmpdir) / activity.DEFAULT_ACTIVITY_DIR
+            act_dir.mkdir(parents=True)
+            activity.write_activity(act_dir / "run-1359.json", record)
+            text, data = io.StringIO(), io.StringIO()
+            with redirect_stdout(text):
+                self.assertEqual(0, main(["cost-report", "--root", tmpdir]))
+            with redirect_stdout(data):
+                self.assertEqual(0, main(["cost-report", "--root", tmpdir, "--json"]))
+        self.assertIn(self.PLACEHOLDER_LINE, text.getvalue())
+        payload = json.loads(data.getvalue())
+        self.assertEqual(
+            ("estimated", 0, 1),
+            self.basis(payload),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

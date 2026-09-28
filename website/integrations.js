@@ -154,7 +154,7 @@
       name: "Google Gemini",
       category: "backends",
       badge: "LLM Backend",
-      desc: "Hosted Gemini API with per-run token cost tracking; the Antigravity CLI reports its own model list to keel doctor --providers.",
+      desc: "Hosted Gemini API through the google-api delegate; the Antigravity CLI reports its own model list to keel doctor --providers.",
       cmd: "keel ship .keel/project.yaml --delegate agy:gemini-3.8-flash-high",
       logo: "logos/googlegemini.svg"
     },
@@ -172,7 +172,7 @@
       name: "DeepSeek V3 / R1",
       category: "backends",
       badge: "LLM Backend",
-      desc: "High-reasoning, low-cost DeepSeek chat and reasoner models with exact token expenditure ledger.",
+      desc: "High-reasoning, low-cost DeepSeek chat and reasoner models, reached through an OpenAI-compatible delegate profile.",
       cmd: "keel ship .keel/project.yaml --delegate deepseek",
       note: "DeepSeek is not a built-in vendor. Needs a <code>knobs.delegate_profiles.deepseek</code> entry (<code>vendor: openai-compatible</code>) pointing at DeepSeek's API — keel ships no profile for it. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#2-openai-compatible-profiles' target='_blank' rel='noopener'>OpenAI-Compatible Profiles</a>.",
       logo: "logos/deepseek.svg"
@@ -191,7 +191,7 @@
       name: "OpenRouter",
       category: "backends",
       badge: "Unified Routing",
-      desc: "Dynamic multi-model fallback and lowest-latency routing with token cost analytics.",
+      desc: "Many hosted models behind one OpenAI-compatible delegate profile. keel cost-report does not read OpenRouter's billing: it estimates each run at a placeholder token count and says so.",
       cmd: "keel cost-report --root . --json",
       logo: "logos/openrouter.svg"
     },
