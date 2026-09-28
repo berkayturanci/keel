@@ -42,7 +42,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from keel import cli, extensions, install, model, providers
+from keel import cli, cost, extensions, install, model, providers, ship
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SITE = REPO_ROOT / "website"
@@ -1249,6 +1249,182 @@ class TestTheDogfoodTerminalIsTheDryAssessment(unittest.TestCase):
             with self.subTest(where=where):
                 self.assertNotIn("MERGED", text)
                 self.assertNotIn("merged + closed", text)
+
+
+def _readme_sections() -> dict[str, str]:
+    """The README's `##` sections by title, each running to the next `##` heading."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    parts = re.split(r"^## +(.+?)\s*$", readme, flags=re.M)
+    return dict(zip(parts[1::2], parts[2::2], strict=True))
+
+
+def _readme_heading_line(title: str) -> int | None:
+    """The 1-based line of the README heading `## <title>`, or None when there is none."""
+    lines = (REPO_ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+    return next((n for n, line in enumerate(lines, 1) if line == f"## {title}"), None)
+
+
+class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
+    """#1330, #1321, #1337, #1329: the README buried Install at line 199.
+
+    A newcomer met a metaphor, a statistics paragraph and a hundred lines of feature
+    bullets first, and the Quickstart ended at `keel version` without saying that the agent
+    host, not the CLI, does the work. These pin the order and the claims the new first
+    screen makes, not its wording.
+    """
+
+    #: The launch order, top to bottom. Each title is a `##` heading.
+    _ORDER = (
+        "Built for long unattended runs",
+        "Install",
+        "Quickstart",
+        "Requirements, cost and limits",
+        "What you get",
+    )
+
+    def section(self, title: str) -> str:
+        """A README section, or an assertion failure naming it — never a KeyError."""
+        sections = _readme_sections()
+        self.assertTrue(title in sections, f"the README has no `## {title}` section")
+        return sections[title]
+
+    def test_install_is_on_the_first_screen(self):
+        line = _readme_heading_line("Install")
+        self.assertIsNotNone(line, "the README has no `## Install` heading")
+        self.assertLessEqual(line, 60, f"`## Install` is at line {line}")
+
+    def test_the_sections_come_in_launch_order(self):
+        lines = [_readme_heading_line(title) for title in self._ORDER]
+        self.assertNotIn(None, lines, dict(zip(self._ORDER, lines, strict=True)))
+        self.assertEqual(sorted(lines), lines, dict(zip(self._ORDER, lines, strict=True)))
+
+    def test_the_first_screen_says_who_does_the_work(self):
+        """#1321: the agent runs /keel:ship, the CLI enforces, `keel merge` merges."""
+        screen = " ".join(_readme_first_screen().split())
+        for claim in ("/keel:ship", "never commits", "only through `keel merge`"):
+            with self.subTest(claim=claim):
+                self.assertTrue(claim in screen, f"the first screen never says {claim!r}")
+
+    def test_every_command_the_long_run_table_names_exists(self):
+        """#1337: each row was checked against the code; this keeps the names real."""
+        section = self.section("Built for long unattended runs")
+        rows = [line for line in section.splitlines() if line.startswith("| ")][1:]
+        self.assertGreaterEqual(len(rows), 6, rows)
+        knobs = json.loads(
+            (REPO_ROOT / "src/keel/schema/project.schema.json").read_text(encoding="utf-8")
+        )["properties"]["knobs"]["properties"]
+        adapters = {path.stem for path in _adapter_commands()}
+        for row in rows:
+            with self.subTest(row=row[:60]):
+                ticked = re.findall(r"`([^`]+)`", row)
+                named = {
+                    "slash": [t[len("/keel:") :] for t in ticked if t.startswith("/keel:")],
+                    "cli": [t.split()[1] for t in ticked if t.startswith("keel ")],
+                    "module": [t for t in ticked if t.endswith(".py")],
+                    "knob": [t[len("knobs.") :] for t in ticked if t.startswith("knobs.")],
+                }
+                self.assertTrue(any(named.values()), "the row names nothing checkable")
+                for name in named["slash"]:
+                    self.assertIn(name, adapters)
+                for name in named["cli"]:
+                    self.assertIn(name, _subcommands())
+                for name in named["module"]:
+                    self.assertTrue((REPO_ROOT / "src/keel" / name).is_file(), name)
+                for name in named["knob"]:
+                    self.assertIn(name, knobs)
+
+    def test_the_long_run_table_cites_its_source_as_independent(self):
+        """#1337: a link rather than a reproduction, and no implied affiliation."""
+        section = " ".join(self.section("Built for long unattended runs").split())
+        self.assertIn("](https://claude.dev/blog/getting-the-most-out-of-opus-5-5/)", section)
+        self.assertIn("map to", section)
+        self.assertIn("keel is independent and not affiliated with Anthropic", section)
+        self.assertIn("](https://keel-ship.dev/silent-revert.html)", section)
+
+    def test_the_quickstart_reaches_a_first_issue(self):
+        """#1321: set up, run the gates, then `/keel:ship` in the agent host."""
+        quickstart = self.section("Quickstart")
+        for step in ("keel setup", "keel run-gates", "build_gate_cmd", "/keel:ship"):
+            with self.subTest(step=step):
+                self.assertIn(step, quickstart)
+        self.assertNotIn("keel ship --live", quickstart, "#1321: the CLI does not ship work")
+
+    def test_the_requirements_section_covers_cost_limits_and_uninstall(self):
+        """#1329, and the Python floor it states is the one the package declares."""
+        section = self.section("Requirements, cost and limits")
+        for fact in (
+            "keel cost-report",
+            "gh auth login",
+            "### Uninstall",
+            "`.keel/`",
+            "`.claude/commands/keel/`",
+            "`.agents/skills/keel-*/`",
+            "GitHub only",
+        ):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, section)
+        floor = re.search(
+            r'requires-python = ">=(\d+\.\d+)"',
+            (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"),
+        )
+        self.assertIsNotNone(floor)
+        self.assertIn(f"Python {floor.group(1)} or newer", section)
+
+    def test_the_cost_report_caveat_matches_what_keel_records(self):
+        """#1329: the README says no keel command writes token counts, so every record is
+        priced at a placeholder. When something starts writing them, this fails and the
+        caveat has to go."""
+        section = " ".join(self.section("Requirements, cost and limits").split())
+        self.assertIn("1,500 prompt and 400 completion tokens", section)
+        report = cost.calculate_cost_report([{}]).to_dict()
+        self.assertEqual(
+            (1500, 400), (report["total_prompt_tokens"], report["total_completion_tokens"])
+        )
+        writers = sorted(
+            path.name
+            for path in (REPO_ROOT / "src/keel").rglob("*.py")
+            if path.name != "cost.py" and "prompt_tokens" in path.read_text(encoding="utf-8")
+        )
+        self.assertEqual([], writers, "something records token counts now; update the README")
+
+
+class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
+    """#1345: the README called the jury "off by default"; tier 3 turns it on."""
+
+    def test_tier_three_turns_the_jury_on_and_the_gates_list_does_not(self):
+        self.assertEqual(
+            (True, "tier-3 auto"),
+            tuple(ship.resolve_jury(tier=3).get(key) for key in ("enabled", "reason")),
+        )
+        self.assertFalse(ship.resolve_jury(tier=2, gates=("jury",))["enabled"])
+
+    def test_no_page_calls_the_jury_off_by_default(self):
+        for name in ("README.md", "docs/keel/configuration.md", "docs/keel/overview.md"):
+            with self.subTest(page=name):
+                text = " ".join((REPO_ROOT / name).read_text(encoding="utf-8").split())
+                # `assertTrue`, not `assertNotIn`: a failure would print the whole page.
+                self.assertTrue("off by default" not in text, f"{name} says 'off by default'")
+
+    def test_the_gates_reference_says_the_list_does_not_switch_the_jury(self):
+        """#1345 asked configuration.md for the same correction: `gates: [jury]` adds an s8
+        run, and tier 3 turns the jury on whether or not it is listed."""
+        text = (REPO_ROOT / "docs/keel/configuration.md").read_text(encoding="utf-8")
+        gates = text.split("#### `gates`", 1)[-1].split("\n#### ", 1)[0]
+        gates = " ".join(gates.split())
+        for claim in ("**tier-3** change", "leaving it out does not keep the jury off"):
+            with self.subTest(claim=claim):
+                self.assertTrue(claim in gates, f"the `gates` reference never says {claim!r}")
+
+    def test_the_readme_says_tier_three_turns_it_on(self):
+        bullet = re.search(
+            r"\n- \*\*A cross-vendor jury(.*?)\n- \*\*",
+            (REPO_ROOT / "README.md").read_text(encoding="utf-8"),
+            re.S,
+        )
+        self.assertIsNotNone(bullet, "the README no longer has its jury bullet")
+        text = " ".join(bullet.group(1).split())
+        self.assertIn("automatically at tier 3", text)
+        self.assertIn("`--no-jury`", text)
 
 
 if __name__ == "__main__":

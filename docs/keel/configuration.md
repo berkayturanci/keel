@@ -134,6 +134,15 @@ Lists built-in gates that should run in the test stage. Current built-in gates a
 than treated as project-specific code. Project-specific gates should be declared as
 extensions or `policy_pack.test_groups`.
 
+Listing `jury` here adds the ai-jury run to `keel run-gates` at s8. It is **not** what turns
+the jury on for a run, and leaving it out does not keep the jury off: `ship.resolve_jury`
+turns the jury on automatically for every **tier-3** change (one matching `knobs.tier3_globs`), and
+the evidence gate then requires a `jury-verdict`. Below tier 3 the jury is off unless a run
+passes `--jury` or [`team`](#team) makes the panel a tier's review. `--no-jury` turns it off
+below a panel tier, and so does a panel that `team.jury.on_unavailable` found unstaffable.
+It is fail-soft when the `jury` binary is missing, and a panel with fewer than
+`team.jury.min_vendors` distinct vendors (at least 2) degrades to advisory beside a host bench.
+
 #### `extensions`
 
 Maps a named backbone hook to a list of extension file names under `extensions_dir`.
