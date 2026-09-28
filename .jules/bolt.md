@@ -53,7 +53,7 @@
 ## 2026-08-10 - Fast multiple regex matching
 **Learning:** Checking a string against multiple regex patterns by condensing them into a single pattern using the `|` (OR) operator is significantly faster (~44% faster) than evaluating them individually via multiple `re.search` calls or `any()` generator expressions.
 **Action:** When validating a string against multiple related regex patterns, combine them into a single regex string using `|` instead of checking them iteratively in a loop or generator expression.
-**Measured wrong for keel's markers (2026-09-28).** keel#1346 combined `delegaterun`'s rate-limit and vendor-timeout patterns this way. On a 400-character failure signal that matches neither — the ordinary failed run — the combined pattern was *slower*: 4.7 → 8.2 µs and 4.6 → 6.0 µs on Python 3.12, 4.9 → 9.1 µs and 4.6 → 6.8 µs on 3.14. (Likely cause, not measured: each separate pattern starts with a literal the engine can scan for, and the alternation has no single prefix.) It won only on the hit path, by 0.1–0.2 µs, once per failed delegate subprocess. Closed. Measure the miss path before combining.
+**Measured wrong for keel's markers (2026-09-28).** keel#1346 combined `delegaterun`'s rate-limit and vendor-timeout patterns this way. On a 400-character failure signal that matches neither — the ordinary failed run — the combined pattern was *slower*: 4.7 → 8.2 µs and 4.6 → 6.0 µs on Python 3.12, 4.9 → 9.1 µs and 4.6 → 6.8 µs on 3.14. (Likely cause, not measured: each separate pattern starts with a literal the engine can scan for, and the alternation has no single prefix.) On a hit the answer depended on where the match sat: it won by 0.1–0.2 µs on a rate-limit hit and lost on a mid-string hit of the other pattern — once per failed delegate subprocess either way. Closed. Measure the miss path before combining.
 
 ## 2026-08-17 - Unrolling any() is real but usually not worth it: measure the µs, not the %
 
@@ -104,6 +104,9 @@ to `tdd.is_test_path` was opened twice, two days apart, and closed twice:
   from `tdd.check_order`, once per `tdd-order` gate: counted on three merged branches
   (keel#1206, keel#1220, keel#1228) it ran 5–19 times, so the saving is 0.5–2 µs per
   run, beside a `git log` subprocess of ≈ 17 000 µs in the same gate.
+
+Closed for a different reason — the change was slower, not merely too small:
+
 - keel#1346 — `delegaterun.rate_limited` / `vendor_timed_out`: a combined regex, slower on the
   miss path (see the 2026-08-10 entry).
 
