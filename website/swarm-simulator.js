@@ -191,7 +191,16 @@
     var issueList = preset.issues;
 
     // Header & stats
-    var btnLabel = state.running ? "<span aria-hidden=\"true\">⏸</span> Pause" : (state.step > 0 ? "<span aria-hidden=\"true\">▶</span> Resume" : "<span aria-hidden=\"true\">▶</span> Run Swarm Simulation");
+    // "Pause" and "Resume" do not say what they act on, so those two states carry an
+    // aria-label. It starts with the visible word, so a speech-input user can still say
+    // what they see (WCAG 2.5.3). The first state's text already names the simulation.
+    var toggle = state.running
+      ? { glyph: "⏸", text: "Pause", name: "Pause the simulation" }
+      : (state.step > 0
+        ? { glyph: "▶", text: "Resume", name: "Resume the simulation" }
+        : { glyph: "▶", text: "Run Swarm Simulation", name: "" });
+    var btnLabel = "<span aria-hidden=\"true\">" + toggle.glyph + "</span> " + toggle.text;
+    var toggleName = toggle.name ? ' aria-label="' + toggle.name + '"' : "";
     var lockClass = state.lock.indexOf("LOCKED") >= 0 ? "lock-active" : "lock-idle";
 
     var html = [
@@ -216,8 +225,8 @@
       '      </div>',
       '    </div>',
       '    <div class="sim-controls">',
-      '      <button type="button" class="sim-btn sim-btn-primary" id="sim-toggle-btn">' + btnLabel + '</button>',
-      '      <button type="button" class="sim-btn sim-btn-secondary" id="sim-reset-btn"><span aria-hidden="true">⟳</span> Reset</button>',
+      '      <button type="button" class="sim-btn sim-btn-primary" id="sim-toggle-btn"' + toggleName + '>' + btnLabel + '</button>',
+      '      <button type="button" class="sim-btn sim-btn-secondary" id="sim-reset-btn" aria-label="Reset the simulation"><span aria-hidden="true">⟳</span> Reset</button>',
       '      <div class="sim-speed-box" role="radiogroup" aria-label="Animation speed">',
       '        <span>Speed:</span>',
       '        <button type="button" class="sim-speed-btn ' + (state.speed === 1 ? 'active' : '') + '" data-speed="1" role="radio" aria-checked="' + (state.speed === 1) + '">1x</button>',
