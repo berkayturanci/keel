@@ -888,7 +888,9 @@ def gate_outcome_as_dict(outcome: gates.GateOutcome) -> dict[str, Any]:
 
     The severity and whether the gate ran at all travel with it (#1165): ``keel loop
     brief`` reads these documents, and without them a failing *soft* gate would hold the
-    loop open and an unrun blocking gate would read as a pass.
+    loop open and an unrun blocking gate would read as a pass. ``unconfigured`` says the
+    gate cannot judge at all — no command, or no gate planned — which the loop stops on
+    at once rather than iterating against (#1364).
     """
     return {
         "gate": outcome.gate,
@@ -897,6 +899,7 @@ def gate_outcome_as_dict(outcome: gates.GateOutcome) -> dict[str, Any]:
         "timed_out": outcome.timed_out,
         "on_fail": outcome.on_fail,
         "not_run": outcome.not_run,
+        "unconfigured": outcome.unconfigured,
         "error": outcome.error,
         "findings": [_finding_as_dict(finding) for finding in outcome.findings],
     }

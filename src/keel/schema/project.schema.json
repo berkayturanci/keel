@@ -501,7 +501,8 @@
         "build_gate_cmd": {
           "type": "string",
           "minLength": 1,
-          "description": "Command the built-in build gate runs. Leave it out only while you have not chosen one: the build gate is then planned unconfigured and blocks every run with a finding that names this key; it never passes."
+          "pattern": "\\S",
+          "description": "Command the built-in build gate runs; blank (whitespace only) is refused, since 'sh -c \" \"' exits 0 having run nothing. Leave it out only while you have not chosen one: the build gate is then planned unconfigured and blocks every run with a finding that names this key; it never passes."
         },
         "lint_cmd": { "type": "string" },
         "tier3_globs": { "type": "array", "items": { "type": "string" } },

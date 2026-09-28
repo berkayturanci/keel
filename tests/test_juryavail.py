@@ -43,6 +43,7 @@ core_version: "^1.0"
 base_branch: main
 owner: acme
 repo: widget
+gates: [build]
 knobs:
   build_gate_cmd: "true"
   tier3_globs: ["src/**"]
@@ -62,6 +63,7 @@ core_version: "^1.0"
 base_branch: main
 owner: acme
 repo: widget
+gates: [build]
 knobs:
   build_gate_cmd: "true"
   tier3_globs: ["src/**"]
@@ -2226,6 +2228,7 @@ core_version: "^1.0"
 base_branch: main
 owner: acme
 repo: widget
+gates: [build]
 knobs:
   build_gate_cmd: "true"
   tier3_globs: ["src/**"]

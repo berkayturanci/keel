@@ -1151,7 +1151,9 @@ keel loop brief --iteration K --brief FILE --gates FILE [--out FILE] [--title TE
 | `--root DIR` / `--project PATH` | path | `.` / `<root>/.keel/project.yaml` | Where `knobs.loop` is read from. |
 | `--json` | flag | off | Emit `{policy, decision, gates, brief, prompt_file, next_action}`. |
 
-Exit `0` on `done` or `continue`, `1` on `budget-exhausted`, `off`, `no-config`, an empty
+Exit `0` on `done` or `continue`, `1` on `budget-exhausted`, `unconfigured` (a judged
+blocking gate whose outcome says `unconfigured: true` — no command, or no gate planned —
+stops the loop at once, at any iteration, #1364), `off`, `no-config`, an empty
 report, a base brief that already carries the loop marker, or an unreadable input. See
 [`knobs.loop`](configuration.md#loop).
 
@@ -1576,12 +1578,15 @@ keel run-gates <project.yaml> [--root DIR] [--tdd] [--defer-jury] [--json]
 | `--tdd` | flag | off | Add the `tdd-order` gate to this run, as `knobs.implement_mode: tdd` would. |
 | `--phases guard,test` | list | every phase | Execute only these backbone phases (`guard`, `test`, `pre-merge`). A gate outside the scope is reported `not_run` with its `on_fail` and its command is never run, exactly as `--defer-jury` reports the jury — so the exit code reflects only what this run judged. An unknown phase is refused (exit 2) rather than silently scoping the run to nothing. |
 | `--defer-jury` | flag | off | Report the `jury` built-in `not_run` instead of convening a panel — the s4 loop's per-iteration gate run. |
-| `--json` | flag | off | Emit the `keel.run-gates.v1` report — the planned `gates` beside the `gate_outcomes` (with `on_fail` and `not_run`), `jury_run`, `blocked` — that `keel loop brief --gates` reads; the exit code is unchanged. |
+| `--json` | flag | off | Emit the `keel.run-gates.v1` report — the planned `gates` beside the `gate_outcomes` (with `on_fail`, `not_run` and `unconfigured`), `jury_run`, `blocked` — that `keel loop brief --gates` reads; the exit code is unchanged. |
 
 ### Details
 
 Each configured command gate runs its shell command; non-zero exit becomes a blocking
-`gate:<name>` finding, output tail captured. A gate killed by its wall-clock limit
+`gate:<name>` finding, output tail captured. A command gate with no command or a blank one
+runs nothing and fails with a finding naming the key, whichever runner executed it, and a
+plan with no gate at all adds a failed `gates` outcome (`no gate configured: gates: in
+.keel/project.yaml plans nothing to run …`) under any `--phases` scope (#1364). A gate killed by its wall-clock limit
 (`knobs.gate_timeout_s`, default 600s; per-gate `timeout:` frontmatter wins) renders as a
 distinct `TIMEOUT` instead of `FAIL` and its finding says no pass/fail result was produced
 — it still blocks, exactly as a failure does. The built-in `jury` gate (when `gates:`
