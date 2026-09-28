@@ -2170,5 +2170,26 @@ class TheInitReferenceQuotesInitsOwnLine(unittest.TestCase):
         self.assertIn(f"  build gate   : {cli._UNSET_BUILD_NOTE}\n", text)
 
 
+class TheWorkflowPageMatchesThisRepositorysJuryPolicy(unittest.TestCase):
+    """`github-actions.md` describes this repository's own `keel-ship` workflow (#1367).
+
+    The jury-verdict requirement it names depends on `team.jury.mode` in the
+    `.keel/project.yaml` that workflow passes to `evidence-verify`, so the page must say
+    what that file sets rather than only what the default policy does.
+    """
+
+    def test_the_page_names_the_mode_this_repository_sets(self):
+        config = (REPO_ROOT / ".keel" / "project.yaml").read_text(encoding="utf-8")
+        mode = re.search(r"^\s+jury:\n(?:\s+#[^\n]*\n)*\s+mode:\s*(\w+)", config, re.M)
+        self.assertIsNotNone(mode, "no team.jury.mode in .keel/project.yaml")
+        page = " ".join(
+            (REPO_ROOT / "docs" / "keel" / "github-actions.md").read_text(encoding="utf-8").split()
+        )
+        self.assertIn("evidence-verify .keel/project.yaml", page)
+        if mode.group(1) == "advisory":
+            self.assertIn("sets `team.jury.mode: advisory`", page)
+            self.assertIn("so here the jury never requires one", page)
+
+
 if __name__ == "__main__":
     unittest.main()

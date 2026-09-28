@@ -31,7 +31,9 @@ On the hosted runner it:
 6. runs **`keel evidence-verify .keel/project.yaml --root . --pr <N>`**, which reads the
    live PR changed files/head SHA and fails until the PR and linked issue have the
    required closure and reviewer-verdict comments for the current tier and head, plus a
-   jury-verdict comment whenever the jury gates (a tier-3 change by default).
+   jury-verdict comment whenever the project's jury gates. Under the default policy that is
+   a tier-3 change; this repository's `.keel/project.yaml` sets `team.jury.mode: advisory`,
+   so here the jury never requires one.
 
 ```yaml
 permissions:
