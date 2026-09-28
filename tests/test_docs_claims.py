@@ -1398,12 +1398,28 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
         )
         self.assertFalse(ship.resolve_jury(tier=2, gates=("jury",))["enabled"])
 
-    def test_no_page_calls_the_jury_off_by_default(self):
-        for name in ("README.md", "docs/keel/configuration.md", "docs/keel/overview.md"):
-            with self.subTest(page=name):
-                text = " ".join((REPO_ROOT / name).read_text(encoding="utf-8").split())
-                # `assertTrue`, not `assertNotIn`: a failure would print the whole page.
-                self.assertTrue("off by default" not in text, f"{name} says 'off by default'")
+    #: The two shapes the wrong sentence took, within one clause of the word "jury":
+    #: "add `jury` to your `gates:` (off by default)" and "the opt-in jury gate".
+    _WRONG_DEFAULT = (
+        re.compile(r"\bjury[^.;]{0,160}\boff by default|\boff by default[^.;]{0,160}\bjury", re.I),
+        re.compile(r"\bopt-in[^.;]{0,40}\bjury|\bjury[^.;]{0,40}\bopt-in", re.I),
+    )
+
+    def test_no_public_page_calls_the_jury_off_by_default_or_opt_in(self):
+        """README, AGENTS, SECURITY, `docs/keel/` and every site page (#1345).
+
+        Tags are stripped first: on the site the word "jury" sits inside a link whose
+        URL has dots in it, which would end the clause before the claim.
+        """
+        pages = _public_pages()
+        for page in ("README.md", "website/index.html", "website/content.js"):
+            self.assertIn(page, pages)
+        for where, text in pages.items():
+            prose = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+            for pattern in self._WRONG_DEFAULT:
+                with self.subTest(page=where, pattern=pattern.pattern[:30]):
+                    found = pattern.search(prose)
+                    self.assertIsNone(found, found and found.group(0))
 
     def test_the_gates_reference_says_the_list_does_not_switch_the_jury(self):
         """#1345 asked configuration.md for the same correction: `gates: [jury]` adds an s8

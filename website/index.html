@@ -221,7 +221,7 @@
           <div class="invs">
             <div class="inv"><b>One backbone, four hosts</b><span>keel installs into Claude Code, Codex, Cursor and Antigravity; /keel:&lt;command&gt; runs as native Claude commands and as one shared skill set under .agents/skills/ for agents that read skills there.</span></div>
             <div class="inv"><b>Project Lego + policy packs</b><span>Snap gates and steps into named hooks (guard, tester, pre-merge, …); keep labels, path policy, health sources, and workflow preferences in policy_pack data — not packaged command prose.</span></div>
-            <div class="inv"><b>Opt-in jury gate</b><span>Add <code>jury</code> to your <code>gates:</code> (off by default); then it runs the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> multi-agent reviewer on the diff when the binary is installed, else a fail-soft no-op.</span></div>
+            <div class="inv"><b>Jury on at tier 3</b><span>A tier-3 change turns on the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> multi-agent reviewer automatically, unless <code>--no-jury</code>; <code>gates: [jury]</code> adds an s8 run. Fail-soft without the binary, advisory with fewer than 2 vendors.</span></div>
             <div class="inv"><b>Safe merges by construction</b><span>A core-owned <code style="font-family:var(--font-mono)">keel merge</code> path — resource claim, window re-check, live CI rollup, and PR evidence verification before the merge — plus the timezone-aware night no-merge window, mkdir merge lock, risk-tier → reviewer count, hotfix bypass with an audit line, and vendor+model attribution.</span></div>
           </div>
         </section>
@@ -447,7 +447,7 @@ keel ship     &lt;cfg&gt; --root .  <span class="cm"># dry assessment → decisi
           <div class="invs">
             <div class="inv"><b>Gate commands run your shell</b><span><code style="font-family:var(--font-mono)">run-gates</code> / <code style="font-family:var(--font-mono)">ship</code> execute the build / lint / command Lego from your config. Review a config before running it on a sensitive repository — exactly as you would a Makefile or CI script.</span></div>
             <div class="inv"><b>Agent reach = agent auth</b><span>The /keel:&lt;command&gt; adapters drive coding agents that may receive diffs, push branches, comment and merge. Their reach is governed by your agent's own auth and permissions, not by keel.</span></div>
-            <div class="inv"><b>The jury sees only the diff</b><span>The opt-in jury gate passes just the change's diff to the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> CLI; keel takes no runtime dependency on it, and the gate is a fail-soft no-op when it's absent.</span></div>
+            <div class="inv"><b>The jury sees only the diff</b><span>The jury passes just the change's diff to the <a href="https://github.com/berkayturanci/ai-jury">ai-jury</a> CLI; keel takes no runtime dependency on it, and the gate is a fail-soft no-op when it's absent.</span></div>
             <div class="inv"><b>Private vulnerability reporting</b><span>Don't open a public issue — email <a href="mailto:berkayturanci@gmail.com">berkayturanci@gmail.com</a> or use GitHub's private “Report a vulnerability” advisory. Acknowledgement within 48 hours when possible.</span></div>
           </div>
           <p class="view-kicker" style="margin:2.2rem 0 .8rem">Security audits — published in the repo</p>
