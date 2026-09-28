@@ -190,7 +190,10 @@ tier 3 the ai-jury panel.
 
 `keel cost-report --root .` summarises the records under `.keel/activity`. No keel command
 writes token counts into them yet, so it prices each record at a placeholder of 1,500 prompt
-and 400 completion tokens: read it as a count of runs, not as a bill.
+and 400 completion tokens: read it as a count of runs, not as a bill. The report says so
+itself: its `Token Basis` line reads `ESTIMATED at 1,500 prompt / 400 completion tokens per
+run`, and `--json` carries `token_basis`, `measured_runs`, `estimated_runs` and
+`assumed_tokens_per_run`.
 
 ### Limits
 
