@@ -43,7 +43,13 @@ SITEMAP_NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
 #: Pages a search engine should be able to find. Deliberately a list rather than
 #: a glob: 404.html must *not* be in the sitemap, and asserting the glob would
 #: quietly accept it.
-INDEXED_PAGES = ("index.html", "docs.html", "coverage.html", "silent-revert.html")
+INDEXED_PAGES = (
+    "index.html",
+    "docs.html",
+    "coverage.html",
+    "silent-revert.html",
+    "long-runs.html",
+)
 
 #: Terms a person would actually type. The site is free to lead with its own
 #: language — it just cannot be the *only* language on the page.
@@ -53,6 +59,15 @@ SEARCH_TERMS = ("code review", "pull request", "GitHub Action", "Claude Code")
 def _head(name: str) -> str:
     text = (SITE / name).read_text(encoding="utf-8")
     return text[: text.find("</head>")]
+
+
+def _articles() -> list[str]:
+    """Every dated write-up — derived, so the next one is covered.
+
+    `og:type` cannot tell them apart: docs.html is an `article` too. A write-up is the
+    page whose structured data carries a publication date.
+    """
+    return [f.name for f in sorted(SITE.glob("*.html")) if '"datePublished"' in _head(f.name)]
 
 
 class TestSearchFacingFields(unittest.TestCase):
@@ -145,17 +160,56 @@ class TestSitemap(unittest.TestCase):
 class TestArticleIsReachable(unittest.TestCase):
     """A page nothing links to is a page nothing crawls."""
 
-    def test_the_article_is_linked_from_the_homepage(self):
-        self.assertIn(
-            'href="silent-revert.html"',
-            (SITE / "index.html").read_text(encoding="utf-8"),
-        )
+    def test_the_articles_are_found(self):
+        # Vacuity: the loops below would pass over an empty list.
+        self.assertEqual(_articles(), ["long-runs.html", "silent-revert.html"])
 
-    def test_the_article_carries_article_structured_data(self):
-        head = _head("silent-revert.html")
-        self.assertIn("application/ld+json", head)
-        self.assertIn('"@type": "TechArticle"', head)
-        self.assertIn('property="og:type" content="article"', head)
+    def test_every_article_is_an_indexed_page(self):
+        # INDEXED_PAGES is a list on purpose (404.html must stay out); an article
+        # added without an entry would skip the sitemap, title and canonical checks.
+        for page in _articles():
+            with self.subTest(page=page):
+                self.assertIn(page, INDEXED_PAGES)
+
+    def test_every_article_is_linked_from_the_homepage(self):
+        index = (SITE / "index.html").read_text(encoding="utf-8")
+        for page in _articles():
+            with self.subTest(page=page):
+                self.assertIn(f'href="{page}"', index)
+
+    def test_the_long_runs_article_is_the_line_under_the_overview_figures(self):
+        """#1338: a one-line block under `.kpis` in `#view-overview`, not a sidebar entry."""
+        index = (SITE / "index.html").read_text(encoding="utf-8")
+        start = index.index('id="view-overview"')
+        overview = index[start : index.index("</section>", start)]
+        line = re.search(
+            r'<div class="kpis[^"]*"[^>]*>(?:\s*<div class="kpi">.*?</div>)+\s*</div>\s*'
+            r"<p [^>]*>(.*?)</p>",
+            overview,
+            re.S,
+        )
+        self.assertIsNotNone(line, "no paragraph directly under the overview's .kpis")
+        self.assertIn('href="long-runs.html"', line.group(1))
+
+    def test_every_article_carries_article_structured_data(self):
+        for page in _articles():
+            with self.subTest(page=page):
+                head = _head(page)
+                self.assertIn("application/ld+json", head)
+                self.assertIn('"@type": "TechArticle"', head)
+                self.assertIn('property="og:type" content="article"', head)
+                url = BASE + page
+                self.assertIn(f'<meta property="og:url" content="{url}">', head)
+                self.assertIn(f'"mainEntityOfPage": "{url}"', head)
+
+    def test_llms_txt_lists_every_article(self):
+        """#1338: llms.txt listed neither article."""
+        llms = (SITE / "llms.txt").read_text(encoding="utf-8")
+        self.assertIn("\n## Articles\n", llms)
+        articles = llms.split("\n## Articles\n", 1)[1].split("\n## ", 1)[0]
+        for page in _articles():
+            with self.subTest(page=page):
+                self.assertIn(f"]({BASE}{page})", articles)
 
 
 class TestAdvertisedUrlsResolve(unittest.TestCase):

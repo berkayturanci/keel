@@ -527,7 +527,7 @@ window.KEEL = {
     },
     {
       group: "Start here", title: "Agent plugin", slug: "plugin",
-      summary: "Add keel's /keel:&lt;command&gt; workflows to Claude Code, Codex, Antigravity or Cursor with no install-adapter step — this repo is its own plugin marketplace. The CLI is still required.",
+      summary: "Add keel's /keel:&lt;command&gt; workflows to Claude Code, Codex, Antigravity or Cursor (partial) with no install-adapter step — this repo is its own plugin marketplace. The CLI is still required.",
       body:
         "<p>The same <code>/keel:&lt;command&gt;</code> flows are packaged as an <b>agent plugin</b>, so an agent gets them straight from this repo's built-in marketplace with no <code>keel install-adapter</code> step. It does not replace the CLI — the command bodies shell out to <code>keel</code>. In Claude Code:</p>" +
         "<pre class='doc-pre' tabindex='0' role='region' aria-label='Claude Code plugin install commands'><code>/plugin marketplace add berkayturanci/keel   <span class='cm'># register the keel marketplace</span>\n/plugin install keel                          <span class='cm'># install → /keel:ship, /keel:regression, …</span></code></pre>" +

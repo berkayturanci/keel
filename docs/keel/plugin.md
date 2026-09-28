@@ -11,7 +11,7 @@ the same project-neutral command bodies; you do not have to choose one.
 ## Install (no `install-adapter` required)
 
 This repository is itself a single-plugin **marketplace**. **Installing it — for
-Claude Code, Codex, Antigravity or Cursor, each with its own update path — is
+Claude Code, Codex, Antigravity or Cursor (partial), each with its own update path — is
 [`install.md`](install.md).** Keeping a second copy of those recipes here is how
 this page came to give Claude's commands and no others, and how a reader came away
 believing the plugin was a Claude-only artifact.

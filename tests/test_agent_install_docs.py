@@ -22,6 +22,7 @@ assert things a regex already answers.
 
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -516,6 +517,54 @@ def host_enumerations(snippet: str, names: tuple[str, ...]) -> list[str]:
     return [c for c in re.split(r"(?<=[.;:])\s", flat) if len(named_in(c, names)) >= 2]
 
 
+def _one(pattern: str, text: str, where: str) -> str:
+    """The first group of the one match of `pattern`, or an assertion naming `where`."""
+    found = re.search(pattern, text, re.S)
+    if found is None:
+        raise AssertionError(f"{where}: no match for {pattern!r}")
+    return found.group(1)
+
+
+def _read(*parts: str) -> str:
+    return REPO_ROOT.joinpath(*parts).read_text(encoding="utf-8")
+
+
+def host_list_surfaces() -> dict[str, str]:
+    """Every public snippet whose job is to list the hosts keel installs into."""
+    readme = README.read_text(encoding="utf-8")
+    llms = _read("website", "llms.txt")
+    index = _read("website", "index.html")
+    return {
+        "README.md 'One backbone' bullet": _one(
+            r"\n- \*\*One backbone(.*?)\n- \*\*", readme, "README.md"
+        ),
+        "website/llms.txt summary": _one(r"\A# keel\n\n((?:> .*\n)+)", llms, "llms.txt"),
+        "index.html meta description": _one(
+            r'<meta name="description" content="([^"]+)"', index, "index.html"
+        ),
+        "index.html og:description": _one(
+            r'<meta property="og:description" content="([^"]+)"', index, "index.html"
+        ),
+        "index.html twitter:description": _one(
+            r'<meta name="twitter:description" content="([^"]+)"', index, "index.html"
+        ),
+        "index.html 'One backbone' card": _one(
+            r"<b>One backbone[^<]*</b><span>(.*?)</span>", index, "index.html"
+        ),
+        "index.html integrations heading": _one(
+            r'id="view-integrations".*?<p>(.*?)</p>', index, "index.html"
+        ),
+        ".claude-plugin/marketplace.json": _one(
+            r'"description": "([^"]+)"', _read(".claude-plugin", "marketplace.json"), "marketplace"
+        ),
+        "website/long-runs.html introduction": _one(
+            r'<p><a href="https://github.com/berkayturanci/keel">keel</a> (.*?)</p>',
+            _read("website", "long-runs.html"),
+            "long-runs.html",
+        ),
+    }
+
+
 class OneHostListEverywhere(unittest.TestCase):
     """#1333: the README and llms.txt said "Codex, Antigravity, Gemini" and left out
     Cursor; the site's meta and og descriptions said "Claude Code, Codex and Gemini";
@@ -525,40 +574,7 @@ class OneHostListEverywhere(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.hosts = install_page_hosts()
-        readme = README.read_text(encoding="utf-8")
-        llms = (REPO_ROOT / "website" / "llms.txt").read_text(encoding="utf-8")
-        index = (REPO_ROOT / "website" / "index.html").read_text(encoding="utf-8")
-        marketplace = (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(
-            encoding="utf-8"
-        )
-
-        def one(pattern: str, text: str, where: str) -> str:
-            found = re.search(pattern, text, re.S)
-            if found is None:
-                raise AssertionError(f"{where}: no match for {pattern!r}")
-            return found.group(1)
-
-        cls.surfaces = {
-            "README.md 'One backbone' bullet": one(
-                r"\n- \*\*One backbone(.*?)\n- \*\*", readme, "README.md"
-            ),
-            "website/llms.txt summary": one(r"\A# keel\n\n((?:> .*\n)+)", llms, "llms.txt"),
-            "index.html meta description": one(
-                r'<meta name="description" content="([^"]+)"', index, "index.html"
-            ),
-            "index.html og:description": one(
-                r'<meta property="og:description" content="([^"]+)"', index, "index.html"
-            ),
-            "index.html 'One backbone' card": one(
-                r"<b>One backbone[^<]*</b><span>(.*?)</span>", index, "index.html"
-            ),
-            "index.html integrations heading": one(
-                r'id="view-integrations".*?<p>(.*?)</p>', index, "index.html"
-            ),
-            ".claude-plugin/marketplace.json": one(
-                r'"description": "([^"]+)"', marketplace, "marketplace.json"
-            ),
-        }
+        cls.surfaces = host_list_surfaces()
 
     def test_the_install_page_lists_the_four_hosts(self):
         """Vacuity, and the one place the list is typed: the install page itself."""
@@ -577,6 +593,133 @@ class OneHostListEverywhere(unittest.TestCase):
                         set(self.hosts),
                         f"{where} names {sorted(named)} as hosts: {clause!r}",
                     )
+
+
+#: A host clause that labels Cursor: "Cursor (partial)" or "Cursor (partial, #1332)".
+CURSOR_PARTIAL = re.compile(r"\bCursor \(partial\b")
+
+
+def partial_surfaces() -> dict[str, str]:
+    """Every host list `host_list_surfaces` holds, plus the ones that name the hosts in
+    passing — a sentence, a docs index line — where a reader meets Cursor as a host too."""
+    readme = README.read_text(encoding="utf-8")
+    return host_list_surfaces() | {
+        "README.md first screen, step 1": _one(
+            r"\n1\. \*\*Your agent host does the work\.\*\* (.*?)\n2\. ", readme, "README.md"
+        ),
+        "README.md requirements": _one(
+            r"\*\*Something to implement\.\*\* (.*?)\n  The implement", readme, "README.md"
+        ),
+        "README.md docs index": _one(
+            r"(installing keel \*\*into an agent\*\* \([^\n]*)", readme, "README.md"
+        ),
+        "index.html plugin line": _one(
+            r'<p class="ov-plugin">Then put it in front of your agent as a plugin — (.*?) each ',
+            _read("website", "index.html"),
+            "index.html",
+        ),
+        "content.js plugin summary": _one(
+            r'slug: "plugin",\s*summary: "(.*?)"', _read("website", "content.js"), "content.js"
+        ),
+        "docs/keel/plugin.md": _one(
+            r"Installing it — for\s+(.*?), each with", _read("docs", "keel", "plugin.md"), "plugin"
+        ),
+        "docs/keel/overview.md 'One backbone' bullet": _one(
+            r"\*\*One backbone, four hosts\*\* — (.*?)\(\[per-host",
+            _read("docs", "keel", "overview.md"),
+            "overview.md",
+        ),
+        "docs/keel/comparison.md adapters": _one(
+            r"\*\*Agent adapters\*\* \((.*?)\) behind",
+            _read("docs", "keel", "comparison.md"),
+            "comparison.md",
+        ),
+        "docs/keel/configuration.md loop rationale": _one(
+            r"while keel runs inside (.*?)\nthrough one backbone",
+            _read("docs", "keel", "configuration.md"),
+            "configuration.md",
+        ),
+    }
+
+
+class CursorIsLabelledPartialWhereverItIsAHost(unittest.TestCase):
+    """#1332: a local Cursor install registers one skill, and the `/keel:` commands
+    reach Cursor only through the marketplace route (or Claude Code's plugin cache),
+    while the README gave Cursor the same `install` badge as the three full hosts.
+
+    Pointing `.cursor-plugin/plugin.json` at `.agents/skills` too could not be verified
+    in a running Cursor, so the label is the fix: every place that offers Cursor as a
+    host says it is partial."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.hosts = install_page_hosts()
+        cls.surfaces = partial_surfaces()
+        cls.readme = README.read_text(encoding="utf-8")
+        cls.install = INSTALL_DOC.read_text(encoding="utf-8")
+
+    def test_every_host_list_that_names_cursor_says_partial(self):
+        names = (*self.hosts, *NOT_A_HOST)
+        for where, snippet in self.surfaces.items():
+            with self.subTest(surface=where):
+                clauses = [c for c in host_enumerations(snippet, names) if "Cursor" in c]
+                self.assertTrue(clauses, f"{where} no longer lists Cursor among its hosts")
+                for clause in clauses:
+                    self.assertRegex(clause, CURSOR_PARTIAL, f"{where}: {clause!r}")
+
+    def test_the_readme_badge_does_not_offer_cursor_as_a_full_install(self):
+        badge = _one(r"(\[!\[[^\]]*\]\([^)]*\)\]\(#cursor\))", self.readme, "README.md")
+        self.assertIn("Cursor-partial", badge)
+        self.assertNotIn("Cursor-install", badge)
+
+    def test_the_readme_box_and_the_install_page_open_with_it(self):
+        summary = _one(r"<summary><b>Cursor</b>(.*?)</summary>", self.readme, "README.md")
+        self.assertIn("partial", summary)
+        box = self.readme.split('<a id="cursor"></a>', 1)[1].split("</details>", 1)[0]
+        section = self.install.split("\n## Cursor\n", 1)[1].split("\n## ", 1)[0]
+        for where, text in (("README.md Cursor box", box), ("install.md ## Cursor", section)):
+            with self.subTest(where=where):
+                first = text.split("</summary>", 1)[-1].strip().split("\n\n", 1)[0]
+                self.assertTrue(first.startswith("**Partial**"), f"{where} opens with {first!r}")
+                self.assertIn("issues/1332", first)
+
+    def test_the_install_page_contents_says_so(self):
+        entries = dict((anchor, name) for name, anchor in CONTENTS_NAME.findall(self.install))
+        self.assertEqual(entries.get("cursor"), "Cursor (partial)")
+
+    def test_the_integrations_card_says_so(self):
+        script = _read("website", "integrations.js")
+        card = _one(r'(\{\s*id: "cursor",.*?\n    \})', script, "integrations.js")
+        badge = _one(r'badge: "([^"]*)"', card, "the Cursor card")
+        self.assertIn("partial", badge)
+        self.assertIn("keel-onboard", _one(r'desc: "([^"]*)"', card, "the Cursor card"))
+
+
+class TheReasonCursorIsPartialIsStillTrue(unittest.TestCase):
+    """The label rests on a layout fact; if the manifest or the layout changes, this
+    fails, and the pages that give the reason have to be re-checked with it (#1332)."""
+
+    def test_the_manifest_names_the_root_skills_directory_only(self):
+        manifest = json.loads(_read(".cursor-plugin", "plugin.json"))
+        self.assertEqual(manifest.get("skills"), "./skills")
+
+    def test_that_directory_holds_onboarding_and_the_workflow_skills_live_elsewhere(self):
+        def skills(where: Path) -> set[str]:
+            return {p.parent.name for p in where.glob("*/SKILL.md")}
+
+        self.assertEqual(skills(REPO_ROOT / "skills"), {"keel-onboard"})
+        workflow = skills(REPO_ROOT / ".agents" / "skills")
+        self.assertIn("keel-ship", workflow)
+        self.assertNotIn("keel-onboard", workflow)
+
+    def test_the_pages_give_that_reason(self):
+        readme = README.read_text(encoding="utf-8")
+        box = readme.split('<a id="cursor"></a>', 1)[1].split("</details>", 1)[0]
+        section = INSTALL_DOC.read_text(encoding="utf-8").split("\n## Cursor\n", 1)[1]
+        for where, text in (("README.md Cursor box", box), ("install.md ## Cursor", section)):
+            with self.subTest(where=where):
+                for fact in ("`keel-onboard`", "`./skills`", "`.agents/skills"):
+                    self.assertIn(fact, text)
 
 
 if __name__ == "__main__":  # pragma: no cover
