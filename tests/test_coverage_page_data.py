@@ -364,6 +364,7 @@ class TestThePageRendersTheGeneratedData(unittest.TestCase):
             [NODE, str(driver), str(SITE / "coverage.js"), mode, json.dumps(payload)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=60,
         )
         self.assertEqual(done.returncode, 0, done.stderr)
@@ -422,7 +423,12 @@ class TestThePageRendersTheGeneratedData(unittest.TestCase):
             + "\nconsole.log(JSON.stringify(out));"
         )
         done = subprocess.run(
-            [NODE, "-e", script], capture_output=True, text=True, timeout=60, check=True
+            [NODE, "-e", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=True,
         )
         shown = json.loads(done.stdout)
         want = [f"{i / 100:.2f}".rstrip("0").rstrip(".") + "%" for i in range(10001)]
