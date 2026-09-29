@@ -45,18 +45,6 @@ All notable changes to keel are documented here. The format follows
   `tests/test_docs_root_claims.py` and `keel-visual/tests/test_readme.py` hold each page to the
   file or code it describes (docs audit 2026-09-29).
 - **The command adapters use the flags, contracts and helpers keel has.** `/keel:ship` s9 passes `keel fixloop brief` the `--delegate`, `--role`, `--tier` and `--host-agent` that pick the fixer, and says the command has no `--team` or `--effort`. s8 records an agentic gate's result on `keel ship --gate-result`, because `run-gates` has no such flag. s5 no longer claims `--reviewers` skips the tier. `/keel:work-block` and `/keel:overnight` build their staffing flags only from values that were set, so an unset `--effort` is no longer passed as `''`, and they pass `--reviewers` too. `/keel:implement` reads the implementer from `keel plan --command ship`, its labels from `keel attribution`, and removes worktrees with `keel worktree-remove`. `/keel:review-all-day` and `/keel:regression` take their numbers, labels and confidence filter from `scan_contract`. `/keel:overnight` states one window rule: only a window that closes during the session stops it. `/keel:triage`, `/keel:pr-loop` and `/keel:review-cycle` route by `team.implement.by_role`, and `/keel:swarm` says a dry run creates no worktree and lands onto `base_branch`. New tests check every `keel <cmd> --flag` in an adapter code block against the parser, and the attribution-prose ban now covers every adapter (docs audit 2026-09-29).
-
-### Companion
-- **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py
-  --package keel-visual [--tag keel-visual-vX.Y.Z]` checks keel-visual's two version markers
-  and that the tag names the version `keel-visual/pyproject.toml` declares, and
-  `publish-visual.yml` runs it before the build. The workflow also checks that every template
-  in the source tree is in the wheel (it checked `runviz.html` only), the wheel's
-  `force-include` lists `swarm.html`, and keel-visual's README links are absolute so they work
-  on PyPI.
-- **`keel cost-report` can say "measured" for hosted-API delegate runs.** `keel delegate run` now reads the token usage the `anthropic-api`, `openai-api`, `google-api` and OpenAI-compatible responses carry, and returns it as `usage`. Only each vendor's documented fields are read, and a missing, malformed, non-integer, negative or zero count records nothing. With `--activity-run-id RUN` the counts go into run `RUN`'s activity record as a per-call `delegate_usage` entry, and every later phase stamp keeps them. A per-record lock stops parallel reviewers from dropping each other's counts. The ship adapter passes the flag in s4 and s7. The report prices each call at its own model, says that a measured count covers delegate calls and never the agent host's own tokens, and prints `the 1 run` instead of `all 1 runs`. Its title is now `Keel Token & Cost Report`, and the VS Code command is `View Token Counts & Estimated USD Cost`. The README, `docs/keel/cli.md` and the OpenRouter site card now describe what is recorded (#1373).
-
-### Fixed
 - **The CLI, evidence and release pages say what the code does.** `cli.md`'s `keel ship`
   sample is a real run's output, its exit-code table names the codes `evidence-verify`,
   `verify-merge`, `run-gates`, `ship` and `merge` return beyond 1, its delegate `error_code`
@@ -69,6 +57,16 @@ All notable changes to keel are documented here. The format follows
   `overview.md`, `ship-baseline.md` and `runtime-capabilities.md` are corrected too, and
   `tests/test_docs_cli_evidence_release.py` reads each list from the code it describes
   (docs audit 2026-09-29)
+
+### Companion
+- **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py
+  --package keel-visual [--tag keel-visual-vX.Y.Z]` checks keel-visual's two version markers
+  and that the tag names the version `keel-visual/pyproject.toml` declares, and
+  `publish-visual.yml` runs it before the build. The workflow also checks that every template
+  in the source tree is in the wheel (it checked `runviz.html` only), the wheel's
+  `force-include` lists `swarm.html`, and keel-visual's README links are absolute so they work
+  on PyPI.
+- **`keel cost-report` can say "measured" for hosted-API delegate runs.** `keel delegate run` now reads the token usage the `anthropic-api`, `openai-api`, `google-api` and OpenAI-compatible responses carry, and returns it as `usage`. Only each vendor's documented fields are read, and a missing, malformed, non-integer, negative or zero count records nothing. With `--activity-run-id RUN` the counts go into run `RUN`'s activity record as a per-call `delegate_usage` entry, and every later phase stamp keeps them. A per-record lock stops parallel reviewers from dropping each other's counts. The ship adapter passes the flag in s4 and s7. The report prices each call at its own model, says that a measured count covers delegate calls and never the agent host's own tokens, and prints `the 1 run` instead of `all 1 runs`. Its title is now `Keel Token & Cost Report`, and the VS Code command is `View Token Counts & Estimated USD Cost`. The README, `docs/keel/cli.md` and the OpenRouter site card now describe what is recorded (#1373).
 
 ## [1.24.3] - 2026-09-29
 
