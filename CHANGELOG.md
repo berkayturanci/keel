@@ -6,7 +6,7 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
-## [1.24.3] - 2026-09-28
+## [1.24.3] - 2026-09-29
 
 - A gate that cannot judge no longer reads as a pass: an unconfigured build or lint gate, or a jury with no `jury` CLI, is reported as such, and a plan in which nothing judges the change blocks the merge.
 - A first live run works or says what is missing: `keel setup` no longer writes a `make test` gate for a project without one, and `keel doctor` checks `gh` and which agent hosts are installed.
