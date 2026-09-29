@@ -460,20 +460,39 @@ class TestExecute(unittest.TestCase):
         self.assertIn("max_changes (1)", why)
 
     def test_the_budget_bounds_every_run_and_then_stops(self):
-        # Each clock read advances 40s against a 100s budget.
+        # Each clock read advances 20s against a 100s budget: `b` is reverted and then
+        # found out of budget before its run, `c` before its revert.
         scratch = _Scratch(runs={None: _GREEN})
         report, _ = _execute(
             [_change("a"), _change("b"), _change("c")],
             _settings(budget_s=100, run_timeout_s=600),
             scratch,
-            _Clock(step=40.0),
+            _Clock(step=20.0),
         )
         self.assertEqual(
-            [c for c in scratch.calls if c[0] == "test"], [("test", None, 60), ("test", "a", 20)]
+            [c for c in scratch.calls if c[0] == "test"], [("test", None, 80), ("test", "a", 40)]
         )
         self.assertEqual([r.change.label for r in report.results], ["a"])
         self.assertEqual([c.label for c, _ in report.not_checked], ["b", "c"])
         self.assertIn("budget_s budget (100s)", report.not_checked[0][1])
+
+    def test_the_budget_counts_the_revert_itself(self):
+        """Review round on 17155a82: the run's limit was the budget left *before* the revert."""
+        now = [0.0]
+
+        class Slow(_Scratch):
+            def revert(self, change):
+                now[0] += 11.0  # resetting, cleaning and applying took 11 s
+                return super().revert(change)
+
+        scratch = Slow(runs={None: _GREEN})
+        report, _ = _execute([_change("a")], _settings(budget_s=10), scratch, clock=lambda: now[0])
+        self.assertEqual([c for c in scratch.calls if c[0] == "test"], [("test", None, 10)])
+        self.assertEqual(report.results, ())
+        ((change, why),) = report.not_checked
+        self.assertEqual(change.label, "a")
+        self.assertIn("budget_s budget (10s) ran out", why)
+        self.assertFalse(rc.judge(rc.Plan((change,), (), ()), report).ok)
 
 
 def _py(label, patch="p"):
@@ -502,7 +521,12 @@ class TestBehaviourFree(unittest.TestCase):
             '"""Module doc."""\n\n# a comment\ndef f(x):\n    """Doc."""\n'
             '    y = x  # why\n    "attribute doc"\n    return y\n'
         )
-        reverted = "def f(x):\n    y=x\n    return (y)\n"
+        # Line for line, so nothing moves: the rule for a change that adds or removes
+        # lines is AChangeThatMovesLinesIsNeverInert's.
+        reverted = (
+            '"""Other doc."""\n\n# other\ndef f(x):\n    """Other."""\n'
+            '    y=x\n    "x"\n    return (y)\n'
+        )
         self.assertTrue(rc.behaviour_free(_py("m"), head, reverted))
         # An expression statement that is not a string is behaviour, and kept.
         self.assertTrue(rc.behaviour_free(_py("m"), "log(1)\n", "log( 1 )  # note\n"))
@@ -732,6 +756,50 @@ class CFamilyInertnessNeedsTheCommentsToBeTheOnlyDifference(unittest.TestCase):
         self.assertEqual(rc._strip_c_comments("a // to the end"), "a")
         self.assertEqual(rc._strip_c_comments("'unterminated"), "'unterminated")
         self.assertEqual(rc._strip_c_comments("  x  \n\t y "), "x y")
+
+
+class AChangeThatMovesLinesIsNeverInert(unittest.TestCase):
+    """Review round on 17155a82: a comment inserted above `__LINE__` changes its value."""
+
+    @staticmethod
+    def _change(path, added):
+        patch = f"diff --git a/{path} b/{path}\n@@ -1,0 +2 @@\n+{added}\n"
+        return rc.Change("c", path, patch, True)
+
+    def test_a_comment_inserted_above_line_is_not_inert(self):
+        head = "int f(void) {\n// inserted comment\nint value = __LINE__;\nreturn value;\n}\n"
+        undone = head.replace("// inserted comment\n", "")
+        self.assertFalse(
+            rc.behaviour_free(self._change("f.c", "// inserted comment"), head, undone)
+        )
+
+    def test_a_python_comment_that_shifts_lines_is_not_inert(self):
+        head = "import inspect\n# inserted\nLINE = inspect.currentframe().f_lineno\n"
+        undone = head.replace("# inserted\n", "")
+        self.assertFalse(rc.behaviour_free(self._change("m.py", "# inserted"), head, undone))
+        # A docstring that grows by a line moves every line below it too.
+        grown = '"""One.\n\nTwo."""\nx = 1\n'
+        self.assertFalse(rc.behaviour_free(_py("m"), grown, '"""One."""\nx = 1\n'))
+
+    def test_a_same_length_comment_edit_is_still_inert(self):
+        for path, head, undone in (
+            ("m.py", "x = 1  # new\n", "x = 1  # old\n"),
+            ("f.c", "int x; // new\n", "int x; // old\n"),
+            ("f.go", "x := 1 // new\n", "x := 1 // old\n"),
+        ):
+            with self.subTest(path=path):
+                patch = f"diff --git a/{path} b/{path}\n@@ -1 +1 @@\n-// old\n+// new\n"
+                change = rc.Change("c", path, patch, False)
+                self.assertTrue(rc.behaviour_free(change, head, undone))
+
+    def test_c_counts_lines_after_splicing_too(self):
+        # Same physical line count and the same text once comments go, but a backslash now
+        # joins the two comment lines into one logical line. Refused on the safe side: the
+        # rule is that no line is added or removed, before or after splicing.
+        head = "int x;\n// a\\\n// b\nint y;\n"
+        undone = "int x;\n// a\n// b\nint y;\n"
+        patch = "diff --git a/f.c b/f.c\n@@ -2 +2 @@\n-// a\n+// a\\\n"
+        self.assertFalse(rc.behaviour_free(rc.Change("c", "f.c", patch, False), head, undone))
 
 
 class CLexingComesBeforeTheComments(unittest.TestCase):

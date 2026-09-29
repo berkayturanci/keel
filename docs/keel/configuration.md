@@ -1299,6 +1299,7 @@ knobs:
     max_changes: 10
     budget_s: 1800
 policy_pack:
+  name: my-project
   test_groups:
     unit:
       command: "make test"
@@ -1345,6 +1346,12 @@ proves it:
   line — and a file with a `??/` trigraph, a backslash followed only by blanks, or `//` or
   `/*` inside an `#include`/`#import` header name is never inert. Go does not splice.
 
+**And no line may move.** In every language, a change is inert only if both files have the
+same number of lines (in C and Objective-C, after splicing too). Adding or removing a line
+shifts every line below it, and programs can observe that: `__LINE__` in C, `runtime.Caller`
+in Go, tracebacks, `inspect` and `%(lineno)d` log fields in Python. So a comment or docstring
+edit that adds or removes a line is tested like any other change.
+
 **Every other language is always tested**, even when every changed line looks like a comment,
 because a line that looks like one may sit inside a string the reader cannot see: a `#` line
 inside a multi-line shell string, `//` inside a JavaScript template literal or regex literal
@@ -1388,7 +1395,8 @@ fix) proves nothing. A production file with no textual hunk (binary, mode-only) 
 named as not checked. The gate ends with a `nit` counting how many changes were caught.
 
 **Cost bounds.** Each run is limited by [`gate_timeout_s`](#gate_timeout_s); the baseline and
-every revert together by `budget_s` (default `1800`); and at most `max_changes` (default `10`)
+every revert together by `budget_s` (default `1800`), with the time spent resetting and
+reverting the scratch tree counted before each run starts; and at most `max_changes` (default `10`)
 changes are reverted. A change either bound leaves out is reported *not checked* and blocks: the
 gate never certifies what it did not run. For a slow suite, point `cmd` at a faster subset
 rather than raising the budget. The gate is planned at the `pre-merge` phase, so the s4 loop

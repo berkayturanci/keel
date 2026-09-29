@@ -588,8 +588,13 @@ def behaviour_free(change: Change, before: str | None, after: str | None) -> boo
     line that merely *looks* like a comment proves nothing (it may sit inside a multi-line
     string). So every other language — and a file added or deleted by the change — is
     never behaviour-free: the tests run.
+
+    **And no line may move.** Both files must have the same number of lines (for C and
+    Objective-C, before and after splicing too): a comment added above ``int v =
+    __LINE__;`` changes ``v``, and Go's ``runtime.Caller``, a Python traceback, ``inspect``
+    or a ``%(lineno)d`` log field all observe line numbers the same way.
     """
-    if before is None or after is None:
+    if before is None or after is None or _line_count(before) != _line_count(after):
         return False
     suffix = posixpath.splitext(change.path)[1].lower()
     if suffix in (".py", ".pyi"):
@@ -601,8 +606,20 @@ def behaviour_free(change: Change, before: str | None, after: str | None) -> boo
     # is a pointer write. So the files must also match once their comments are stripped
     # (strings kept verbatim), or the change is not inert.
     mode = _C_INERT_SUFFIXES[suffix]
+    if mode == "c" and _line_count(_splice(before)) != _line_count(_splice(after)):
+        return False
     head, undone = _c_source(before, mode), _c_source(after, mode)
     return head is not None and head == undone
+
+
+def _line_count(text: str) -> int:
+    """Lines in ``text``, counted on ``\\n`` — a final line without one counts too."""
+    return len(text.split("\n"))
+
+
+def _splice(text: str) -> str:
+    """C translation phase 2: every backslash-newline removed, ``\\r\\n`` included."""
+    return text.replace("\\\r\n", "").replace("\\\n", "")
 
 
 def _c_source(text: str, mode: str) -> str | None:
@@ -616,7 +633,7 @@ def _c_source(text: str, mode: str) -> str | None:
         return _strip_c_comments(text, raw_backticks=True)
     if _C_UNSAFE.search(text):
         return None
-    return _strip_c_comments(text.replace("\\\r\n", "").replace("\\\n", ""))
+    return _strip_c_comments(_splice(text))
 
 
 def looks_comment_only(change: Change) -> bool:
@@ -896,6 +913,14 @@ def execute(
                 ChangeResult(change, INERT, "only comments, docstrings or formatting change")
             )
             continue
+        # Re-read the clock: resetting, cleaning, applying and reading took time too, and a
+        # run must never start with a limit the budget no longer has.
+        remaining = left()
+        if remaining < 1:
+            skipped.append(
+                (change, f"the knobs.revert_check.budget_s budget ({settings.budget_s}s) ran out")
+            )
+            continue
         outcome = test(limit(remaining))
         result, why = classify(
             exit_ok=outcome.exit_ok, timed_out=outcome.timed_out, output=outcome.output
@@ -1022,8 +1047,9 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
         elif item.result == UNNOTICED:
             hint = (
                 "; it looks comment-only, but keel proves a change inert only for "
-                f"{INERT_LANGUAGES} — test it, or leave such files out with "
-                "knobs.revert_check.paths"
+                f"{INERT_LANGUAGES}, and only when no line is added or removed (a moved "
+                "line changes what __LINE__, tracebacks and line-number lookups report) — "
+                "test it, or leave such files out with knobs.revert_check.paths"
                 if looks_comment_only(item.change)
                 else ""
             )

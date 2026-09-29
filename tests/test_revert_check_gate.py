@@ -251,10 +251,12 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertTrue(found[0][1].startswith("pkg/calc.py @@ -1 +1 @@: noticed only as an error"))
 
     def test_a_comment_or_docstring_change_is_not_run(self):
-        commented = '"""Calculator."""\n\n\n' + _BASE_CALC.replace(
+        # Same number of lines on both sides: nothing below the edits moves.
+        documented = '"""Calc."""\n' + _BASE_CALC
+        commented = '"""Calculator."""\n' + _BASE_CALC.replace(
             "    return 1\n", "    return 1  # always positive\n"
         )
-        root = _repo(self.root, {"pkg/calc.py": commented})
+        root = _repo(self.root, {"pkg/calc.py": commented}, base_calc=documented)
         with patch("keel.cli.run_command", wraps=cli.run_command) as runs:
             outcome = _outcome(root)
         self.assertTrue(outcome.ok, _messages(outcome))
@@ -270,6 +272,16 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
                 )
             ],
         )
+
+    def test_a_comment_that_moves_lines_is_tested_and_says_why(self):
+        commented = _BASE_CALC.replace("def sign(x):\n", "# sign of x\ndef sign(x):\n")
+        root = _repo(self.root, {"pkg/calc.py": commented})
+        outcome = _outcome(root)
+        self.assertFalse(outcome.ok)
+        major = _messages(outcome)[0]
+        self.assertEqual(major[0], "major")
+        self.assertIn("no test notices this change", major[1])
+        self.assertIn("only when no line is added or removed", major[1])
 
     def test_a_suite_red_on_a_clean_head_cannot_judge(self):
         root = _repo(
