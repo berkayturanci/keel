@@ -111,7 +111,7 @@ class EverySlashCommandOnTheSiteTakesItsFlags(unittest.TestCase):
                 if not flags or declared is None:
                     continue
                 seen += 1
-                unknown += [f"{page}: /keel:{command}{rest}" for f in flags - declared]
+                unknown += [f"{page}: /keel:{command}{rest} ({f})" for f in sorted(flags - declared)]
         self.assertGreaterEqual(seen, 10, "no flagged /keel: invocation found on the site")
         self.assertEqual([], unknown)
 
