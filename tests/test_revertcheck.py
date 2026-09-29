@@ -270,6 +270,25 @@ class TestReadOutput(unittest.TestCase):
             (True, 7, 3, 2, 0),
         )
 
+    def test_a_pytest_node_id_may_contain_spaces(self):
+        """Review finding on #1385: `\\S+` dropped these, turning a caught change unreadable."""
+        tally = rc.read_output(
+            "FAILED tests/test_x.py::test_value[hello world] - assert 1 == 2\n"
+            "FAILED tests/my tests.py::test_b - AssertionError: no\n"
+            "FAILED tests/test_x.py::test_c[a b] - NameError: name 'x' is not defined\n"
+            "FAILED tests/test_x.py::test_d[c d]\n"
+            "4 failed in 0.20s\n"
+        )
+        self.assertEqual((tally.assertions, tally.errors, tally.unclassified), (2, 2, 0))
+        self.assertEqual(
+            rc.classify(
+                exit_ok=False,
+                timed_out=False,
+                output="FAILED t.py::v[hello world] - assert 1 == 2\n1 failed in 0.1s\n",
+            )[0],
+            rc.CAUGHT,
+        )
+
     def test_a_pytest_failure_nobody_describes_is_unclassified(self):
         tally = rc.read_output("FAILED t.py::a\n2 failed, 1 passed in 1.0s (0:00:01)\n")
         self.assertEqual((tally.assertions, tally.errors, tally.unclassified), (0, 1, 1))
@@ -501,18 +520,59 @@ class TestBehaviourFree(unittest.TestCase):
         self.assertFalse(rc.behaviour_free(_py("m"), None, ""))
         self.assertFalse(rc.behaviour_free(_py("m"), "", None))
 
-    def test_other_languages_read_their_comment_markers(self):
-        patch = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1,2 @@\n-// old\n+  // new\n+\n"
-        self.assertTrue(rc.behaviour_free(rc.Change("x", "src/a.ts", patch, False), "", ""))
-        code = patch + "+const x = 1;\n"
-        self.assertFalse(rc.behaviour_free(rc.Change("x", "src/a.ts", code, False), "", ""))
-        # `#` is a comment in a shell script and code in C.
-        hashes = "diff --git a/x b/x\n@@ -1 +1 @@\n-#include <a.h>\n+#include <b.h>\n"
-        self.assertTrue(rc.behaviour_free(rc.Change("x", "run.sh", hashes, False), "", ""))
-        self.assertFalse(rc.behaviour_free(rc.Change("x", "main.c", hashes, False), "", ""))
-        # A suffix keel knows no marker for, or none at all, always runs.
-        self.assertFalse(rc.behaviour_free(rc.Change("x", "a.zig", hashes, False), "", ""))
-        self.assertFalse(rc.behaviour_free(rc.Change("x", "Makefile", hashes, False), "", ""))
+    def test_a_comment_line_inside_a_shell_string_is_not_inert(self):
+        """Review finding on #1385: a `#` line inside a multi-line string is text."""
+        patch = "diff --git a/run.sh b/run.sh\n@@ -2 +2 @@\n-# old value\n+# new value\n"
+        head = "printf '%s' '\n# new value\n'\n"
+        undone = "printf '%s' '\n# old value\n'\n"
+        self.assertFalse(rc.behaviour_free(rc.Change("x", "run.sh", patch, False), head, undone))
+
+    def test_only_languages_keel_can_read_whole_keep_the_shortcut(self):
+        def change(path, marker):
+            patch = f"diff --git a/x b/x\n@@ -1 +1 @@\n-{marker} old\n+{marker} new\n"
+            return rc.Change("x", path, patch, False)
+
+        # Same files once comments are stripped, every changed line a comment: still not
+        # proven, because these languages have literals the stripper cannot read.
+        for path in (
+            "a.ts",
+            "a.js",
+            "a.rs",
+            "a.cpp",
+            "a.h",
+            "a.mm",
+            "a.cs",
+            "a.java",
+            "a.kt",
+            "a.swift",
+            "a.dart",
+            "a.scala",
+            "a.php",
+            "a.fs",
+        ):
+            with self.subTest(path=path):
+                self.assertFalse(
+                    rc.behaviour_free(change(path, "//"), "// new\nx;\n", "// old\nx;\n")
+                )
+        for path, marker in (("a.rb", "#"), ("a.lua", "--"), ("a.clj", ";"), ("a.erl", "%")):
+            with self.subTest(path=path):
+                self.assertFalse(
+                    rc.behaviour_free(change(path, marker), f"{marker} new\n", f"{marker} old\n")
+                )
+        for path in ("a.c", "a.m", "a.go"):
+            with self.subTest(path=path):
+                self.assertTrue(
+                    rc.behaviour_free(change(path, "//"), "// new\nx;\n", "// old\nx;\n")
+                )
+        self.assertFalse(rc.behaviour_free(change("Makefile", "#"), "# new\n", "# old\n"))
+
+    def test_a_go_raw_string_escapes_nothing(self):
+        # With a backslash read as an escape, `C:\` swallowed its closing backtick and the
+        # next raw string's `// two` line was read as a comment: a false inert.
+        patch = "diff --git a/a.go b/a.go\n@@ -3 +3 @@\n-// one\n+// two\n"
+        head = "a := `C:\\`\nb := `\n// two\n`\n"
+        undone = "a := `C:\\`\nb := `\n// one\n`\n"
+        self.assertFalse(rc.behaviour_free(rc.Change("x", "a.go", patch, False), head, undone))
 
 
 class TestVerdict(unittest.TestCase):
@@ -583,6 +643,25 @@ class TestVerdict(unittest.TestCase):
         self.assertIn("no test notices this change", verdict.findings[3].message)
         self.assertIn("no test failed as an assertion", verdict.findings[2].message)
 
+    def test_an_unnoticed_comment_only_change_says_why_it_was_tested(self):
+        comment = rc.Change(
+            "run.sh @@", "run.sh", "diff --git a/x b/x\n@@ -1 +1 @@\n-# a\n+# b\n", False
+        )
+        code = rc.Change("run.sh @@", "run.sh", "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n", False)
+        other = rc.Change(
+            "x.zig", "x.zig", "diff --git a/x b/x\n@@ -1 +1 @@\n-// a\n+// b\n", False
+        )
+        results = tuple(rc.ChangeResult(c, rc.UNNOTICED, "passed") for c in (comment, code, other))
+        verdict = rc.judge(rc.Plan((), (), ()), rc.Report(None, results))
+        self.assertFalse(verdict.ok)
+        first, second, third = (f.message for f in verdict.findings[:3])
+        self.assertIn("it looks comment-only, but keel proves a change inert only for", first)
+        self.assertIn(rc.INERT_LANGUAGES, first)
+        self.assertIn("knobs.revert_check.paths", first)
+        self.assertNotIn("comment-only", second)
+        self.assertNotIn("comment-only", third)
+        self.assertEqual({f.severity for f in verdict.findings[:3]}, {"major"})
+
     def test_all_caught_passes_with_a_count(self):
         results = (
             rc.ChangeResult(_change("a"), rc.CAUGHT, "x"),
@@ -637,9 +716,9 @@ class CFamilyInertnessNeedsTheCommentsToBeTheOnlyDifference(unittest.TestCase):
         )
 
     def test_a_comment_marker_inside_a_string_is_text(self):
-        change = self._change("a.js", "// one", "// two")
-        head = "const s = `\n// two\n`;\n"
-        undone = "const s = `\n// one\n`;\n"
+        change = self._change("a.go", "// one", "// two")
+        head = "s := `\n// two\n`\n"
+        undone = "s := `\n// one\n`\n"
         self.assertFalse(rc.behaviour_free(change, head, undone))
 
     def test_a_line_comment_change_is_inert(self):

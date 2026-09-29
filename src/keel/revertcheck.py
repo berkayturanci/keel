@@ -395,10 +395,14 @@ def _patch(header: Sequence[str], hunks: Sequence[Hunk]) -> str:
 
 # --- changes with no behaviour ------------------------------------------------------
 
-#: Line-comment markers by suffix, for the languages keel does not parse. ``#`` is listed
-#: only where it starts a comment — in C it starts ``#include``/``#define``, which are code.
-_COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
-    **dict.fromkeys((".sh", ".bash", ".rb", ".pl", ".pm", ".r", ".ex", ".exs"), ("#",)),
+#: Line-comment markers by suffix. Used **only to word a finding** — a change whose every
+#: line looks like a comment but that keel cannot prove inert is still tested, and its
+#: "no test notices" finding says why. ``#`` is listed only where it starts a comment; in
+#: C it starts ``#include``/``#define``, which are code.
+_COMMENT_MARKERS: dict[str, tuple[str, ...]] = {
+    **dict.fromkeys(
+        (".py", ".pyi", ".sh", ".bash", ".rb", ".pl", ".pm", ".r", ".ex", ".exs"), ("#",)
+    ),
     **dict.fromkeys(
         (
             ".js",
@@ -434,6 +438,23 @@ _COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
     ".erl": ("%",),
 }
 
+#: The C-family languages whose whole files :func:`_strip_c_comments` reads safely, so a
+#: comment-only change in them may skip its run: their only literals are ``"…"`` and
+#: ``'…'`` with backslash escapes, plus Go's backtick raw string, which has none.
+#:
+#: Left out, because a literal the stripper cannot read could hide code inside what it
+#: takes for a comment — and the rule is that inertness is *proven*, never guessed:
+#: C++ (``.cc``/``.cpp``/``.cxx``/``.hpp``, and ``.h``/``.mm``, which may be C++) for
+#: ``R"(…)"`` raw strings; Rust for ``r#"…"#`` and lifetimes (``'a``); C# for ``@"…"`` and
+#: ``"""…"""``; Java, Kotlin, Scala, Swift and Dart for ``"""…"""`` text blocks (and Dart's
+#: ``r'…'``); PHP for heredoc/nowdoc and ``#`` comments; F# for ``(* … *)`` and
+#: ``"""…"""``; and JavaScript/TypeScript for regex literals (``/\/*/``) and ``${…}``
+#: nesting inside template literals. Every other language — the ``#``-comment scripting
+#: languages, Lua, Clojure, Erlang — has no reader at all here.
+_C_INERT_SUFFIXES: dict[str, bool] = {".c": False, ".m": False, ".go": True}
+#: The languages :func:`behaviour_free` can prove inert, as a finding names them.
+INERT_LANGUAGES = "Python (.py, .pyi), C (.c), Objective-C (.m) and Go (.go)"
+
 
 class _DropStrings(ast.NodeTransformer):
     """Remove every bare string statement — docstrings and attribute docstrings alike."""
@@ -464,23 +485,24 @@ def _python_shape(text: str, *, imports: bool = True) -> str | None:
     return ast.dump((_DropStrings() if imports else _DropImports()).visit(tree))
 
 
-def _strip_c_comments(text: str) -> str:
+def _strip_c_comments(text: str, *, raw_backticks: bool = False) -> str:
     """``text`` without ``//`` and ``/* … */`` comments, whitespace outside strings collapsed.
 
-    String and character literals (double-quoted, single-quoted and, for JS/Go, backtick) are kept
-    verbatim with their escapes, so a comment marker inside one is text, not a comment. A
-    reading that goes wrong makes two files differ, never match: the change is then
-    tested, which is the safe side.
+    String and character literals (``"…"`` and ``'…'``, with backslash escapes) are kept
+    verbatim, so a comment marker inside one is text, not a comment. With
+    ``raw_backticks`` (Go) a backtick string is kept verbatim too, and a backslash inside it
+    escapes nothing. Only the languages in :data:`_C_INERT_SUFFIXES` are read this way.
     """
     out: list[str] = []
     i, n = 0, len(text)
     pending_space = False
+    quotes = "\"'`" if raw_backticks else "\"'"
     while i < n:
         ch = text[i]
-        if ch in "\"'`":
+        if ch in quotes:
             end = i + 1
             while end < n and text[end] != ch:
-                end += 2 if text[end] == "\\" else 1
+                end += 2 if text[end] == "\\" and ch != "`" else 1
             if pending_space and out:
                 out.append(" ")
             pending_space = False
@@ -522,11 +544,14 @@ def behaviour_free(change: Change, before: str | None, after: str | None) -> boo
     * **Python** — the two files parse to the same syntax tree once positions and bare
       string statements (docstrings) are set aside: a change to comments, docstrings or
       formatting. A file that does not parse on either side is never behaviour-free.
-    * **Other languages** keel knows a line-comment marker for — every changed line is
-      blank or starts with one.
+    * **C, Objective-C and Go** (:data:`_C_INERT_SUFFIXES`) — every changed line looks like
+      a comment, *and* the two whole files are equal once :func:`_strip_c_comments` has
+      removed their comments with every string literal kept.
 
-    A file added or deleted by the change is never behaviour-free, and neither is any
-    other file type: when in doubt, the tests run.
+    Inertness has to be proven by a string-aware reading of both whole files; a changed
+    line that merely *looks* like a comment proves nothing (it may sit inside a multi-line
+    string). So every other language — and a file added or deleted by the change — is
+    never behaviour-free: the tests run.
     """
     if before is None or after is None:
         return False
@@ -534,21 +559,30 @@ def behaviour_free(change: Change, before: str | None, after: str | None) -> boo
     if suffix in (".py", ".pyi"):
         shape = _python_shape(before)
         return shape is not None and shape == _python_shape(after)
-    prefixes = _COMMENT_PREFIXES.get(suffix)
-    if prefixes is None:
+    if suffix not in _C_INERT_SUFFIXES or not looks_comment_only(change):
         return False
-    looks_like_comments = all(
-        not line.strip() or line.strip().startswith(prefixes)
+    # A leading ``*`` is a block-comment continuation only inside ``/* … */`` — ``*p = 1;``
+    # is a pointer write. So the files must also match once their comments are stripped
+    # (strings kept verbatim), or the change is not inert.
+    raw = _C_INERT_SUFFIXES[suffix]
+    return _strip_c_comments(before, raw_backticks=raw) == _strip_c_comments(
+        after, raw_backticks=raw
+    )
+
+
+def looks_comment_only(change: Change) -> bool:
+    """Is every changed line blank or led by its language's comment marker?
+
+    A *look*, not a proof: :func:`behaviour_free` requires more, and this alone only words
+    the finding for a change that looks comment-only yet was tested and not noticed.
+    """
+    markers = _COMMENT_MARKERS.get(posixpath.splitext(change.path)[1].lower())
+    if markers is None:
+        return False
+    return all(
+        not line.strip() or line.strip().startswith(markers)
         for line in _changed_lines(change.patch)
     )
-    if not looks_like_comments:
-        return False
-    if "/*" not in prefixes:
-        return True
-    # C-family: a leading ``*`` is a block-comment continuation only inside ``/* … */`` —
-    # ``*p = 1;`` is a pointer write. So the files must also match once their comments
-    # are stripped (strings kept verbatim), or the change is not inert.
-    return _strip_c_comments(before) == _strip_c_comments(after)
 
 
 def imports_only(change: Change, before: str | None, after: str | None) -> bool:
@@ -578,7 +612,13 @@ _PYTEST_SUMMARY = re.compile(
 _PYTEST_COUNT = re.compile(r"(\d+) ([a-z]+)")
 #: A pytest short-summary line. The node id never starts with ``(``, which is what keeps
 #: unittest's own ``FAILED (failures=1)`` from being read as a failed pytest test.
-_PYTEST_LINE = re.compile(r"^(FAILED|ERROR) (?!\()\S+(?: - (.*))?$", re.MULTILINE)
+#:
+#: The node id may contain spaces — a parametrized id (``test_v[hello world]``) or a file
+#: name — so it is read as: a bracketed id up to its ``]``, else one word, else the
+#: shortest text before `` - ``; the reason is what follows `` - `` and may be absent.
+_PYTEST_LINE = re.compile(
+    r"^(FAILED|ERROR) (?!\()(?:\S*?\[.*?\]|\S+|.+?)(?: - (.*))?$", re.MULTILINE
+)
 #: A pytest short-summary reason that is an assertion: a rewritten ``assert``, an
 #: ``AssertionError`` (unittest-style assertions under pytest), or ``pytest.fail``.
 _ASSERTION_REASON = re.compile(r"^(?:assert\b|AssertionError\b|Failed:)")
@@ -931,8 +971,15 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
                 )
             )
         elif item.result == UNNOTICED:
+            hint = (
+                "; it looks comment-only, but keel proves a change inert only for "
+                f"{INERT_LANGUAGES} — test it, or leave such files out with "
+                "knobs.revert_check.paths"
+                if looks_comment_only(item.change)
+                else ""
+            )
             findings.append(
-                Finding(_BLOCK, f"{label}: no test notices this change — {item.why}", GATE_ID)
+                Finding(_BLOCK, f"{label}: no test notices this change — {item.why}{hint}", GATE_ID)
             )
         else:
             findings.append(
