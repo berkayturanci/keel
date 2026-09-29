@@ -809,5 +809,145 @@ class TestSwarmRunCLI(unittest.TestCase):
                 self.assertIn("status        : partial_failure", buf.getvalue())
 
 
+class TheWorkerTimeoutFollowsTheProject(unittest.TestCase):
+    """#1279 item 1: the child `keel ship` was killed after a literal 300 s, and it runs
+    the gate suite in a dry run too, so a suite the project allows ten minutes failed
+    every cluster with `code=124` on a dry `swarm-run`."""
+
+    def _plan(self):
+        return build_swarm_plan(
+            [IssueScope(issue=601, title="T", predicted_files=("src/a.py",))],
+            swarm_id="swarm-timeout",
+        )
+
+    def _config_with_budgets(self, tmpdir: str) -> Path:
+        text = Path(".keel/project.yaml").read_text(encoding="utf-8")
+        self.assertIn("\nknobs:\n", text)
+        self.assertNotIn("gate_timeout_s", text)
+        path = Path(tmpdir) / "project.yaml"
+        path.write_text(
+            text.replace("\nknobs:\n", "\nknobs:\n  gate_timeout_s: 900\n  jury_timeout_s: 120\n"),
+            encoding="utf-8",
+        )
+        return path
+
+    def _swarm_run_timeout(self, *extra: str) -> int | None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config_with_budgets(tmpdir)
+            with patch("keel.swarm_runtime.run_swarm_orchestration") as orchestrate:
+                orchestrate.return_value.status = "success"
+                orchestrate.return_value.to_dict.return_value = {}
+                with redirect_stdout(io.StringIO()):
+                    main(
+                        ["swarm-run", str(config), "--root", tmpdir, "--issues", "7", "--json"]
+                        + list(extra)
+                    )
+        return orchestrate.call_args.kwargs.get("timeout_s")
+
+    def test_the_timeout_reaches_the_child_process(self):
+        """End to end, with keel's own runner: the budget is what `subprocess.run` gets."""
+        seen: list[tuple[list[str], object]] = []
+
+        def fake_run(cmd, **kwargs):
+            seen.append((cmd, kwargs.get("timeout")))
+            return subprocess.CompletedProcess(cmd, 0, stdout="{}")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("keel.swarm_runtime.subprocess.run", side_effect=fake_run):
+                result = run_swarm_orchestration(
+                    self._plan(),
+                    ".keel/project.yaml",
+                    root=tmpdir,
+                    dry_run=True,
+                    base_branch="main",
+                    timeout_s=1234,
+                )
+        self.assertEqual(result.status, "success")
+        ships = [timeout for cmd, timeout in seen if "ship" in cmd]
+        self.assertEqual(ships, [1234])
+
+    def test_the_runner_keeps_its_own_default_for_other_commands(self):
+        """canary and swarm_landing call `default_runner(cmd, cwd)` for git; that stays 300."""
+        with patch(
+            "keel.swarm_runtime.subprocess.run",
+            return_value=subprocess.CompletedProcess(["git"], 0, stdout=""),
+        ) as run:
+            default_runner(["git", "status"], Path("."))
+        self.assertEqual(run.call_args.kwargs["timeout"], 300)
+
+    def test_the_default_is_the_projects_gate_plus_jury_budget(self):
+        from keel import config as cfg
+        from keel.swarm import worker_timeout_s
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            loaded = cfg.load_config(str(self._config_with_budgets(tmpdir)))
+        self.assertEqual(worker_timeout_s(loaded), 1020)
+        self.assertEqual(self._swarm_run_timeout(), 1020)
+
+    def test_the_flag_overrides_the_derived_default(self):
+        self.assertEqual(self._swarm_run_timeout("--worker-timeout", "42"), 42)
+
+    def test_an_invalid_worker_timeout_is_refused(self):
+        parser = build_parser()
+        for bad in ("0", "-5", "abc", "1.5"):
+            with self.subTest(bad=bad), redirect_stderr(io.StringIO()) as err:
+                with self.assertRaises(SystemExit) as raised:
+                    parser.parse_args(["swarm-run", ".keel/project.yaml", "--worker-timeout", bad])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("--worker-timeout", err.getvalue())
+
+    def _worker(self, result: CommandResult) -> dict:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            return execute_cluster_worker(
+                ".keel/project.yaml",
+                601,
+                Path(tmpdir),
+                Path(tmpdir) / "wt",
+                runner=lambda cmd, cwd: result,
+                timeout_s=77,
+            )
+
+    def test_a_worker_that_runs_out_is_reported_timed_out(self):
+        res = self._worker(
+            CommandResult(ok=False, code=124, output="gate 1 of 4 ...\n", timed_out=True)
+        )
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["code"], 124)
+        self.assertTrue(res["timed_out"])
+        self.assertTrue(res["output"].startswith("gate 1 of 4 ...\n"))
+        self.assertTrue(res["output"].endswith("legitimately needs longer."))
+        self.assertIn("timed out after 77s", res["output"])
+
+    def test_a_silent_timeout_still_says_why(self):
+        res = self._worker(CommandResult(ok=False, code=124, output="", timed_out=True))
+        self.assertTrue(res["output"].startswith("keel ship timed out after 77s"))
+
+    def test_a_failing_child_is_not_called_a_timeout(self):
+        res = self._worker(CommandResult(ok=False, code=1, output="FAIL test_x"))
+        self.assertFalse(res["timed_out"])
+        self.assertEqual(res["output"], "FAIL test_x")
+
+    def test_the_state_file_records_the_timeout(self):
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            return CommandResult(ok=False, code=124, output="", timed_out=True)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = run_swarm_orchestration(
+                self._plan(),
+                ".keel/project.yaml",
+                root=tmpdir,
+                dry_run=True,
+                runner=runner,
+                base_branch="main",
+                timeout_s=55,
+            )
+            state = load_swarm_state("swarm-timeout", root=tmpdir)
+        cluster = next(iter(result.wave_results[0]["cluster_results"].values()))
+        self.assertTrue(cluster["timed_out"])
+        self.assertEqual(result.status, "failed")
+        self.assertIsNotNone(state)
+        self.assertIn("timed out after 55s", state.workers[0].details)
+
+
 if __name__ == "__main__":
     unittest.main()
