@@ -451,7 +451,8 @@ class Plan:
     """What the gate will revert, and what it had to leave out."""
 
     changes: tuple[Change, ...]
-    #: Production files with no textual hunk (binary, mode-only): not checked.
+    #: Production files with no textual hunk (a binary file, or an empty file added or
+    #: deleted): not checked. A mode-only change is a change of its own, and is checked.
     unrevertable: tuple[str, ...]
     #: Every path the diff touched, for the finding that says none was production.
     touched: tuple[str, ...]
@@ -1112,9 +1113,9 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
       there. The error does prove a test depends on it, so it is a ``nit``. Any other
       error — a ``KeyError``, a ``TypeError``, an instance attribute — is behaviour a test
       should assert on, and blocks, as does any error after reverting a modification.
-    * A production file with no textual hunk (binary, mode-only) blocks as **not
-      checked**: nothing could be reverted, and the gate never certifies what it did not
-      check.
+    * A production file with no textual hunk (binary, or an empty file added or deleted)
+      blocks as **not checked**: nothing could be reverted, and the gate never certifies
+      what it did not check.
     * A diff with no production change is ``SKIPPED`` — judged, with nothing to check.
 
     ``report`` is ``None`` only when there was nothing to execute.
@@ -1124,7 +1125,8 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
         findings.append(
             Finding(
                 _BLOCK,
-                f"{path}: not checked — no textual hunk to revert (a binary or mode-only change)",
+                f"{path}: not checked — no textual hunk to revert (a binary file, or an empty file "
+                "added or deleted)",
                 GATE_ID,
             )
         )

@@ -1388,7 +1388,7 @@ reverted change is then one of:
 | timed out | the run hit its limit | `major` |
 | unreadable | the command failed and its output has no unittest/pytest summary (a crash at import), or pytest failures its summary does not describe | `major`; a `nit` for an addition, on the same evidence |
 | not applied | `git apply -R` could not undo it on `HEAD` | `major` |
-| not checked | over `max_changes`, the budget ran out, or a production file with no textual hunk (binary, mode-only) | `major` |
+| not checked | over `max_changes`, the budget ran out, or a production file with no textual hunk (a binary file, or an empty file added or deleted) | `major` |
 
 The **errored** exception is narrow on purpose. Reverting an *addition* removes a name, and a
 test that calls it can then only error — no assertion can fail against code that is not there —
@@ -2178,11 +2178,12 @@ policy_pack:
 
 ## `gates` vs `extensions`
 
-- **`gates`** lists which **built-in** gates run (`build` / `lint` / `jury`). An unknown
-  name here is an error — but not a `keel validate` one: the schema checks only that
-  `gates` is a list of strings, so `gates: [build, foo]` validates `OK`. The name is
-  refused where the gates are planned — `keel plan`, `keel run-gates` and `keel ship`
-  exit 1 with `unknown built-in gate 'foo'` — so it still fails before any gate runs.
+- **`gates`** lists which **built-in** gates run (`build` / `lint` / `jury` /
+  `revert-check`). An unknown name here is an error — but not a `keel validate` one: the
+  schema checks only that `gates` is a list of strings, so `gates: [build, foo]` validates
+  `OK`. The name is refused where the gates are planned — `keel plan`, `keel run-gates` and
+  `keel ship` exit 1 with `unknown built-in gate 'foo'` — so it still fails before any gate
+  runs.
 - **`extensions`** registers **project-provided** gates/steps (Lego pieces) into named
   backbone slots. They are add-only and run at their slot's step. See
   [extensions.md](extensions.md).
