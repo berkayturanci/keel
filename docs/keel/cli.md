@@ -1931,8 +1931,12 @@ If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturan
 its findings (file/line/severity) into keel findings (critical/major block). If `jury` is
 not installed the s8 gate is a **no-op**, but that does not waive the evidence: a tier-3
 merge still requires a `jury-verdict` unless the run passes `--no-jury`, and it relaxes to
-advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors. Its
-wall-clock limit is [`knobs.jury_timeout_s`](configuration.md#jury_timeout_s) (default
+advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors. That
+is the default policy: off a jury-panel tier, `team.jury.mode: advisory` or `--jury-advisory`
+never requires the verdict and `team.jury.min_vendors` may raise the 2; on a tier whose review
+is the jury panel, no flag or short panel relaxes it, and only a probe that finds the panel
+unstaffable turns that tier's jury off, under `team.jury.on_unavailable: fallback` (the
+default). Its wall-clock limit is [`knobs.jury_timeout_s`](configuration.md#jury_timeout_s) (default
 600s), separate from `gate_timeout_s` because a cross-vendor panel and a test suite have
 unrelated runtimes.
 
@@ -2055,7 +2059,7 @@ The checks are:
   with its group, so `role: ["core"]` means `role:core`), `policy_pack.scan.issue_labels.*`,
   and the attribution vocabulary: `agent:<vendor>` for every built-in vendor plus each
   `knobs.delegate_profiles` entry's vendor, and `model:<base>` for a model a profile pins.
-  A `model:*` minted from `--delegate vendor:model` or a `delegate-model:` issue label is
+  A `model:*` minted from `--delegate vendor:model` or `keel delegate run --model` is
   unbounded and cannot be enumerated ahead of time, so the check does not try.
   Missing labels are a `warn` that prints the exact `gh label create` commands under the
   check; **never a `fail`**. Only runs when a config path names an `owner`/`repo`, and one
@@ -2175,8 +2179,8 @@ redefined, the same invariant `keel validate` enforces for `knobs.delegate_profi
 `keel doctor --providers` reports for the registry.
 
 `--model` overrides the model half. Either way the token is validated before use, because
-it can arrive from a `delegate-model:` issue label — and **which rule applies depends on
-where the model lands**:
+it arrives per run on the command line, a lower-trust source than config — and **which
+rule applies depends on where the model lands**:
 
 | destination | accepted | why |
 | --- | --- | --- |

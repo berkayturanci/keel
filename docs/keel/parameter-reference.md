@@ -2230,15 +2230,14 @@ compound `workflow_profile`. `--compound` composes with every other flag
 
 Value set `claude | codex | agy | ollama:MODEL | anthropic-api:MODEL | openai-api:MODEL | google-api:MODEL`,
 plus the name of any `knobs.delegate_profiles` entry;
-`ollama:` and the `*-api:` values require a non-empty model
-(per-issue model overrides can also come from a `delegate-model:<name>` label).
+`ollama:` and the `*-api:` values require a non-empty model.
 Implementer precedence at s4, most specific first: `--delegate` flag >
 `knobs.team.profiles.<--team>` (the operator-named bench) > `knobs.team.by_difficulty.<band>`
 (the scored bench) > `knobs.team.implement.by_role` (by the issue's role label) >
-`knobs.team.implement.default` > the deprecated `knobs.implementer_agents` > issue
-`delegate:*` label > `HOST_AGENT` (the CLI driving the run, resolved from the runtime). The
-core of that chain — everything but the label — is the one
-[`configuration.md`](configuration.md#team) resolves, field by field. `keel ship --json` publishes the winner and the config
+`knobs.team.implement.default` > the deprecated `knobs.implementer_agents` > `HOST_AGENT`
+(the CLI driving the run, resolved from the runtime). That chain is the one
+[`configuration.md`](configuration.md#team) resolves, field by field; core reads no
+`delegate:*` issue label, so `--delegate` is how one issue is routed elsewhere. `keel ship --json` publishes the winner and the config
 path it came from as `assignment.implementer`, so s4 reads the resolution rather than
 recomputing it. Delegated CLI
 implementers are fed the prompt via stdin and run network-enabled; a bare local (Ollama)
@@ -2371,7 +2370,11 @@ downgrade needs the count to be reported, by a posted verdict or by `--jury-vend
 until then the mode stays gating. So a missing jury does not waive anything: without the
 `jury` binary the s8 gate is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a `jury-verdict`
 unless the run passes `--no-jury`, and it relaxes to advisory only when a posted verdict
-(or `--jury-vendors`) reports fewer than 2 vendors. Supply the count with
+(or `--jury-vendors`) reports fewer than 2 vendors. That is the default policy: off a
+jury-panel tier, `team.jury.mode: advisory` or `--jury-advisory` never requires the verdict and
+`team.jury.min_vendors` may raise the 2; on a tier whose review is the jury panel, no flag or
+short panel relaxes it, and only a probe that finds the panel unstaffable turns that tier's
+jury off, under `team.jury.on_unavailable: fallback` (the default). Supply the count with
 [`evidence-verify --jury-vendors`](cli.md); the resolved `jury.mode` is what the evidence
 gate reads to decide whether a `jury-verdict` is required. The single jury verdict comment
 is posted through `keel post-comment --artifact jury-verdict`.

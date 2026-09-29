@@ -216,7 +216,7 @@ capture.
   `contract.implement_mode.loop` (`enabled`, `max_iterations`, `gate_output_max_bytes`,
   `source`, `wraps`) — never re-derive it.
 - `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>` — the
-  **implementer**. Per-run override of any issue role/delegate label. `ollama:` and the
+  **implementer**. Per-run override of the configured implementer. `ollama:` and the
   `*-api:` values require a non-empty model. The `*-api:` values are the **hosted-API
   delegates** (no agent CLI needed — just `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` in the
   environment; see s4). `PROFILE` is the name of a `knobs.delegate_profiles` entry — a
@@ -283,7 +283,7 @@ together; positionals are everything not consumed by a flag. Repeated single-val
 (e.g. `--reviewers 2 --reviewers 3`) are user error. With **no issue numbers**, run in
 watch mode: take the top of the backlog (s1). Resolve **`HOST_AGENT`** from the runtime
 (the CLI executing this command: `claude` / `codex` / `agy`) — it is the default
-implementer and reviewer; a delegate label or an explicit `--delegate`/`--review-delegate`
+implementer and reviewer; `knobs.team` or an explicit `--delegate`/`--review-delegate`
 overrides it. State the detected window state and host agent in your first user-facing line.
 
 ## The team — one resolved assignment, not four independent guesses
@@ -423,11 +423,14 @@ none were found. The lessons are context, not a checklist: they say what went wr
 last time work of this shape was done, and they do not replace the issue's acceptance
 criteria. Do not paraphrase them, and do not append your own.
 
-Read the implementer from `assignment.implementer` — core resolved it from
-`knobs.team.implement` (or the deprecated `implementer_agents`) by the issue's role label,
-**overridden by `--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag >
-`team.implement.by_role` > `team.implement.default` > `implementer_agents` (deprecated) > issue
-`delegate:*` label > `HOST_AGENT`. Dispatch on `assignment.implementer.kind`:
+Read the implementer from `assignment.implementer` — core resolved it from `knobs.team`
+(or the deprecated `implementer_agents`) by the issue's role label, **overridden by
+`--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag >
+`team.profiles.<--team>` bench > `team.by_difficulty.<band>` bench (only where a band was
+scored, i.e. a `keel swarm-plan` cluster; `keel ship` scores none) > `team.implement.by_role` >
+`team.implement.default` > `implementer_agents` (deprecated) > `HOST_AGENT`. Core reads no
+`delegate:*` issue label; route one issue elsewhere with `--delegate`. Dispatch on
+`assignment.implementer.kind`:
 
 - **Host / Claude-class subagent** (`kind: "subagent"`) — run the standard implement brief
   under the subagent named by `assignment.implementer.name`.
@@ -525,8 +528,8 @@ Read the implementer from `assignment.implementer` — core resolved it from
 - **Model and effort selection.** `--provider <name>:<model>` or `--model <token>` picks
   the model; a per-run choice wins over the profile's or the registry entry's, and core
   validates the token (`agents.is_safe_model_token`) before it can reach an argv or a URL
-  path — a `delegate-model:<name>` issue label is a lower-trust source than config, so an
-  unsafe value is refused rather than escaped. `--effort low|medium|high` is translated
+  path — a per-run token is a lower-trust source than config, so an unsafe value is
+  refused rather than escaped. `--effort low|medium|high` is translated
   per vendor; a provider that cannot express it returns `effort_applied: false` with a
   warning instead of silently running at its default.
 - **Configured providers.** A `knobs.delegate_profiles` entry (`vendor: cli` or
@@ -1646,4 +1649,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.24.3 source_sha256=429b3c0120c4f3ae0278c5f3c2a1b7b00c601e34a6248acf2f56619e713a77c4 generated_sha256=de92d12d5ec87f1418ac2f3c9ce74fa6ec4d87d630449ea6f1c7895a726a8ea2 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.24.3 source_sha256=958895950e126d42bf407a6a5f694159cdb50ae5556bca624c1b7a1ec3b0ff08 generated_sha256=0d9b048c153572efe9906fd67d5a569a36af59dd1b76e6ce96aa6e1d570d2b9c -->

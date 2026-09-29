@@ -100,8 +100,8 @@ def _unsafe_model_reason(model: str) -> str | None:
 
     Only ``google-api`` puts the model in the URL; ``anthropic-api``/``openai-api``
     carry it in the JSON body, where a stray ``/`` or ``?`` is inert. Here it is not:
-    the model arrives from ``--delegate google-api:MODEL`` or a ``delegate-model:``
-    issue label, so a value containing ``/``, ``..``, ``?`` or ``#`` could retarget
+    the model arrives per run from ``--delegate google-api:MODEL`` or ``keel delegate run
+    --model``, so a value containing ``/``, ``..``, ``?`` or ``#`` could retarget
     the request to a different path or smuggle query parameters onto a URL that also
     carries an API key header. Rejected rather than escaped — no real Gemini model id
     needs anything outside ``[A-Za-z0-9._-]``.

@@ -98,8 +98,11 @@ it or start fresh — do not silently clobber in-flight work.
 ## Step 3 — Resolve the implementer
 
 Do not resolve the implementer yourself — ask core, which resolves it exactly as
-`/keel:ship` s4 does (`--delegate` > `team.implement.by_role` > `team.implement.default` >
-the deprecated `implementer_agents` > the **host agent**). Pass the issue's
+`/keel:ship` s4 does. Precedence: `--delegate` flag > `team.profiles.<--team>` bench >
+`team.by_difficulty.<band>` bench > `team.implement.by_role` > `team.implement.default` >
+`implementer_agents` (deprecated) > `HOST_AGENT`. This command passes no `--team` and
+`keel plan` scores no band, so neither bench applies here. Core reads no `delegate:*` issue
+label. Pass the issue's
 **role/platform label** as `--role`, and `--delegate` only when this run was given one:
 
 ```bash

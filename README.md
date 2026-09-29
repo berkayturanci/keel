@@ -178,7 +178,11 @@ merges out of the night. The one-command setup and what to check afterwards are 
 - **For tier-3 changes:** [ai-jury](https://github.com/berkayturanci/ai-jury), or `--no-jury`.
   Without the `jury` binary the s8 run is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a
   `jury-verdict` unless the run passes `--no-jury`; it relaxes to advisory only when a posted
-  verdict (or `--jury-vendors`) reports fewer than 2 vendors.
+  verdict (or `--jury-vendors`) reports fewer than 2 vendors. That is the default policy: off a
+  jury-panel tier, `team.jury.mode: advisory` or `--jury-advisory` never requires the verdict and
+  `team.jury.min_vendors` may raise the 2; on a tier whose review is the jury panel, no flag or
+  short panel relaxes it, and only a probe that finds the panel unstaffable turns that tier's
+  jury off, under `team.jury.on_unavailable: fallback` (the default).
 
 The dry commands in the Quickstart need only Python and git.
 
@@ -413,7 +417,12 @@ or the reference it points at.
   listing `jury` in `gates:` also runs it at s8. Without the `jury` binary the s8 run is a
   no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
   it relaxes to advisory only when a posted verdict (or `--jury-vendors`) reports fewer than
-  2 vendors ([details](docs/keel/overview.md#what-you-get)).
+  2 vendors. That is the default policy: off a jury-panel tier, `team.jury.mode: advisory` or
+  `--jury-advisory` never requires the verdict and `team.jury.min_vendors` may raise the 2; on a
+  tier whose review is the jury panel, no flag or short panel relaxes it, and only a probe that
+  finds the panel unstaffable turns that tier's jury off, under
+  `team.jury.on_unavailable: fallback` (the default)
+  ([details](docs/keel/overview.md#what-you-get)).
 - **Safe merges** — `keel merge` claims the lock, re-checks the window, reads the live CI
   rollup and verifies the evidence before it merges, over GraphQL or REST
   ([reference](docs/keel/cli.md#keel-merge-projectyaml---pr-n---root-dir---method-squashmergerebase---transport-autographqlrest---dry-run---effort-lowmediumhigh---team-profile)).

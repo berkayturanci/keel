@@ -62,11 +62,14 @@ Pass `--delegate` (for implementer) or `--review-delegate` (for reviewer):
 /keel:ship 123 --delegate openrouter:deepseek/deepseek-r1
 ```
 
-### 2. Issue Labels
-Label an issue on GitHub to route implementation automatically:
-* `delegate:google-api` + `delegate-model:<model-id>`
-* `delegate:anthropic-api` + `delegate-model:claude-sonnet-5`
-* `delegate:openrouter` + `delegate-model:meta-llama/llama-3.3-70b-instruct`
+### 2. The Issue's Role Label
+keel reads no `delegate:<vendor>` or `delegate-model:<model>` issue label; a label like that
+routes nothing. The one issue label that picks an implementer is the **role** label:
+`/keel:ship` reads it off the issue in s1 and passes it as `--role`, which selects that
+role's `knobs.team.implement.by_role` seat (below). A bench outranks it: `--team <profile>`
+staffs the run from a `knobs.team.profiles` entry, and a `keel swarm-plan` cluster gets the
+`knobs.team.by_difficulty` bench for its scored band. `--delegate` outranks both. The full
+order is in [`configuration.md#team`](configuration.md#team).
 
 ### 3. Project Team Policy (`project.yaml`)
 `knobs.team` is where a project states its whole team — implementer per issue role, one

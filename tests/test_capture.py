@@ -908,10 +908,12 @@ class TheRecordSaysWhereItsArtifactCanBeRead(unittest.TestCase):
     """`capture.artifact_scope` (#1185).
 
     An in-repo sink's path means the same thing in every clone. A sink outside the
-    checkout records an absolute path, and the run ledger is *committed*, so that path
-    travels to teammates and CI runners where it names nothing. Saying which kind it is
-    lets `capture-verify` tell "written somewhere this host cannot see" from "never
-    written" — the same absence, very different facts.
+    checkout records an absolute path, which names nothing on any other host. The run
+    ledger is gitignored per-host state by default (`.keel/state/run-ledger.jsonl`), but
+    `policy_pack.reports.run_ledger` may point it at a tracked file, and then that path
+    travels to teammates and CI runners. Saying which kind it is lets `capture-verify`
+    tell "written somewhere this host cannot see" from "never written" — the same
+    absence, very different facts.
     """
 
     def test_the_sinks_shape_decides(self):
