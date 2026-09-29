@@ -196,6 +196,22 @@ class TestParseDiff(unittest.TestCase):
         self.assertEqual(plan.unrevertable, ('src/b"in.py',))
         self.assertFalse(rc.judge(plan, None).ok)
 
+    def test_the_not_checked_finding_names_what_has_no_hunk(self):
+        """agy, after #1385: the finding said "a binary or mode-only change", but a mode
+        change is a change of its own; only a binary file or an empty one added or
+        deleted has nothing to revert."""
+        text = (
+            "diff --git a/src/e.py b/src/e.py\nnew file mode 100644\n"
+            "index 0000000..e69de29\n"
+            "diff --git a/src/t.py b/src/t.py\nold mode 100644\nnew mode 100755\n"
+        )
+        plan = rc.plan_changes(rc.parse_diff(text), tests=[], paths=[], unit="hunk")
+        self.assertEqual(plan.unrevertable, ("src/e.py",))
+        self.assertEqual([c.path for c in plan.changes], ["src/t.py"])
+        (finding,) = [f for f in rc.judge(plan, None).findings if "not checked" in f.message]
+        self.assertIn("an empty file added or deleted", finding.message)
+        self.assertNotIn("mode-only", finding.message)
+
     def test_an_unquoted_header_splits_in_the_middle(self):
         cases = {
             "diff --git a/x b/y.py b/x b/y.py": "x b/y.py",
