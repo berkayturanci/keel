@@ -152,6 +152,29 @@ class TestScratchDirCommand(unittest.TestCase):
             self.assertEqual(out.strip(), str(Path(tmp) / ".keel" / "scratch"))
             self.assertFalse((Path(tmp) / ".keel").exists())
 
+    def test_an_uncreatable_root_is_a_clean_error_not_a_traceback(self):
+        # Used to escape as a PermissionError traceback (docs audit 2026-09-29). Driven
+        # through the seam rather than a chmod'd directory, which root and Windows ignore.
+        denied = PermissionError(13, "Permission denied", "ro/.keel")
+        with mock.patch("keel.cli.workspace.scratch_dir", side_effect=denied):
+            try:
+                rc, out, err = self._run(["scratch-dir", "--root", "ro"])
+            except OSError as exc:
+                self.fail(f"escaped as a traceback: {exc!r}")
+            else:
+                self.assertEqual(rc, 1)
+                self.assertEqual(out, "")
+                self.assertEqual(
+                    err,
+                    "keel scratch-dir: cannot create the scratch dir: "
+                    "[Errno 13] Permission denied: 'ro/.keel'\n",
+                )
+
+    def test_the_default_root_prints_the_relative_path(self):
+        # What cli.md now says it prints; it used to say "the absolute path".
+        rc, out, _ = self._run(["scratch-dir", "--no-create"])
+        self.assertEqual((rc, out), (0, f"{Path('.keel') / 'scratch'}\n"))
+
 
 class TestGitActuallyIgnoresWhatKeelWrites(unittest.TestCase):
     """Ask git, and ask it about the paths the code really writes.

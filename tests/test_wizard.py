@@ -16,7 +16,7 @@ import re
 import unittest
 from pathlib import Path
 
-from keel import cli, scaffold, team, wizard, wizardrun
+from keel import cli, model, scaffold, team, wizard, wizardrun
 from keel import config as cfg
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -672,6 +672,14 @@ class TestApplyAnswers(unittest.TestCase):
         self.assertIn("a real wizard question, but this run never reaches it", errors[0])
         self.assertIn("`keel init --wizard` question", errors[0])
 
+    def test_the_run_scope_names_the_step_that_really_classifies_the_tier(self):
+        # It said s1 (select); the backbone classifies at s5 (docs audit 2026-09-29).
+        classify_step = next(step.id for step in model.BACKBONE if step.name == "classify")
+        _, errors = wizard.apply_answers(
+            wizard.start(_catalog()), {"mode": wizard.CUSTOMIZE, "review.3": "claude"}
+        )
+        self.assertIn(f"its tier is not classified until {classify_step}", errors[0])
+
     def test_a_misspelled_key_is_a_different_message_from_an_unreachable_one(self):
         _, errors = wizard.apply_answers(wizard.start(_catalog()), {"nonsense": "x"})
         self.assertEqual(len(errors), 1)
@@ -966,7 +974,7 @@ class TestQuickStartChangesNothing(unittest.TestCase):
     A wizard told to take every default must resolve the *same* team as a run with no
     `--wizard` at all. It did not: `apply_resolution` materialised every resolved value
     as a flag, so quick-start on a tier-3 change wrote `--reviewers 2` (the run bench is
-    derived at a nominal tier, because the real one is not classified until s1) and
+    derived at a nominal tier, because the real one is not classified until s5) and
     `--no-jury` (the jury question's opening value when `knobs.team` names no mode) —
     dropping a reviewer and the gating jury from the strictest tier keel has.
     """

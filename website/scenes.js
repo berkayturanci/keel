@@ -139,7 +139,7 @@
       requestAnimationFrame(function () { if (nodes[0]) { var x = dotX(0); jdot.style.left = x + "px"; jline.style.width = Math.max(0, x - 7) + "px"; } });
       var read = el("div", "sc-read", '<span class="rid">s0</span><span class="rname">config</span><span class="rblurb">' + steps[0].blurb + "</span>");
       stage.appendChild(read);
-      var cap = el("div", "sc-cap", '<span class="blink"></span><span>$ /keel:ship --issue 128</span>');
+      var cap = el("div", "sc-cap", '<span class="blink"></span><span>$ /keel:ship 128</span>');
       stage.appendChild(cap); var capt = cap.querySelector("span:last-child");
       steps.forEach(function (s, i) {
         at(500 + i * 470, function () {
@@ -153,7 +153,7 @@
           var rslots = s.slots && s.slots.length ? '<span class="rslots">slots:' + s.slots.map(function (h) { return '<code class="' + (SLOT_BLOCK[h] ? "block" : SLOT_PRIMARY[h] ? "primary" : "") + '">' + h + (SLOT_BLOCK[h] ? " ⊘" : "") + "</code>"; }).join("") + "</span>" : "";
           read.innerHTML = '<span class="rid">' + s.id + '</span><span class="rname">' + s.name + '</span><span class="rblurb">' + s.blurb + "</span>" + tag + rslots;
           if (i === steps.length - 1) { nodes[i].classList.add("done"); jdot.classList.add("merged"); jline.classList.add("merged"); cap.classList.add("ok"); capt.textContent = "✓ issue #128 merged + closed"; }
-          else capt.textContent = "$ /keel:ship --issue 128 · running…";
+          else capt.textContent = "$ /keel:ship 128 · running…";
         });
       });
       at(500 + steps.length * 470 + 2200, loop);

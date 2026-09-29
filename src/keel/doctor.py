@@ -4,8 +4,8 @@ This module is **pure**: no network, no wall-clock, no randomness. The caller
 (``keel.cli``) performs all I/O — fetching the latest version from PyPI, reading
 adapter markers off disk, loading config, probing state-path existence — and
 passes the already-gathered facts into :func:`run_doctor`, which classifies each
-check as ``ok`` / ``warn`` / ``fail`` and returns a structured, JSON-stable
-result. Every branch here is deterministic and unit-tested.
+check as ``ok`` / ``skipped`` / ``warn`` / ``fail`` and returns a structured,
+JSON-stable result. Every branch here is deterministic and unit-tested.
 
 Checks
 ------
@@ -230,9 +230,10 @@ def _check_orphan_adapters(orphans: list[dict[str, object]]) -> CheckResult:
 def _check_core_version(installed: str, core_version: str | None) -> CheckResult:
     """``core_version`` constraint from project.yaml vs the installed CLI version."""
     if core_version is None:
+        # Reported, not passed: with no config there is no constraint to hold the CLI to.
         return CheckResult(
             "core_version",
-            _OK,
+            _SKIPPED,
             "no project config given — core_version check skipped",
             {"installed": installed, "core_version": None},
         )
@@ -263,10 +264,12 @@ def _check_core_version(installed: str, core_version: str | None) -> CheckResult
 def _check_state_paths(state_paths: list[dict[str, object]]) -> CheckResult:
     """Advisory check on configured ledger/checkpoint paths — missing == empty history."""
     if not state_paths:
+        # A config always resolves both paths, so an empty list means no config was given:
+        # nothing was looked at, which is ``skipped`` rather than a clean bill.
         return CheckResult(
             "state_paths",
-            _OK,
-            "no state paths configured",
+            _SKIPPED,
+            "no project config given — state paths not checked",
             {"paths": []},
         )
     for entry in state_paths:
@@ -301,7 +304,7 @@ def _check_python_toolchain(toolchain: dict[str, object] | None) -> CheckResult:
     if toolchain is None:
         return CheckResult(
             "python_toolchain",
-            _OK,
+            _SKIPPED,
             "build-gate interpreter not probed",
             {},
         )
@@ -374,7 +377,7 @@ def _check_checkout_binding(module_path: str | None, checkout_root: str | None) 
     if not checkout_root:
         return CheckResult(
             "checkout_binding",
-            _OK,
+            _SKIPPED,
             "not run against a keel checkout; binding not checked",
             {"module_path": module_path, "checkout_root": None},
         )
@@ -661,7 +664,7 @@ def run_doctor(
     if providers is not None:
         checks.append(_check_providers(providers))
     # A skipped check reports that it could not look; it never speaks for the roll-up.
-    # ``checkout_binding`` is always ``ok`` or ``warn``, so this is never empty.
+    # ``cli_version`` is never ``skipped`` (offline is its ``warn``), so this is never empty.
     worst = max((c.status for c in checks if c.status != _SKIPPED), key=lambda s: _RANK[s])
     counts = {_OK: 0, _SKIPPED: 0, _WARN: 0, _FAIL: 0}
     for check in checks:

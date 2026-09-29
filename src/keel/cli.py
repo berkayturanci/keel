@@ -4184,6 +4184,10 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
         head_ref=artifacts.get("head_ref"),
         pr_comments=artifacts["pr_comments"],
         pr_reviews=artifacts["pr_reviews"],
+        # This PR's own ship_run record is ship provenance (signal 7 in evidence.md).
+        # It was loaded above and never handed over, so the signal could not fire
+        # (docs audit 2026-09-29).
+        ledger_records=_ship_run_records(ledger_record),
     )
     enforced = gate["enforced"]
     report = evidence.verify(
@@ -4885,8 +4889,16 @@ def _cmd_scratch_dir(args: argparse.Namespace) -> int:
     Adapters wire this as ``SCRATCH=$(keel scratch-dir)`` so every transient
     artifact (PR diffs, issue dumps, draft prose) lands under ``.keel/scratch``
     instead of the consumer's checkout.
+
+    A root it cannot create the directory under is a one-line error and exit 1, not a
+    traceback: the caller is a ``$(…)`` substitution, so what it needs is an empty
+    stdout, a non-zero exit and one readable reason (docs audit 2026-09-29).
     """
-    scratch = workspace.scratch_dir(args.root, create=args.create)
+    try:
+        scratch = workspace.scratch_dir(args.root, create=args.create)
+    except OSError as exc:
+        print(f"keel scratch-dir: cannot create the scratch dir: {exc}", file=sys.stderr)
+        return 1
     print(scratch)
     return 0
 
@@ -5405,6 +5417,7 @@ def _verify_merge_evidence(
     # or empty file list is deliberately not docs-only either — this carve-out is the
     # one place an empty CI check set is tolerated, so it must fail closed.
     docs_only = classify.is_docs_only(changed_files, config.knobs.docs_gate_paths)
+    ledger_record = _merge_ledger_record(args, config)
     review_contract = ship.resolve_review_contract(
         tier=tier,
         reviewer_override=args.reviewers,
@@ -5424,7 +5437,7 @@ def _verify_merge_evidence(
             config,
             args,
             tier=tier,
-            pinned=_shipped_jury_availability(artifacts, _merge_ledger_record(args, config)),
+            pinned=_shipped_jury_availability(artifacts, ledger_record),
         ),
         # …and reads the panel size off the same posted jury verdict `evidence-verify`
         # reads, so a jury-panel tier is held to the panel that actually ran (#1015).
@@ -5444,6 +5457,8 @@ def _verify_merge_evidence(
         head_ref=artifacts.get("head_ref"),
         pr_comments=artifacts["pr_comments"],
         pr_reviews=artifacts["pr_reviews"],
+        # The same signal `evidence-verify` reads: the merge gate must not arm on less.
+        ledger_records=_ship_run_records(ledger_record),
     )
     enforced = gate["enforced"]
     report = evidence.verify(
@@ -5716,6 +5731,15 @@ def _evidence_ledger_record(
     else:
         records = ledger.read_records(ledger.resolve_path(args.root, config))
     return ledger.latest_ship_run_for_pr(records, args.pr)
+
+
+def _ship_run_records(record: dict[str, object] | None) -> list[dict[str, object]]:
+    """The ``ledger_records`` arming signal for :func:`keel.evidence.gate_decision`.
+
+    Only the ship_run record matched to *this* pull request — the one both gates already
+    load — so another PR's run in the same ledger can never arm this one.
+    """
+    return [record] if record is not None else []
 
 
 def _merge_ledger_record(
