@@ -6,6 +6,30 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The Ship watermark names ai-jury only when a jury sat.** The s11 closure comment's
+  signature said "with ai-jury consensus" on every run, including ones whose `Jury` line read
+  `off`. It now adds the clause only when the record's `run_context.jury_mode` is `gating` or
+  `advisory` and the panel did not fall back or refuse. `badges.md` also stops offering a
+  `watermark: false` opt-out that no knob or flag sets (docs audit 2026-09-29).
+- **The VS Code / Cursor extension's merge-window bar reads the window.** It ran
+  `keel window … --json`, a flag `keel window` does not have, and every failure fell back to
+  "open", so the bar said `Keel: Open` through the night lock. It now parses what
+  `keel window` prints and shows `Open`, `Night Lock`, `No Window`, or `Window ?` when keel
+  could not answer. `editors.md` no longer promises a countdown, and says the Ship command is
+  a dry assessment and the Visualizer opens the website (docs audit 2026-09-29).
+- **`keel doctor` reports `skipped` for checks that did not look.** `checkout_binding` outside
+  a keel checkout, and `core_version` / `state_paths` without a config, said `ok`
+  (docs audit 2026-09-29).
+- **`keel scratch-dir` fails cleanly on a root it cannot write.** It raised an `OSError`
+  traceback; it now prints one error line and exits 1. `cli.md` says it prints
+  `<root>/.keel/scratch` (relative for a relative root) rather than "the absolute path"
+  (docs audit 2026-09-29).
+- **A PR's own `ship_run` ledger record arms the evidence gate, as documented.**
+  `evidence-verify` and `keel merge` loaded that record but never passed it to the arming
+  decision, so signal 7 in `evidence.md` could not fire (docs audit 2026-09-29).
+- **The run wizard says the tier is classified at s5, not s1** (docs audit 2026-09-29).
+
 ### Companion
 - **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py
   --package keel-visual [--tag keel-visual-vX.Y.Z]` checks keel-visual's two version markers
