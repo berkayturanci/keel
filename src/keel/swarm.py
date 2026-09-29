@@ -320,6 +320,12 @@ class SwarmLandingResult:
     #: verify — (cluster_id, reason) pairs. Held is not failed: the code is
     #: intact, the independent-review contract is simply not yet satisfied.
     held_clusters: tuple[tuple[str, str], ...] = ()
+    #: Why a live landing did not start at all: a dirty working tree, or a
+    #: checkout whose status or HEAD could not be read. Empty when it started.
+    refused: str = ""
+    #: What the operator must still do by hand after the wave; today only a
+    #: checkout that could not be returned to the branch it started on.
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -331,6 +337,8 @@ class SwarmLandingResult:
             "failed_clusters": list(self.failed_clusters),
             "held_clusters": [list(pair) for pair in self.held_clusters],
             "status": self.status,
+            "refused": self.refused,
+            "warnings": list(self.warnings),
         }
 
 
@@ -1312,6 +1320,53 @@ def evaluate_wave_landing_mode(
     )
 
 
+#: keel's own runtime subtrees of a ``.keel`` directory (see
+#: ``workspace.RUNTIME_IGNORE_ENTRIES``), and the ``.keel/.gitignore`` keel
+#: scaffolds to ignore them. keel writes all of these itself (the swarm run state
+#: and the merge lock scaffold the gitignore on first write), so a project that
+#: has not committed that gitignore yet sees them as untracked. They are not the
+#: operator's work, so they do not make a tree dirty.
+_KEEL_RUNTIME_PATH = re.compile(
+    r'^"?(?:.*/)?\.keel/(?:(?:state|activity|scratch|worktrees)/|\.gitignore$)'
+)
+
+#: How many status entries a dirty-tree refusal names before it summarises.
+_DIRTY_TREE_LISTED = 20
+
+
+def landing_tree_changes(porcelain: str) -> tuple[str, ...]:
+    """The ``status --porcelain`` entries that make a checkout unsafe to land in.
+
+    Landing checks out, rebases and merges branches in the operator's own
+    checkout, so any change there (staged, unstaged or untracked) is either
+    carried onto another branch or blocks a checkout halfway through a wave
+    (#1279). Every entry counts except untracked files under keel's own runtime
+    subtrees. Each entry is returned as printed, status code included, so the
+    refusal says which files are tracked and which are new.
+    """
+    changes: list[str] = []
+    for line in porcelain.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("?? ") and _KEEL_RUNTIME_PATH.match(line[3:]):
+            continue
+        changes.append(line)
+    return tuple(changes)
+
+
+def render_dirty_tree_refusal(changes: Sequence[str]) -> str:
+    """The reason a live landing gives for refusing a dirty working tree."""
+    listed = ", ".join(changes[:_DIRTY_TREE_LISTED])
+    more = len(changes) - _DIRTY_TREE_LISTED
+    if more > 0:
+        listed += f", and {more} more"
+    return (
+        "the working tree has uncommitted changes, and landing checks out and merges "
+        f"branches in it: {listed}. Commit or remove them (or land from a clean clone), "
+        "then run swarm-land again; nothing was checked out or merged"
+    )
+
+
 def render_swarm_landing_result(result: SwarmLandingResult) -> str:
     """Render human-readable summary of a SwarmLandingResult."""
     status_icon = (
@@ -1329,4 +1384,8 @@ def render_swarm_landing_result(result: SwarmLandingResult) -> str:
         lines.append("  held    : review evidence missing — not landed")
         for cluster_id, reason in result.held_clusters:
             lines.append(f"    {cluster_id}: {reason}")
+    if result.refused:
+        lines.append(f"  refused : {result.refused}")
+    for warning in result.warnings:
+        lines.append(f"  warning : {warning}")
     return "\n".join(lines)

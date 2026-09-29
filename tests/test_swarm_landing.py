@@ -23,7 +23,9 @@ from keel.swarm import (
     SwarmWorkerStatus,
     build_swarm_plan,
     evaluate_wave_landing_mode,
+    landing_tree_changes,
     load_swarm_state,
+    render_dirty_tree_refusal,
     render_swarm_landing_result,
     save_swarm_state,
 )
@@ -37,6 +39,24 @@ from keel.swarm_landing import (
     resolve_adjacent_conflict,
     resolve_conflict_content,
 )
+
+
+def _home(runner, branch: str = "feature"):
+    """Answer a live landing's clean-tree and HEAD reads as a clean checkout on ``branch``.
+
+    Every live landing starts by reading ``git status`` and HEAD (#1279). The tests
+    about what happens after that get a checkout that passes the check and never
+    moves, so their runners keep answering only the commands they are about.
+    """
+
+    def wrapped(cmd: list[str], cwd: Path) -> CommandResult:
+        if cmd[:3] == ["git", "status", "--porcelain"] and "--untracked-files=all" in cmd:
+            return CommandResult(ok=True, code=0, output="")
+        if cmd[:2] == ["git", "symbolic-ref"]:
+            return CommandResult(ok=True, code=0, output=branch)
+        return runner(cmd, cwd)
+
+    return wrapped
 
 
 class TestConflictHealing(unittest.TestCase):
@@ -475,7 +495,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=mock_runner,
+                runner=_home(mock_runner),
                 evidence_checker=None,
                 base_branch="main",
             )
@@ -523,7 +543,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=mock_runner,
+                runner=_home(mock_runner),
                 evidence_checker=checker,
                 base_branch="main",
             )
@@ -593,7 +613,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     "cluster-1-101": ["src/shared.py"],
                     "cluster-1-102": ["src/shared.py"],
                 },
-                runner=healing_runner,
+                runner=_home(healing_runner),
                 resolver=lambda _text: "resolved\n",
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
                 base_branch="main",
@@ -635,7 +655,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     "cluster-1-101": ["src/shared.py"],
                     "cluster-1-102": ["src/shared.py"],
                 },
-                runner=drifted_runner,
+                runner=_home(drifted_runner),
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
                 base_branch="main",
             )
@@ -700,7 +720,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     "cluster-1-101": ["src/shared.py"],
                     "cluster-1-102": ["src/shared.py"],
                 },
-                runner=clean_runner,
+                runner=_home(clean_runner),
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", sha),
                 base_branch="main",
             )
@@ -784,7 +804,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                         project_yaml=".keel/project.yaml",
                         root=tmpdir,
                         dry_run=False,
-                        runner=runner,
+                        runner=_home(runner),
                         evidence_checker=lambda _b, a=answer: a,
                         base_branch="main",
                     )
@@ -828,7 +848,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=moving_runner,
+                runner=_home(moving_runner),
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
                 base_branch="main",
             )
@@ -861,7 +881,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=blind_runner,
+                runner=_home(blind_runner),
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
                 base_branch="main",
             )
@@ -887,7 +907,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=steady_runner,
+                runner=_home(steady_runner),
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", sha),
                 base_branch="main",
             )
@@ -926,7 +946,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     "cluster-1-101": ["src/shared.py"],
                     "cluster-1-102": ["src/shared.py"],
                 },
-                runner=healing_runner,
+                runner=_home(healing_runner),
                 resolver=lambda _t: "resolved\n",
                 evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
                 base_branch="main",
@@ -953,7 +973,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=recording_runner,
+                runner=_home(recording_runner),
                 evidence_checker=None,
                 base_branch="develop",
             )
@@ -1000,7 +1020,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=mock_runner,
+                runner=_home(mock_runner),
                 evidence_checker=checker,
                 base_branch="main",
             )
@@ -1022,7 +1042,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=mock_ok_runner,
+                runner=_home(mock_ok_runner),
                 evidence_checker=lambda _b: (False, "no open PR for the cluster branch"),
                 base_branch="main",
             )
@@ -1036,7 +1056,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=mock_ok_runner,
+                runner=_home(mock_ok_runner),
                 evidence_checker=None,
                 base_branch="main",
             )
@@ -1057,7 +1077,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=mock_ok_runner,
+                runner=_home(mock_ok_runner),
                 evidence_checker=None,
                 base_branch="main",
             )
@@ -1072,7 +1092,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=mock_fail_runner,
+                runner=_home(mock_fail_runner),
                 evidence_checker=None,
                 base_branch="main",
             )
@@ -1107,7 +1127,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     project_yaml=".keel/project.yaml",
                     root=tmpdir,
                     dry_run=False,
-                    runner=mock_ok_runner,
+                    runner=_home(mock_ok_runner),
                     evidence_checker=None,
                     base_branch="main",
                 )
@@ -1152,7 +1172,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 root=tmpdir,
                 dry_run=False,
                 pr_diff_map=diff_map,
-                runner=mock_heal_runner,
+                runner=_home(mock_heal_runner),
                 evidence_checker=None,
                 base_branch="main",
             )
@@ -1172,7 +1192,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 root=tmpdir,
                 dry_run=False,
                 pr_diff_map=diff_map,
-                runner=mock_conflict_runner,
+                runner=_home(mock_conflict_runner),
                 evidence_checker=None,
                 base_branch="main",
             )
@@ -1191,7 +1211,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                 root=tmpdir,
                 dry_run=False,
                 pr_diff_map=diff_map,
-                runner=mock_merge_fail_runner,
+                runner=_home(mock_merge_fail_runner),
                 evidence_checker=None,
                 base_branch="main",
             )
@@ -1206,7 +1226,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     root=tmp_nostate,
                     dry_run=False,
                     pr_diff_map=diff_map,
-                    runner=mock_heal_runner,
+                    runner=_home(mock_heal_runner),
                     evidence_checker=None,
                     base_branch="main",
                 )
@@ -1219,7 +1239,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     root=tmp_nostate,
                     dry_run=False,
                     pr_diff_map=diff_map,
-                    runner=mock_conflict_runner,
+                    runner=_home(mock_conflict_runner),
                     evidence_checker=None,
                     base_branch="main",
                 )
@@ -1232,7 +1252,7 @@ class TestSwarmLandingThinIO(unittest.TestCase):
                     root=tmp_nostate,
                     dry_run=False,
                     pr_diff_map=diff_map,
-                    runner=mock_merge_fail_runner,
+                    runner=_home(mock_merge_fail_runner),
                     evidence_checker=None,
                     base_branch="main",
                 )
@@ -1814,7 +1834,7 @@ class AContendedMergeLockHoldsTheWave(unittest.TestCase):
                     project_yaml=".keel/project.yaml",
                     root=tmpdir,
                     dry_run=False,
-                    runner=runner,
+                    runner=_home(runner),
                     evidence_checker=None,
                     base_branch="main",
                 )
@@ -1885,7 +1905,7 @@ class AContendedMergeLockHoldsTheWave(unittest.TestCase):
                 project_yaml=".keel/project.yaml",
                 root=tmpdir,
                 dry_run=False,
-                runner=lambda cmd, cwd: CommandResult(ok=True, code=0, output=""),
+                runner=_home(lambda cmd, cwd: CommandResult(ok=True, code=0, output="")),
                 evidence_checker=None,
                 base_branch="main",
             )
@@ -2007,7 +2027,7 @@ class AFailedCheckoutStopsTheLanding(unittest.TestCase):
             project_yaml=".keel/project.yaml",
             root=self.root,
             dry_run=False,
-            runner=runner,
+            runner=_home(runner),
             evidence_checker=None,
             base_branch="main",
         )
@@ -2031,6 +2051,328 @@ class AFailedCheckoutStopsTheLanding(unittest.TestCase):
         self.assertFalse(any(c[:2] == ["git", "rebase"] for c in calls), calls)
         self.assertFalse(merge_cluster_branch(self.root, "c", runner=runner))
         self.assertFalse(any(c[:2] == ["git", "merge"] for c in calls), calls)
+
+
+class LandingLeavesTheOperatorWhereTheyWere(unittest.TestCase):
+    """#1279 item 3: a live landing checks out, rebases and merges in the operator's
+    own checkout. It left HEAD on the base branch after a merge and on the cluster
+    branch after an aborted rebase, and a dirty tree stopped it only when a checkout
+    happened to collide with the change. Measured in a real repository: the
+    operator starts on `feature`, a cluster branch waits to land on `main`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "commit.gpgsign", "false")
+        self.git("config", "core.autocrlf", "false")
+        self.commit("a.txt", "value = 1\n", "base")
+        self.git("checkout", "-q", "-b", "feature")
+        self.commit("f.txt", "feature\n", "feature work")
+        self.git("checkout", "-q", "main")
+
+    def git(self, *args: str, check: bool = True) -> str:
+        import subprocess
+
+        done = subprocess.run(
+            ["git", *args], cwd=self.root, capture_output=True, text=True, check=check
+        )
+        return done.stdout.strip()
+
+    def write(self, name: str, text: str) -> None:
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+
+    def commit(self, name: str, text: str, message: str) -> None:
+        self.write(name, text)
+        self.git("add", name)
+        self.git("commit", "-q", "-m", message)
+
+    def cluster_branch(self, branch: str, name: str, text: str) -> None:
+        """A cluster branch cut from `main` with one commit; HEAD returns to `main`."""
+        self.git("checkout", "-q", "-b", branch, "main")
+        self.commit(name, text, f"{branch} work")
+        self.git("checkout", "-q", "main")
+
+    def one_cluster_plan(self, swarm_id: str) -> tuple[SwarmPlan, str]:
+        plan = build_swarm_plan(
+            [IssueScope(issue=101, title="A", predicted_files=("b.txt",))], swarm_id=swarm_id
+        )
+        return plan, f"swarm/{swarm_id}/{plan.waves[0].clusters[0].cluster_id}"
+
+    def land(self, plan: SwarmPlan, **kwargs):
+        kwargs.setdefault("dry_run", False)
+        return land_wave_clusters(
+            plan,
+            wave_index=1,
+            project_yaml=".keel/project.yaml",
+            root=self.root,
+            evidence_checker=None,
+            base_branch="main",
+            **kwargs,
+        )
+
+    def head(self) -> str:
+        return self.git("symbolic-ref", "--short", "HEAD")
+
+    def recording(self, calls: list[list[str]]):
+        from keel.swarm_runtime import default_runner
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            calls.append(cmd)
+            return default_runner(cmd, cwd)
+
+        return runner
+
+    def test_a_dirty_tracked_file_is_refused_before_any_checkout(self):
+        """`a.txt` is the same on every branch, so no checkout collides with the edit:
+        the old landing carried it onto `main` and merged there."""
+        plan, branch = self.one_cluster_plan("swarm-dirty")
+        self.cluster_branch(branch, "b.txt", "cluster\n")
+        self.git("checkout", "-q", "feature")
+        self.write("a.txt", "value = uncommitted\n")
+        main_before = self.git("rev-parse", "main")
+        calls: list[list[str]] = []
+
+        result = self.land(plan, runner=self.recording(calls))
+
+        self.assertIn("uncommitted changes", result.refused)
+        self.assertIn(" M a.txt", result.refused)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.landed_clusters, ())
+        self.assertFalse(
+            any(c[:2] in (["git", "checkout"], ["git", "merge"]) for c in calls), calls
+        )
+        self.assertEqual(self.head(), "feature")
+        self.assertEqual(self.git("rev-parse", "main"), main_before)
+        self.assertEqual((self.root / "a.txt").read_text(encoding="utf-8"), "value = uncommitted\n")
+        self.assertIn("refused : the working tree", render_swarm_landing_result(result))
+
+    def test_an_untracked_file_is_refused_too(self):
+        plan, branch = self.one_cluster_plan("swarm-untracked")
+        self.cluster_branch(branch, "b.txt", "cluster\n")
+        self.git("checkout", "-q", "feature")
+        self.write("notes/new.txt", "scratch\n")
+        main_before = self.git("rev-parse", "main")
+
+        result = self.land(plan)
+
+        self.assertIn("?? notes/new.txt", result.refused)
+        self.assertEqual(self.head(), "feature")
+        self.assertEqual(self.git("rev-parse", "main"), main_before)
+
+    def test_a_dry_run_on_a_dirty_tree_still_previews(self):
+        """A dry run touches no branch, so it keeps answering as before."""
+        plan, branch = self.one_cluster_plan("swarm-preview")
+        self.cluster_branch(branch, "b.txt", "cluster\n")
+        self.git("checkout", "-q", "feature")
+        self.write("a.txt", "value = uncommitted\n")
+
+        result = self.land(plan, dry_run=True)
+
+        self.assertEqual(result.refused, "")
+        self.assertEqual(result.status, "success")
+        self.assertEqual(len(result.landed_clusters), 1)
+
+    def test_after_a_landing_the_operator_is_back_on_their_branch(self):
+        """The run state keel wrote into `.keel/state/` is untracked here (no
+        `.keel/.gitignore`), and it is keel's own, so it does not count as dirty."""
+        plan, branch = self.one_cluster_plan("swarm-lands")
+        self.cluster_branch(branch, "b.txt", "cluster\n")
+        self.git("checkout", "-q", "feature")
+        feature_before = self.git("rev-parse", "feature")
+        cid = plan.waves[0].clusters[0].cluster_id
+        save_swarm_state(
+            SwarmRunState(
+                swarm_id="swarm-lands",
+                total_workers=1,
+                workers=(
+                    SwarmWorkerStatus(cluster_id=cid, issue=101, role="core", status="passed"),
+                ),
+            ),
+            root=self.root,
+        )
+
+        result = self.land(plan)
+
+        self.assertEqual(result.refused, "")
+        self.assertEqual(result.landed_clusters, (cid,))
+        self.assertEqual(result.warnings, ())
+        self.assertEqual(self.head(), "feature")
+        self.assertEqual(self.git("rev-parse", "feature"), feature_before)
+        self.assertIn(f"{branch} work", self.git("log", "--format=%s", "main"))
+        state = load_swarm_state("swarm-lands", root=self.root)
+        assert state is not None
+        self.assertEqual(state.workers[0].status, "merged")
+
+    def test_after_a_conflicting_merge_the_operator_is_back_on_their_branch(self):
+        plan, branch = self.one_cluster_plan("swarm-conflict")
+        self.cluster_branch(branch, "a.txt", "value = cluster\n")
+        self.commit("a.txt", "value = main\n", "main moves on")
+        self.git("checkout", "-q", "feature")
+
+        result = self.land(plan)
+
+        self.assertEqual(result.failed_clusters, (plan.waves[0].clusters[0].cluster_id,))
+        self.assertEqual(self.head(), "feature")
+        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=no"), "")
+
+    def test_after_an_aborted_funnel_rebase_the_operator_is_back_on_their_branch(self):
+        """The funnel's failed rebase aborted onto the cluster branch and stayed there."""
+        clusters = tuple(
+            SwarmCluster(
+                cluster_id=f"cluster-1-{n}", issues=(n,), role="core", combined_scope=("a.txt",)
+            )
+            for n in (1, 2)
+        )
+        wave = SwarmWave(
+            wave_index=1,
+            mode="sequential_dependent",
+            eligible_direct_landing=False,
+            clusters=clusters,
+        )
+        plan = SwarmPlan(swarm_id="swarm-funnel", total_issues=2, waves=(wave,))
+        for c in clusters:
+            self.cluster_branch(
+                f"swarm/swarm-funnel/{c.cluster_id}", "a.txt", f"value = {c.cluster_id}\n"
+            )
+        self.commit("a.txt", "value = main\n", "main moves on")
+        self.git("checkout", "-q", "feature")
+
+        result = self.land(plan, pr_diff_map={"cluster-1-1": ["a.txt"], "cluster-1-2": ["a.txt"]})
+
+        self.assertEqual(result.mode, "sequential_funnel")
+        self.assertEqual(len(result.failed_clusters), 2)
+        self.assertEqual(self.head(), "feature")
+        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=no"), "")
+
+    def test_an_exception_mid_wave_still_returns_the_checkout(self):
+        from keel.swarm_runtime import default_runner
+
+        plan, branch = self.one_cluster_plan("swarm-raises")
+        self.cluster_branch(branch, "b.txt", "cluster\n")
+        self.git("checkout", "-q", "feature")
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            if cmd[:2] == ["git", "merge"]:
+                raise RuntimeError("interrupted mid-wave")
+            return default_runner(cmd, cwd)
+
+        with self.assertRaises(RuntimeError):
+            self.land(plan, runner=runner)
+        self.assertEqual(self.head(), "feature")
+
+    def test_a_detached_head_is_restored_detached(self):
+        plan, branch = self.one_cluster_plan("swarm-detached")
+        self.cluster_branch(branch, "b.txt", "cluster\n")
+        sha = self.git("rev-parse", "feature")
+        self.git("checkout", "-q", "--detach", sha)
+
+        result = self.land(plan)
+
+        self.assertEqual(len(result.landed_clusters), 1)
+        self.assertEqual(self.git("rev-parse", "HEAD"), sha)
+        self.assertEqual(self.git("symbolic-ref", "-q", "HEAD", check=False), "")
+
+
+class TheLandingStartCheckFailsClosed(unittest.TestCase):
+    """The reads the clean-tree check and the return depend on, when they fail."""
+
+    def _land(self, runner):
+        plan = build_swarm_plan(
+            [IssueScope(issue=101, title="A", predicted_files=("src/a.py",))], swarm_id="swarm-x"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            return land_wave_clusters(
+                plan,
+                wave_index=1,
+                project_yaml=".keel/project.yaml",
+                root=tmpdir,
+                dry_run=False,
+                runner=runner,
+                evidence_checker=None,
+                base_branch="main",
+            )
+
+    def test_an_unreadable_status_refuses(self):
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            if cmd[:2] == ["git", "status"]:
+                return CommandResult(ok=False, code=128, output="fatal: not a git repository")
+            return CommandResult(ok=True, code=0, output="")
+
+        result = self._land(runner)
+        self.assertIn("could not read the working tree's status", result.refused)
+        self.assertIn("not a git repository", result.refused)
+        self.assertEqual(result.landed_clusters, ())
+
+    def test_an_unreadable_head_refuses(self):
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            if cmd[:2] in (["git", "symbolic-ref"], ["git", "rev-parse"]):
+                return CommandResult(ok=False, code=1, output="")
+            return CommandResult(ok=True, code=0, output="")
+
+        result = self._land(runner)
+        self.assertIn("could not read HEAD", result.refused)
+        self.assertEqual(result.landed_clusters, ())
+
+    def test_a_return_that_fails_is_reported(self):
+        heads = iter(["feature"])
+
+        def runner(cmd: list[str], cwd: Path) -> CommandResult:
+            if cmd[:2] == ["git", "symbolic-ref"]:
+                # `feature` when the landing starts, `main` once it has merged.
+                return CommandResult(ok=True, code=0, output=next(heads, "main"))
+            if cmd == ["git", "checkout", "feature", "--"]:
+                return CommandResult(ok=False, code=1, output="error: your local changes")
+            return CommandResult(ok=True, code=0, output="")
+
+        result = self._land(runner)
+        self.assertEqual(len(result.landed_clusters), 1)
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("could not return the checkout to feature", result.warnings[0])
+        self.assertIn("git checkout feature", result.warnings[0])
+        self.assertIn("warning : could not return", render_swarm_landing_result(result))
+        self.assertEqual(result.to_dict()["warnings"], list(result.warnings))
+
+
+class TheDirtyTreeDecision(unittest.TestCase):
+    def test_keel_runtime_files_are_not_the_operators_changes(self):
+        porcelain = "\n".join(
+            [
+                "?? .keel/state/swarm/s.json",
+                "?? sub/.keel/worktrees/w1/",
+                '?? ".keel/scratch/odd name.txt"',
+                "?? .keel/.gitignore",
+                "?? .keel/project.yaml",
+                "?? .keel/extensions/.gitignore",
+                " M .keel/state/tracked.json",
+                "",
+                "?? .keelx/state/x",
+                "A  src/new.py",
+            ]
+        )
+        self.assertEqual(
+            landing_tree_changes(porcelain),
+            (
+                "?? .keel/project.yaml",
+                "?? .keel/extensions/.gitignore",
+                " M .keel/state/tracked.json",
+                "?? .keelx/state/x",
+                "A  src/new.py",
+            ),
+        )
+
+    def test_a_long_list_is_summarised(self):
+        changes = [f"?? f{n}.txt" for n in range(25)]
+        refusal = render_dirty_tree_refusal(changes)
+        self.assertIn("?? f19.txt, and 5 more.", refusal)
+        self.assertNotIn("f20.txt", refusal)
+        self.assertNotIn("more", render_dirty_tree_refusal(changes[:20]))
 
 
 if __name__ == "__main__":

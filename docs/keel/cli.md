@@ -3272,6 +3272,12 @@ wave (default `1`); without `--live` the command reports what it would land.
 
 - **Direct Batch Mode**: Orthogonal disjoint diff trees are merged one after another with
   `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **Your checkout (#1279)**: a live landing checks out and merges in the `--root` checkout, so it
+  refuses to start when `git status --porcelain` shows any tracked or untracked change (keel's own
+  untracked runtime files under `.keel/` excepted). It names the files in `refused`, touches no
+  branch, and exits 1. It then returns HEAD to the branch or commit it started on, whether the
+  wave landed, conflicted or raised; a return that fails is reported in `warnings`. Dry runs are
+  unchanged.
 - **Adaptive Funnel Mode**: implemented in `swarm_landing.py` (rebase onto the moved base, marker-resolver healing, hold-and-rewind) but selected only when a caller supplies a PR diff map — **no `keel swarm-land` invocation reaches it today**, because a planned wave's clusters are always disjoint.
 - **Review evidence (#828)**: before a live landing, every cluster branch's open PR must pass
   the same pre-merge review-evidence verification `keel merge` enforces — armed gate label,
