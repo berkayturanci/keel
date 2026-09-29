@@ -222,6 +222,9 @@ class Hunk:
     lines: tuple[str, ...]
     added: int
     removed: int
+    #: Context lines. :func:`keel.git.revert_diff` asks for none, so any here means the
+    #: diff is not the shape the plan needs (:func:`context_problem`).
+    context: int = 0
 
     @property
     def pure_addition(self) -> bool:
@@ -306,7 +309,7 @@ def _read_hunk(lines: list[str], i: int) -> tuple[Hunk, int]:
     old_left = int(match.group(2) or "1") if match else 0
     new_left = int(match.group(4) or "1") if match else 0
     body: list[str] = []
-    added = removed = 0
+    added = removed = context = 0
     i += 1
     while i < len(lines) and (old_left > 0 or new_left > 0):
         line = lines[i]
@@ -322,13 +325,32 @@ def _read_hunk(lines: list[str], i: int) -> tuple[Hunk, int]:
         else:  # context, including an empty line git wrote for a blank one
             old_left -= 1
             new_left -= 1
+            context += 1
         body.append(line)
         i += 1
     # A trailing "\ No newline at end of file" marker after the last counted line.
     while i < len(lines) and lines[i].startswith("\\"):
         body.append(lines[i])
         i += 1
-    return Hunk(header, tuple(body), added, removed), i
+    return Hunk(header, tuple(body), added, removed, context), i
+
+
+def context_problem(files: Sequence[FileDiff]) -> str | None:
+    """Why the diff cannot be split into independent changes, or ``None`` when it can.
+
+    Every hunk must carry **no context line**. :func:`keel.git.revert_diff` pins
+    ``--unified=0`` and ``--inter-hunk-context=0``, but ``GIT_DIFF_OPTS`` or a setting keel
+    does not know could still widen a hunk — and a hunk that carries context is either
+    two edits merged into one change, where one caught edit passes the other, or a patch
+    whose context ``--unidiff-zero`` would misplace. Checked here, on what git printed.
+    """
+    widened = [f.path for f in files if any(h.context for h in f.hunks)]
+    if not widened:
+        return None
+    return (
+        f"the diff carries context lines (in {', '.join(widened[:3])}), so its hunks may merge "
+        "independent edits; check GIT_DIFF_OPTS and the diff settings in your git config"
+    )
 
 
 @dataclass(frozen=True)
@@ -357,10 +379,14 @@ class Plan:
 def plan_changes(
     files: Sequence[FileDiff], *, tests: Sequence[str], paths: Sequence[str], unit: str
 ) -> Plan:
-    """The production changes to revert, one per hunk (or per file), in diff order."""
+    """The production changes to revert, one per hunk (or per file), ordered by path.
+
+    Ordered here, not by git: ``diff.orderFile`` reorders git's output, and the order
+    decides which changes ``max_changes`` reaches.
+    """
     changes: list[Change] = []
     unrevertable: list[str] = []
-    for f in files:
+    for f in sorted(files, key=lambda f: f.path):
         if not is_production(f.path, tests=tests, paths=paths):
             continue
         if not f.hunks:
@@ -451,7 +477,17 @@ _COMMENT_MARKERS: dict[str, tuple[str, ...]] = {
 #: ``"""…"""``; and JavaScript/TypeScript for regex literals (``/\/*/``) and ``${…}``
 #: nesting inside template literals. Every other language — the ``#``-comment scripting
 #: languages, Lua, Clojure, Erlang — has no reader at all here.
-_C_INERT_SUFFIXES: dict[str, bool] = {".c": False, ".m": False, ".go": True}
+_C_INERT_SUFFIXES: dict[str, str] = {".c": "c", ".m": "c", ".go": "go"}
+
+#: C text the reader will not vouch for, so a change in such a file is never inert: a
+#: ``??/`` trigraph (a backslash before C23, so it can splice a comment's next line into
+#: it), a backslash followed only by blanks at the end of a line (GCC and Clang splice
+#: that too, with a warning), and a ``//`` or ``/*`` inside an ``#include``/``#import``
+#: header name, which is not a comment there.
+_C_UNSAFE = re.compile(
+    r"\?\?/|\\[ \t]+\r?$|^[ \t]*#[ \t]*(?:include|import)[ \t]*<[^>\n]*(?://|/\*)",
+    re.MULTILINE,
+)
 #: The languages :func:`behaviour_free` can prove inert, as a finding names them.
 INERT_LANGUAGES = "Python (.py, .pyi), C (.c), Objective-C (.m) and Go (.go)"
 
@@ -564,10 +600,23 @@ def behaviour_free(change: Change, before: str | None, after: str | None) -> boo
     # A leading ``*`` is a block-comment continuation only inside ``/* … */`` — ``*p = 1;``
     # is a pointer write. So the files must also match once their comments are stripped
     # (strings kept verbatim), or the change is not inert.
-    raw = _C_INERT_SUFFIXES[suffix]
-    return _strip_c_comments(before, raw_backticks=raw) == _strip_c_comments(
-        after, raw_backticks=raw
-    )
+    mode = _C_INERT_SUFFIXES[suffix]
+    head, undone = _c_source(before, mode), _c_source(after, mode)
+    return head is not None and head == undone
+
+
+def _c_source(text: str, mode: str) -> str | None:
+    """``text`` as the compiler's lexer sees it, comments removed; ``None`` if unreadable.
+
+    For C and Objective-C, backslash-newline splicing (translation phase 2) comes first:
+    a ``// note\\`` comment swallows the next line, so ``return 1;`` under it is comment
+    and not code. Go has no splicing and no trigraphs; its backtick strings are raw.
+    """
+    if mode == "go":
+        return _strip_c_comments(text, raw_backticks=True)
+    if _C_UNSAFE.search(text):
+        return None
+    return _strip_c_comments(text.replace("\\\r\n", "").replace("\\\n", ""))
 
 
 def looks_comment_only(change: Change) -> bool:

@@ -8,6 +8,7 @@ behaviour is exercised opt-in against a real repo. Each returns a
 
 from __future__ import annotations
 
+import os
 import re
 
 from . import tdd
@@ -263,24 +264,47 @@ def revert_diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> s
     apart merge into one hunk, and a per-hunk check then passes when a test notices either
     of them — the #871 shape, measured on this gate's own first smoke run. Zero context
     splits every contiguous edit into its own hunk; :func:`apply_reverse` applies them.
+
+    **The user's configuration cannot widen or rename a hunk.** ``--unified=0`` does not
+    override ``diff.interHunkContext`` (a value of 10000 merged every edit in a file into
+    one change), so it is pinned too, with every other setting the parser depends on:
+    prefixes (``diff.noprefix``, ``diff.mnemonicPrefix``), paths (``diff.relative``,
+    ``core.quotePath``), the diff algorithm, the submodule format, textconv and external
+    drivers. ``GIT_DIFF_OPTS`` outranks even the command line, so it is removed from the
+    child's environment. :func:`keel.revertcheck.context_problem` still refuses a diff
+    whose hunks carry context, whatever widened them.
     """
     result = run_argv(
         [
             "git",
             "-c",
-            "core.quotepath=off",
+            "core.quotePath=off",
             "-c",
             "diff.suppressBlankEmpty=false",
+            "-c",
+            "diff.interHunkContext=0",
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
+            "-c",
+            "diff.relative=false",
             "diff",
             "--no-color",
             "--no-ext-diff",
+            "--no-textconv",
             "--no-renames",
+            "--no-relative",
             "--unified=0",
+            "--inter-hunk-context=0",
+            "--diff-algorithm=myers",
+            "--submodule=short",
             "--src-prefix=a/",
             "--dst-prefix=b/",
             f"{base}...{head}",
         ],
         cwd=cwd,
+        env={key: value for key, value in os.environ.items() if key != "GIT_DIFF_OPTS"},
         **_kw(_run),
     )
     return result.stdout if result.ok else None
@@ -318,9 +342,27 @@ def apply_reverse(patch_path: str, *, cwd: str | None = None, _run=None) -> Comm
     ``--unidiff-zero`` because :func:`revert_diff` writes hunks with no context lines, which
     git refuses to apply by default. It is exact here: the patch is undone on the very
     commit it was taken from, so every line number it carries is the tree's own.
+
+    The user's ``apply.*`` settings are pinned: ``apply.whitespace=error`` would refuse a
+    change whose lines carry trailing blanks (a false "could not undo"), and
+    ``apply.ignoreWhitespace`` or ``apply.3way`` would let a patch land where it does not
+    match exactly.
     """
     return run_argv(
-        ["git", "apply", "-R", "--unidiff-zero", "--", patch_path], cwd=cwd, **_kw(_run)
+        [
+            "git",
+            "-c",
+            "apply.ignoreWhitespace=no",
+            "apply",
+            "-R",
+            "--unidiff-zero",
+            "--whitespace=nowarn",
+            "--no-3way",
+            "--",
+            patch_path,
+        ],
+        cwd=cwd,
+        **_kw(_run),
     )
 
 

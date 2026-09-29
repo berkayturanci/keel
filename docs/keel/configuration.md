@@ -1315,7 +1315,12 @@ reverted?
 
 **How it runs.** It diffs the branch against the base ref every other gate diffs against
 (`refs/remotes/origin/<base_branch>`, else `refs/heads/<base_branch>`) with no context lines,
-so every contiguous edit is its own change. Each change is a hunk (`unit: hunk`, the default)
+so every contiguous edit is its own change. Your git configuration cannot change that: every
+setting the split depends on is pinned on the command (`diff.interHunkContext`, prefixes,
+`diff.relative`, `core.quotePath`, the algorithm, colour, textconv and external drivers, and
+`apply.whitespace`/`apply.ignoreWhitespace`/`apply.3way` for the revert), `GIT_DIFF_OPTS` is
+dropped from git's environment, and a diff whose hunks still carry context lines is refused
+(*cannot judge*). Changes are checked in path order. Each change is a hunk (`unit: hunk`, the default)
 or a whole file (`unit: file`); a new or deleted file is always one change. It then checks out
 the committed `HEAD` as a **scratch worktree under the OS temp directory** (with the
 repository's git hooks switched off for that checkout) — your checkout's files are never
@@ -1335,7 +1340,10 @@ proves it:
 - **C (`.c`), Objective-C (`.m`) and Go (`.go`)**: every changed line is blank or a comment,
   *and* the two files are equal once `//` and `/* … */` comments are removed with every string
   and character literal kept (Go's backtick raw strings included, where `\` escapes nothing).
-  A leading `*` is not enough on its own: `*p = 1;` is a pointer write.
+  A leading `*` is not enough on its own: `*p = 1;` is a pointer write. In C and Objective-C
+  backslash-newline splicing comes first, as in the compiler — `// note\` swallows the next
+  line — and a file with a `??/` trigraph, a backslash followed only by blanks, or `//` or
+  `/*` inside an `#include`/`#import` header name is never inert. Go does not splice.
 
 **Every other language is always tested**, even when every changed line looks like a comment,
 because a line that looks like one may sit inside a string the reader cannot see: a `#` line

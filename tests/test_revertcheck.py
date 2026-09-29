@@ -734,5 +734,69 @@ class CFamilyInertnessNeedsTheCommentsToBeTheOnlyDifference(unittest.TestCase):
         self.assertEqual(rc._strip_c_comments("  x  \n\t y "), "x y")
 
 
+class CLexingComesBeforeTheComments(unittest.TestCase):
+    """Review round on 07030c52: a trailing backslash splices the next line into a comment."""
+
+    @staticmethod
+    def _change(path, removed, added):
+        patch = f"diff --git a/{path} b/{path}\n@@ -2 +2 @@\n-{removed}\n+{added}\n"
+        return rc.Change("c", path, patch, False)
+
+    def test_a_backslash_splices_the_next_line_into_the_comment(self):
+        for path, newline in (("f.c", "\n"), ("f.c", "\r\n"), ("f.m", "\n")):
+            with self.subTest(path=path, newline=repr(newline)):
+                head = newline.join(
+                    ["int f(void) {", "// note\\", "return 1;", "return 2;", "}", ""]
+                )
+                undone = head.replace("// note\\", "// note")
+                change = self._change(path, "// note", "// note\\")
+                # HEAD returns 2 (`return 1;` is spliced into the comment); the revert returns 1.
+                self.assertFalse(rc.behaviour_free(change, head, undone))
+
+    def test_go_does_not_splice(self):
+        head = "func f() int {\n// note\\\nreturn 1\n}\n"
+        undone = head.replace("// note\\", "// note")
+        self.assertTrue(
+            rc.behaviour_free(self._change("f.go", "// note", "// note\\"), head, undone)
+        )
+
+    def test_c_text_the_reader_cannot_vouch_for_is_never_inert(self):
+        base = "int x;\n// old\nint y;\n"
+        for label, extra in (
+            ("trigraph backslash", "// a ??/\nint z;\n"),
+            ("backslash then blanks", "// a \\  \nint z;\n"),
+            ("comment marker in a header name", "#include <sys//x.h>\n"),
+            ("block marker in an import", "#import <a/*b.h>\n"),
+        ):
+            with self.subTest(label=label):
+                change = self._change("f.c", "// old", "// new")
+                head = extra + base.replace("old", "new")
+                self.assertFalse(rc.behaviour_free(change, head, extra + base))
+        # Without any of them, the same comment edit is inert.
+        change = self._change("f.c", "// old", "// new")
+        self.assertTrue(rc.behaviour_free(change, base.replace("old", "new"), base))
+
+
+class TheDiffMustCarryNoContext(unittest.TestCase):
+    def test_a_hunk_with_context_is_refused(self):
+        widened = (
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,3 +1,3 @@\n-x = 1\n y = 2\n+x = 3\n"
+        )
+        problem = rc.context_problem(rc.parse_diff(widened))
+        self.assertIsNotNone(problem)
+        self.assertIn("a.py", problem)
+        self.assertIn("GIT_DIFF_OPTS", problem)
+        self.assertIsNone(rc.context_problem(rc.parse_diff(DIFF)))
+
+    def test_changes_are_ordered_by_path_whatever_git_printed(self):
+        files = rc.parse_diff(DIFF)
+        plan = rc.plan_changes(tuple(reversed(files)), tests=["tests/**"], paths=[], unit="hunk")
+        self.assertEqual(
+            [c.path for c in plan.changes],
+            ["src/calc.py", "src/calc.py", "src/new.py", "src/old.py"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

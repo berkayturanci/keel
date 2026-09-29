@@ -131,6 +131,56 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertTrue(majors[0].startswith("pkg/calc.py @@ -6,0 +9,4 @@: no test notices"))
         self.assertIn("1 of 2 production change(s)", _messages(outcome)[-1][1])
 
+    def test_the_users_git_config_cannot_merge_or_rename_changes(self):
+        """Review round on 07030c52: `--unified=0` does not override `diff.interHunkContext`,
+        and at 10000 it merged `sign`'s guard and the untested `double` into one change,
+        which `test_sign` then passed."""
+        # `add`'s trailing blanks are removed on the branch, so undoing that change writes
+        # them back — which `apply.whitespace=error` refuses unless the call pins it.
+        root = _repo(
+            self.root,
+            {"pkg/calc.py": _FEATURE_CALC, "tests/test_calc.py": _BASE_TEST + _SIGN_TEST},
+            base_calc=_BASE_CALC.replace("return a + b\n", "return a + b  \n"),
+        )
+        for key, value in (
+            ("diff.interHunkContext", "10000"),
+            ("diff.context", "10"),
+            ("diff.noprefix", "true"),
+            ("diff.mnemonicPrefix", "true"),
+            ("diff.relative", "true"),
+            ("diff.suppressBlankEmpty", "true"),
+            ("diff.algorithm", "patience"),
+            ("diff.renames", "copies"),
+            ("diff.external", "false"),
+            ("diff.submodule", "log"),
+            ("core.quotePath", "true"),
+            ("color.ui", "always"),
+            ("color.diff", "always"),
+            ("apply.whitespace", "error"),
+            ("apply.ignoreWhitespace", "change"),
+        ):
+            _git(root, "config", key, value)
+        with patch.dict(os.environ, {"GIT_DIFF_OPTS": "--unified=5"}):
+            outcome = _outcome(root)
+        majors = [m for s, m in _messages(outcome) if s == "major"]
+        self.assertEqual(len(majors), 1, _messages(outcome))
+        self.assertTrue(majors[0].startswith("pkg/calc.py @@ -6,0 +9,4 @@: no test notices"))
+        self.assertIn("1 of 2 production change(s)", _messages(outcome)[-1][1])
+        self.assertIn(
+            "1 changed only comments, docstrings or formatting", _messages(outcome)[-1][1]
+        )
+
+    def test_a_diff_with_context_cannot_judge(self):
+        root = _repo(self.root, {"pkg/calc.py": _FEATURE_CALC})
+        widened = (
+            "diff --git a/pkg/calc.py b/pkg/calc.py\n--- a/pkg/calc.py\n+++ b/pkg/calc.py\n"
+            "@@ -5,2 +5,3 @@\n def sign(x):\n+    y = 1\n     return 1\n"
+        )
+        with patch("keel.git.revert_diff", return_value=widened):
+            outcome = _outcome(root)
+        self.assertEqual((outcome.ok, outcome.unconfigured), (False, True))
+        self.assertIn("the diff carries context lines", outcome.findings[0].message)
+
     def test_every_change_caught_passes_and_leaves_no_trace(self):
         feature = _FEATURE_CALC.replace("\n\n\ndef double(x):\n    return x * 3\n", "\n")
         root = _repo(

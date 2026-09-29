@@ -333,9 +333,11 @@ def _revert_check_verdict(
     head = git.rev_parse("HEAD", cwd=root)
     if diff_text is None or head is None:
         return revertcheck.cannot_judge(f"could not read the diff between {base_ref} and HEAD")
-    plan = revertcheck.plan_changes(
-        revertcheck.parse_diff(diff_text), tests=tests, paths=settings.paths, unit=settings.unit
-    )
+    files = revertcheck.parse_diff(diff_text)
+    widened = revertcheck.context_problem(files)
+    if widened is not None:
+        return revertcheck.cannot_judge(widened)
+    plan = revertcheck.plan_changes(files, tests=tests, paths=settings.paths, unit=settings.unit)
     if not plan.changes:
         return revertcheck.judge(plan, None)
     with tempfile.TemporaryDirectory(prefix="keel-revert-check-", ignore_cleanup_errors=True) as d:

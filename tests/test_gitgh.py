@@ -1,7 +1,9 @@
 """Unit tests for the thin git/gh wrappers (argv construction + fail-soft)."""
 
 import json
+import os
 import unittest
+import unittest.mock
 
 from keel import git, github, tdd
 
@@ -357,21 +359,42 @@ class TestRevertCheckGit(unittest.TestCase):
     """The git half of the `revert-check` gate (#1289)."""
 
     def test_revert_diff_pins_the_shape_the_parser_and_git_apply_read(self):
-        rec = _Recorder(out="diff --git a/x b/x\n")
-        self.assertEqual(git.revert_diff("origin/main", "HEAD", _run=rec), "diff --git a/x b/x\n")
-        argv = rec.calls[0]
+        seen = {}
+
+        def run(argv, **kwargs):
+            seen.update(argv=argv, env=kwargs.get("env"))
+            return _Proc(0, "diff --git a/x b/x\n", "")
+
+        with unittest.mock.patch.dict(os.environ, {"GIT_DIFF_OPTS": "--unified=5", "K": "v"}):
+            self.assertEqual(
+                git.revert_diff("origin/main", "HEAD", _run=run), "diff --git a/x b/x\n"
+            )
+        argv = seen["argv"]
         for flag in (
-            "core.quotepath=off",
+            "core.quotePath=off",
             "diff.suppressBlankEmpty=false",
+            "diff.interHunkContext=0",
+            "diff.noprefix=false",
+            "diff.mnemonicPrefix=false",
+            "diff.relative=false",
             "--no-color",
             "--no-ext-diff",
+            "--no-textconv",
             "--no-renames",
+            "--no-relative",
             "--unified=0",
+            "--inter-hunk-context=0",
+            "--diff-algorithm=myers",
+            "--submodule=short",
             "--src-prefix=a/",
             "--dst-prefix=b/",
         ):
             self.assertIn(flag, argv)
         self.assertEqual(argv[-1], "origin/main...HEAD")
+        # GIT_DIFF_OPTS outranks the command line, so the child never sees it.
+        self.assertIsNotNone(seen["env"], "the child must get an environment without it")
+        self.assertNotIn("GIT_DIFF_OPTS", seen["env"])
+        self.assertEqual(seen["env"]["K"], "v")
         self.assertIsNone(git.revert_diff("a", "b", _run=_Recorder(code=128)))
 
     def test_the_scratch_worktree_is_detached(self):
@@ -396,7 +419,19 @@ class TestRevertCheckGit(unittest.TestCase):
         rec = _Recorder()
         git.apply_reverse("/tmp/p.patch", _run=rec)
         self.assertEqual(
-            rec.calls[0], ["git", "apply", "-R", "--unidiff-zero", "--", "/tmp/p.patch"]
+            rec.calls[0],
+            [
+                "git",
+                "-c",
+                "apply.ignoreWhitespace=no",
+                "apply",
+                "-R",
+                "--unidiff-zero",
+                "--whitespace=nowarn",
+                "--no-3way",
+                "--",
+                "/tmp/p.patch",
+            ],
         )
 
     def test_reset_clean_removes_ignored_files_too(self):

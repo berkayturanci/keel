@@ -124,9 +124,13 @@ def run_argv(
     cwd: str | None = None,
     timeout: int = 120,
     stdin_text: str | None = None,
+    env: dict[str, str] | None = None,
     _run=subprocess.run,
 ) -> CommandResult:
     """Run an argv list (no shell). Fail-soft on timeout/OS error. Used by git/gh wrappers.
+
+    ``env`` replaces the child's environment when given (``None`` inherits it) — for a
+    caller that must keep a variable such as ``GIT_DIFF_OPTS`` away from the child.
 
     ``stdin_text`` feeds the child on standard input instead of closing it. Every delegate
     CLI keel dispatches to takes its prompt that way (:mod:`keel.delegate`): a prompt
@@ -152,6 +156,7 @@ def run_argv(
             encoding="utf-8",
             errors="surrogateescape",
             timeout=timeout,
+            env=env,
             input=stdin_text,
             # Written out rather than assembled into a **kwargs dict: #879's sweep in
             # tests/test_missing_pins.py reads every spawn site's keywords out of the
