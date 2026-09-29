@@ -161,13 +161,14 @@ class TestScratchDirCommand(unittest.TestCase):
                 rc, out, err = self._run(["scratch-dir", "--root", "ro"])
             except OSError as exc:
                 self.fail(f"escaped as a traceback: {exc!r}")
-        self.assertEqual(rc, 1)
-        self.assertEqual(out, "")
-        self.assertEqual(
-            err,
-            "keel scratch-dir: cannot create the scratch dir: [Errno 13] Permission denied: "
-            "'ro/.keel'\n",
-        )
+            else:
+                self.assertEqual(rc, 1)
+                self.assertEqual(out, "")
+                self.assertEqual(
+                    err,
+                    "keel scratch-dir: cannot create the scratch dir: "
+                    "[Errno 13] Permission denied: 'ro/.keel'\n",
+                )
 
     def test_the_default_root_prints_the_relative_path(self):
         # What cli.md now says it prints; it used to say "the absolute path".

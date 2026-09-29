@@ -132,8 +132,9 @@ class TheWindowCallMeetsTheRealParser(unittest.TestCase):
                 args = cli.build_parser().parse_args(argv)
         except SystemExit:
             self.fail(f"keel rejects the extension's argv {argv}: {stderr.getvalue()}")
-        self.assertIs(args.func, cli._cmd_window)
-        self.assertEqual(args.path, ".keel/project.yaml")
+        else:
+            self.assertIs(args.func, cli._cmd_window)
+            self.assertEqual(args.path, ".keel/project.yaml")
 
 
 @unittest.skipUnless(NODE, "needs node to execute the extension")
