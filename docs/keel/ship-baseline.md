@@ -64,7 +64,7 @@ reintroduced as project-specific prose in the packaged command body.
 | A successful merge is authoritative even if local cleanup after merge reports a non-critical error. | Adapter instruction | s10 PR-state authoritative rule. |
 | Closeout comments must appear on both the issue and PR and include changed files, docs, manual checks, and capture outcome. | Core invariant / adapter instruction | s11 capture and s12 close. |
 | Post-merge knowledge capture must be fail-soft and auditable, with one canonical capture marker per merged PR. | Extension / capture invariant | s11 capture Lego and marker discipline. Detailed project learning workflows stay outside keel core. |
-| Session-level learning verifier rejects silent capture skips. | Project extension / deferred from core | Keel core preserves capture slots and marker vocabulary; project-specific verifier implementation belongs in a capture extension or follow-up parity work if still required. |
+| Session-level learning verifier rejects silent capture skips. | Core verifier | `keel capture-verify` ships in core: it fails a merged PR with a missing, invalid or duplicate capture marker, and with `--from-transport` it derives the merged set from the host so a PR cannot drop out of the accounting by being left off the command line. Project-specific learning workflows still belong in a capture extension. |
 | Project-specific high-risk file lists, test commands, labels, report paths, and manual playbooks are embedded in the legacy command. | Project policy / extension / project command | Represented by `policy_pack`, extension hooks, and `policy_pack.project_commands`; intentionally not copied into keel core. |
 
 ## Ship Parity Evidence

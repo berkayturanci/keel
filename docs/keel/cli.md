@@ -282,8 +282,10 @@ one it is refused before any merge work. Provide exactly one of:
 
 - `--blocker-rule <id>` — a [`keel guard`](#keel-guard-projectyaml---issue-number---issue-title-title---issue-labels-l1l2---root-dir---json)
   rule id that **actually fires** for this issue. The merge re-evaluates the ruleset
-  against the issue's title/labels (`--issue` for a live fetch, or `--issue-title` /
-  `--issue-labels` offline) and refuses if the named rule is unknown or did not match.
+  against the issue's title/labels, which must come from `--issue <N>` and a successful live
+  `gh` fetch — `--issue-title` / `--issue-labels` are refused on this path, so an agent cannot
+  justify a window bypass with a title it typed — and refuses if the named rule is unknown or
+  did not match.
   Recorded as `hotfix_justification: {kind: "matched-rule", rule_id, matched}`.
 - `--operator-override` paired with a named `--operator` — the audited human override for
   a genuine emergency that no rule covers. Recorded as
@@ -528,7 +530,7 @@ keel review .keel/project.yaml --root . --pr 456 \
 ```
 
 ```bash
-# Dry by default: render and print what it WOULD post, no network.
+# Dry by default: render and print what it WOULD post; no PR fetch, no post.
 keel review .keel/project.yaml --root . --pr 456 \
   --reviews /tmp/reviews.json --json
 
@@ -542,8 +544,10 @@ keel review .keel/project.yaml --root . --pr 456 --issue 123 \
 `keel.closure.render_closure_comment` and posted to both the PR and `--issue` as the
 `closure-comment` artifact (sub-key `<run-id>:closure`). `--verify` runs the
 `evidence-verify` check after posting and folds its pass/fail into the result (and exit
-code). `--head-sha` / `--changed-file` supply offline fixtures so dry runs stay fully
-offline and deterministic.
+code). `--head-sha` / `--changed-file` supply fixtures so a dry run fetches no pull-request data and
+stays deterministic. It is not offline, though: every run, dry or live, first requires `gh` on
+`PATH` and authenticated (it runs `gh auth status`) and refuses otherwise, and it needs a config
+that names both `owner` and `repo`.
 
 Dry by default: renders the bundle and prints `DRY-RUN:` lines for each planned post with
 no network writes. `--live` actually posts and is consent-gated exactly like other live
@@ -1615,7 +1619,7 @@ hazard (a PR/branch keel has no covering state for). This is **advisory**: orpha
 reported but never block. The decision is pure
 ([`keel.checkpoint.find_orphans`](../../src/keel/checkpoint.py)).
 
-## `keel activity <project.yaml> [--root DIR] [--write|--done|--clear] [--command CMD] [--run-id ID] [--phase PHASE] [--status running|done] [--verdict pass|blocked] [--issue N] [--pull-request N] [--note TEXT] [--json]`
+## `keel activity <project.yaml> [--root DIR] [--write|--done|--clear] [--command CMD] [--run-id ID] [--phase PHASE] [--status running|done|merged] [--verdict pass|blocked] [--issue N] [--pull-request N] [--note TEXT] [--json]`
 
 Read or stamp the **additive command-activity** channel — a lightweight, checkpoint-free
 record per run under `.keel/activity/<run-id>.json` (path resolved under `--root DIR`,
@@ -1627,16 +1631,17 @@ phase as it advances, so non-ship runs (`triage`, `morning`, `pr-loop`, …) sho
 
 ```bash
 # stamp the active phase as the command advances (one stable --run-id per run)
-keel activity .keel/project.yaml --root . --command triage --run-id triage-2260 --phase classify --issue 2260
-# stamp phase completion verdict
-keel activity .keel/project.yaml --root . --command ship --run-id ship-861 --phase test --verdict pass
+keel activity .keel/project.yaml --root . --write --command triage --run-id triage-2260 --phase classify --issue 2260
+# stamp phase completion verdict (ship's phase ids are its step ids, s0–s12)
+keel activity .keel/project.yaml --root . --write --command ship --run-id ship-861 --phase s8 --verdict pass
 # … repeat --phase as you move through the flow …
 keel activity .keel/project.yaml --root . --run-id triage-2260 --done   # mark finished
 keel activity .keel/project.yaml --root . --clear --run-id triage-2260  # remove the record
 keel activity .keel/project.yaml --root . --json                        # read all records
 ```
 
-`--write` validates that `--command` is a known `keel.flows` command and `--phase` one of
+Stamping needs `--write`: without one of `--write`, `--done` or `--clear` the command only
+lists records, whatever else it is given. `--write` validates that `--command` is a known `keel.flows` command and `--phase` one of
 that command's phase ids (`build_activity_record`); records are keyed by `--run-id` (one file
 each), so two commands in the same repo never clobber one another, and the run-id is slugged
 to a safe filename. `--verdict pass|blocked` records the phase outcome verdict into the activity record.
@@ -1826,21 +1831,21 @@ Dry-run mode never opens issues, pushes, edits code, comments on PRs, or merges.
 is only a preflight contract; adapters perform approved issue creation after checking
 consent and GitHub transport support.
 
-Example output:
+Example output (`keel review-all-day .keel/project.yaml` in this repository; the
+`degraded opt.` line lists whichever optional capabilities the machine lacks):
 
 ```
-keel plan — example-flutter
-  base_branch: main   core_version: ^1.0
-  backbone:
-     s0  config
-     ...
-     s8  test
-           - gate: build
-           - gate: lint
-           - gate: design-parity
-    s10  merge
-           - gate: design-parity-gate
-    ...
+keel review-all-day — keel  (base main)
+  target        : 1 day scan
+  profile       : time-window-scan
+  github        : gh
+  consent       : not-required-dry-run
+  degraded opt. : github-mcp, parallel-subagents
+  areas         : 4 configured
+  dedupe        : similarity>=0.6
+  writes        : issues only after consent; no code/PR mutation
+  title prefix  : [review-all-day]
+  note          : dry-run contract; adapters perform any approved live work.
 ```
 
 ## `keel run-gates <project.yaml> [--root DIR] [--tdd] [--defer-jury] [--json] [--run-id ID] [--command CMD] [--phase PHASE] [--issue N] [--pull-request N]`
@@ -2259,6 +2264,8 @@ traceback. Branch on the code, never on the message.
 | --- | --- |
 | `unknown-provider` · `bad-provider` | the `--provider` token names nothing keel can resolve |
 | `bad-role` · `bad-effort` · `bad-timeout` | an argument keel refuses |
+| `bad-run-id` | `--run-id` is not a safe run id, or the internal `--_child` run was started without one |
+| `spawn-failed` | a `--detach` run's background child could not be started |
 | `bad-model` · `no-model` | the model token is unsafe, or the transport needs one and has none |
 | `no-prompt` | `--prompt-file` is missing, unreadable, or empty |
 | `missing-binary` | the CLI is not installed |
@@ -2266,6 +2273,7 @@ traceback. Branch on the code, never on the message.
 | `timeout` | it ran out of time (`timed_out: true`) — keel's wall-clock limit killed it (`exit_code: 124`), **or** the vendor stopped on its own timer and said so |
 | `rate-limit` | HTTP 429, or a CLI that said it was out of quota |
 | `no-key` · `auth` · `http` · `network` · `bad-response` | the HTTP transports' vocabulary |
+| `unknown-vendor` · `bad-key` | a hosted-API delegate names a vendor keel has no endpoint for (or an `openai-compatible` profile without both `endpoint` and `api_key_env`), or its key holds characters that cannot travel in an HTTP header |
 | `lost` | a detached run's process vanished, or it passed its own deadline, without recording a result |
 
 `timed_out` means *this run ran out of time*, whichever bound it hit. `exit_code` says
@@ -2566,18 +2574,36 @@ keel ship .keel/project.yaml --root . --live --json
 keel ship .keel/project.yaml --root . --live --approve-scope filesystem,git,github --operator "$USER" --target "issue #123" --json
 keel ship .keel/project.yaml --root . --issue-title "Add setup docs" --issue-body "$ISSUE_BODY" --issue-label enhancement --json
 KEEL_APPROVE_SCOPE=filesystem,git,github KEEL_OPERATOR=automation:nightly keel ship .keel/project.yaml --root . --live --consent-mode standing --json
-# keel ship — keel  (base main)
-#   changed files : 53
-#   risk tier     : TIER-3  → 3 reviewer(s)
-#   review posts  : inline
-#   jury          : gating (tier-3 auto)
-#   merge window  : OPEN
-#   ci            : unknown
-#   github        : gh
-#   gate build          ok
-#   gate lint           ok
-#   decision      : MERGE — clear to merge
 ```
+
+The first line, run in this repository on a branch with no changes yet, prints (the run-ledger
+path is absolute; shortened here):
+
+```
+keel ship — keel  (base main)
+  changed files : 0
+  profile       : standard
+  risk tier     : TIER-2  → 2 reviewer(s)
+  review posts  : inline
+  jury          : off (default)
+  merge window  : OPEN
+  ci            : unknown
+  github        : gh
+  consent       : not-required-dry-run
+  intake        : needs-input
+  run ledger    : …/keel/.keel/state/run-ledger.jsonl
+  run controls  : pass
+  questions     : 3
+  gate build          ok
+  gate lint           ok
+  gate bandit         ok
+  decision      : MERGE — clear to merge
+  note: dry assessment; live merge (s10) needs a configured runner (git + gh auth).
+```
+
+Some lines appear only when they apply — for example `questions` when the issue intake has open
+questions, `ci MISSING` for a declared workflow that never ran, `github degraded` and
+`degraded opt.` for capabilities the machine lacks, `ledger append` with `--append-ledger`.
 
 Exits non-zero when the decision is `BLOCK` (failing gates, blocking findings, or failing
 CI), so it can gate a runner before it attempts a real merge. When the block comes from a
@@ -2898,7 +2924,7 @@ preferring two distinct vendors, no gate seat, no jury). Customize walks the res
 implementer provider, its model and reasoning effort where the provider can express one,
 the gate seat, the jury mode, the bench for each tier, and the review-comments mode.
 
-Two rules the step will not let you break, because `keel validate` would not either:
+Three rules the step will not let you break, because `keel validate` would not either:
 
 - the gate seat is offered from every provider **except** the implementer, and is written
   with `distinct_from: implementer` — a gate review from the vendor that wrote the change
@@ -2966,7 +2992,7 @@ The CLI (`keel ship`, `keel run-gates`, …) does the deterministic work; these 
 the **agentic** flows (per-round review, inline comments, delegation) the agent runs. The
 shipped set: `ship`, `regression`, `implement`, `review-cycle`, `pr-loop`, `morning`,
 `review-all-day`, `overnight`, `wrap`, `triage`, `stale-prs`, `ci-check`, `deps-audit`,
-`flake-audit`, `coverage`. Existing files are skipped unless `--force` (so your
+`flake-audit`, `coverage`, `work-block`, `swarm` (experimental). Existing files are skipped unless `--force` (so your
 edits are never clobbered).
 
 The generated surface is covered as a release contract: tests install into a clean temporary
@@ -3273,8 +3299,12 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 
 ## Exit codes
 
+Most commands use only 0 and 1; a few give a third answer its own code, so a caller can tell
+"not yet" from "no".
+
 | code | meaning |
 |---|---|
 | 0 | success |
-| 1 | a config was invalid/missing, or a plan target could not be loaded |
-| 2 | no command given (help printed) |
+| 1 | a config was invalid/missing, a plan target could not be loaded, or the command's own check failed or blocked |
+| 2 | no command given (help printed); a usage error argparse rejects (an unknown flag, a bad choice); `keel evidence-verify`: required evidence is still `waiting`; `keel verify-merge`: the result is `unknown` or `incomplete`; `keel run-gates`: `--phases` names an unknown phase; `keel ship`: a `--loop-iteration` contradicts the loop policy |
+| 3 | `keel merge`: the merge landed, but drift was detected — it may have written over work another PR merged after this one branched |

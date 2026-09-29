@@ -17,6 +17,20 @@ All notable changes to keel are documented here. The format follows
 
 - **`keel cost-report` can say "measured" for hosted-API delegate runs.** `keel delegate run` now reads the token usage the `anthropic-api`, `openai-api`, `google-api` and OpenAI-compatible responses carry, and returns it as `usage`. Only each vendor's documented fields are read, and a missing, malformed, non-integer, negative or zero count records nothing. With `--activity-run-id RUN` the counts go into run `RUN`'s activity record as a per-call `delegate_usage` entry, and every later phase stamp keeps them. A per-record lock stops parallel reviewers from dropping each other's counts. The ship adapter passes the flag in s4 and s7. The report prices each call at its own model, says that a measured count covers delegate calls and never the agent host's own tokens, and prints `the 1 run` instead of `all 1 runs`. Its title is now `Keel Token & Cost Report`, and the VS Code command is `View Token Counts & Estimated USD Cost`. The README, `docs/keel/cli.md` and the OpenRouter site card now describe what is recorded (#1373).
 
+### Fixed
+- **The CLI, evidence and release pages say what the code does.** `cli.md`'s `keel ship`
+  sample is a real run's output, its exit-code table names the codes `evidence-verify`,
+  `verify-merge`, `run-gates`, `ship` and `merge` return beyond 1, its delegate `error_code`
+  table gains `bad-key`, `unknown-vendor`, `spawn-failed` and `bad-run-id`, and its
+  `keel activity` examples stamp (they needed `--write`, and ship's phase is `s8`).
+  `evidence.md` no longer says the verifier reads gate results or that a waiver takes
+  `--operator` and writes a record; `github-actions.md` shows the flags the workflow passes;
+  `command-contracts.md` lists the six artifact bodies a run renders and the closure's
+  `watermark` section. `release.md`, `homebrew-release-chain.md`, `comparison.md`,
+  `overview.md`, `ship-baseline.md` and `runtime-capabilities.md` are corrected too, and
+  `tests/test_docs_cli_evidence_release.py` reads each list from the code it describes
+  (docs audit 2026-09-29)
+
 ## [1.24.3] - 2026-09-29
 
 - A gate that cannot judge no longer reads as a pass: an unconfigured build or lint gate, or a jury with no `jury` CLI, is reported as such, and a plan in which nothing judges the change blocks the merge.

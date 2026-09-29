@@ -193,7 +193,10 @@ Evidence requirements are split by lifecycle phase:
 * **Post-Merge Phase (`s11`)**: Records `closure-comment` and `compound-learning` markers.
 
 The pre-merge gate strictly validates what exists before the merge, preventing cyclical dependencies
-while guaranteeing full review compliance.
+while guaranteeing full review compliance. The two halves of that phase are checked by different
+commands: `keel evidence-verify --phase pre-merge` checks the verdicts and nothing else — it reads no
+gate result — and the gate results are checked by `keel merge` itself, whose gates-SHA step refuses a
+head with no gates-pass record in the run ledger (`--hotfix` skips that one step).
 
 ### 6. Transparent Deferrals & Audit Trail
 In real engineering teams, legitimate exceptions occur (e.g. emergency hotfixes outside the merge window,
@@ -201,8 +204,12 @@ or temporary gate waivers).
 
 Rather than offering an unmonitored backdoor, Keel makes exceptions **first-class and auditable**:
 * **`--deferral` / `keel:evidence-waived`**: An operator can explicitly waive specific requirements.
-* **Audit Record**: Every waiver requires an explicit `--operator` attribution and records a durable
-  entry in the `.keel/state/` run ledger and GitHub issue timeline, creating an auditable record.
+* **Audit Record**: the waiver is visible where it was made, and nowhere else by itself.
+  `keel evidence-verify` takes no `--operator` and writes nothing — no ledger entry, no comment; it
+  reports a `--deferral` as `(deferred)` and a waiver label as the rule that disarmed the gate. The
+  durable record is the one the operator leaves: the label on the PR, and a deferral recorded in the
+  PR/issue conversation before branch protection is bypassed
+  ([command-contracts.md](command-contracts.md)).
 
 ### 7. Header-Anchored Marker Classification
 What a comment *is* — a review verdict, a jury verdict, a closure comment, a ship-provenance stamp,
@@ -257,7 +264,9 @@ The verifier confirms:
 1. Presence of required reviewer verdicts matching the risk tier (`TIER-1` = 1, `TIER-2` = 2, `TIER-3` = 3).
 2. Exact matching between the verdict `head_sha` and the target commit.
 3. Proper agent attribution.
-4. Pass status for all declared blocking quality gates.
+
+It does **not** read gate results: whether the gates passed on this head is `keel merge`'s gates-SHA
+check, not this command's.
 
 ### Three-State Verification Lifecycle
 
@@ -361,7 +370,7 @@ out contributor-authored code, even though it holds `checks: write`.
 Keel enforces the evidence chain programmatically, but complete end-to-end enforcement requires pairing Keel's deterministic core with standard repository protections:
 
 ### 1. Keel Core Deterministic Enforcement
-* **Fail-Closed Evidence Gate**: `keel merge` blocks unconditionally if required reviewer verdicts or quality gates are missing or mismatched against the head commit SHA.
+* **Fail-Closed Evidence Gate**: `keel merge` blocks if required reviewer verdicts are missing or not pinned to the head commit SHA, or if no gates-pass record matches that SHA. `--hotfix` is the one audited bypass, and it skips only the gates-SHA check and the merge window; the evidence, CI, lock and checkpoint-gate checks still apply.
 * **Independent Diff Verification**: The orchestrator inspects actual git filesystem diffs rather than trusting agent-declared file lists.
 * **Merge Lock & Window**: Simultaneous agent merges and out-of-window merges are blocked at the filesystem and clock level.
 
@@ -373,8 +382,8 @@ To prevent autonomous agents from bypassing the Keel backbone via direct `git pu
 
 ### 3. No Bot Exemption — A Decision, Not An Omission
 
-The gate has one requirement for every pull request: three reviewer verdicts bound to the head
-SHA, plus an `agent:<vendor>` label. It exempts no account, and
+The gate has one requirement for every pull request: the reviewer verdicts its risk tier requires
+(one, two or three), bound to the head SHA, plus an `agent:<vendor>` label. It exempts no account, and
 [#1023](https://github.com/berkayturanci/keel/issues/1023) — which asked for a narrow exemption
 so one machine-generated release pull request could merge itself — was answered by removing the
 pull request instead.

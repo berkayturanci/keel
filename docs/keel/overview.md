@@ -58,8 +58,9 @@ Most coding agents stop at *"I opened a PR."* Without an invariant delivery back
   it off below a panel tier. Listing `jury` in `gates:` also runs it as a
   `keel run-gates` gate at s8, at every tier. Without the `jury` binary the s8 run is a
   no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a `jury-verdict` unless the run passes `--no-jury`;
-  it relaxes to advisory only when a posted verdict (or `--jury-vendors`) reports fewer than
-  2 vendors. Core resolves the mode from the panel that actually ran: a cross-vendor gate
+  it relaxes to advisory when the run passes `--jury-advisory`, when `knobs.team.jury.mode` is
+  `advisory`, or when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors. None
+  of the three relaxes a tier whose review is the panel (next bullet). Core resolves the mode from the panel that actually ran: a cross-vendor gate
   needs ≥2 distinct vendors, so a short panel downgrades to advisory instead of blocking.
 - **…or the panel *is* the review** — set `knobs.team.review.by_tier."3": jury` and s7 dispatches
   ai-jury **once** instead of running host reviewers beside it. `keel review --from-jury
@@ -243,6 +244,6 @@ landed) rather than a soft `done`, so the board distinguishes a green confirmed-
 a closed-out run; runs whose `--run-id` ends in their issue/PR (`ship-585`) are labelled
 `#585` even when no explicit issue is passed.
 
-Depends on this core (`keel-workflow >= 1.6.0`); the core never depends on it (it only
+Depends on this core (`keel-workflow >= 1.15.0`); the core never depends on it (it only
 reads records, and probes `shutil.which("jury")` — never imports ai-jury). See
 [`keel-visual/README.md`](../../keel-visual/README.md).
