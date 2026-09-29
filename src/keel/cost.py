@@ -1,15 +1,23 @@
-"""Keel Analytics, Token Usage, and USD Cost Estimation Engine.
+"""Keel token counts and USD cost estimates.
 
-Estimates token usage and USD cost from the activity records under ``.keel/activity``,
-using built-in model pricing tables without any external billing APIs.
+Totals the token counts the activity records under ``.keel/activity`` carry — or a
+placeholder where they carry none — and prices them from built-in model pricing tables,
+without any external billing API.
 
-**The figures are estimates, and the report says how much of each.** A record that
-carries ``prompt_tokens`` / ``completion_tokens`` is *measured*; one that does not is
-priced at :data:`ASSUMED_PROMPT_TOKENS` / :data:`ASSUMED_COMPLETION_TOKENS` and counted
-as *estimated*. No keel command writes token counts into an activity record today, so
-every run keel stamps is estimated (#1359) — and a report whose dollar figure is a run
-count times a constant must not read as a bill. :class:`CostReport` carries the split,
-and both renderings state it.
+**The report says which of its figures are measured.** A record that carries a
+non-zero ``prompt_tokens`` / ``completion_tokens``, or a
+:data:`keel.activity.USAGE_FIELD` entry with non-zero counts, is *measured*; one that
+carries neither is priced at :data:`ASSUMED_PROMPT_TOKENS` /
+:data:`ASSUMED_COMPLETION_TOKENS` and counted as *estimated* (#1359) — a report whose
+dollar figure is a run count times a constant must not read as a bill.
+:class:`CostReport` carries the split, and both renderings state it.
+
+The one keel writer of counts is ``keel delegate run --activity-run-id`` (#1373): a
+hosted-API delegate's reported usage, one entry per call, priced at that call's model.
+A measured run is therefore measured *for its delegate calls*: an agent host's own
+tokens, and a CLI delegate's, are never in a record, and the report says so. The dollar
+figures stay estimates either way — they are keel's pricing table applied to counts,
+not the provider's bill.
 """
 
 from __future__ import annotations
@@ -316,42 +324,42 @@ def calculate_cost_report(records: list[dict[str, Any]]) -> CostReport:
     models_data: dict[str, dict[str, Any]] = {}
 
     for rec in records:
-        p_tok = int(rec.get("prompt_tokens") or 0)
-        c_tok = int(rec.get("completion_tokens") or 0)
-        model = rec.get("model") or ""
-
-        if p_tok == 0 and c_tok == 0:
+        parts = _measured_parts(rec)
+        if not parts:
             # No counts on the record: price it at the placeholder, and count it, so the
             # report can say how much of itself is the placeholder (#1359).
-            p_tok = ASSUMED_PROMPT_TOKENS
-            c_tok = ASSUMED_COMPLETION_TOKENS
+            parts = [(rec.get("model") or "", ASSUMED_PROMPT_TOKENS, ASSUMED_COMPLETION_TOKENS)]
             estimated_runs += 1
 
-        total_prompt += p_tok
-        total_completion += c_tok
+        run_unpriced = False
+        run_models: set[str] = set()
+        for model, p_tok, c_tok in parts:
+            total_prompt += p_tok
+            total_completion += c_tok
 
-        m_key = normalize_model_name(model)
-        cost = estimate_token_cost(p_tok, c_tok, model)
-        total_actual_cost += cost
-        if m_key == "default":
-            unpriced_runs += 1
-        else:
-            # Only a run whose real price is known can evidence a saving against
-            # the frontier benchmark.
-            priced_actual_cost += cost
-            total_benchmark_cost += estimate_benchmark_cost(p_tok, c_tok)
+            m_key = normalize_model_name(model)
+            cost = estimate_token_cost(p_tok, c_tok, model)
+            total_actual_cost += cost
+            if m_key == "default":
+                run_unpriced = True
+            else:
+                # Only a run whose real price is known can evidence a saving against
+                # the frontier benchmark.
+                priced_actual_cost += cost
+                total_benchmark_cost += estimate_benchmark_cost(p_tok, c_tok)
 
-        if m_key not in models_data:
-            models_data[m_key] = {
-                "runs": 0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "cost_usd": 0.0,
-            }
-        models_data[m_key]["runs"] += 1
-        models_data[m_key]["prompt_tokens"] += p_tok
-        models_data[m_key]["completion_tokens"] += c_tok
-        models_data[m_key]["cost_usd"] = round(models_data[m_key]["cost_usd"] + cost, 4)
+            stats = models_data.setdefault(
+                m_key, {"runs": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0}
+            )
+            # A model's `runs` counts the runs that used it, once each: a ship run whose
+            # implementer and reviewer both called the same model is one run of it.
+            if m_key not in run_models:
+                stats["runs"] += 1
+                run_models.add(m_key)
+            stats["prompt_tokens"] += p_tok
+            stats["completion_tokens"] += c_tok
+            stats["cost_usd"] = round(stats["cost_usd"] + cost, 4)
+        unpriced_runs += run_unpriced
 
     total_tokens = total_prompt + total_completion
     # Like with like: both sides of the subtraction cover exactly the priced
@@ -379,6 +387,29 @@ def calculate_cost_report(records: list[dict[str, Any]]) -> CostReport:
     )
 
 
+def _measured_parts(rec: dict[str, Any]) -> list[tuple[str, int, int]]:
+    """Every ``(model, prompt_tokens, completion_tokens)`` a record carries; ``[]`` if none.
+
+    Two sources, both measured: the record's own top-level counts (any writer's, priced at
+    the record's ``model``), and each :data:`keel.activity.USAGE_FIELD` entry keel's
+    delegates recorded (#1373), priced at that call's model. A part whose counts are both
+    zero is not a measurement, as before; neither is a malformed entry — a record read
+    from disk has been validated, but this also takes records built in memory.
+    """
+    parts: list[tuple[str, int, int]] = []
+    p_tok = int(rec.get("prompt_tokens") or 0)
+    c_tok = int(rec.get("completion_tokens") or 0)
+    if p_tok or c_tok:
+        parts.append((rec.get("model") or "", p_tok, c_tok))
+    usage = rec.get(activity.USAGE_FIELD)
+    for entry in usage.values() if isinstance(usage, dict) else ():
+        if activity.usage_entry_issue(entry) is None and (
+            entry["prompt_tokens"] or entry["completion_tokens"]
+        ):
+            parts.append((entry["model"], entry["prompt_tokens"], entry["completion_tokens"]))
+    return parts
+
+
 def _token_basis_lines(report: CostReport) -> list[str]:
     """The report's statement of what its token figures rest on (#1359).
 
@@ -393,10 +424,19 @@ def _token_basis_lines(report: CostReport) -> list[str]:
     basis = report.token_basis
     if basis == "none":
         return []
+    # What a measured count covers, said wherever one is counted: keel records what a
+    # hosted-API delegate reports (#1373), and nothing of the agent host running the run.
+    scope = [
+        f"{indent}Measured counts are the ones the records carry: keel records what a",
+        f"{indent}hosted-API delegate reports, never an agent host's own tokens.",
+    ]
     if basis == "measured":
-        return [
-            f"  Token Basis           : measured (all {report.total_runs} runs carry token counts)"
-        ]
+        whole = (
+            "the 1 run carries token counts"
+            if report.total_runs == 1
+            else f"all {report.total_runs} runs carry token counts"
+        )
+        return [f"  Token Basis           : measured ({whole})", *scope]
     if basis == "estimated":
         return [
             f"  Token Basis           : ESTIMATED at {assumption}",
@@ -408,13 +448,14 @@ def _token_basis_lines(report: CostReport) -> list[str]:
         f"{report.estimated_runs} ESTIMATED at {assumption}",
         f"{indent}The estimated runs carry no token counts; their share of every figure",
         f"{indent}below is that assumption, not a measurement.",
+        *scope,
     ]
 
 
 def render_cost_report(report: CostReport) -> str:
     """Render human-readable markdown / CLI report."""
     lines = [
-        "Keel Efficiency & Cost Ledger",
+        "Keel Token & Cost Report",
         "────────────────────────────────────────────────────────",
         f"  Total Runs Tracked    : {report.total_runs}",
         *_token_basis_lines(report),

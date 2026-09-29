@@ -251,11 +251,17 @@ def result_document(
     timed_out: bool = False,
     error_code: str | None = None,
     error: str | None = None,
+    usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """The one JSON document ``keel delegate run`` prints, success or failure.
 
     ``exit_code`` is ``None`` for the HTTP transports: there is no process, and reporting
     a synthetic ``1`` would let a caller mistake a refused API key for a crashed CLI.
+
+    ``usage`` is the vendor's own token count for the call (#1373) —
+    ``{"prompt_tokens": …, "completion_tokens": …}`` — and ``None`` whenever the transport
+    reported none. Only the ``api`` transport fills it today; a CLI's or Ollama's run
+    reports ``None``, which means "not counted", never "free".
     """
     return {
         "schema_version": SCHEMA_VERSION,
@@ -278,6 +284,7 @@ def result_document(
         "read_only_backed": plan.read_only_backed,
         "effort_applied": plan.effort_applied,
         "warnings": list(plan.warnings),
+        "usage": dict(usage) if usage else None,
     }
 
 
@@ -526,8 +533,11 @@ def _run_api(plan: RunPlan, prompt: str, finish, *, env, opener) -> dict[str, An
         _opener=opener,
     )
     if not result.ok:
-        return finish(ok=False, error_code=result.error_code, error=result.error)
-    return finish(ok=True, text=result.text)
+        # A `bad-response` can still carry the vendor's counts: the call was made.
+        return finish(
+            ok=False, error_code=result.error_code, error=result.error, usage=result.usage
+        )
+    return finish(ok=True, text=result.text, usage=result.usage)
 
 
 def _run_ollama(plan: RunPlan, prompt: str, finish, *, opener) -> dict[str, Any]:
@@ -752,6 +762,7 @@ def _detached_failure(record: dict[str, Any], *, code: str, message: str) -> dic
         "read_only_backed": False,
         "effort_applied": False,
         "warnings": [],
+        "usage": None,
         "run_id": record.get("run_id"),
         "out_path": record.get("out_path"),
     }
@@ -969,4 +980,5 @@ def planning_failure(
         "read_only_backed": False,
         "effort_applied": False,
         "warnings": [],
+        "usage": None,
     }

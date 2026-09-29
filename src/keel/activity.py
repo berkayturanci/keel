@@ -18,13 +18,16 @@ read/write/remove touch the filesystem.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from . import config as cfg
-from . import flows, workspace
+from . import flows, lock, workspace
 
 ACTIVITY_SCHEMA_VERSION = "keel.activity.v1"
 RECORD_TYPE_ACTIVITY = "command_activity"
@@ -39,6 +42,20 @@ STATUSES = ("running", "done", "merged")
 #: without a verdict to report (planning, a phase with nothing to pass), which is not
 #: the same as passing.
 VERDICTS = ("pass", "blocked")
+
+#: The field a record keeps its delegates' measured token counts in (#1373): an object
+#: keyed by the delegate call's id, each value ``{"model", "prompt_tokens",
+#: "completion_tokens"}``. Keyed rather than summed, for two reasons: one ship run makes
+#: several delegate calls, often to different vendors, and a sum could only be priced at
+#: one model; and a key makes recording the same call twice a no-op instead of a double
+#: count. Absent until a delegate records into the run.
+USAGE_FIELD = "delegate_usage"
+
+#: How long a writer waits for another writer of the same record: attempts x poll.
+#: Holding the lock takes one read and one atomic write, so two seconds is ample; it is
+#: bounded because a holder killed mid-write leaves its claim behind.
+LOCK_ATTEMPTS = 40
+LOCK_POLL_S = 0.05
 
 # A run_id reduces to this slug for its filename; anything else is rejected so a
 # crafted run_id can never escape the activity directory.
@@ -60,6 +77,7 @@ def activity_contract_as_dict() -> dict[str, Any]:
         "additive": True,
         "touches_checkpoint": False,
         "phase_source": "keel.flows.flow_for(command)",
+        "usage_field": USAGE_FIELD,
     }
 
 
@@ -173,6 +191,75 @@ def validate_activity(record: Any) -> None:
     # not — a board that trusts this field must never read a typo as a pass.
     if record.get("verdict") is not None and record.get("verdict") not in VERDICTS:
         raise ActivityError("unsupported verdict")
+    usage = record.get(USAGE_FIELD)
+    if usage is not None:
+        # The cost report prices whatever is here as measured, so a malformed entry is
+        # refused at the door rather than read as a count.
+        if not isinstance(usage, dict):
+            raise ActivityError(f"{USAGE_FIELD} must be an object")
+        for call_id, entry in usage.items():
+            issue = usage_entry_issue(entry)
+            if issue is not None:
+                raise ActivityError(f"{USAGE_FIELD}[{call_id!r}]: {issue}")
+
+
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def usage_entry_issue(entry: Any) -> str | None:
+    """Why ``entry`` is not a well-formed delegate-usage entry, or ``None`` when it is."""
+    if not isinstance(entry, dict):
+        return "entry must be an object"
+    model = entry.get("model")
+    if not isinstance(model, str) or not model.strip():
+        return "model must be a non-empty string"
+    for name in ("prompt_tokens", "completion_tokens"):
+        if not _is_count(entry.get(name)):
+            return f"{name} must be a non-negative integer"
+    return None
+
+
+def with_delegate_usage(
+    record: dict[str, Any],
+    call_id: str,
+    *,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> dict[str, Any]:
+    """A copy of ``record`` that also carries one delegate call's token counts.
+
+    Keyed by ``call_id``, so recording the same call again replaces its entry rather than
+    adding it twice. The entry is validated here, not only on write, so a bad count fails
+    before anything is built on it.
+    """
+    entry = {
+        "model": model,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+    }
+    issue = usage_entry_issue(entry)
+    if issue is not None:
+        raise ActivityError(f"{USAGE_FIELD}: {issue}")
+    if not isinstance(call_id, str) or not call_id.strip():
+        raise ActivityError(f"{USAGE_FIELD}: call id must be a non-empty string")
+    updated = dict(record)
+    updated[USAGE_FIELD] = {**(record.get(USAGE_FIELD) or {}), call_id: entry}
+    return updated
+
+
+def carry_usage(record: dict[str, Any], existing: dict[str, Any] | None) -> dict[str, Any]:
+    """``record`` with the delegate counts ``existing`` already held.
+
+    Every phase stamp rebuilds the record from :func:`build_activity_record`, which knows
+    nothing of counts; without this, the next stamp after a delegate recorded would erase
+    what it recorded (#1373).
+    """
+    usage = (existing or {}).get(USAGE_FIELD)
+    if not usage:
+        return record
+    return {**record, USAGE_FIELD: dict(usage)}
 
 
 def encode_activity(record: dict[str, Any]) -> str:
@@ -202,6 +289,82 @@ def read_activity(path: str | Path) -> dict[str, Any] | None:
 def write_activity(path: str | Path, record: dict[str, Any]) -> None:
     """Write one validated activity record atomically."""
     workspace.write_text_atomic(path, encode_activity(record))
+
+
+@contextlib.contextmanager
+def record_lock(
+    lock_root: str | Path,
+    path: str | Path,
+    *,
+    owner: str,
+    attempts: int | None = None,
+    _sleep: Callable[[float], None] | None = None,
+) -> Iterator[bool]:
+    """Serialise the read-modify-write of one activity record; yields whether it is held.
+
+    Detached reviewers finish independently, and two recording at once would each read
+    the record without the other's counts and the second write would drop the first's.
+    The claim is :mod:`keel.lock`'s atomic ``mkdir``. Bounded: after ``attempts`` tries —
+    or on an I/O error claiming it — this yields ``False`` and the caller decides whether
+    to go ahead unlocked (a phase stamp must land) or skip (a count may not be guessed).
+    """
+    # Resolved at call time, not bound as defaults, so the bound and the sleep can be
+    # changed where they are defined rather than at every caller.
+    attempts = LOCK_ATTEMPTS if attempts is None else attempts
+    sleep = time.sleep if _sleep is None else _sleep
+    resource = f"activity-{Path(path).stem}"
+    held = False
+    for attempt in range(attempts):
+        try:
+            held = lock.claim_resource(lock_root, resource, owner=owner).granted
+        except OSError:
+            break
+        if held or attempt + 1 == attempts:
+            break
+        sleep(LOCK_POLL_S)
+    try:
+        yield held
+    finally:
+        if held:
+            with contextlib.suppress(OSError):
+                lock.release_resource(lock_root, resource, owner=owner, best_effort=True)
+
+
+def record_delegate_usage(
+    path: str | Path,
+    lock_root: str | Path,
+    *,
+    call_id: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    attempts: int | None = None,
+    _sleep: Callable[[float], None] | None = None,
+) -> str:
+    """Add one delegate call's counts to the run's existing record, under the record lock.
+
+    Returns ``recorded``; ``no-record`` when the run has no record to add to (a count is
+    never the thing that creates one — it has no phase); or ``busy`` when the lock could
+    not be taken, in which case nothing is written rather than risking a lost update.
+    Raises :class:`ActivityError` / ``OSError`` for a malformed record or a failed write.
+    """
+    with record_lock(lock_root, path, owner=call_id, attempts=attempts, _sleep=_sleep) as held:
+        if not held:
+            return "busy"
+        existing = read_activity(path)
+        if existing is None:
+            return "no-record"
+        write_activity(
+            path,
+            with_delegate_usage(
+                existing,
+                call_id,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            ),
+        )
+    return "recorded"
 
 
 def remove_activity(path: str | Path) -> bool:
