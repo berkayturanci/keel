@@ -45,6 +45,18 @@ All notable changes to keel are documented here. The format follows
   `tests/test_docs_root_claims.py` and `keel-visual/tests/test_readme.py` hold each page to the
   file or code it describes (docs audit 2026-09-29).
 - **The command adapters use the flags, contracts and helpers keel has.** `/keel:ship` s9 passes `keel fixloop brief` the `--delegate`, `--role`, `--tier` and `--host-agent` that pick the fixer, and says the command has no `--team` or `--effort`. s8 records an agentic gate's result on `keel ship --gate-result`, because `run-gates` has no such flag. s5 no longer claims `--reviewers` skips the tier. `/keel:work-block` and `/keel:overnight` build their staffing flags only from values that were set, so an unset `--effort` is no longer passed as `''`, and they pass `--reviewers` too. `/keel:implement` reads the implementer from `keel plan --command ship`, its labels from `keel attribution`, and removes worktrees with `keel worktree-remove`. `/keel:review-all-day` and `/keel:regression` take their numbers, labels and confidence filter from `scan_contract`. `/keel:overnight` states one window rule: only a window that closes during the session stops it. `/keel:triage`, `/keel:pr-loop` and `/keel:review-cycle` route by `team.implement.by_role`, and `/keel:swarm` says a dry run creates no worktree and lands onto `base_branch`. New tests check every `keel <cmd> --flag` in an adapter code block against the parser, and the attribution-prose ban now covers every adapter (docs audit 2026-09-29).
+- **The CLI, evidence and release pages say what the code does.** `cli.md`'s `keel ship`
+  sample is a real run's output, its exit-code table names the codes `evidence-verify`,
+  `verify-merge`, `run-gates`, `ship` and `merge` return beyond 1, its delegate `error_code`
+  table gains `bad-key`, `unknown-vendor`, `spawn-failed` and `bad-run-id`, and its
+  `keel activity` examples stamp (they needed `--write`, and ship's phase is `s8`).
+  `evidence.md` no longer says the verifier reads gate results or that a waiver takes
+  `--operator` and writes a record; `github-actions.md` shows the flags the workflow passes;
+  `command-contracts.md` lists the six artifact bodies a run renders and the closure's
+  `watermark` section. `release.md`, `homebrew-release-chain.md`, `comparison.md`,
+  `overview.md`, `ship-baseline.md` and `runtime-capabilities.md` are corrected too, and
+  `tests/test_docs_cli_evidence_release.py` reads each list from the code it describes
+  (docs audit 2026-09-29)
 
 ### Companion
 - **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py

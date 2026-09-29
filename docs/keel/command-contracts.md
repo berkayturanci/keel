@@ -59,7 +59,7 @@ Every contract includes:
 | `agent_output_provenance` | Deterministic untrusted-output tagging contract for agent findings, review/jury verdict material, step handoffs, and feedback workflows. |
 | `resource_claims` | Single-host `mkdir` resource-claim primitive; denial is structured feedback, and `keel merge` is the core merge-lock consumer. |
 | `closure_comment` | Present for `ship` (both profiles); the deterministic, consumer-neutral closure-comment contract describing how the s11 ship-outcome comment is rendered from the `ship_run` ledger record. |
-| `evidence` | Present for `ship` (both profiles); the pre-merge evidence contract used by `keel evidence-verify`. The gate is armed by deterministic ship provenance (ship-style branch, review marker, trusted `keel ship` assessment comment, ship-run ledger record, or the legacy `evidence_gate_label`), and only an operator waiver label disarms it. Assessment comments arm the gate but are not accepted as evidence. The contract carries an `enforced` flag and, when not enforced for a hand-authored PR, an empty `required` set. When enforced it is fail-closed. |
+| `evidence` | Present for `ship` (both profiles); the pre-merge evidence contract used by `keel evidence-verify`. The gate is armed by deterministic ship provenance (a trusted `keel.ship-provenance.v1` comment — the primary signal, checked ahead of the branch name — ship-style branch, review marker, trusted `keel ship` assessment comment, ship-run ledger record, or the legacy `evidence_gate_label`), and only an operator waiver label disarms it. Assessment comments arm the gate but are not accepted as evidence. The contract carries an `enforced` flag and, when not enforced for a hand-authored PR, an empty `required` set. When enforced it is fail-closed. |
 | `step_verification` | Present for `ship` (both profiles); the fail-closed step completion contract that maps required public evidence onto backbone steps and defines the structured handoff object every successful step must produce. |
 | `assignment` | The reviewer bench is a pure function of config + tier + role + `--reviewers` + `--review-delegate`; the jury flags never move it, and one that is ignored on a jury-panel tier is reported in `warnings`. Present for ship-like commands (`ship`, `pr-loop`, `review-cycle`, `work-block`, `overnight`); the resolved `knobs.team` team for this run — `implementer`, `gate`, `reviewers[]` (per-slot `provider`/`model`/`effort`), `review_panel`, `jury`, `fix`, and `warnings`. Resolved once and shared with `review_merge_contract.reviewers.slots`, so the bench a host dispatches and the contract it publishes cannot disagree. `keel ship` re-resolves it against the tier classified from the real diff. Since #1017 the block also always carries five more keys, present on every resolution rather than only when staffing is configured: `lead` (the seat coordinating a batch; the host agent when `knobs.team.lead` is unset), `effort` (the implementer seat's effective reasoning effort), `difficulty` (the band this was resolved for, `null` outside a swarm plan), `team_profile` (the `--team` name, `null` when none), and `bench` (config paths of the `knobs.team` benches that applied, `[]` when none). A reader can therefore always ask "who led this, at what effort, from which bench" without testing for the keys' existence. |
 | `run_controls` | Present for agentic/looping commands (`ship`, `pr-loop`, `review-cycle`, `work-block`, `overnight`); deterministic run budgets, per-slot step caps, and oscillation hard-halt rules. |
@@ -370,7 +370,8 @@ The block records:
   comment so external evidence checks can distinguish the actual s11 closure comment from
   PR bodies, chat summaries, and automated assessment comments
 - `heading` (`Ship outcome`) and the ordered `sections`: implementer, reviewers, tester,
-  fix_rounds, pull_request, changed_files, docs_touched, capture, run_id, run_context
+  fix_rounds, pull_request, changed_files, docs_touched, capture, run_id, run_context,
+  watermark
 - a **Fix rounds** line after `tester`, listing who took each s9 fix round
   (`round 2: opus (gate)`) from the ledger record's `actors.fixers`. It is **omitted
   entirely** on a run that spent no fix round — most of them — so every existing line of
@@ -383,7 +384,11 @@ The block records:
   transport (`gh`|`mcp`), profile (`standard`|`compound`), jury mode
   (`off`|`advisory`|`gating`), and a consent summary (status + approved scopes). Its fields
   are listed under `run_context_fields` (`host_agent`, `transport`, `profile`,
-  `jury_mode`, `consent`). The block
+  `jury_mode`, `jury_panel`, `implement_mode`, `implement_loop`, `consent`). Three of them
+  render only when they have something to say: `jury_panel` adds the s7 panel-availability
+  line (and its machine-readable marker) on a run that resolved a jury panel, and
+  `implement_mode` / `implement_loop` add one **Implement:** line on a test-first or looped
+  s4 run. The block
   is **additive** — the `comment_marker` and every existing line stay byte-identical, so the
   evidence verifier is unaffected. Missing fields degrade gracefully: host agent / transport /
   profile / consent status render `unknown`, jury mode renders `off`, an empty scope list renders
@@ -403,6 +408,8 @@ The block records:
   the Changed files line renders `unreadable (git diff failed)` in place of a count: "no
   docs touched" is an affirmative claim, and it must not be made about a diff nobody could
   read
+- the `watermark` section closes the comment: a keel signature after a `---` rule (see
+  [badges.md](badges.md))
 - `source: run-ledger ship_run record`
 - `deterministic: true`, `consumer_neutral: true`, `mirror_not_parser: true`
 - `renderer: keel.closure.render_closure_comment`
@@ -422,7 +429,7 @@ renderer contract for public GitHub/writeable outputs that agents previously had
 from prose. The renderer contract is consumer-neutral and tells adapters to post rendered
 Markdown verbatim when available.
 
-`keel ship --json` exposes the rendered bodies under `result.artifact_bodies`:
+`keel ship --json` exposes six rendered bodies under `result.artifact_bodies`:
 
 - `pr_body`: canonical PR description with Summary, Context / Root Cause, Changes Made,
   Testing, Fix evidence, Docs Impact, and a closing or reference line
@@ -433,22 +440,27 @@ Markdown verbatim when available.
   `evidence_require_distinct_vendors` check
 - `jury_verdict_template`: marker-based jury verdict carrying `keel.jury-verdict.v1` and
   `head: <sha>` when available
-- `review_cycle_summary`: marker-based multi-reviewer summary carrying
-  `keel.review-cycle-summary.v1` — one section per reviewer plus a Consolidated Summary whose
-  severity histogram drives the merge recommendation (rendered via
-  `keel review-cycle-summary`, used by `/keel:review-cycle` and `/keel:pr-loop`)
 - `extension_result_template`: stable `keel.extension-result.v1` shape for slot/extension
   status, mode, summary, artifacts, and follow-up references
-- `step_handoff`: stable `keel.step-handoff.v1` shape for step-to-step handoff status,
-  summary, next step, and evidence ids
-- `run_control_halt`: stable `keel.run-control-halt.v1` shape for budget, step-cap, or
-  oscillation hard-halt reasons
 - `ship_provenance`: the `keel.ship-provenance.v1` stamp a live run posts on its own PR
   right after creating it — run id, issue, head, and the implementer's attribution labels
   as `keel.agents.attribution()` produced them. `keel.evidence.gate_decision()` arms the
   evidence gate on this marker **ahead of** the legacy branch-name regex, so a ship run is
   gated regardless of what its branch is called (see [evidence.md](evidence.md)). Post it
   with `keel post-comment --artifact ship-provenance`.
+
+Three more renderers are in the contract's `artifact_renderers.renderers` but have no body
+under `result.artifact_bodies`, because a dry assessment has nothing to fill them with — each
+is rendered by the step that produces its content:
+
+- `review_cycle_summary`: marker-based multi-reviewer summary carrying
+  `keel.review-cycle-summary.v1` — one section per reviewer plus a Consolidated Summary whose
+  severity histogram drives the merge recommendation (rendered via
+  `keel review-cycle-summary`, used by `/keel:review-cycle` and `/keel:pr-loop`)
+- `step_handoff`: stable `keel.step-handoff.v1` shape for step-to-step handoff status,
+  summary, next step, and evidence ids
+- `run_control_halt`: stable `keel.run-control-halt.v1` shape for budget, step-cap, or
+  oscillation hard-halt reasons
 
 Project customization changes the content supplied to these renderers through config,
 policy, and extension results; it does not change the artifact shape. PR bodies remain
