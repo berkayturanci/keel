@@ -33,7 +33,7 @@ obvious.
 Project-neutral backlog triage. This adapter contains no repo, role name, path
 glob, or label literal beyond the generic vocabulary below — read every project
 specific from `.keel/project.yaml` via the `keel` CLI (`tier3_globs`,
-`implementer_agents`, repo).
+`team.implement.by_role`, repo).
 
 The command scans open issues missing any `status:*` label, spawns one classifier
 subagent per issue that proposes a routing role + `priority:* + status:*` label
@@ -53,7 +53,7 @@ published artifact and MUST be English.
 
 ```bash
 keel validate .keel/project.yaml --root .
-keel plan     .keel/project.yaml --root .   # tier3_globs, implementer_agents, repo
+keel plan     .keel/project.yaml --root .   # tier3_globs, team.implement.by_role, repo
 keel plan     .keel/project.yaml --root . --command triage --live --json
 ```
 
@@ -65,7 +65,11 @@ and ask the operator to rerun with the required `--approve-scope` values. Pass
 only `approved_mutation_scopes`; scope expansion blocks or escalates.
 
 The **role/platform** vocabulary is project-defined — derive it from the keys of
-`implementer_agents` (each key is a routing role). Do not hardcode role names.
+`team.implement.by_role` (each key is a routing role), read from
+`contract.project.knobs.team.implement.by_role` in the live plan. A project that has not
+migrated may still key roles in the deprecated `implementer_agents`
+(`contract.project.knobs.implementer_agents`), which keel still routes on — the vocabulary
+is the union of both key sets. Do not hardcode role names.
 Legacy wrappers that used `platform:*` labels must migrate by either defining
 matching routing-role keys in project config for the transition or translating the
 legacy platform value to one configured role before invoking this adapter. keel
@@ -83,7 +87,7 @@ unknown `--` flag):
 - `--label <name>` — optional filter: only triage issues already carrying
   `<name>`.
 - `--assign` — also set the **role label** that routes the implementer
-  (`implementer_agents`). Without it, the role/platform label is suggested but the
+  (`team.implement.by_role`). Without it, the role/platform label is suggested but the
   routing assignment is left to a human / `/keel:ship`.
 
 Worked examples:
@@ -137,14 +141,15 @@ off — classification is always read-only.
 
 ### Allowed label set (closed vocabulary — do NOT invent labels)
 
-- Role/platform: one of the **roles defined in `implementer_agents`** (config).
+- Role/platform: one of the **routing roles** (config: the keys of `team.implement.by_role`,
+  plus any in the deprecated `implementer_agents`).
 - Priority: one of `priority:critical`, `priority:high`, `priority:medium`,
   `priority:low`.
 - Status: one of `status:backlog`, `status:in-progress`, `status:needs-review`,
   `status:needs-test`, `status:needs-fix`, `status:done`, `status:blocked`.
 
 If the agent cannot confidently pick a role/platform, default to the project's
-neutral/shared role (the catch-all key in `implementer_agents`, or the host
+neutral/shared role (the catch-all routing role, or `team.implement.default` / the host
 agent).
 
 ### Classifier subagent prompt (template)
@@ -156,7 +161,7 @@ stdout, nothing else:
   {"role": "...", "priority": "...", "status": "...", "reasoning": "..."}
 
 Constraints (closed vocabulary — picking anything outside these lists is a bug):
-  role     ∈ the roles defined in implementer_agents (passed in below)
+  role     ∈ the project's routing roles (passed in below)
   priority ∈ {priority:critical, priority:high, priority:medium, priority:low}
   status   ∈ {status:backlog, status:in-progress, status:needs-review,
               status:needs-test, status:needs-fix, status:done, status:blocked}
@@ -178,8 +183,8 @@ Status:
     the orchestrator posts a note and skips the status label.
 
 Role/platform heuristics:
-  - Map the files/paths the issue implies to the routing role in
-    implementer_agents (e.g. a path that matches a role's ownership ⇒ that role).
+  - Map the files/paths the issue implies to one of the routing roles
+    (e.g. a path that matches a role's ownership ⇒ that role).
   - Source-of-truth doc / agent config / slash commands / shared schema ⇒ the
     neutral/shared role.
   - If unclear, default to the neutral/shared role.
@@ -191,7 +196,7 @@ Issue payload:
   title: <TITLE>
   existing labels: <CSV of label names>
   risk tier: <tier from Step 2>
-  roles: <CSV of implementer_agents keys>
+  roles: <CSV of the routing roles>
   body: <BODY>
 
 You MAY read the issue or its comments for extra context but MUST NOT run any
@@ -269,7 +274,7 @@ writes. Hand ready items to `/keel:ship`.
 
 ## Stop conditions / safety invariants
 
-- **Never invent labels.** The role (from `implementer_agents`) / priority /
+- **Never invent labels.** The role (from `team.implement.by_role`) / priority /
   status vocabularies are the entire allowed set. If the repo label set changes,
   update config in the same commit — never broaden the vocabulary at runtime.
 - **Never modify titles or bodies.** Labels and comments only.
@@ -286,8 +291,8 @@ writes. Hand ready items to `/keel:ship`.
 
 - `gh` authenticated with `repo` scope (issue read / edit / comment), or the
   GitHub MCP tools in a sandbox/web runtime.
-- The closed label vocabulary above (the `implementer_agents` roles + the
+- The closed label vocabulary above (the routing roles + the
   priority/status families) must exist in the repo. If any label is missing, fix
   the repo labels (not this command) before invoking.
 
-<!-- keel-generated: surface=plugin command=triage keel_version=1.24.3 source_sha256=5323541c69418c01b9fee083f7e4d79cdad44f030b23fadd538fc334ed2abf7e generated_sha256=5323541c69418c01b9fee083f7e4d79cdad44f030b23fadd538fc334ed2abf7e -->
+<!-- keel-generated: surface=plugin command=triage keel_version=1.24.3 source_sha256=016a61658fc790bd525f2d45d7302fc079910dbafe298b00c7d3052f80427a50 generated_sha256=016a61658fc790bd525f2d45d7302fc079910dbafe298b00c7d3052f80427a50 -->

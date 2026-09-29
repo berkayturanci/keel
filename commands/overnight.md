@@ -1,5 +1,5 @@
 ---
-description: Unattended overnight work block — time-aware merge mode keyed on the merge window; runs /keel:ship over the queue until the window closes, then writes a session/morning report. Project-neutral; reads .keel/project.yaml.
+description: Unattended overnight work block — time-aware merge mode keyed on the merge window (Night while it is closed, Day while it is open); runs /keel:ship over the queue until the budget runs out or an open window closes, then writes a session/morning report. Project-neutral; reads .keel/project.yaml.
 argument-hint: "[hours] [--max <N>] [--review-comments <inline|summary>] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
@@ -72,6 +72,15 @@ The boundary is shared with `/keel:ship`, so both commands defer or merge the
 same PR at the same wall-clock minute. Re-check `keel window` each loop — the
 mode can flip mid-session.
 
+**When the window ends the session.** `session_contract.overnight.stop_conditions` lists
+`merge-window-close`, and it means one event: the window **closing during this session** —
+an `OPEN` read followed by a `CLOSED` one. A session that starts `CLOSED` is in Night mode
+and is not stopped by the window being closed; it runs until another stop condition holds
+(the `hours` budget, `--max`, a hard blocker, …). If the window opens while it runs, it
+switches to Day mode and merges as it goes, and the window closing again ends it. A session
+that starts `OPEN` runs in Day mode until the window closes or another stop condition
+holds.
+
 Read `contract.checkpoint` from the live plan. At session start, call
 `keel resume .keel/project.yaml --root . --json`. If the resume plan is
 `no-checkpoint`, begin a new work block. If it is `ambiguous`, stop and reconcile the
@@ -93,9 +102,18 @@ This block accepts `--delegate <provider[:model]>`, `--review-delegate <provider
 **every** child `/keel:ship`. Resolve them once, from the same preflight the rest of this
 command reads:
 
+Build the flag list from the values that were set — never pass an empty one, which the
+parser rejects (`--effort ''` is `invalid choice: ''`) or records as a value
+(`--delegate ''`):
+
 ```bash
-keel overnight .keel/project.yaml --root . --live --json \
-  --delegate "$DELEGATE" --review-delegate "$REVIEWER" --effort "$EFFORT" --team "$TEAM"
+STAFF=()
+[ -n "$DELEGATE" ]  && STAFF+=(--delegate "$DELEGATE")
+for r in "${REVIEW_DELEGATES[@]}"; do STAFF+=(--review-delegate "$r"); done  # one per slot, in order
+[ -n "$EFFORT" ]    && STAFF+=(--effort "$EFFORT")
+[ -n "$TEAM" ]      && STAFF+=(--team "$TEAM")
+[ -n "$REVIEWERS" ] && STAFF+=(--reviewers "$REVIEWERS")
+keel overnight .keel/project.yaml --root . --live --json "${STAFF[@]}"
 ```
 
 `contract.session_contract.work_block.delegation` comes back with the effective values and
@@ -135,9 +153,10 @@ an unattended block whose report does not say which team ran it cannot be audite
    A regular feature PR, a refactor/conversion PR, a test-only PR, or a docs
    cleanup is **not** a blocker — it stays unmerged in night mode.
 
-2. **Work until the budget runs out** (`hours`, default 8). If the primary queue
+2. **Work until the budget runs out** (`hours`, default 8) or another stop condition in
+   `session_contract.overnight.stop_conditions` holds. If the primary queue
    empties early, expand test coverage, open modernization issues, or improve CI
-   infrastructure — never stop early.
+   infrastructure — an empty queue is never a reason to stop early.
 
 For everything else (review protocol, issue lifecycle, branch naming, docs gate,
 do-not-touch list, code-quality checklist) follow the project's source-of-truth
@@ -180,7 +199,8 @@ the project's plans directory, use it as the queue instead.
 ## Main loop
 
 1. `keel window .keel/project.yaml` — only merge while OPEN; in CLOSED
-   mode leave PRs open (blocker exception above). Stop the loop at window close.
+   mode leave PRs open (blocker exception above). Stop the loop when the window closes
+   during this session (an `OPEN` → `CLOSED` flip); a `CLOSED` read alone does not stop it.
 2. Pick the next candidate issue in queue order. Fetch its title, body, and labels, then
    run the shared intake preflight before handing it to ship:
    ```bash
@@ -200,7 +220,9 @@ the project's plans directory, use it as the queue instead.
 4. On a blocking failure that can't be auto-fixed within the round budget,
    **defer** it to the cross-session morning queue (for `/keel:morning`) and move
    on — never force a risky merge.
-5. Loop until window close, `hours` exhausted, or `--max` reached.
+5. Loop until a stop condition in `session_contract.overnight.stop_conditions` holds: the
+   window closing during the session (step 1), `hours` exhausted, `--max` reached, a hard
+   blocker, three consecutive unresolved CI failures, or the user cancelling.
 
 ## Session report (mandatory)
 
@@ -228,4 +250,4 @@ When stopped, write the session report immediately, even if partial.
 Never merge outside the window · merge lock · fail-soft per issue (one failure
 never aborts the loop) · attribute the effective agents (vendor + base model).
 
-<!-- keel-generated: surface=plugin command=overnight keel_version=1.24.3 source_sha256=a1a101fc53792c0f57a5ca81e4b0f7f87de8ea69b1fc18ad5d8e6eea2ec22355 generated_sha256=a1a101fc53792c0f57a5ca81e4b0f7f87de8ea69b1fc18ad5d8e6eea2ec22355 -->
+<!-- keel-generated: surface=plugin command=overnight keel_version=1.24.3 source_sha256=8763e50a5a4c9d93354defe3ca838d8f851b5191ad46f82edd395a24bd57c85c generated_sha256=8763e50a5a4c9d93354defe3ca838d8f851b5191ad46f82edd395a24bd57c85c -->

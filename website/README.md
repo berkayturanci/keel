@@ -38,9 +38,11 @@ flow keeps working.
   `tests/test_docs_claims.py::TestTheStatedCommandCountIsReal` names every one and fails
   if any disagrees with `src/keel/adapters/commands/`.
 - **CLI table** → `KEEL.cli[]`. Angle brackets are fine — renderers escape them.
-- **Version** → fetched automatically from the GitHub releases API (fallback: PyPI),
-  cached 6 h in localStorage. `KEEL.meta.version` in `content.js` is only the static
-  fallback; bump it occasionally.
+- **Version** → `KEEL.meta.version` in `content.js` is shown first; `app.js` then asks
+  the GitHub releases API for the newest core (`v1.x`) release on every load (fallback:
+  PyPI) and replaces it if one answers. Nothing is cached: `app.js` deletes the
+  `keel-version` localStorage entry an older build left, because a stale cache once
+  reverted a correct version. Bump `KEEL.meta.version` with each release.
 
 ## Coverage data
 
@@ -94,19 +96,9 @@ snippet, so that section was fiction and has been removed.
 ## Theming
 
 Dark/light follows the OS by default; the toggle stores the override in
-`localStorage["keel-theme"]` (shared across pages). All colors are CSS custom
+`localStorage["theme"]` (shared across pages). All colors are CSS custom
 properties in `styles.css` — three accents (indigo `--accent`, emerald `--green`,
 amber `--brass`) plus neutrals. Change palette there only.
-
-## One production cleanup to do
-
-`index.html` ends with a **"Tweaks" block** (marked by the
-`<!-- Tweaks (in-page controls; ...) -->` comment: a `#tweaks-root` div, three
-unpkg React/Babel script tags, and two `text/babel` scripts) plus the file
-`tweaks-panel.jsx`. This was a design-review tool from the authoring environment —
-it never renders for normal visitors but does load React + Babel from a CDN.
-**Delete that block and `tweaks-panel.jsx` for production.** Nothing else references
-them; removing them changes nothing visually.
 
 ## Recent additions (already wired, nothing to do)
 
@@ -114,11 +106,11 @@ them; removing them changes nothing visually.
   rendered by `home.js` from `KEEL.backbone` / inline `covRows`. Slot hierarchy:
   grey = passive before/after, amber = primary, red ⊘ = may_block
   (`guard`, `tester`, `test`, `pre-merge`) — keep in sync with
-  `src/keel/workflows/model.py` SLOT_DEFINITIONS if slots change.
-- Version badge: stale-while-revalidate — cached value shown instantly, GitHub
-  releases API re-checked on every load.
+  `src/keel/model.py` SLOT_DEFINITIONS if slots change.
+- Version badge: the static `KEEL.meta.version` first, then the GitHub releases API
+  re-checked on every load, with no cache (see **Version** above).
 - Security view on `index.html` (+ sidebar links on docs/coverage) summarizing
-  SECURITY.md and the three audit reports.
+  SECURITY.md and the five audit reports in `docs/security/`.
 
 ## License / attribution
 

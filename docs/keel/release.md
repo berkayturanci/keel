@@ -94,8 +94,12 @@ Before tagging a release:
     `test_plugin_manifest_version_matches_keel_version` covers the Claude one only. A
     manifest added to the tree without a table entry fails
     `EveryPluginManifestIsARegisteredSurface` (#1139),
-  - the pinned-install `keel@v<version>` references in `README.md` and
-    `.github/workflows/keel-ship.yml` (kept in lockstep by `test_release_docs.py`),
+  - the pinned-install `keel@v<version>` references in `README.md`,
+    `.github/workflows/keel-ship.yml` and `docs/keel/cutover.md` (kept in lockstep by
+    `test_release_docs.py`),
+  - the published Action's example in `docs/keel/github-actions.md` — both its
+    `keel@v<version>` tag and the `keel-version:` it installs — and the integration card in
+    `website/integrations.js`, matched by shape,
   - the four site surfaces (`website/index.html`, `docs.html`, `coverage.html`,
     `content.js`), matched by shape — see below,
   - then runs `make plugin` **and** `make adapters` so every surface's `keel_version=<v>`
@@ -141,7 +145,7 @@ Before tagging a release:
   | `declared version` | `pyproject.toml` and `src/keel/__init__.py` naming different versions |
   | `changelog lockstep` | a top released `## [x.y.z]` that is not the declared version — i.e. a CHANGELOG never renamed from `## [Unreleased]` |
   | `release highlights` | a declared version after 1.24.2 whose section does not open with one to three `- ` highlight lines, or that carries anything else above its first `###` (#1342) |
-  | `release surfaces` | any surface in `scripts/release_surfaces.py` left behind: the plugin manifests, the pinned-install references in `README.md` / `keel-ship.yml` / `cutover.md`, the four site fallbacks |
+  | `release surfaces` | any surface in `scripts/release_surfaces.py` left behind: the plugin manifests, the pinned-install references in `README.md` / `keel-ship.yml` / `cutover.md`, the Action example in `github-actions.md` and its card in `integrations.js`, the four site fallbacks |
   | `keel-visual markers` | `keel-visual/pyproject.toml` and `keel_visual/__init__.py` disagreeing (#796) |
 
   `scripts/release_surfaces.py` is the single table: `release_bump.py` writes through it

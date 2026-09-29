@@ -87,7 +87,7 @@ written should not be written.
 | # | Step | Who | Where |
 |---|---|---|---|
 | 1 | `make release-bump VERSION=x.y.z`, cut the changelog | human | release PR |
-| 2 | Merge, then `git tag vX.Y.Z && git push origin vX.Y.Z` | human | — |
+| 2 | Merge, then `git tag -s vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z` (`-a` when signing is unavailable; never a lightweight tag — [release.md](release.md)) | human | — |
 | 3 | Build, publish to PyPI, attest | automatic | `publish.yml` |
 | 4 | Download the tag archive, hash it, render the formula, refuse if it disagrees | automatic | `publish.yml` |
 | 5 | Attach `keel.rb` to the GitHub Release, inside `SHA256SUMS` | automatic | `publish.yml` |
@@ -105,8 +105,9 @@ at all. The sibling pushes as a fast path and keeps the pull as a fallback. Both
 work; this design has one less secret, that one has less latency.
 
 `make release-bump` regenerates 60-odd surfaces that carry a `keel_version`
-marker — `commands/`, `.claude/commands/keel/`, `.agents/skills/keel-*`, both
-plugin manifests, `keel-ship.yml`, the website. Hand-editing the version is how
+marker — `commands/`, `.claude/commands/keel/`, `.agents/skills/keel-*`, the three
+plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`), `keel-ship.yml`,
+the website. Hand-editing the version is how
 those go stale; the script is the only supported route. The formula is no longer
 among them, and `scripts/release_surfaces.py` says why at the point where it used
 to be listed.
@@ -187,8 +188,8 @@ another.
 | the tap's live `sync-formula.yml` no longer names the retired path | `KEEL_CHECK_EXTERNAL=1` | **no** — it runs in `external promises`, which is not a required status check |
 
 Be exact about that second row, because "it runs in CI" reads as "it blocks" and
-it does not. `main`'s required contexts are the nine test-matrix jobs, `Format
-(ruff)`, CodeQL, the pull-request description lint and the keel evidence check;
+it does not. `main`'s required contexts (sixteen, as of 2026-09-29) are the twelve test-matrix
+jobs (Python 3.11–3.14 on Ubuntu, macOS and Windows), `Format (ruff)`, CodeQL, the pull-request description lint and the keel evidence check;
 `external promises` is absent from that list and no ruleset adds it. A red
 `external promises` is visible and ignorable.
 

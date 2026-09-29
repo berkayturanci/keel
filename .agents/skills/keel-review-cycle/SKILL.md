@@ -46,7 +46,7 @@ The standalone review→fix loop (`s7` + `s9`) over one or more existing PRs. Fo
 set of reviewers reviews the same diff **in parallel**, findings are posted per the chosen
 posting mode, blocking findings drive a capped fix loop, and the loop exits clean or at the
 budget. **Project-neutral** — every project specific (`base_branch`, `build_gate_cmd`,
-`lint_cmd`, `ci_workflows`, `tier3_globs`, `implementer_agents`) is read from
+`lint_cmd`, `ci_workflows`, `tier3_globs`, `team`) is read from
 `.keel/project.yaml` via the `keel` CLI. Never inline a branch name, build command, CI
 workflow name, or agent here.
 
@@ -288,4 +288,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=skills command=review-cycle keel_version=1.24.3 source_sha256=362d8f38fd43903a92facb0669dc7f218ae5cd56cd2721a06b4e602c99e1b77b generated_sha256=d1cf8e60ed13b0244939c1baf8bdd4bc11012c4fa70366ec8db742669f286019 -->
+<!-- keel-generated: surface=skills command=review-cycle keel_version=1.24.3 source_sha256=7fefc25d4921ad741fdb56d372c2255263496c6b4d4178ba521d16ec23ec7d2c generated_sha256=8e363d2f9984707e69a3224cbf7592a4a66968249403136b9a883ecbbcb56948 -->

@@ -50,9 +50,17 @@ When Keel drives an issue through the `s0`–`s12` backbone to completion, the s
 
 ```markdown
 ---
-⚓ **Shipped by [keel](https://github.com/berkayturanci/keel)** — *Driven on fixed backbone `s0`→`s12` (with [ai-jury](https://github.com/berkayturanci/ai-jury) consensus)*  
+⚓ **Shipped by [keel](https://github.com/berkayturanci/keel)** — *Driven on fixed backbone `s0`→`s12`*  
 [⭐ Star on GitHub](https://github.com/berkayturanci/keel) · [Add Keel to your repo](https://github.com/berkayturanci/keel#readme)
 ```
 
+The first line adds ` (with [ai-jury](https://github.com/berkayturanci/ai-jury) consensus)` after
+`` `s0`→`s12` `` only when the run's own ledger record says a jury sat: `run_context.jury_mode`
+is `gating` or `advisory`, and the recorded panel decision is not `fallback` or `block`. A run
+whose `Jury` line reads `off` does not claim ai-jury consensus.
+
 ### Opting Out
-Projects can customize or disable the watermark signature in their ledger record by passing `watermark: false` or providing a custom signature string.
+There is no supported opt-out: no `project.yaml` knob or CLI flag disables or replaces the
+watermark. The renderer does honour a `watermark` field on the `ship_run` ledger record
+(`false` omits it, a string replaces it), but keel never writes that field, so only a
+hand-edited record changes the signature.

@@ -57,9 +57,9 @@ may use only `approved_mutation_scopes`; scope expansion blocks or escalates.
 `--wizard` is interactive opt-in only. Pass it through to the same Step 0 command; core
 runs the picker described in `/keel:ship`'s `--wizard` section, from the same provider
 probe, and in any non-interactive context degrades to a logged no-op that leaves the
-parsed flags exactly as they are. Work-block has no implementer or jury flag of its own,
-so core echoes those choices in the resolved flag set — hand them to every child
-`/keel:ship` verbatim rather than re-deciding them per issue.
+parsed flags exactly as they are. Work-block has no jury flag of its own (its implementer
+flag is `--delegate`, Step 0b), so core echoes the picker's choices in the resolved flag set
+— hand them to every child `/keel:ship` verbatim rather than re-deciding them per issue.
 
 Read `contract.session_contract.work_block`. It is the queue primitive shared with
 `/keel:overnight`: queue snapshot, readiness refresh, per-issue worktree isolation, ship
@@ -75,9 +75,18 @@ This block accepts `--delegate <provider[:model]>`, `--review-delegate <provider
 **every** child `/keel:ship`. Resolve them once, from the same preflight the rest of this
 command reads:
 
+Build the flag list from the values that were set — never pass an empty one, which the
+parser rejects (`--effort ''` is `invalid choice: ''`) or records as a value
+(`--delegate ''`):
+
 ```bash
-keel work-block .keel/project.yaml --root . --live --json \
-  --delegate "$DELEGATE" --review-delegate "$REVIEWER" --effort "$EFFORT" --team "$TEAM"
+STAFF=()
+[ -n "$DELEGATE" ]  && STAFF+=(--delegate "$DELEGATE")
+for r in "${REVIEW_DELEGATES[@]}"; do STAFF+=(--review-delegate "$r"); done  # one per slot, in order
+[ -n "$EFFORT" ]    && STAFF+=(--effort "$EFFORT")
+[ -n "$TEAM" ]      && STAFF+=(--team "$TEAM")
+[ -n "$REVIEWERS" ] && STAFF+=(--reviewers "$REVIEWERS")
+keel work-block .keel/project.yaml --root . --live --json "${STAFF[@]}"
 ```
 
 `contract.session_contract.work_block.delegation` comes back with the effective values and
@@ -172,4 +181,4 @@ Also include the effective staffing (`--delegate`, `--review-delegate`, `--effor
 `--team`, `--reviewers` as they were passed to the children), open questions, consent gaps,
 and the next 1–3 operator actions.
 
-<!-- keel-generated: surface=skills command=work-block keel_version=1.24.3 source_sha256=819ef54e37514ef71b7f824aad586aefe810404308f3ec8cacd0802d311ee954 generated_sha256=324d65919f912fd7aa2d2a4de8c65719b9175ced26f943c74b05ed569dae9dd8 -->
+<!-- keel-generated: surface=skills command=work-block keel_version=1.24.3 source_sha256=bf24c297b1704cbaaccffa0ce6e71cfee8497dfb31f1c3c94f412067ac405edb generated_sha256=7efab7ceea6e6e0ba57f8763c6d4609d3f7578bf207a3ae234348b9206044717 -->

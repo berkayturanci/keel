@@ -28,12 +28,15 @@ On the hosted runner it:
    files (git), the project gates, and the PR's CI rollup (`gh`), then prints the
    assessment (risk tier → reviewers, merge window, gates, decision);
 5. posts that assessment as a **PR comment**;
-6. runs **`keel evidence-verify .keel/project.yaml --root . --pr <N>`**, which reads the
-   live PR changed files/head SHA and fails until the PR and linked issue have the
-   required closure and reviewer-verdict comments for the current tier and head, plus a
-   jury-verdict comment whenever the project's jury gates. Under the default policy that is
-   a tier-3 change; this repository's `.keel/project.yaml` sets `team.jury.mode: advisory`,
-   so here the jury never requires one.
+6. runs **`keel evidence-verify .keel/project.yaml --root . --pr <N> --phase pre-merge
+   --require-armed --no-jury`**, which reads the live PR changed files/head SHA and fails
+   until the PR has the reviewer-verdict comments its tier requires, pinned to the current
+   head. `--phase pre-merge` leaves out the closure comments, which s11 posts only after
+   the merge this check authorizes; `--require-armed` refuses to report success for a gate
+   that never armed; `--no-jury` drops the jury verdict (the workflow's own comment says
+   why). Without that flag the jury verdict is owed whenever the project's jury gates —
+   under the default policy a tier-3 change; this repository's `.keel/project.yaml` sets
+   `team.jury.mode: advisory`, so here the jury never requires one either way.
 
 ```yaml
 permissions:
@@ -105,7 +108,10 @@ run to the single round trip between reading the published stamp and writing ove
 The evidence gate **arms from deterministic ship provenance by default** — when the PR
 carries ship-run signals (a ship-style head branch name, a trusted review-verdict marker,
 trusted `keel ship` assessment comment, or a `ship_run` ledger record), the gate is active
-without any label. The assessment comment only arms the gate; it never satisfies closure,
+without any label. Ahead of all of these it arms on the primary signal: the trusted
+`keel.ship-provenance.v1` comment a live run posts on its own PR as soon as the PR exists.
+The branch name is checked after it, as a legacy fallback (see
+[evidence.md](evidence.md)). The assessment comment only arms the gate; it never satisfies closure,
 review, or jury evidence. The legacy gate label remains an additional arming signal for
 already-installed workflows. The only disarm path is the **operator-applied**
 `keel:evidence-waived` label; agents must never apply it.

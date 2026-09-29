@@ -53,8 +53,10 @@ keel install-adapter plugin --root .
 `make plugin`) write its output. A test (`tests/test_install.py::TestClaudeCodePlugin`)
 asserts the committed `commands/*.md` files are **byte-identical** to the generator output, so
 any drift — or a stale file after the source bodies change — fails `make test`. Further tests
-lock that `plugin.json`'s `version` equals `keel.__version__` and that both JSON manifests
-parse and carry their required fields.
+lock that `plugin.json`'s `version` equals `keel.__version__` and that all four JSON manifests
+— `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`,
+`.codex-plugin/plugin.json` and `.cursor-plugin/plugin.json` — parse and carry their
+required fields.
 
 ## Relationship to `pip install`
 
