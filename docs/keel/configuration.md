@@ -30,7 +30,7 @@ declared through `required_capabilities`, `policy_pack`, or extension docs.
 | `merge_window` | string `HH:MM-HH:MM` | | open merge window (hours `00`-`23`, the two ends must differ); the complement is the night no-merge window; required with `timezone` |
 | `merge_window_mode` | `freeze` \| `pause` | `freeze` | outside the window: `freeze` blocks the merge but keeps gates/CI running; `pause` halts the pipeline |
 | `consent_mode` | `explicit` \| `standing` \| `agent` | `explicit` | default live-run consent mode for every command |
-| `gates` | string[] | | built-in gates to run: any of `build`, `lint`, `jury`; a run that plans no gate at all blocks (see below) |
+| `gates` | string[] | | built-in gates to run: any of `build`, `lint`, `jury`, `revert-check` (off unless listed, see [`knobs.revert_check`](#revert_check)); a run that plans no gate at all blocks (see below) |
 | `extensions` | object | | add-only Lego pieces keyed by named slot |
 | `extensions_dir` | string | | dir holding extension files (default `.keel/extensions`) |
 | `policy_pack` | object | | durable project-owned policy data (see below) |
@@ -130,7 +130,9 @@ standing approval environment values do not break read-only checks.
 #### `gates`
 
 Lists built-in gates that should run in the test stage. Current built-in gates are
-`build`, `lint`, and `jury`. Unknown gate names are rejected by command execution rather
+`build`, `lint`, `jury` and `revert-check`. The last runs only when listed: it re-runs your
+tests once per production change on the branch (see [`knobs.revert_check`](#revert_check)).
+Unknown gate names are rejected by command execution rather
 than treated as project-specific code. Project-specific gates should be declared as
 extensions or `policy_pack.test_groups`.
 
@@ -201,6 +203,7 @@ contracts, but executable project behavior remains in extension files or project
 | `loop` | object | | the s4 iteration loop: after each implement iteration the command gates run; green ends the loop, red starts the next with the same brief plus the gate output, up to `max_iterations` (1–10, default `3`). The gate run is the judge, never the implementer's text; composes with `implement_mode: tdd` (wraps phase B) |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
 | `jury_timeout_s` | integer ≥ 1 | | wall-clock seconds the `jury` built-in may run before it is killed (default `600`) |
+| `revert_check` | object | | settings for the opt-in `revert-check` gate: the test command (`cmd`, default `build_gate_cmd`), which files are production (`paths`), the unit (`hunk`/`file`), and its cost bounds (`max_changes`, default `10`; `budget_s`, default `1800`) |
 
 ### `knobs` field details
 
@@ -1280,6 +1283,108 @@ operational failure that will otherwise recur silently on every run.)
 A nonzero exit that *does* carry a parseable report is a completed review — ai-jury signals
 "request changes" that way — so its findings are used as-is. The test is deliberately
 "did we parse a verdict", not "was the exit code zero".
+
+#### `revert_check`
+
+Settings for the **opt-in `revert-check` gate** (#1289), which you turn on by listing it:
+
+```yaml
+gates: [build, lint, revert-check]
+knobs:
+  build_gate_cmd: "make test"
+  revert_check:              # every key is optional
+    cmd: "pytest -q tests/unit"   # default: build_gate_cmd
+    paths: ["src/**"]             # default: any changed file with a source-code suffix
+    unit: hunk                    # or: file
+    max_changes: 10
+    budget_s: 1800
+policy_pack:
+  test_groups:
+    unit:
+      command: "make test"
+      paths: ["src/**", "tests/**"]
+      test_paths: ["tests/**"]    # required: where the tests live
+```
+
+**The question it answers.** Coverage proves a line *ran*, not that any assertion depends on
+it — and with `fail_under = 100` enforced, "maintained 100 % coverage" is true of every pull
+request before anyone writes it. An audit of 14 closed fixes in keel found three whose tests
+passed with the fix removed. This gate asks the question coverage cannot: for each production
+change on the branch, does a test **fail as an assertion** when *that change alone* is
+reverted?
+
+**How it runs.** It diffs the branch against the base ref every other gate diffs against
+(`refs/remotes/origin/<base_branch>`, else `refs/heads/<base_branch>`) with no context lines,
+so every contiguous edit is its own change. Each change is a hunk (`unit: hunk`, the default)
+or a whole file (`unit: file`); a new or deleted file is always one change. It then checks out
+the committed `HEAD` as a **scratch worktree under the OS temp directory** (with the
+repository's git hooks switched off for that checkout) — your checkout's files are never
+touched — and runs the test command there once unreverted (the *baseline*), then once per
+change with that change undone by `git apply -R`, from a clean tree each time (`git reset
+--hard` + `git clean -fdx`, so neither the previous revert nor its bytecode answers for the
+next). The worktree is removed when the check ends; a run killed outright can leave its
+entry behind, which `git worktree prune` clears.
+
+**A change with no behaviour is not run.** Before the tests run for a reverted change, the
+file is compared on both sides of the revert: for Python, the two syntax trees without
+positions or bare string statements (so comments, docstrings and formatting do not count);
+for languages with a known line-comment marker (`//`, `#` in scripts, `--` in Lua, …), every
+changed line must be blank or a comment. Such a change is *inert*: counted in the closing
+`nit`, never reported as unnoticed. A new or deleted file is never inert.
+
+**What counts as production.** A changed file under any
+`policy_pack.test_groups.*.test_paths` glob is a test and is never reverted. Of the rest,
+`revert_check.paths` (fnmatch globs) selects production when set; otherwise any file with a
+source-code suffix (`.py`, `.js`, `.ts`, `.go`, `.rs`, `.java`, `.rb`, `.sh` and similar) is
+production, and docs, config and data are not. Only the declared `test_paths` count here — a
+group's `paths` are selectors that usually include the implementation too.
+
+**How a run is read.** The exit code says whether the suite failed; the output says *how*.
+keel reads **unittest** (`FAILED (failures=…, errors=…)`: failures are assertions, errors are
+not) and **pytest** (the short test summary, `-rfE` by default since pytest 6: a `FAILED` line
+whose reason is `assert …`, `AssertionError…` or `Failed:` is an assertion, any other exception
+is an error). Each reverted change is then one of:
+
+| result | meaning | verdict |
+|---|---|---|
+| caught | a test failed as an assertion | pass |
+| unnoticed | the suite passed with the change reverted | `major` — *no test notices this change* |
+| errored | tests failed, none as an assertion (an exception, an import error) | `major`; a `nit` when the change only **adds** lines or only changes Python imports |
+| timed out | the run hit its limit | `major` |
+| unreadable | the command failed and its output has no unittest/pytest summary (a crash at import), or pytest failures its summary does not describe | `major`; a `nit` for an addition, as above |
+| not applied | `git apply -R` could not undo it on `HEAD` | `major` |
+| not checked | over `max_changes`, or the budget ran out | `major` |
+
+The **errored** exception is deliberate: reverting an *addition* removes a name or a branch, and
+a test that calls it can then only error — no assertion can fail against code that is not
+there, though the error does prove a test depends on it. A Python change whose only effect is
+on its imports (a name added to `from x import …`) is an addition in this sense. Reverting a *modification* restores
+code that ran before, so a test that only errors against it (the `NameError` of a half-reverted
+fix) proves nothing. A production file with no textual hunk (binary, mode-only) is a `minor`,
+named as not checked. The gate ends with a `nit` counting how many changes were caught.
+
+**Cost bounds.** Each run is limited by [`gate_timeout_s`](#gate_timeout_s); the baseline and
+every revert together by `budget_s` (default `1800`); and at most `max_changes` (default `10`)
+changes are reverted. A change either bound leaves out is reported *not checked* and blocks: the
+gate never certifies what it did not run. For a slow suite, point `cmd` at a faster subset
+rather than raising the budget. The gate is planned at the `pre-merge` phase, so the s4 loop
+(`--phases guard,test`) reports it `NOT-RUN` rather than paying for it on every iteration;
+`keel run-gates` at s8 and `keel ship` run it, after the other gates.
+
+**When it cannot judge, it fails — never passes.** With no test command (`cmd` and
+`build_gate_cmd` both unset), no declared `test_paths`, an unreadable diff, a scratch worktree
+git will not create, or a baseline that is red, times out, prints neither summary or runs no
+tests, the outcome is `FAIL` with a `major` `cannot judge: …` finding and is marked
+unconfigured. When the guard or test gates are red it does not spend a run and fails with
+`not run: the guard and test gates are red …`. A branch with no production change is
+`SKIPPED`, with a `nit` saying so.
+
+**What it does not check.** The unit is a hunk, not a *behaviour*: two arms of one conditional
+edited in one contiguous block are one change, and a test that notices either passes it (#871).
+A passing check is also necessary, not sufficient — a test can fail without the fix and still
+be blind to what the fix broke, as #873's was (#1268). Both stay reviewer questions. Only
+unittest and pytest output is read today; any other runner's failures are *unreadable* and
+block.
 
 #### `swarm_review_evidence`
 

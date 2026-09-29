@@ -1072,6 +1072,10 @@ implementer defensively without spending review budget unless it surfaces a bloc
 Under `implement_mode: tdd` (or `--tdd`, which `run-gates` also accepts) this run also
 carries the pure **`tdd-order`** gate — see **Test-first s4** — evaluated after the other
 gates because its verdict includes theirs.
+When `gates:` lists the opt-in **`revert-check`**, this run also reverts each production
+change on the branch alone in a scratch worktree and re-runs the tests; a `major` naming a
+hunk means no test fails as an assertion without it. Answer it with a test that does, not by
+raising `knobs.revert_check` bounds; a `cannot judge:` finding is the project's config to fix.
 An **`agentic` gate reports `NOT-RUN` here** — this command does not dispatch those, you
 do. `NOT-RUN` is not a pass: a gate declared `on_fail: block` that shows `NOT-RUN` blocks
 the merge decision and refuses to certify the run, so `keel merge` will reject the head.
@@ -1605,4 +1609,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.24.3 source_sha256=63b2b4c2009c24033894c0f71200530ab0914719711e192b44f453ef288cbbbc generated_sha256=63b2b4c2009c24033894c0f71200530ab0914719711e192b44f453ef288cbbbc -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.24.3 source_sha256=fd639d26f2ad5e55e0d59c673e09ce78c30241ff1a9d461cf07d5a7945c14f85 generated_sha256=fd639d26f2ad5e55e0d59c673e09ce78c30241ff1a9d461cf07d5a7945c14f85 -->

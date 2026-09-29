@@ -1,6 +1,7 @@
 """Unit tests for keel project-config loading + validation."""
 
 import copy
+import json
 import re
 import unittest
 import unittest.mock as mock
@@ -551,6 +552,34 @@ class TestParse(unittest.TestCase):
         data = copy.deepcopy(VALID)
         data["knobs"]["gate_timeout_s"] = 3600
         self.assertEqual(cfg.parse_config(data).knobs.gate_timeout_s, 3600)
+
+    def test_revert_check_is_kept_as_written_and_hashed_only_when_set(self):
+        base = cfg.parse_config(copy.deepcopy(VALID))
+        self.assertIsNone(base.knobs.revert_check)
+        data = copy.deepcopy(VALID)
+        data["knobs"]["revert_check"] = {"cmd": "make unit", "max_changes": 4, "unit": "file"}
+        config = cfg.parse_config(data)
+        self.assertEqual(
+            config.knobs.revert_check, {"cmd": "make unit", "max_changes": 4, "unit": "file"}
+        )
+        # The added knob does not rotate config_hash for a project that never set it…
+        self.assertNotIn("revert_check", json.dumps(cfg._canonical(base)))
+        # …and does for one that did.
+        self.assertNotEqual(cfg.config_hash(base), cfg.config_hash(config))
+
+    def test_revert_check_refuses_what_it_cannot_run(self):
+        for bad in (
+            {"cmd": "  "},
+            {"unit": "line"},
+            {"max_changes": 0},
+            {"budget_s": 0},
+            {"paths": "src/**"},
+            {"typo": 1},
+        ):
+            data = copy.deepcopy(VALID)
+            data["knobs"]["revert_check"] = bad
+            with self.subTest(bad=bad), self.assertRaises(cfg.ConfigError):
+                cfg.parse_config(data)
 
     def test_gate_timeout_changes_config_hash(self):
         base = cfg.parse_config(copy.deepcopy(VALID))

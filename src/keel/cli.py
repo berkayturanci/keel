@@ -17,6 +17,8 @@ import re
 import shlex
 import shutil
 import sys
+import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -59,6 +61,7 @@ from . import (
     project_commands,
     providerprobe,
     redaction,
+    revertcheck,
     review,
     runcontrols,
     runtime,
@@ -83,7 +86,7 @@ from . import providers as providers_mod
 from .extensions import ExtensionError, load_extensions
 from .gates import GateOutcome, GateSpec
 from .model import DEFAULT_GATE_TIMEOUT_S, DEFAULT_JURY_TIMEOUT_S
-from .runner import command_gate_runner, run_argv
+from .runner import command_gate_runner, run_argv, run_command
 
 #: Help text for the per-run ``--loop`` flag (#1165), shared by ``ship`` and ``plan``.
 _LOOP_FLAG_HELP = (
@@ -254,13 +257,8 @@ def _run_planned_gates(
     # "The other gates" are the ones s4 can make green — the guard- and test-phase gates
     # (#1165): a pre-merge gate needs the pull request and says nothing about the tests
     # the branch was written against, and it would otherwise turn the order gate red on
-    # every loop iteration of a project that carries one.
-    # `tdd-order` is evaluated here rather than through the runner, so the runner's phase
-    # scope does not reach it. Apply the same test: a scope that excludes its phase must
-    # report it `not_run`, like any other gate outside the run (#1172).
-    if phases is not None and later[0].phase not in phases:
-        outcomes.append(gates.run_gates((later[0],), lambda _spec: (True, [], False, True))[0])
-        return outcomes, None
+    # every loop iteration of a project that carries one. `revert-check` reads the same
+    # verdict: a revert against a red suite cannot tell which failures it caused.
     phase_of = {spec.id: spec.phase for spec in now}
     judged = [o for o in outcomes if phase_of.get(o.gate) in loop.JUDGED_PHASES]
     if empty is not None:
@@ -269,9 +267,130 @@ def _run_planned_gates(
         # test-first history beside `FAIL gates` certified `tdd-order` green (#1368 review).
         judged.append(empty)
     green = not fnd.summarize(gates.collect_findings(judged)).blocked
-    outcome, result = _tdd_order_outcome(later[0], config, root, gates_green=green)
-    outcomes.append(outcome)
+    result = None
+    for spec in later:
+        # The deferred gates are evaluated here rather than through the runner, so the
+        # runner's phase scope does not reach them. Apply the same test: a scope that
+        # excludes a gate's phase must report it `not_run`, like any other gate outside
+        # the run (#1172).
+        if phases is not None and spec.phase not in phases:
+            outcomes.append(gates.run_gates((spec,), lambda _spec: (True, [], False, True))[0])
+        elif spec.id == revertcheck.GATE_ID:
+            outcomes.append(_revert_check_outcome(spec, config, root, gates_green=green))
+        else:
+            outcome, result = _tdd_order_outcome(spec, config, root, gates_green=green)
+            outcomes.append(outcome)
     return outcomes, result
+
+
+def _revert_check_outcome(
+    spec: GateSpec,
+    config: cfg.ProjectConfig,
+    root: str,
+    *,
+    gates_green: bool,
+    clock: Callable[[], float] = time.monotonic,
+) -> GateOutcome:
+    """Evaluate the opt-in ``revert-check`` gate (#1289): git and the test runs here, the
+    decisions in :mod:`keel.revertcheck`.
+
+    The diff is the range every other gate reads (:func:`_ship_base_ref`). The reverts run
+    in a **scratch worktree** of the committed ``HEAD`` under the OS temp directory — the
+    operator's checkout is never touched — which is removed when the check ends, whatever
+    happened in it. Each run starts from a clean tree (:func:`keel.git.reset_clean`), so
+    neither a previous revert nor its bytecode can answer for the next one.
+    """
+    settings = revertcheck.resolve(
+        config.knobs.revert_check,
+        build_cmd=config.knobs.build_gate_cmd,
+        gate_timeout_s=config.knobs.gate_timeout_s,
+    )
+    verdict = _revert_check_verdict(settings, config, root, gates_green=gates_green, clock=clock)
+    return GateOutcome(
+        spec.id,
+        verdict.ok,
+        verdict.findings,
+        skipped=verdict.skipped,
+        on_fail=spec.on_fail,
+        unconfigured=verdict.unconfigured,
+    )
+
+
+def _revert_check_verdict(
+    settings: revertcheck.Settings,
+    config: cfg.ProjectConfig,
+    root: str,
+    *,
+    gates_green: bool,
+    clock: Callable[[], float],
+) -> revertcheck.Verdict:
+    tests = revertcheck.test_paths(config.policy_pack)
+    early = revertcheck.precheck(settings, tests=tests, gates_green=gates_green)
+    if early is not None:
+        return early
+    base_ref = _ship_base_ref(config.base_branch, root)
+    diff_text = git.revert_diff(base_ref, "HEAD", cwd=root)
+    head = git.rev_parse("HEAD", cwd=root)
+    if diff_text is None or head is None:
+        return revertcheck.cannot_judge(f"could not read the diff between {base_ref} and HEAD")
+    plan = revertcheck.plan_changes(
+        revertcheck.parse_diff(diff_text), tests=tests, paths=settings.paths, unit=settings.unit
+    )
+    if not plan.changes:
+        return revertcheck.judge(plan, None)
+    with tempfile.TemporaryDirectory(prefix="keel-revert-check-", ignore_cleanup_errors=True) as d:
+        scratch, hooks = os.path.join(d, "worktree"), os.path.join(d, "hooks")
+        os.mkdir(hooks)
+        added = git.worktree_add_detached(scratch, head, hooks_path=hooks, cwd=root)
+        if not added.ok:
+            why = (added.output.strip().splitlines() or ["git worktree add failed"])[-1]
+            return revertcheck.cannot_judge(f"could not create a scratch worktree: {why}")
+        try:
+            report = revertcheck.execute(
+                plan.changes,
+                settings,
+                revert=_reverter(scratch, os.path.join(d, "change.patch")),
+                test=_revert_tester(scratch, settings.cmd),
+                clock=clock,
+            )
+        finally:
+            git.worktree_remove(scratch, cwd=root)
+    return revertcheck.judge(plan, report)
+
+
+def _reverter(scratch: str, patch_path: str) -> revertcheck.Reverter:
+    """The I/O half of one revert: clean the scratch tree, then undo the change in it.
+
+    The changed file is read on both sides of ``git apply -R`` so the core can tell a
+    change with no behaviour (a comment, a docstring) from one a test should notice.
+    """
+
+    def read(path: str) -> str | None:
+        try:
+            return Path(scratch, path).read_text(encoding="utf-8", errors="surrogateescape")
+        except OSError:
+            return None
+
+    def revert(change: revertcheck.Change) -> revertcheck.Reverted:
+        if not git.reset_clean(cwd=scratch):
+            return revertcheck.Reverted(applied=False)
+        before = read(change.path)
+        Path(patch_path).write_text(change.patch, encoding="utf-8", newline="\n")
+        if not git.apply_reverse(patch_path, cwd=scratch).ok:
+            return revertcheck.Reverted(applied=False)
+        return revertcheck.Reverted(True, before, read(change.path))
+
+    return revert
+
+
+def _revert_tester(scratch: str, cmd: str | None) -> revertcheck.Tester:
+    """Run the test command in the scratch tree as it stands."""
+
+    def test(timeout: int) -> revertcheck.RunResult:
+        result = run_command(cmd or "", cwd=scratch, timeout=timeout)
+        return revertcheck.RunResult(result.ok, result.timed_out, result.output)
+
+    return test
 
 
 def _cmd_version(args: argparse.Namespace) -> int:

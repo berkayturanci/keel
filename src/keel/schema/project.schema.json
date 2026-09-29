@@ -546,6 +546,39 @@
           "type": "integer",
           "minimum": 1,
           "description": "Wall-clock seconds the jury built-in may run before it is killed. Default 600. Separate from gate_timeout_s because the jury is a cross-vendor agent CLI rather than a project test command. A jury run killed by this limit produces no verdict, so in gating mode it fails closed rather than passing."
+        },
+        "revert_check": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cmd": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "description": "The test command each revert runs, in a scratch worktree. Default knobs.build_gate_cmd. Point it at a faster subset when the full suite is slow; it must print a unittest or pytest summary."
+            },
+            "paths": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "description": "fnmatch globs selecting the production files whose changes are reverted. Default: any changed file with a source-code suffix. Paths under policy_pack.test_groups.*.test_paths are never production."
+            },
+            "unit": {
+              "type": "string",
+              "enum": ["hunk", "file"],
+              "description": "Revert each hunk alone (default) or each file. A new or deleted file is always one change."
+            },
+            "max_changes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "At most this many changes are reverted per run (default 10). Changes past the cap are reported not checked, which blocks."
+            },
+            "budget_s": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Wall-clock seconds for the whole check - the baseline run and every revert (default 1800). Each run is also bounded by gate_timeout_s. Changes the budget leaves out are reported not checked, which blocks."
+            }
+          },
+          "description": "Settings for the opt-in revert-check gate (#1289), turned on by listing revert-check in gates:. For each production change on the branch it reverts that change alone in a scratch worktree, runs the test command, and requires a test to fail as an assertion - not an error, not a timeout. A change no test notices is named and blocks; a check that cannot run fails, never passes."
         }
       }
     },

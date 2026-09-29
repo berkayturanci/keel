@@ -249,6 +249,94 @@ def diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str | No
     return result.stdout if result.ok else None
 
 
+def revert_diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """The diff the ``revert-check`` gate splits into changes (``base...head``, #1289).
+
+    Every setting that changes the *shape* of the output is pinned, because the parser is
+    :func:`keel.revertcheck.parse_diff` and each hunk is handed back to ``git apply -R``:
+    no colour or external diff driver, ``a/``/``b/`` prefixes whatever ``diff.noprefix`` or
+    ``diff.mnemonicPrefix`` say, no rename detection (a rename is a deletion and an
+    addition, each revertible alone), unquoted non-ASCII paths, and a blank context line
+    written as a space. ``None`` when git failed — distinct from ``""``, an empty diff.
+
+    **No context lines** (``--unified=0``): with git's default three, two edits six lines
+    apart merge into one hunk, and a per-hunk check then passes when a test notices either
+    of them — the #871 shape, measured on this gate's own first smoke run. Zero context
+    splits every contiguous edit into its own hunk; :func:`apply_reverse` applies them.
+    """
+    result = run_argv(
+        [
+            "git",
+            "-c",
+            "core.quotepath=off",
+            "-c",
+            "diff.suppressBlankEmpty=false",
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-renames",
+            "--unified=0",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            f"{base}...{head}",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    return result.stdout if result.ok else None
+
+
+def worktree_add_detached(
+    path: str, commit: str, *, hooks_path: str, cwd: str | None = None, _run=None
+) -> CommandResult:
+    """Check ``commit`` out at ``path`` as a detached worktree — no branch is created.
+
+    ``hooks_path`` replaces the repository's hooks for this one command: a worktree shares
+    its repository's hooks, and a ``post-checkout`` hook would otherwise run in the scratch
+    tree. Pass an empty directory.
+    """
+    return run_argv(
+        [
+            "git",
+            "-c",
+            f"core.hooksPath={hooks_path}",
+            "worktree",
+            "add",
+            "--detach",
+            "--quiet",
+            path,
+            commit,
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+
+
+def apply_reverse(patch_path: str, *, cwd: str | None = None, _run=None) -> CommandResult:
+    """Undo the patch at ``patch_path`` in the working tree at ``cwd`` (``git apply -R``).
+
+    ``--unidiff-zero`` because :func:`revert_diff` writes hunks with no context lines, which
+    git refuses to apply by default. It is exact here: the patch is undone on the very
+    commit it was taken from, so every line number it carries is the tree's own.
+    """
+    return run_argv(
+        ["git", "apply", "-R", "--unidiff-zero", "--", patch_path], cwd=cwd, **_kw(_run)
+    )
+
+
+def reset_clean(*, cwd: str | None = None, _run=None) -> bool:
+    """Put the working tree at ``cwd`` back to ``HEAD`` exactly; ``True`` when both steps ran.
+
+    ``clean -x`` removes *ignored* files too, and that is the point: a ``__pycache__``
+    written while one change was reverted must not answer for the next run, since a
+    ``.pyc`` whose source was restored within the same second can be served stale.
+    """
+    reset = run_argv(["git", "reset", "--hard", "--quiet", "HEAD"], cwd=cwd, **_kw(_run))
+    if not reset.ok:
+        return False
+    return run_argv(["git", "clean", "-fdxq"], cwd=cwd, **_kw(_run)).ok
+
+
 def hash_object(path: str, *, cwd: str | None = None, _run=None) -> str | None:
     """Write ``path``'s content into the object database; return its blob SHA.
 

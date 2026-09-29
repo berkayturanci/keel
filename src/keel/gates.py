@@ -14,7 +14,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from . import tdd
+from . import revertcheck, tdd
 from .findings import Finding
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -26,7 +26,10 @@ if TYPE_CHECKING:  # pragma: no cover
 #: ``tdd-order`` is deliberately not among them: it is not a gate a project *lists*, it
 #: is the gate ``implement_mode: tdd`` brings with it. Naming it here would let a project
 #: ask for the verification of a commit order it never asked its implementer to produce.
-BUILTIN_GATES: tuple[str, ...] = ("build", "lint", "jury")
+#:
+#: ``revert-check`` (#1289) is listed, and **opt-in**: it re-runs the test command once per
+#: production change, so a project turns it on knowing the cost (:mod:`keel.revertcheck`).
+BUILTIN_GATES: tuple[str, ...] = ("build", "lint", "jury", revertcheck.GATE_ID)
 
 #: Directories a source scanner must not walk, as **prefix-independent globs**.
 #:
@@ -278,6 +281,11 @@ def plan_gates(
             specs.append(
                 GateSpec("jury", "builtin", "test", "block", timeout=config.knobs.jury_timeout_s)
             )
+        elif name == revertcheck.GATE_ID:
+            # `pre-merge`, so the s4 loop (`--phases guard,test`) defers it rather than
+            # paying for a revert per change on every iteration; s8 runs every phase.
+            # No `timeout`: its bounds are `knobs.revert_check`'s, applied per run.
+            specs.append(GateSpec(revertcheck.GATE_ID, "builtin", "pre-merge", "block"))
         else:
             raise GateError(
                 f"unknown built-in gate {name!r}; valid: {', '.join(BUILTIN_GATES)} "
@@ -361,18 +369,24 @@ def unconfigured_finding(spec: GateSpec) -> Finding:
     return Finding(_ON_FAIL_SEVERITY[spec.on_fail], message, spec.id)
 
 
+#: Gates evaluated after the others, because each reads their verdict: ``tdd-order``
+#: (the branch must be test-first *and* green) and ``revert-check`` (a revert against a red
+#: suite proves nothing, so it does not spend a run when the others are red).
+DEFERRED_GATES: tuple[str, ...] = (revertcheck.GATE_ID, tdd.GATE_ID)
+
+
 def split_deferred(
     specs: Sequence[GateSpec],
 ) -> tuple[tuple[GateSpec, ...], tuple[GateSpec, ...]]:
-    """Split planned gates into "run now" and "run after the rest" (the ``tdd-order`` gate).
+    """Split planned gates into "run now" and "run after the rest" (:data:`DEFERRED_GATES`).
 
-    One gate reads the others' verdict, and a runner cannot: :func:`run_gates` hands each
+    These gates read the others' verdict, and a runner cannot: :func:`run_gates` hands each
     spec to the runner independently, and may run them concurrently. So the caller runs
-    the first group, summarises it, and only then evaluates the deferred one — rather than
+    the first group, summarises it, and only then evaluates the deferred ones — rather than
     depending on a list order that a future ``concurrency > 1`` would quietly invalidate.
     """
-    now = tuple(spec for spec in specs if spec.id != tdd.GATE_ID)
-    later = tuple(spec for spec in specs if spec.id == tdd.GATE_ID)
+    now = tuple(spec for spec in specs if spec.id not in DEFERRED_GATES)
+    later = tuple(spec for spec in specs if spec.id in DEFERRED_GATES)
     return now, later
 
 

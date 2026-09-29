@@ -1888,6 +1888,12 @@ Under `implement_mode: tdd` — or with `--tdd` for one run — the gate list al
 pure **`tdd-order`** gate, evaluated after all the others because its verdict includes
 theirs. See [`knobs.implement_mode`](configuration.md#implement_mode).
 
+When `gates:` lists the opt-in **`revert-check`**, it is evaluated after the others too: it
+reverts each production change on the branch alone in a scratch worktree, re-runs the test
+command, and fails naming every change no test notices as an assertion. It is a `pre-merge`
+gate, so `--phases guard,test` reports it `NOT-RUN`. See
+[`knobs.revert_check`](configuration.md#revert_check).
+
 There are five outcome labels, and the difference between the last two matters:
 
 | label | meaning |

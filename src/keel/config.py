@@ -305,6 +305,11 @@ class Knobs:
     #: Wall-clock seconds the ``jury`` built-in may run. Separate from gate_timeout_s:
     #: a cross-vendor panel and a test suite have unrelated runtimes.
     jury_timeout_s: int = DEFAULT_JURY_TIMEOUT_S
+    #: The opt-in ``revert-check`` gate's settings (#1289): ``None`` when the project never
+    #: wrote the block. Kept as the mapping the project wrote, like ``loop`` — the schema
+    #: owns its shape and :func:`keel.revertcheck.resolve` reads it — so the added knob
+    #: cannot rotate ``config_hash`` for a project that never set it.
+    revert_check: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -535,6 +540,7 @@ def _build(data: dict) -> ProjectConfig:
         swarm_review_evidence=bool(k.get("swarm_review_evidence", True)),
         gate_timeout_s=int(k.get("gate_timeout_s", DEFAULT_GATE_TIMEOUT_S)),
         jury_timeout_s=int(k.get("jury_timeout_s", DEFAULT_JURY_TIMEOUT_S)),
+        revert_check=(dict(k["revert_check"]) if isinstance(k.get("revert_check"), dict) else None),
     )
     extensions = {slot: tuple(files) for slot, files in data.get("extensions", {}).items()}
     automation_data = data.get("automation", {})
@@ -1140,5 +1146,11 @@ def _canonical(config: ProjectConfig) -> dict:
             "swarm_review_evidence": config.knobs.swarm_review_evidence,
             "gate_timeout_s": config.knobs.gate_timeout_s,
             "jury_timeout_s": config.knobs.jury_timeout_s,
+            # Same rule as `loop` (#1289): present only when the project wrote it.
+            **(
+                {"revert_check": dict(config.knobs.revert_check)}
+                if config.knobs.revert_check is not None
+                else {}
+            ),
         },
     }

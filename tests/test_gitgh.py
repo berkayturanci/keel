@@ -353,6 +353,66 @@ class TestGit(unittest.TestCase):
         self.assertIsNone(git.rev_count("a", "b", _run=_Recorder(out="oops\n")))
 
 
+class TestRevertCheckGit(unittest.TestCase):
+    """The git half of the `revert-check` gate (#1289)."""
+
+    def test_revert_diff_pins_the_shape_the_parser_and_git_apply_read(self):
+        rec = _Recorder(out="diff --git a/x b/x\n")
+        self.assertEqual(git.revert_diff("origin/main", "HEAD", _run=rec), "diff --git a/x b/x\n")
+        argv = rec.calls[0]
+        for flag in (
+            "core.quotepath=off",
+            "diff.suppressBlankEmpty=false",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-renames",
+            "--unified=0",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+        ):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[-1], "origin/main...HEAD")
+        self.assertIsNone(git.revert_diff("a", "b", _run=_Recorder(code=128)))
+
+    def test_the_scratch_worktree_is_detached(self):
+        rec = _Recorder()
+        self.assertTrue(git.worktree_add_detached("/tmp/wt", SHA_A, hooks_path="/h", _run=rec).ok)
+        self.assertEqual(
+            rec.calls[0],
+            [
+                "git",
+                "-c",
+                "core.hooksPath=/h",
+                "worktree",
+                "add",
+                "--detach",
+                "--quiet",
+                "/tmp/wt",
+                SHA_A,
+            ],
+        )
+
+    def test_apply_reverse_accepts_zero_context_hunks(self):
+        rec = _Recorder()
+        git.apply_reverse("/tmp/p.patch", _run=rec)
+        self.assertEqual(
+            rec.calls[0], ["git", "apply", "-R", "--unidiff-zero", "--", "/tmp/p.patch"]
+        )
+
+    def test_reset_clean_removes_ignored_files_too(self):
+        rec = _Recorder()
+        self.assertTrue(git.reset_clean(cwd="/wt", _run=rec))
+        self.assertEqual(
+            rec.calls,
+            [["git", "reset", "--hard", "--quiet", "HEAD"], ["git", "clean", "-fdxq"]],
+        )
+
+    def test_reset_clean_fails_when_either_step_does(self):
+        self.assertFalse(git.reset_clean(_run=_Recorder(code=1)))
+        answers = iter([_Proc(0, "", ""), _Proc(1, "", "no")])
+        self.assertFalse(git.reset_clean(_run=lambda argv, **kw: next(answers)))
+
+
 class TestGitHub(unittest.TestCase):
     def test_open_pr_argv(self):
         rec = _Recorder()

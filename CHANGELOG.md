@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **An opt-in `revert-check` gate names every change no test notices.** Listed in `gates:`, it diffs the branch against its base with no context lines, then — in a scratch worktree of the committed `HEAD`, never your checkout — runs the test command once unreverted and once per production hunk (or file) with that change alone undone by `git apply -R`. A change passes only when a test fails **as an assertion**: unittest's `failures` count, or a pytest short-summary `FAILED` line whose reason is an assertion. A change that only touches comments, docstrings or formatting (the Python syntax tree, or a known line-comment marker, says so) is counted as inert and not run. A suite that stays green, only errors, times out, prints no readable summary, or a change the gate did not reach is a blocking finding that names the hunk; an error is accepted (as a `nit`) only for a change that purely adds code or imported names, since no assertion can fail against code that is not there. It is bounded by `knobs.revert_check.max_changes` (default 10), `budget_s` (default 1800) and `gate_timeout_s` per run, and `cmd` can point it at a faster subset than `build_gate_cmd`. A check that cannot judge — no command, no declared `policy_pack.test_groups.*.test_paths`, an unreadable diff, a baseline that is red or unreadable — fails as unconfigured, never passes; a branch with no production change is `SKIPPED`. It runs at the `pre-merge` phase, so the s4 loop defers it. Off by default, including for keel itself (#1289).
+
 ## [1.24.3] - 2026-09-29
 
 - A gate that cannot judge no longer reads as a pass: an unconfigured build or lint gate, or a jury with no `jury` CLI, is reported as such, and a plan in which nothing judges the change blocks the merge.

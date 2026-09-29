@@ -189,7 +189,7 @@ Evidence requirements are split by lifecycle phase:
 * **Pre-Merge Phase (`s10`)**: Requires verified `review-verdict` (from required risk-tier reviewer count),
   a `jury-verdict` whenever the resolved jury mode is `gating` (a tier-3 change by default, unless the
   run passes `--no-jury`, and whether or not the `jury` binary is installed), and passing gate results
-  (`build`, `lint`, and `jury` when `gates:` lists it).
+  (`build`, `lint`, and `jury` or `revert-check` when `gates:` lists them).
 * **Post-Merge Phase (`s11`)**: Records `closure-comment` and `compound-learning` markers.
 
 The pre-merge gate strictly validates what exists before the merge, preventing cyclical dependencies
