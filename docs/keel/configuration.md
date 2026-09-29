@@ -1403,7 +1403,10 @@ changes are reverted. A change either bound leaves out is reported *not checked*
 gate never certifies what it did not run. For a slow suite, point `cmd` at a faster subset
 rather than raising the budget. The gate is planned at the `pre-merge` phase, so the s4 loop
 (`--phases guard,test`) reports it `NOT-RUN` rather than paying for it on every iteration;
-`keel run-gates` at s8 and `keel ship` run it, after the other gates.
+`keel run-gates` at s8 and `keel ship` run it, after the other gates. It is **not a test
+gate**: it reverts against a suite the guard and test gates proved green, so list `build`
+beside it. Planned alone (or only beside `tdd-order`), the run blocks as *no gate
+configured* and revert-check reports that it cannot judge.
 
 **When it cannot judge, it fails — never passes.** With no test command (`cmd` and
 `build_gate_cmd` both unset), no declared `test_paths`, an unreadable diff, a scratch worktree
@@ -2153,8 +2156,8 @@ policy_pack:
 
 ## `gates` vs `extensions`
 
-- **`gates`** lists which **built-in** gates run (`build` / `lint` / `jury`). An unknown
-  name here is an error.
+- **`gates`** lists which **built-in** gates run (`build` / `lint` / `jury` /
+  `revert-check`). An unknown name here is an error.
 - **`extensions`** registers **project-provided** gates/steps (Lego pieces) into named
   backbone slots. They are add-only and run at their slot's step. See
   [extensions.md](extensions.md).

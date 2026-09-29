@@ -565,6 +565,24 @@ class TestTheGateIsWiredIntoTheGateRun(unittest.TestCase):
             [("revert", True), ("order", True), ("revert", False), ("order", False)],
         )
 
+    def test_planned_alone_it_says_it_needs_a_test_gate(self):
+        """Codex, round 9: with ``gates: [revert-check]`` the plan blocked as "no gate
+        configured" (right: it is not a test gate) but revert-check itself said "the guard
+        and test gates are red" — gates that do not exist."""
+        with patch("keel.cli._revert_check_outcome") as never:
+            outcomes, result = cli._run_planned_gates(
+                (_SPEC,), lambda spec: (True, []), config=None, root="."
+            )
+        never.assert_not_called()
+        self.assertIsNone(result)
+        by_gate = {o.gate: o for o in outcomes}
+        self.assertEqual(set(by_gate), {gates.NO_GATES_ID, revertcheck.GATE_ID})
+        alone = by_gate[revertcheck.GATE_ID]
+        self.assertEqual((alone.ok, alone.unconfigured), (False, True))
+        self.assertEqual(alone.findings[0].message, f"cannot judge: {revertcheck.PLANNED_ALONE}")
+        self.assertNotIn("are red", alone.findings[0].message)
+        self.assertTrue(by_gate[gates.NO_GATES_ID].unconfigured)
+
     def test_a_scope_that_excludes_one_deferred_gate_still_runs_the_other(self):
         """`--phases guard,test` defers `revert-check` (pre-merge) and still judges
         `tdd-order` (test). The first version returned as soon as the first deferred gate

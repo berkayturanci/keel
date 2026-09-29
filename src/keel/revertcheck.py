@@ -1060,6 +1060,14 @@ def cannot_judge(why: str) -> Verdict:
     return Verdict(False, (Finding(_BLOCK, f"cannot judge: {why}", GATE_ID),), unconfigured=True)
 
 
+#: Why the gate cannot judge a plan with no guard or test gate beside it (#1289 review).
+PLANNED_ALONE = (
+    "revert-check is not a test gate: it reverts each change against a suite the guard and "
+    "test gates proved green, and none is planned — list build (with knobs.build_gate_cmd) "
+    "beside it in gates:"
+)
+
+
 def precheck(settings: Settings, *, tests: Sequence[str], gates_green: bool) -> Verdict | None:
     """The verdict when the check must not start, else ``None``.
 

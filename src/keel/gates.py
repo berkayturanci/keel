@@ -395,8 +395,10 @@ def nothing_to_judge(specs: Sequence[GateSpec]) -> GateOutcome | None:
 
     Keyed on the **plan**, not on the ``gates:`` key alone: ``gates: []`` beside a
     ``tester`` extension is a documented way to run project gates, and that run judges.
-    The ``tdd-order`` gate does not count — it reads the *other* gates' verdict, and
-    "green" over no gates is vacuous. Independent of ``--phases``: this is not a gate
+    Neither deferred gate counts (:data:`DEFERRED_GATES`): ``tdd-order`` reads the *other*
+    gates' verdict, and "green" over no gates is vacuous; ``revert-check`` runs at the
+    ``pre-merge`` phase, so an s4 loop over it alone would judge nothing, and it needs a
+    suite the other gates proved green. Independent of ``--phases``: this is not a gate
     outside the run's scope but the absence of any gate in every scope, which is why it
     is reported apart from the planned gates rather than as a ``not_run`` one (#1364).
     """

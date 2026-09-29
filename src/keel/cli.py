@@ -275,6 +275,11 @@ def _run_planned_gates(
         # the run (#1172).
         if phases is not None and spec.phase not in phases:
             outcomes.append(gates.run_gates((spec,), lambda _spec: (True, [], False, True))[0])
+        elif spec.id == revertcheck.GATE_ID and empty is not None:
+            # Planned alone it has no green suite to revert against; say that, not that
+            # absent gates are red (#1289 review).
+            verdict = revertcheck.cannot_judge(revertcheck.PLANNED_ALONE)
+            outcomes.append(_revert_check_gate_outcome(spec, verdict))
         elif spec.id == revertcheck.GATE_ID:
             outcomes.append(_revert_check_outcome(spec, config, root, gates_green=green))
         else:
@@ -306,6 +311,10 @@ def _revert_check_outcome(
         gate_timeout_s=config.knobs.gate_timeout_s,
     )
     verdict = _revert_check_verdict(settings, config, root, gates_green=gates_green, clock=clock)
+    return _revert_check_gate_outcome(spec, verdict)
+
+
+def _revert_check_gate_outcome(spec: GateSpec, verdict: revertcheck.Verdict) -> GateOutcome:
     return GateOutcome(
         spec.id,
         verdict.ok,
