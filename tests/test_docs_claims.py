@@ -47,6 +47,7 @@ import unittest.mock
 from pathlib import Path
 
 from keel import (
+    api_delegate,
     cli,
     cost,
     doctor,
@@ -1814,21 +1815,33 @@ class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
         self.assertIn(f"Python {floor.group(1)} or newer", section)
 
     def test_the_cost_report_caveat_matches_what_keel_records(self):
-        """#1329: the README says no keel command writes token counts, so every record is
-        priced at a placeholder. When something starts writing them, this fails and the
-        caveat has to go."""
+        """#1329, #1373: the README names the one keel writer of token counts — a
+        hosted-API delegate run with `--activity-run-id` — and what is never recorded, and
+        prices everything else at the placeholder. The modules that name `prompt_tokens`
+        are pinned, so a new writer fails here and the README has to be revisited."""
         section = " ".join(self.section("Requirements, cost and limits").split())
         self.assertIn("1,500 prompt and 400 completion tokens", section)
         report = cost.calculate_cost_report([{}]).to_dict()
         self.assertEqual(
             (1500, 400), (report["total_prompt_tokens"], report["total_completion_tokens"])
         )
+        for claim in (
+            "keel delegate run --activity-run-id <run>",
+            "An agent host's own tokens and a CLI delegate's are never recorded.",
+            "never the provider's bill",
+        ):
+            with self.subTest(claim=claim):
+                self.assertIn(claim, section)
         writers = sorted(
             path.name
             for path in (REPO_ROOT / "src/keel").rglob("*.py")
             if path.name != "cost.py" and "prompt_tokens" in path.read_text(encoding="utf-8")
         )
-        self.assertEqual([], writers, "something records token counts now; update the README")
+        self.assertEqual(
+            ["activity.py", "api_delegate.py", "cli.py", "delegaterun.py"],
+            writers,
+            "the set of modules that handle token counts changed; update the README",
+        )
 
     def test_the_readme_names_what_the_report_itself_now_says(self):
         """#1359: the caveat is in the report's own output, and the README says where."""
@@ -1864,13 +1877,59 @@ class TestTheCostReportDocsMatchItsOutput(unittest.TestCase):
         measured = {"prompt_tokens": 1, "completion_tokens": 1}
         mixed = cost.render_cost_report(cost.calculate_cost_report([measured] * 3 + [{}] * 2))
         full = cost.render_cost_report(cost.calculate_cost_report([measured] * 5))
+        single = cost.render_cost_report(cost.calculate_cost_report([measured]))
+        flat = " ".join(section.split())
         for quoted, output in (
             ("3 measured, 2 ESTIMATED at 1,500 prompt / 400 completion tokens per run", mixed),
             ("measured (all 5 runs carry token counts)", full),
+            ("measured (the 1 run carries token counts)", single),
         ):
             with self.subTest(quoted=quoted):
-                self.assertIn(f"`{quoted}`", section)
+                self.assertIn(f"`{quoted}`", flat)
                 self.assertIn(quoted, output)
+
+    def test_the_documented_scope_lines_are_printed_for_every_measured_report(self):
+        """#1373: a measured count covers a hosted-API delegate's calls, not the host's."""
+        fences = re.findall(r"```text\n(.*?)```", self.cost_section(), re.S)
+        self.assertEqual(2, len(fences), "the scope lines are no longer shown")
+        measured = {"prompt_tokens": 1, "completion_tokens": 1}
+        for records in ([measured], [measured, {}]):
+            rendered = cost.render_cost_report(cost.calculate_cost_report(records)).splitlines()
+            for line in fences[1].splitlines():
+                with self.subTest(records=len(records), line=line):
+                    self.assertIn(line, rendered)
+
+    def test_the_documented_usage_fields_are_the_ones_the_parser_reads(self):
+        """#1373: each row of the vendor table, built into a response, is read as the sum
+        the row says — so a field dropped from the parser or the table fails here."""
+        rows = re.findall(
+            r"^\| (`[a-z-]+`(?:, `[a-z-]+`)?) \| (.+?) \| (.+?) \|$",
+            self.cost_section(),
+            re.M,
+        )
+        self.assertEqual(3, len(rows), rows)
+        documented = {
+            name
+            for _vendors, prompt, completion in rows
+            for name in re.findall(r"`(?:[A-Za-z]+\.)?([A-Za-z_]+)`", prompt + completion)
+        }
+        read = set(
+            re.findall(
+                r'"([A-Za-z_]+(?:Count|_tokens))"', inspect.getsource(api_delegate.parse_usage)
+            )
+        )
+        self.assertEqual(read, documented, "the table and the parser name different fields")
+        for vendors, prompt, completion in rows:
+            prompt_fields = re.findall(r"`(?:[A-Za-z]+\.)?([A-Za-z_]+)`", prompt)
+            completion_fields = re.findall(r"`(?:[A-Za-z]+\.)?([A-Za-z_]+)`", completion)
+            container = "usageMetadata" if "google-api" in vendors else "usage"
+            usage = {name: 3 for name in prompt_fields} | {name: 5 for name in completion_fields}
+            for vendor in re.findall(r"`([a-z-]+)`", vendors):
+                with self.subTest(vendor=vendor):
+                    self.assertEqual(
+                        (3 * len(prompt_fields), 5 * len(completion_fields)),
+                        api_delegate.parse_usage(vendor, {container: usage}),
+                    )
 
     def test_every_added_json_field_is_documented_with_its_value(self):
         section = self.cost_section()
@@ -1882,7 +1941,8 @@ class TestTheCostReportDocsMatchItsOutput(unittest.TestCase):
 
     def test_the_site_does_not_advertise_cost_tracking_keel_does_not_do(self):
         """Three integration cards claimed per-run token cost tracking, an exact token
-        expenditure ledger and token cost analytics. Nothing records a token count."""
+        expenditure ledger and token cost analytics. keel records only the counts a
+        hosted-API delegate reports (#1373), and prices them from its own table."""
         cards = (REPO_ROOT / "website/integrations.js").read_text(encoding="utf-8").lower()
         for claim in ("cost tracking", "expenditure ledger", "cost analytics", "exact token"):
             with self.subTest(claim=claim):
@@ -1979,8 +2039,9 @@ class TheLongRunsArticleClaimsOnlyWhatKeelDoes(unittest.TestCase):
 
 
 class TheSiteAdvertisesNoTokenOrCostMetering(unittest.TestCase):
-    """Nothing in keel records a token count or a spend (`keel cost-report` prices each run
-    at a placeholder), yet the home page's swarm simulator ran "Tokens Processed",
+    """keel records no spend, and no token count beyond what a hosted-API delegate reports
+    (#1373; `keel cost-report` prices every other run at a placeholder), yet the home
+    page's swarm simulator ran "Tokens Processed",
     "Estimated Spend" and "Routing Savings" counters off random increments, and three
     integration cards promised token cost tracking, an expenditure ledger and cost
     analytics. Every page and script the site serves is read, not a list of them."""

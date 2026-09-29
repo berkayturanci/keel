@@ -461,27 +461,30 @@ def _autostamp(
         return
     try:
         path = activity.record_path(root, config, run_id)
-        existing = activity.read_activity(path)
-        if existing and existing.get("status") == "merged":
-            return  # merged is terminal; never overwrite a landed run
-        if (
-            status == "running"
-            and existing
-            and existing.get("status") == "running"
-            and existing.get("phase") in order
-            and order.index(existing["phase"]) > order.index(phase)
-        ):
-            return  # don't regress a more-advanced still-running run
-        record = activity.build_activity_record(
-            command=command,
-            run_id=run_id,
-            phase=phase,
-            status=status,
-            verdict=verdict,
-            issue=issue,
-            pr=pr,
-        )
-        activity.write_activity(path, record)
+        # Held or not, the stamp lands: the lock only keeps a delegate's concurrent count
+        # (#1373) from being overwritten by this rebuild.
+        with activity.record_lock(_lock_root(root), path, owner=f"stamp-{phase}"):
+            existing = activity.read_activity(path)
+            if existing and existing.get("status") == "merged":
+                return  # merged is terminal; never overwrite a landed run
+            if (
+                status == "running"
+                and existing
+                and existing.get("status") == "running"
+                and existing.get("phase") in order
+                and order.index(existing["phase"]) > order.index(phase)
+            ):
+                return  # don't regress a more-advanced still-running run
+            record = activity.build_activity_record(
+                command=command,
+                run_id=run_id,
+                phase=phase,
+                status=status,
+                verdict=verdict,
+                issue=issue,
+                pr=pr,
+            )
+            activity.write_activity(path, activity.carry_usage(record, existing))
     except (activity.ActivityError, OSError):
         return
 
@@ -4927,17 +4930,20 @@ def _cmd_activity(args: argparse.Namespace) -> int:
                 pr=args.pull_request,
                 note=args.note,
             )
-            activity.write_activity(path, record)
+            with activity.record_lock(_lock_root(args.root), path, owner="activity-write"):
+                record = activity.carry_usage(record, _readable_activity(path))
+                activity.write_activity(path, record)
             _emit_activity(args, [record], path=str(path))
             return 0
         if args.done:
             path = activity.record_path(args.root, config, args.run_id)
-            record = activity.read_activity(path)
-            if record is None:
-                print(f"no activity record for run {args.run_id}", file=sys.stderr)
-                return 1
-            record["status"] = "done"
-            activity.write_activity(path, record)
+            with activity.record_lock(_lock_root(args.root), path, owner="activity-done"):
+                record = activity.read_activity(path)
+                if record is None:
+                    print(f"no activity record for run {args.run_id}", file=sys.stderr)
+                    return 1
+                record["status"] = "done"
+                activity.write_activity(path, record)
             _emit_activity(args, [record], path=str(path))
             return 0
         if args.clear:
@@ -4951,6 +4957,18 @@ def _cmd_activity(args: argparse.Namespace) -> int:
     except activity.ActivityError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+
+def _readable_activity(path: Path) -> dict | None:
+    """The record at ``path``, or ``None`` when there is none or it cannot be parsed.
+
+    ``--write`` has always replaced a malformed record rather than refusing to; reading it
+    first, to keep its delegate counts (#1373), must not change that.
+    """
+    try:
+        return activity.read_activity(path)
+    except (activity.ActivityError, OSError):
+        return None
 
 
 def _emit_activity(args, records, *, path, removed=None):
@@ -6996,6 +7014,7 @@ def _delegate_child_argv(args: argparse.Namespace, run_id: str) -> list[str]:
         ("--model", args.model),
         ("--project", args.path),
         ("--registry", args.registry),
+        ("--activity-run-id", args.activity_run_id),
     ):
         if value:
             argv += [flag, str(value)]
@@ -7037,12 +7056,48 @@ def _cmd_delegate_run(args: argparse.Namespace) -> int:
         print(json.dumps(record, indent=2, sort_keys=True))
         return 0 if record["status"] == "running" else 1
     result = delegaterun.execute(plan)
+    if args.activity_run_id:
+        # Recorded by the process that made the call — the detached child included — so
+        # the count reaches the run whether or not anyone waits for it (#1373).
+        result["activity_usage"] = _record_delegate_usage(
+            args, result, call_id=args.run_id or delegaterun.new_run_id()
+        )
     if args.child:
         # The parent already wrote the `running` record; this is the authoritative
         # overwrite that `keel delegate wait` is blocking on.
         delegaterun.finish_detached(args.root, args.run_id, result)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result["ok"] else 1
+
+
+def _record_delegate_usage(args: argparse.Namespace, result: dict, *, call_id: str) -> str:
+    """Add this call's reported token counts to ``--activity-run-id``'s record (#1373).
+
+    Returns what happened, for the result document's ``activity_usage``: ``recorded``,
+    ``no-usage`` (the vendor reported no usable counts — every CLI and Ollama run, and a
+    hosted response without them), ``no-config``, ``no-record`` (nothing has stamped that
+    run yet), ``busy`` (another writer held the record) or ``error``. Never raises: the
+    delegate's answer is the product, and failing to count it must not cost the caller it.
+    """
+    usage = result.get("usage")
+    if not usage:
+        return "no-usage"
+    config = _delegate_config(args)
+    if config is None:
+        return "no-config"
+    try:
+        return activity.record_delegate_usage(
+            activity.record_path(args.root, config, args.activity_run_id),
+            _lock_root(args.root),
+            call_id=call_id,
+            # The model the call was *made* with. An empty one is refused as an entry
+            # (`error`) rather than priced under a name nobody chose.
+            model=result.get("model") or "",
+            prompt_tokens=usage["prompt_tokens"],
+            completion_tokens=usage["completion_tokens"],
+        )
+    except (activity.ActivityError, OSError):
+        return "error"
 
 
 def _delegate_bad_run_id(args: argparse.Namespace, message: str) -> dict:
@@ -9900,6 +9955,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dr.add_argument("--run-id", default=None, help="stable id for a detached run")
     p_dr.add_argument(
+        "--activity-run-id",
+        default=None,
+        help="add the token counts a hosted API reports to this run's activity record, "
+        "so keel cost-report counts the run as measured",
+    )
+    p_dr.add_argument(
         "--detach",
         action="store_true",
         help="start the run in the background and return immediately; collect it with "
@@ -10210,7 +10271,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_cost = sub.add_parser(
         "cost-report",
-        help="report token consumption, estimated USD costs, and model analytics",
+        help="report recorded or estimated token counts, estimated USD cost, and model analytics",
     )
     p_cost.add_argument("--root", default=".", help="repo root containing .keel/activity")
     p_cost.add_argument("--json", action="store_true", help="emit structured JSON")

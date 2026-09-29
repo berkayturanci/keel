@@ -437,7 +437,8 @@ Read the implementer from `assignment.implementer` — core resolved it from
 
   ```bash
   keel delegate run --provider "$DELEGATE" --role implement \
-    --prompt-file "$BRIEF" --cwd "$WORKTREE" --timeout 3600 --project .keel/project.yaml
+    --prompt-file "$BRIEF" --cwd "$WORKTREE" --timeout 3600 --project .keel/project.yaml \
+    --activity-run-id "$RUN_ID"
   ```
 
   ```json
@@ -446,8 +447,18 @@ Read the implementer from `assignment.implementer` — core resolved it from
     "duration_s": 42.5, "timed_out": false, "error_code": null, "error": null,
     "attribution": { "agent_label": "…", "model_label": "…", "system": "…" },
     "read_only": false, "read_only_backed": false,
-    "effort_applied": true, "warnings": [] }
+    "effort_applied": true, "warnings": [],
+    "usage": { "prompt_tokens": 1830, "completion_tokens": 412 },
+    "activity_usage": "recorded" }
   ```
+
+  **Always pass `--activity-run-id "$RUN_ID"`** (the same id as `keel plan --run-id`). It
+  is how the token counts a hosted API reports (`usage`; `null` for a CLI, profile or
+  Ollama run) reach this run's activity record, so `keel cost-report` can count the run as
+  measured instead of estimated. keel does the join itself and says what happened in
+  `activity_usage` (`recorded`, `no-usage`, `no-record`, `no-config`, `busy`, `error`).
+  That field is information, never a failure: do not retry a run because of it, and never
+  write counts into the record by hand.
 
   Parse that document; do not re-derive any of it. `attribution` is computed by core, so
   the labels you write and the ledger's `actors.implementer` can no longer drift from what
@@ -461,7 +472,8 @@ Read the implementer from `assignment.implementer` — core resolved it from
 
   ```bash
   keel delegate run --provider "$DELEGATE" --role implement --prompt-file "$BRIEF" \
-    --cwd "$WORKTREE" --timeout 3600 --detach --run-id "$RUN_ID" --root .
+    --cwd "$WORKTREE" --timeout 3600 --detach --run-id "$RUN_ID" --root . \
+    --activity-run-id "$RUN_ID"
   keel delegate wait "$RUN_ID" --root . --timeout 3600
   ```
 
@@ -907,12 +919,17 @@ own `provider` (plus `:model` / `--effort` when the seat carries them), read str
 ```bash
 # one dispatch per slot; SLOT is an entry of review_merge_contract.reviewers.slots
 keel delegate run --provider "$SLOT_PROVIDER" --role review \
-  --prompt-file "$RUBRIC_AND_DIFF" --cwd . --timeout 900 --project .keel/project.yaml
+  --prompt-file "$RUBRIC_AND_DIFF" --cwd . --timeout 900 --project .keel/project.yaml \
+  --activity-run-id "$RUN_ID"
 
 # the gate review, when assignment.gate is present
 keel delegate run --provider "$GATE_PROVIDER" --role gate \
-  --prompt-file "$RUBRIC_AND_DIFF" --cwd . --timeout 900 --project .keel/project.yaml
+  --prompt-file "$RUBRIC_AND_DIFF" --cwd . --timeout 900 --project .keel/project.yaml \
+  --activity-run-id "$RUN_ID"
 ```
+
+`--activity-run-id "$RUN_ID"` adds each reviewer's reported token counts to the run's record,
+exactly as in s4; parallel reviewers finishing together are serialised by core.
 
 A slot whose `kind` is `subagent` never reaches `keel delegate run`: it is a host
 (Claude-class) subagent named by `slot.name`, dispatched the way s4 dispatches one.

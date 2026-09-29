@@ -1640,6 +1640,10 @@ keel activity .keel/project.yaml --root . --json                        # read a
 that command's phase ids (`build_activity_record`); records are keyed by `--run-id` (one file
 each), so two commands in the same repo never clobber one another, and the run-id is slugged
 to a safe filename. `--verdict pass|blocked` records the phase outcome verdict into the activity record.
+Every stamp keeps the record's `delegate_usage` — the token counts a hosted-API delegate
+added with `keel delegate run --activity-run-id` (#1373) — so a later phase never erases them.
+Stamps and delegates take a short per-record lock for the read and write, so two writers
+finishing together cannot drop each other's update.
 `--done` flips an existing record's status (the board fades / last-sorts /
 filters it like any finished run); `--clear` removes it. With no flag, it lists every readable
 record (malformed files are skipped, fail-soft). The stepped command adapters emit this
@@ -2133,7 +2137,7 @@ why an unreachable GitHub cannot turn a label check into a red run.
 
 <a id="keel-delegate"></a>
 
-## `keel delegate run --provider TOKEN --role ROLE --prompt-file FILE [--cwd DIR] [--timeout S] [--effort low|medium|high] [--model TOKEN] [--root DIR] [--project project.yaml] [--registry FILE] [--run-id ID] [--detach] [--json]`
+## `keel delegate run --provider TOKEN --role ROLE --prompt-file FILE [--cwd DIR] [--timeout S] [--effort low|medium|high] [--model TOKEN] [--root DIR] [--project project.yaml] [--registry FILE] [--run-id ID] [--activity-run-id RUN] [--detach] [--json]`
 
 Dispatch **one** delegate and print the JSON return contract. This is the single executor
 for every transport keel supports — the three built-in agent CLIs, a
@@ -2223,9 +2227,25 @@ for the life of the process. The one exception is a profile that declares
   "attribution": { "agent_label": "agent:agy", "model_label": "model:gemini-3", "system": "agy:gemini-3.8-flash-high" },
   "read_only": false, "read_only_backed": false,
   "effort_applied": true,
-  "warnings": []
+  "warnings": [],
+  "usage": null
 }
 ```
+
+`usage` is the vendor's own token count for the call, as
+`{"prompt_tokens": N, "completion_tokens": N}`, and `null` when the transport reported none.
+Only the `api` transport fills it. It stays `null` for every CLI, profile and Ollama run, and
+for a hosted response without a usable count (see [`keel cost-report`](#keel-cost-report---root-dir---json)).
+A `bad-response` failure still carries it, because the call was made.
+
+With `--activity-run-id RUN`, the counts are also added to run `RUN`'s activity record so
+`keel cost-report` counts the run as measured. The document then carries one more key,
+`activity_usage`, saying what happened: `recorded`; `no-usage` (the call reported no counts);
+`no-record` (nothing has stamped `RUN` yet, and a count never creates a record); `no-config`;
+`busy` (another writer held the record for two seconds, so nothing was written rather than
+risk losing its update); or `error` (the record could not be read or written). None of these
+changes `ok` or the exit code. A detached run passes the flag to its child, which records
+when the call returns, so `keel delegate wait` shows `activity_usage` too.
 
 `vendor` is the vendor **attribution** names — a built-in's own token, or a profile /
 registry entry's [`vendor_label`](configuration.md#vendor-label) when it declares one.
@@ -2733,8 +2753,9 @@ Exit 0 when the revert commit was created, 1 otherwise.
 
 ## `keel cost-report [--root DIR] [--json]`
 
-Report token consumption, estimated USD cost and per-model analytics from the activity
-records under `.keel/activity`. It takes **no** project.yaml — the records are the input.
+Report recorded or estimated token counts, estimated USD cost and per-model analytics from
+the activity records under `.keel/activity`. It takes **no** project.yaml — the records are
+the input.
 
 ```bash
 keel cost-report --root . --json
@@ -2743,13 +2764,12 @@ keel cost-report --root . --json
 A missing or empty activity directory is an empty report, not an error: a project that has
 not stamped any activity has spent nothing keel can see. Always exits 0.
 
-**The figures are estimates, and the report says which.** A record that carries
-`prompt_tokens` / `completion_tokens` is *measured*; one that does not is priced at a
-placeholder of 1,500 prompt and 400 completion tokens and is *estimated*. No keel command
-writes token counts into an activity record today, so every run keel stamps is estimated
-and the dollar figure is a run count times a constant, not a bill (#1359). The text report
-states this on a `Token Basis` line directly under the run count, above the first figure it
-qualifies:
+**The report says which figures are measured.** A record that carries a non-zero
+`prompt_tokens` / `completion_tokens`, or a `delegate_usage` entry with non-zero counts, is
+*measured*. A record that carries neither is priced at a placeholder of 1,500 prompt and 400
+completion tokens and is *estimated*: for such a run the dollar figure is a run count times
+a constant, not a bill (#1359). The text report states this on a `Token Basis` line directly
+under the run count, above the first figure it qualifies:
 
 ```text
   Total Runs Tracked    : 2
@@ -2760,21 +2780,43 @@ qualifies:
 
 When some records carry counts and others do not, the line reads
 `3 measured, 2 ESTIMATED at 1,500 prompt / 400 completion tokens per run`; when every record
-carries them, `measured (all 5 runs carry token counts)`. An empty report prints no basis line.
+carries them, `measured (all 5 runs carry token counts)`, or `measured (the 1 run carries
+token counts)` for a single run. Whenever a run is measured, two more lines say what the
+counts cover:
+
+```text
+                          Measured counts are the ones the records carry: keel records what a
+                          hosted-API delegate reports, never an agent host's own tokens.
+```
+
+An empty report prints no basis line.
 
 `--json` keeps every earlier key and adds:
 
 | Key | Meaning |
 | --- | --- |
 | `token_basis` | `none` (no runs), `estimated` (no run measured), `mixed`, or `measured` (every run measured) |
-| `measured_runs` | runs whose record carried its own token counts |
+| `measured_runs` | runs whose record carried a non-zero token count of its own or from a delegate |
 | `estimated_runs` | runs priced at the placeholder; `measured_runs + estimated_runs == total_runs` |
 | `assumed_tokens_per_run` | the placeholder itself: `{"prompt_tokens": 1500, "completion_tokens": 400}` |
 
-The hosted APIs behind the `anthropic-api`, `openai-api` and `google-api` delegates return
-token usage in each response, but `keel delegate run` reads only the completion text, and
-nothing carries a count into an activity record. Until something does, `measured_runs` is 0
-for every record keel writes.
+**Where measured counts come from (#1373).** `keel delegate run --activity-run-id RUN` adds
+the counts a hosted-API response reports to run `RUN`'s record, as one `delegate_usage` entry
+per call, keyed by the call's id and priced at that call's model. The run keeps them through
+every later phase stamp. The fields read are the ones each vendor documents:
+
+| Vendor | Prompt | Completion |
+| --- | --- | --- |
+| `anthropic-api` | `usage.input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens` | `usage.output_tokens` |
+| `openai-api`, `openai-compatible` | `usage.prompt_tokens` | `usage.completion_tokens` |
+| `google-api` | `usageMetadata.promptTokenCount` | `candidatesTokenCount` + `thoughtsTokenCount` |
+
+An absent usage object, a missing field, a count that is not a non-negative integer, or a
+zero on either side records nothing: no count is guessed. The `openai-compatible` shape is
+confirmed for DeepSeek and OpenRouter. Another compatible server records counts only if it
+returns that same `usage` object. Never recorded: an agent host's own tokens, a CLI or
+profile delegate's, and Ollama's. A ship run whose delegates all ran as CLIs therefore stays
+estimated, and a measured ship run is measured for its hosted-API delegate calls only.
 
 ## `keel init [--root DIR] [--force] [--wizard] [--auto]`
 

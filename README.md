@@ -190,12 +190,17 @@ gate review when `knobs.team.gate` names one, one to three reviewers by risk tie
 TIER-2 → 2, TIER-3 → 3, unless `knobs.team` names the seats), any fix-loop rounds, and at
 tier 3 the ai-jury panel.
 
-`keel cost-report --root .` summarises the records under `.keel/activity`. No keel command
-writes token counts into them yet, so it prices each record at a placeholder of 1,500 prompt
-and 400 completion tokens: read it as a count of runs, not as a bill. The report says so
-itself: its `Token Basis` line reads `ESTIMATED at 1,500 prompt / 400 completion tokens per
-run`, and `--json` carries `token_basis`, `measured_runs`, `estimated_runs` and
-`assumed_tokens_per_run`.
+`keel cost-report --root .` summarises the records under `.keel/activity`. The only token
+counts keel records are the ones a hosted-API delegate (`anthropic-api`, `openai-api`,
+`google-api`, or an OpenAI-compatible profile) reports in its response, and only when the
+adapter runs it as `keel delegate run --activity-run-id <run>`. An agent host's own tokens
+and a CLI delegate's are never recorded. A record with no counts is priced at a placeholder
+of 1,500 prompt and 400 completion tokens, so read a report built from those as a count of
+runs, not as a bill. The report says which it is: its `Token Basis` line reads `ESTIMATED at
+1,500 prompt / 400 completion tokens per run` when no record carries counts, and `--json`
+carries `token_basis`, `measured_runs`, `estimated_runs` and `assumed_tokens_per_run`. The
+dollar figures are keel's own pricing table applied to those counts, never the provider's
+bill.
 
 ### Limits
 

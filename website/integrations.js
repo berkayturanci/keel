@@ -191,7 +191,7 @@
       name: "OpenRouter",
       category: "backends",
       badge: "Unified Routing",
-      desc: "Many hosted models behind one OpenAI-compatible delegate profile. keel cost-report does not read OpenRouter's billing: it estimates each run at a placeholder token count and says so.",
+      desc: "Many hosted models behind one OpenAI-compatible delegate profile. keel cost-report does not read OpenRouter's billing: it prices the token counts each response reports from keel's own table, and marks a run without counts as estimated.",
       cmd: "keel cost-report --root . --json",
       logo: "logos/openrouter.svg"
     },

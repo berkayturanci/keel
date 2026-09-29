@@ -8,6 +8,16 @@ All notable changes to keel are documented here. The format follows
 
 ### Added
 - **An opt-in `revert-check` gate names every change no test notices.** Listed in `gates:`, it diffs the branch against its base with no context lines, then — in a scratch worktree of the committed `HEAD`, never your checkout — runs the test command once unreverted and once per production hunk (or file) with that change alone undone by `git apply -R`. A change passes only when a test fails **as an assertion**: unittest's `failures` count, or a pytest short-summary `FAILED` line whose reason is an assertion. A change that only touches comments, docstrings or formatting (the Python syntax tree, or a known line-comment marker, says so) is counted as inert and not run. A suite that stays green, only errors, times out, prints no readable summary, or a change the gate did not reach is a blocking finding that names the hunk; an error is accepted (as a `nit`) only for a change that purely adds code or imported names, since no assertion can fail against code that is not there. It is bounded by `knobs.revert_check.max_changes` (default 10), `budget_s` (default 1800) and `gate_timeout_s` per run, and `cmd` can point it at a faster subset than `build_gate_cmd`. A check that cannot judge — no command, no declared `policy_pack.test_groups.*.test_paths`, an unreadable diff, a baseline that is red or unreadable — fails as unconfigured, never passes; a branch with no production change is `SKIPPED`. It runs at the `pre-merge` phase, so the s4 loop defers it. Off by default, including for keel itself (#1289).
+- **`keel cost-report` can say "measured" for hosted-API delegate runs.** `keel delegate run` now reads the token usage the `anthropic-api`, `openai-api`, `google-api` and OpenAI-compatible responses carry, and returns it as `usage`. Only each vendor's documented fields are read, and a missing, malformed, non-integer, negative or zero count records nothing. With `--activity-run-id RUN` the counts go into run `RUN`'s activity record as a per-call `delegate_usage` entry, and every later phase stamp keeps them. A per-record lock stops parallel reviewers from dropping each other's counts. The ship adapter passes the flag in s4 and s7. The report prices each call at its own model, says that a measured count covers delegate calls and never the agent host's own tokens, and prints `the 1 run` instead of `all 1 runs`. Its title is now `Keel Token & Cost Report`, and the VS Code command is `View Token Counts & Estimated USD Cost`. The README, `docs/keel/cli.md` and the OpenRouter site card now describe what is recorded (#1373).
+
+### Companion
+- **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py
+  --package keel-visual [--tag keel-visual-vX.Y.Z]` checks keel-visual's two version markers
+  and that the tag names the version `keel-visual/pyproject.toml` declares, and
+  `publish-visual.yml` runs it before the build. The workflow also checks that every template
+  in the source tree is in the wheel (it checked `runviz.html` only), the wheel's
+  `force-include` lists `swarm.html`, and keel-visual's README links are absolute so they work
+  on PyPI.
 
 ## [1.24.3] - 2026-09-29
 

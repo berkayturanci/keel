@@ -152,7 +152,7 @@ class TestCostPureLogic(unittest.TestCase):
         self.assertIn("model_breakdown", d)
 
         rendered = render_cost_report(rep)
-        self.assertIn("Keel Efficiency & Cost Ledger", rendered)
+        self.assertIn("Keel Token & Cost Report", rendered)
         self.assertIn("Total Runs Tracked    : 3", rendered)
         self.assertIn("Top Dispatched Model  : gemini-2.5-flash", rendered)
         self.assertIn("Model Breakdown:", rendered)
@@ -191,7 +191,7 @@ class TestCostThinIOAndCLI(unittest.TestCase):
             with redirect_stdout(buf_text):
                 code = main(["cost-report", "--root", tmpdir])
             self.assertEqual(code, 0)
-            self.assertIn("Keel Efficiency & Cost Ledger", buf_text.getvalue())
+            self.assertIn("Keel Token & Cost Report", buf_text.getvalue())
 
             # Test CLI JSON output
             buf_json = io.StringIO()

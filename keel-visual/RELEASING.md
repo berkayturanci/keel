@@ -15,8 +15,9 @@ from PyPI (step 3 below) as well as the latest.
 The [`publish-visual.yml`](../.github/workflows/publish-visual.yml) workflow builds
 and publishes keel-visual on a `keel-visual-v*` tag, using **OIDC trusted
 publishing** — no API token in CI. It mirrors the core's `publish.yml` posture:
-hash-locked build tools, a template-presence check, build-provenance attestation,
-SBOM + checksums, and a GitHub Release.
+a tag-versus-version guard before the build, hash-locked build tools, a check that
+every template shipped in the wheel, build-provenance attestation, SBOM + checksums,
+and a GitHub Release.
 
 **One-time PyPI setup (operator):**
 
@@ -40,7 +41,11 @@ SBOM + checksums, and a GitHub Release.
    git tag keel-visual-v0.1.0 && git push origin keel-visual-v0.1.0
    ```
 
-   CI builds, attests, publishes to PyPI via OIDC, and cuts the GitHub Release.
+   CI first runs `python scripts/release_check.py --package keel-visual --tag "$TAG"`
+   and stops if the tag does not name the version in `keel-visual/pyproject.toml`
+   (or the two version markers disagree). Run the same command locally before
+   pushing the tag. Then it builds, attests, publishes to PyPI via OIDC, and cuts
+   the GitHub Release.
 
 The manual build/upload below is the **fallback** (e.g. before trusted publishing
 is configured).
@@ -87,13 +92,18 @@ python -m twine check dist/*
 ```
 
 `build` uses the `hatchling` backend declared in `pyproject.toml`; the
-`force-include` there ships the HTML template (`runviz.html`) inside the wheel.
-Verify it is present:
+`force-include` there ships the HTML templates (`board.html`, `dashboard.html`,
+`runviz.html`, `swarm.html`) inside the wheel. Verify every template in the source
+tree is present:
 
 ```
-python -c "import zipfile,glob; w=glob.glob('dist/*.whl')[0]; \
-print('template:', 'keel_visual/templates/runviz.html' in zipfile.ZipFile(w).namelist())"
+python -c "import zipfile,glob,pathlib; w=glob.glob('dist/*.whl')[0]; \
+n=set(zipfile.ZipFile(w).namelist()); \
+print('missing:', [p.name for p in pathlib.Path('src/keel_visual/templates').glob('*.html') \
+if 'keel_visual/templates/' + p.name not in n])"
 ```
+
+It should print `missing: []`.
 
 ### 3. Smoke-test the wheel in a clean venv
 
@@ -127,4 +137,6 @@ Use TestPyPI first if you want a dry run: `twine upload --repository testpypi di
 ### 5. Tag
 
 Tag the release (e.g. `keel-visual-v0.1.0`) so the published artifact is
-traceable to the commit.
+traceable to the commit. From the repo root, `python scripts/release_check.py
+--package keel-visual --tag keel-visual-v0.1.0` confirms the tag names the version
+the tree declares.
