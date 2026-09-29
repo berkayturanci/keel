@@ -30,6 +30,32 @@ function runKeel(args, cwd, callback) {
   });
 }
 
+// `keel window` takes the config path and nothing else: it has no `--json`. The
+// extension used to pass one, argparse rejected it (exit 2), and the error branch
+// fell back to "open" — so the bar said "Keel: Open" through every night lock.
+const WINDOW_ARGS = ["window", ".keel/project.yaml"];
+
+// What `keel window` prints, one line each: `merge window OPEN  [tz HH:MM-HH:MM]`,
+// `merge window CLOSED (night no-merge)  [...]`, or `no merge window configured (...)`.
+// Anything else — a missing `keel`, a config error — is "unknown", never "open".
+function parseWindowOutput(err, stdout, stderr) {
+  const line = (stdout || "").trim();
+  if (!err) {
+    if (/^merge window OPEN\b/.test(line)) return { state: "open", detail: line };
+    if (/^merge window CLOSED\b/.test(line)) return { state: "closed", detail: line };
+    if (/^no merge window configured\b/.test(line)) return { state: "none", detail: line };
+  }
+  const reason = (stderr || "").trim() || (err && err.message) || line || "no output";
+  return { state: "unknown", detail: reason };
+}
+
+const WINDOW_TEXT = {
+  open: "Window Open",
+  closed: "Night Lock Active",
+  none: "No merge window configured",
+  unknown: "Unknown",
+};
+
 function updateStatusBar() {
   const root = getWorkspaceRoot();
   if (!root) {
@@ -44,18 +70,9 @@ function updateStatusBar() {
   }
 
   // Query window status
-  runKeel(["window", ".keel/project.yaml", "--json"], root, (err, stdout) => {
-    let isOpen = true;
-    let windowText = "Window Open";
-    if (!err && stdout) {
-      try {
-        const data = JSON.parse(stdout);
-        isOpen = !!data.open;
-        if (!isOpen) {
-          windowText = "Night Lock Active";
-        }
-      } catch (e) {}
-    }
+  runKeel(WINDOW_ARGS, root, (err, stdout, stderr) => {
+    const windowState = parseWindowOutput(err, stdout, stderr);
+    const windowText = WINDOW_TEXT[windowState.state];
 
     // Check for active activity records in .keel/activity/
     const actDir = path.join(root, ".keel", "activity");
@@ -80,14 +97,22 @@ function updateStatusBar() {
       statusBarItem.text = `$(gear~spin) Keel: ${activePhase}${activeIssue ? ` (#${activeIssue})` : ""}`;
       statusBarItem.tooltip = `Keel Run Active (${activePhase})\nMerge Window: ${windowText}\nClick to view options.`;
       statusBarItem.backgroundColor = undefined;
-    } else if (isOpen) {
+    } else if (windowState.state === "open") {
       statusBarItem.text = `$(git-merge) Keel: Open`;
-      statusBarItem.tooltip = `Keel Merge Window is OPEN (Merges permitted)\nClick for commands.`;
+      statusBarItem.tooltip = `Keel Merge Window is OPEN (Merges permitted)\n${windowState.detail}\nClick for commands.`;
+      statusBarItem.backgroundColor = undefined;
+    } else if (windowState.state === "closed") {
+      statusBarItem.text = `$(lock) Keel: Night Lock`;
+      statusBarItem.tooltip = `Keel Merge Window is CLOSED (Night lock active)\n${windowState.detail}\nMerges queued until morning window opens.\nClick for commands.`;
+      statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+    } else if (windowState.state === "none") {
+      statusBarItem.text = `$(git-merge) Keel: No Window`;
+      statusBarItem.tooltip = `No merge window configured (needs timezone + merge_window) — merges are not time-gated.\nClick for commands.`;
       statusBarItem.backgroundColor = undefined;
     } else {
-      statusBarItem.text = `$(lock) Keel: Night Lock`;
-      statusBarItem.tooltip = `Keel Merge Window is CLOSED (Night lock active)\nMerges queued until morning window opens.\nClick for commands.`;
-      statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+      statusBarItem.text = `$(question) Keel: Window ?`;
+      statusBarItem.tooltip = `Could not read the merge window: ${windowState.detail}\nClick for commands.`;
+      statusBarItem.backgroundColor = undefined;
     }
 
     statusBarItem.show();
@@ -103,7 +128,7 @@ function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("keel.window", () => {
       const root = getWorkspaceRoot();
-      runKeel(["window", ".keel/project.yaml"], root, (err, stdout) => {
+      runKeel(WINDOW_ARGS, root, (err, stdout) => {
         vscode.window.showInformationMessage(stdout || "Keel window checked.");
         updateStatusBar();
       });
@@ -189,5 +214,8 @@ function deactivate() {
 
 module.exports = {
   activate,
-  deactivate
+  deactivate,
+  // Exported for tests/test_editor_extension.py, which drives them under node.
+  WINDOW_ARGS,
+  parseWindowOutput
 };

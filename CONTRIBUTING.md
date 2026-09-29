@@ -19,7 +19,7 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
   replace a backbone step. `on_fail: block` is permitted only in documented blocking slots:
   `guard`, `tester`, `test`, and `pre-merge`.
 - **Single runtime dependency.** PyYAML only on Linux/macOS. Dev-only tools (`ruff`,
-  `coverage`, `build`) live in the `dev` extra. The one platform exception is `tzdata` on
+  `coverage`, `bandit`) live in the `dev` extra. The one platform exception is `tzdata` on
   Windows (`sys_platform == 'win32'`), where the stdlib `zoneinfo` has no system IANA
   database to read; it is never installed on Linux/macOS.
 - **Python ≥ 3.11.** `requires-python` in `pyproject.toml` is the source of truth.
@@ -29,7 +29,7 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 1. Fork and branch from `main`.
 2. Set up locally:
    ```bash
-   python3 -m venv venv && source venv/bin/activate
+   python3 -m venv .venv && source .venv/bin/activate
    pip install -e ".[dev]"
    ```
 3. Run the checks before submitting:
@@ -37,7 +37,7 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    make test        # offline unit suite (no network, no credentials)
    make lint        # ruff
    make coverage    # coverage gate (fail_under in pyproject)
-   make validate    # validate every projects/*.yaml
+   make validate    # validate every projects/*.yaml and .keel/project.yaml
    ```
    These targets resolve their own interpreter (`scripts/find_python.sh`: the repo venv,
    then the newest `python3.x` on PATH that is ≥ 3.11 and can import yaml) rather than

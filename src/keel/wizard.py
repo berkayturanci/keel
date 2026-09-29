@@ -50,7 +50,7 @@ SCHEMA_VERSION = "keel.wizard.v1"
 #: ``keel work-block``; ``config`` resolves the ``knobs.team`` block ``keel init``
 #: writes. The questions differ because the *artefacts* differ: a run has one reviewer
 #: bench (``--reviewers`` / ``--review-delegate`` are per-slot flags and the risk tier
-#: is not known until s1 classifies the diff), while a config names one bench **per
+#: is not known until s5 classifies the diff), while a config names one bench **per
 #: tier**. Same planner, same catalogue, same defaults.
 SCOPE_RUN = "run"
 SCOPE_CONFIG = "config"
@@ -440,7 +440,7 @@ class Resolution:
         resolved default, and materialising those defaults as flags is not neutral —
         it overrides the very policy they were read from. The reviewer bench a run
         wizard shows is derived at a nominal tier because the real one is not
-        classified until s1, and the jury default is "whatever the flags and
+        classified until s5, and the jury default is "whatever the flags and
         `knobs.team` already say"; writing either back turned a quick-start run on a
         tier-3 change into `--reviewers 2 --no-jury`, dropping a reviewer and the
         gating jury. An unanswered question therefore emits nothing at all and the
@@ -965,7 +965,7 @@ def _unreachable_reason(state: State, key: str) -> str:
     if state.scope == SCOPE_RUN and key.startswith("review."):
         return (
             f"{key} is a `keel init --wizard` question (one bench per risk tier); a run "
-            "asks `review` once, because its tier is not classified until s1"
+            "asks `review` once, because its tier is not classified until s5"
         )
     if state.scope == SCOPE_CONFIG and key == "review":
         return "a config names one bench per tier, so answer review.1 / review.2 / review.3"

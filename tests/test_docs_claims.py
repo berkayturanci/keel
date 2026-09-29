@@ -2137,6 +2137,7 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
     )
     _NO_BINARY = {
         "README.md": _VERDICT_OWED,
+        "SECURITY.md": _VERDICT_OWED,
         "docs/keel/configuration.md": _VERDICT_OWED,
         "docs/keel/overview.md": _VERDICT_OWED,
         "docs/keel/cli.md": _VERDICT_OWED,

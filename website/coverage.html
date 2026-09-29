@@ -148,7 +148,7 @@
             <div class="cov-tbl-head"><b>Per-file coverage</b><span>src/keel/ · <span id="cov-scope">line + branch</span></span></div>
             <div class="cov-scroll"><table class="cov"><thead><tr><th>file</th><th>statements</th><th>missing</th><th>branch</th><th>line</th></tr></thead><tbody id="cov-tbody"></tbody></table></div>
           </div>
-          <p class="cov-note">The coverage gate (<code>fail_under = 100</code>) runs in CI on every push — keel runs it on itself through the <code>s8 test</code> step. A drop below 100% blocks keel's own merge. ← <a href="index.html#ship">see keel ship itself</a> · <a href="docs.html#coverage-doc">coverage docs</a></p>
+          <p class="cov-note">The coverage gate (<code>fail_under = 100</code>) runs in CI on every push, as the <code>Test + coverage gate</code> step of every required <code>test</code> job — a CI step of its own, not keel's <code>s8 test</code> step, whose build gate is <code>make test</code>. A drop below 100% fails those required checks, so it blocks keel's own merge. ← <a href="index.html#ship">see keel ship itself</a> · <a href="docs.html#coverage-doc">coverage docs</a></p>
         </div>
       </main>
     </div>

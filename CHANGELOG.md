@@ -7,6 +7,43 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **The Ship watermark names ai-jury only when a jury sat.** The s11 closure comment's
+  signature said "with ai-jury consensus" on every run, including ones whose `Jury` line read
+  `off`. It now adds the clause only when the record's `run_context.jury_mode` is `gating` or
+  `advisory` and the panel did not fall back or refuse. `badges.md` also stops offering a
+  `watermark: false` opt-out that no knob or flag sets (docs audit 2026-09-29).
+- **The VS Code / Cursor extension's merge-window bar reads the window.** It ran
+  `keel window … --json`, a flag `keel window` does not have, and every failure fell back to
+  "open", so the bar said `Keel: Open` through the night lock. It now parses what
+  `keel window` prints and shows `Open`, `Night Lock`, `No Window`, or `Window ?` when keel
+  could not answer. `editors.md` no longer promises a countdown, and says the Ship command is
+  a dry assessment and the Visualizer opens the website (docs audit 2026-09-29).
+- **`keel doctor` reports `skipped` for checks that did not look.** `checkout_binding` outside
+  a keel checkout, and `core_version` / `state_paths` without a config, said `ok`
+  (docs audit 2026-09-29).
+- **`keel scratch-dir` fails cleanly on a root it cannot write.** It raised an `OSError`
+  traceback; it now prints one error line and exits 1. `cli.md` says it prints
+  `<root>/.keel/scratch` (relative for a relative root) rather than "the absolute path"
+  (docs audit 2026-09-29).
+- **A PR's own `ship_run` ledger record arms the evidence gate, as documented.**
+  `evidence-verify` and `keel merge` loaded that record but never passed it to the arming
+  decision, so signal 7 in `evidence.md` could not fire (docs audit 2026-09-29).
+- **The run wizard says the tier is classified at s5, not s1** (docs audit 2026-09-29).
+- **keel-ship.dev claims only what keel does.** The site named a config key the schema rejects (`core` for `core_version`), captioned the ship scene `/keel:ship --issue 128` (the command takes issue numbers positionally), credited the coverage gate to the s8 step (it is the CI step `Test + coverage gate`), still called a missing `jury` binary a fail-soft no-op (it now carries the README's `SKIPPED` / blocks-when-alone wording), listed a sixth invariant, left 1.24.3's keel-visual escaping fix (#1317) out of the September security row, and said 1.15.0 was reverted "a day later" (84 minutes, from the commits). The swarm simulator's presets are now the waves `keel swarm-plan` would plan and no worker claims a closed or merged pull request (#1287); the backbone map no longer draws `/keel:swarm` to the merge; the curl installer, `/keel:stale-prs`' refresh (a merge commit, not a rebase), `--deferral`, the TestPyPI rehearsal, and the Antigravity, Hermes, `.agents/skills` and local-gates integration cards say what keel does; `website/README.md` describes the site's real version fetch, theme key, module path and five audit reports. `tests/test_site_accuracy.py` checks each claim against its source (docs audit 2026-09-29)
+- **SECURITY, CONTRIBUTING, keel-visual and the swarm pages match the code.** SECURITY.md no
+  longer calls a missing `jury` binary a fail-soft no-op (the s8 run reports `SKIPPED`, blocks
+  when it is the only gate, and a tier-3 merge still owes a `jury-verdict`), and says what `init`
+  and `install-adapter` write and that Windows adds `tzdata`. CONTRIBUTING.md lists the `dev`
+  extra as `ruff`, `coverage`, `bandit`, creates the `.venv` the interpreter resolver looks for,
+  and says `make validate` checks `.keel/project.yaml` too. `docs/keel/plugin.md` counts four
+  JSON manifests; `docs/keel/overview.md` gives keel-visual's floor as `keel-workflow >= 1.15.0`;
+  keel-visual's README names `dash`/`render`/`serve --all` instead of saying it cannot aggregate,
+  and shows `triage`'s real phases. `docs/keel/swarm.md` describes the wave skip (#1268) and the
+  `LockError` (#1272) as fixed, `docs/keel/commands.md` says a swarm worker is a
+  `keel ship --dry-run` and marks team leads, vendor routing and per-cluster review as design,
+  and `docs/keel/keel-visual.md` labels its `swarm` view experimental. Tests in
+  `tests/test_docs_root_claims.py` and `keel-visual/tests/test_readme.py` hold each page to the
+  file or code it describes (docs audit 2026-09-29).
 - **The command adapters use the flags, contracts and helpers keel has.** `/keel:ship` s9 passes `keel fixloop brief` the `--delegate`, `--role`, `--tier` and `--host-agent` that pick the fixer, and says the command has no `--team` or `--effort`. s8 records an agentic gate's result on `keel ship --gate-result`, because `run-gates` has no such flag. s5 no longer claims `--reviewers` skips the tier. `/keel:work-block` and `/keel:overnight` build their staffing flags only from values that were set, so an unset `--effort` is no longer passed as `''`, and they pass `--reviewers` too. `/keel:implement` reads the implementer from `keel plan --command ship`, its labels from `keel attribution`, and removes worktrees with `keel worktree-remove`. `/keel:review-all-day` and `/keel:regression` take their numbers, labels and confidence filter from `scan_contract`. `/keel:overnight` states one window rule: only a window that closes during the session stops it. `/keel:triage`, `/keel:pr-loop` and `/keel:review-cycle` route by `team.implement.by_role`, and `/keel:swarm` says a dry run creates no worktree and lands onto `base_branch`. New tests check every `keel <cmd> --flag` in an adapter code block against the parser, and the attribution-prose ban now covers every adapter (docs audit 2026-09-29).
 
 ### Companion
@@ -17,7 +54,6 @@ All notable changes to keel are documented here. The format follows
   in the source tree is in the wheel (it checked `runviz.html` only), the wheel's
   `force-include` lists `swarm.html`, and keel-visual's README links are absolute so they work
   on PyPI.
-
 - **`keel cost-report` can say "measured" for hosted-API delegate runs.** `keel delegate run` now reads the token usage the `anthropic-api`, `openai-api`, `google-api` and OpenAI-compatible responses carry, and returns it as `usage`. Only each vendor's documented fields are read, and a missing, malformed, non-integer, negative or zero count records nothing. With `--activity-run-id RUN` the counts go into run `RUN`'s activity record as a per-call `delegate_usage` entry, and every later phase stamp keeps them. A per-record lock stops parallel reviewers from dropping each other's counts. The ship adapter passes the flag in s4 and s7. The report prices each call at its own model, says that a measured count covers delegate calls and never the agent host's own tokens, and prints `the 1 run` instead of `all 1 runs`. Its title is now `Keel Token & Cost Report`, and the VS Code command is `View Token Counts & Estimated USD Cost`. The README, `docs/keel/cli.md` and the OpenRouter site card now describe what is recorded (#1373).
 
 ## [1.24.3] - 2026-09-29

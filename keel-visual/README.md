@@ -47,13 +47,15 @@ page), not *agent runs ship → animation in the agent's output*.
 
 Two scope limits follow from "it reads the records":
 
-- **One repo at a time.** `dash` and `--follow` watch a **single** keel project —
-  `dash` enumerates that repo's worktrees via `git worktree list`, so it shows
-  every parallel run *of that repo* on one board. It does **not** aggregate
-  across separate repos: a parent folder that merely *contains* several projects
-  isn't a git repo or a keel project, so point keel-visual at each project and
-  run one instance per repo (a tab each). A cross-project board would be a
-  separate feature.
+- **One repo per board, unless you pass `--all`.** Given a project, `dash`,
+  `serve` and `--follow` watch that **single** keel project — `dash` enumerates
+  its worktrees via `git worktree list`, so it shows every parallel run *of that
+  repo* on one board. A parent folder that merely *contains* several projects
+  isn't a git repo or a keel project; to see them together, point `--root` at it
+  and pass `--all`: `dash --all`, `render --all` and `serve --all` scan its
+  immediate subdirectories and group the runs by project (see
+  [Across every project](#across-every-project--dash---all) below). `play` has
+  no `--all`; it follows one run.
 - **Same machine / filesystem.** keel-visual reads the ledger and checkpoint
   **files** directly, so it sees a run only when those files land on the **same
   filesystem** it's reading. A run on *this* machine — your own `keel ship` or a
@@ -66,8 +68,8 @@ Two scope limits follow from "it reads the records":
 `--command` accepts **all 17 keel commands** (ci-check, coverage, deps-audit,
 flake-audit, implement, morning, overnight, pr-loop, regression, review-all-day,
 review-cycle, ship, stale-prs, swarm, triage, work-block, wrap). Each renders its own
-flow — e.g. `overnight` shows `config → preflight → queue → work-block loop →
-report`; `triage` shows `find → tier → classify → rank → apply → summary`.
+flow — e.g. `overnight` shows `config → preflight → queue → work block →
+report`; `triage` shows `config → find → tier → classify → rank → apply → summary`.
 
 `ship` is the full s0–s12 backbone with live merge/test-gate and regression
 detail. The other commands render their phase structure (animatable via
