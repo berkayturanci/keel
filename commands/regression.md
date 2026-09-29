@@ -121,14 +121,18 @@ aggregation by design.
 
 ## Step 3 — aggregate + second-pass confidence
 
-Collect every agent's findings into one list, then:
+Collect every agent's findings into one list, then apply
+`scan_contract.regression.confidence_filter` — read it from the contract, not from here:
 
-1. **Drop low-confidence** findings from the issue-creation set (still surfaced in the final
-   report under "review-only").
+1. **File only what `file_only_when` names** (`["high-confidence", "medium-security"]` by
+   default): a high-confidence finding, or a medium-confidence one whose `type` is the
+   **Security** class. Everything else leaves the issue-creation set — `drop` (`low`) and a
+   medium-confidence non-security finding alike — and is still surfaced in the final report
+   under "review-only".
 2. **Within-agent dedup.** Collapse a repeated `(path, line, type)` triple to one. Keep
    distinct lines of the same `(path, type)` — they may be separate defects.
-3. **Severity sanity.** `blocker` requires high confidence; downgrade to `major` if only
-   medium. Drop any stray `nit`.
+3. **Severity sanity.** `blocker` requires high confidence; downgrade to `major` when
+   `downgrade_blocker_when` holds (`medium-confidence`). Drop any stray `nit`.
 4. **Tier every finding** via `tier3_globs`: a finding whose `paths` match a tier-3 glob is
    escalated (higher reviewer/priority weight, tier label on the issue).
 
@@ -203,7 +207,7 @@ opened (tier + severity per candidate). Open no issues, take no lock, route noth
 Always print a final report, even on partial/early exit: codename; areas scanned + file/line
 counts; findings raw → after-confidence → duplicates-skipped (with refs) → promoted-regressions
 (with refs) → opened; severity distribution; the opened-issue list; and a "review-only"
-section for the dropped low-confidence findings.
+section for every finding the confidence filter kept out of the issue set.
 
 ## Stop conditions / invariants
 
@@ -211,10 +215,11 @@ section for the dropped low-confidence findings.
   area and flags it under "open questions"; the others still proceed.
 - A rate-limit/network error prints the partial report and exits without further writes.
 - **Area agents are read-only**; only the orchestrator opens issues or creates labels.
-- Never open an issue for a low-confidence or `nit` finding; never re-open against an OPEN
+- Never open an issue for a finding outside `confidence_filter.file_only_when` (low
+  confidence, or medium confidence outside the Security class) or a `nit`; never re-open against an OPEN
   duplicate (CLOSED matches are promoted, not dropped).
 - Fail-soft (a missing tool degrades to a skipped check) · deterministic grouping (same
   findings ⇒ same issues) · `/keel:regression` never edits code, pushes, or merges — fixes go
   through `/keel:ship`'s backbone (window + lock + review).
 
-<!-- keel-generated: surface=plugin command=regression keel_version=1.24.3 source_sha256=0c293379fc0d500d0df8951d6b41a9b055590575b909e4582c23572ee90965fd generated_sha256=0c293379fc0d500d0df8951d6b41a9b055590575b909e4582c23572ee90965fd -->
+<!-- keel-generated: surface=plugin command=regression keel_version=1.24.3 source_sha256=d9258dfcc12949cdf527cec5a7437f178afe8150d1cd348ac1b3d79e580210c4 generated_sha256=d9258dfcc12949cdf527cec5a7437f178afe8150d1cd348ac1b3d79e580210c4 -->

@@ -282,28 +282,20 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
    the child reproduces the parent's resolution instead of quietly deriving a different
    team from config alone. `keel ship` accepts all five.
 3. **Rebalancing on failure**: when a cluster's issue fails, `rebalance_swarm_plan` drops the
-   clusters carrying that issue and discards any wave left empty. **This does not do what it was
-   written for, and it is actively harmful.** Because the partition emits one issue per cluster, no
-   *remaining* wave ever carries the failed issue, so the drop is a no-op in every plan the CLI
-   builds. What is not a no-op is the discarded wave: `run_swarm_orchestration` iterates the wave
-   list by index, so when the failing cluster was alone in its wave the list shrinks underneath the
-   index and **the next, unrelated wave is skipped entirely** — its clusters finish the run as
-   `queued` — reported as `partial_failure`, or as `failed` when nothing else passed, and in
-   neither
-   case are they mentioned. Reproduced with three conflicting issues: issue 1 fails, the run
-   executes waves 1 and 3,
-   and `cluster-2-2` is never attempted. Being alone in its wave is sufficient but not
-   necessary — a two-cluster wave whose clusters both fail skips the next one too.
-
-   The positional loop came from [#893](https://github.com/berkayturanci/keel/pull/893), closing
-   [#873](https://github.com/berkayturanci/keel/issues/873), which asked for exactly that: before it
-   the loop iterated the original, immutable tuple and could skip nothing. So the skip is a
-   regression introduced by a correct fix, and iterating by identity again is the obvious direction.
-   Its test uses issue 101 in both waves
-   (`tests/test_swarm_runtime.py:272-273`), so it never sees an unrelated next wave. Tracked as
-   [#1268](https://github.com/berkayturanci/keel/issues/1268); the `queued` stranding is the same
-   bug, not the separate one [#1277](https://github.com/berkayturanci/keel/issues/1277) originally
-   described.
+   clusters carrying that issue, discards any wave left empty, and removes the failed issue from
+   every survivor's `depends_on_issues` and from the plan's `conflict_map` and `issue_scopes`
+   ([#1277](https://github.com/berkayturanci/keel/issues/1277), fixed in
+   [#1310](https://github.com/berkayturanci/keel/pull/1310)). It re-schedules nothing: the
+   partition emits one issue per cluster, so no *remaining* wave carries the failed issue, and
+   the waves keep their order — a cluster that overlapped the failed one still runs in its own
+   later wave. `run_swarm_orchestration` follows the waves by `wave_index`, not by position, so a
+   discarded wave no longer makes it step past the next, unrelated one
+   ([#1268](https://github.com/berkayturanci/keel/issues/1268), fixed in
+   [#1312](https://github.com/berkayturanci/keel/pull/1312)); before that fix, three conflicting
+   issues with issue 1 failing ran waves 1 and 3 and left `cluster-2-2` `queued`.
+   `tests/test_swarm_runtime.py::AFailedWaveDoesNotSkipTheNext` holds it with a distinct issue per
+   wave: reusing one issue in two waves, as the fixture behind
+   [#873](https://github.com/berkayturanci/keel/issues/873)'s fix did, hides the skip.
 
    (There is also no runtime scope audit — clusters are kept off each other's files by plan-time
    overlap partitioning and per-worktree isolation, not by watching what a worker writes.)
@@ -455,9 +447,9 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 
 | Risk / Failure Scenario | Detection Mechanism | Fail-Soft Mitigation |
 | :--- | :--- | :--- |
-| **A cluster changes files another cluster also touches** | Plan-time static file-overlap partitioning (disjoint trees only share a wave) + isolated per-cluster worktrees | Overlapping clusters are sequenced into later waves. The "failed cluster is dropped from the remaining waves" half is a no-op that skips the next wave instead — see item 3 above and [#1268](https://github.com/berkayturanci/keel/issues/1268). |
+| **A cluster changes files another cluster also touches** | Plan-time static file-overlap partitioning (disjoint trees only share a wave) + isolated per-cluster worktrees | Overlapping clusters are sequenced into later waves. A failed cluster's issue is dropped from the plan and every later wave still runs ([#1268](https://github.com/berkayturanci/keel/issues/1268), fixed in [#1312](https://github.com/berkayturanci/keel/pull/1312)); nothing is re-scheduled — see item 3 above. |
 | **Merge conflict during landing** | `git merge` non-zero exit code | Automatic `git merge --abort`; the base branch remains untouched; the cluster is reported `merge failed`. |
-| **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock; a second writer raises `LockError` rather than retrying, so landing is single-writer by refusal. |
+| **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock. When another writer holds it, `swarm-land` merges nothing: every cleared cluster is reported `held` with the lock named in the reason, the hold is written to the run state, and the wave's result is returned rather than retried ([#1272](https://github.com/berkayturanci/keel/issues/1272)) — landing is single-writer by refusal. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |
 | **Missing or unreadable run state** | `load_swarm_state` JSON/Value/Key/Type/Overflow errors, and an `OSError` opening the file | Fails soft to no state rather than raising; `swarm-land` rebuilds the plan from `--issues`, so a lost state file costs the board, not the landing. |
 | **A cluster scored lighter than it turns out to be** | The lead's own progress against the plan | The lead reports through its worker record and the CTO re-plans; a lead never re-staffs itself, so the run's team stays the one the plan published. |

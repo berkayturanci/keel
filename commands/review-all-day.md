@@ -35,7 +35,7 @@ aligned to the project's configured timezone), collect every commit in that span
 trunk plus active work branches, fan reviewers out over the diffs, classify each for
 defects, and open **one GitHub issue per serious finding**. **Project-neutral** — every
 project specific (`base_branch`, `ci_workflows`, `tier3_globs`, `build_gate_cmd`, `lint_cmd`,
-`implementer_agents`, the timezone driving the window, the active-branch naming convention)
+the `policy_pack.scan` policy, the timezone driving the window, the active-branch naming convention)
 is read from `.keel/project.yaml` via the `keel` CLI. If you are about to type a literal
 branch name, timezone, build command, or path glob — stop and read it from config instead.
 
@@ -55,7 +55,10 @@ keel window   .keel/project.yaml                          # window state in the 
 
 The live review-all-day contract is the operator-consent preflight and includes
 `scan_contract`: configured active branch patterns, title prefix, dedupe rules, diff
-truncation, issue labels, and dry-run write suppression. Before fetching/checking refs, spawning
+truncation, issue labels, and dry-run write suppression. Its `scan_contract.review_all_day`
+block carries every number and label the steps below use — `span`, `ref_scope`,
+`strategy.batch_threshold`, `diff_truncation.max_bytes`, `finding_filter` and
+`issue_creation.{title_prefix,labels}` — so read them from it rather than from this text. Before fetching/checking refs, spawning
 reviewers, opening issues, using secrets, publishing, or calling production-adjacent
 systems, parse `contract.operator_consent`; if `requires_operator_consent` is true, STOP
 and ask the operator to rerun with the required `--approve-scope` values. Pass
@@ -64,8 +67,8 @@ and ask the operator to rerun with the required `--approve-scope` values. Pass
 
 Read the knobs you will need: `base_branch`, `tier3_globs` (the risk map used to tier every
 finding), `ci_workflows`, and `policy_pack.scan.active_branch_patterns`. The span
-boundaries are derived from the project **timezone** and **`merge_window`** as reported by
-`keel window` — never hardcode a timezone or offset here. `gh` (or its MCP equivalent) is
+boundaries are derived from the project **timezone** and **`merge_window`** in
+`scan_contract.review_all_day.span` — never hardcode a timezone or offset here. `gh` (or its MCP equivalent) is
 required for the issue calls; if it is unavailable, exit cleanly with a single note rather
 than partial-running.
 
@@ -82,9 +85,12 @@ Argument grammar:
 Reject: negative integers, non-integers (anything not matching `^[0-9]+$`), and more than one
 positional argument.
 
-Let the CLI own the deterministic boundary math: resolve `[SINCE, UNTIL]` (ISO-8601 with the
-numeric offset that `git log --since/--until` accepts) from the project timezone + window via
-`keel window`, rather than re-deriving timezone arithmetic inline. State the parsed `DAYS`
+Resolve `[SINCE, UNTIL]` (ISO-8601 with the numeric offset that `git log --since/--until`
+accepts) from `scan_contract.review_all_day.span`: `SINCE` is the `merge_window` open boundary
+of the earliest day in the span, in the IANA `timezone` it names, with that zone's offset on
+that date. `keel window` only reports whether the window is open *now* — no keel command
+resolves the span's timestamps — so take both inputs from the contract and never type a zone
+or an offset yourself. State the parsed `DAYS`
 value and the resolved `[SINCE, UNTIL]` timestamps in your first user-facing line.
 
 Also print `Resolved span: N+1 calendar days` (where `N` is the parsed `DAYS`, or `0` for the
@@ -118,10 +124,11 @@ Let `COMMIT_COUNT` be the number of unique SHAs from Step 2:
 | `COMMIT_COUNT` | Strategy |
 |---|---|
 | `0` | Skip Steps 4–5; jump to Step 6. |
-| `1 ≤ count ≤ 5` | **Batch mode** — a single reviewer, one Agent-tool call, all diffs concatenated in the prompt. |
-| `count > 5` | **Fan-out mode** — one reviewer per commit, all spawned in a single Agent-tool message so they run concurrently. |
+| `1 ≤ count ≤ T` | **Batch mode** — a single reviewer, one Agent-tool call, all diffs concatenated in the prompt. |
+| `count > T` | **Fan-out mode** — one reviewer per commit, all spawned in a single Agent-tool message so they run concurrently. |
 
-The threshold is 5: below it, per-agent overhead dominates and batching is faster; above it,
+`T` is `scan_contract.review_all_day.strategy.batch_threshold` (`policy_pack.scan.batch_threshold`,
+default 5): below it, per-agent overhead dominates and batching is faster; above it,
 single-agent attention degrades and fan-out's parallelism wins. Document the choice in the
 user-facing log: `STRATEGY=batch|fan-out, COMMIT_COUNT=<n>`.
 
@@ -133,7 +140,9 @@ runs read-only / findings-only). Any `reviewers` Lego extensions also slot in he
 For every commit, the orchestrator **pre-fetches** the diff so subagents do not re-shell into
 git: `git show --no-color --stat --patch "$SHA"`.
 
-**Large-diff guard.** Truncate to ~200 KB per commit if the diff is enormous, but never cut
+**Large-diff guard.** Truncate each commit's diff at
+`scan_contract.review_all_day.diff_truncation.max_bytes` (`policy_pack.scan.large_diff_max_bytes`,
+default 200000) if the diff is enormous, but never cut
 mid-hunk — a malformed diff confuses the reviewer. Truncate at the next `^diff --git ` file
 boundary past the threshold (file boundaries fall between hunks, so this is safe), then emit a
 synthetic trailing line:
@@ -143,7 +152,7 @@ synthetic trailing line:
 so the reviewer can flag "diff too large for full review" rather than guess from a half-hunk.
 (Account for the newline `awk` strips when byte-counting: `length($0) + 1` per line.)
 
-### 4a. Batch mode (≤ 5 commits)
+### 4a. Batch mode (≤ `T` commits)
 
 Spawn ONE reviewer in a single Agent-tool message. Give it a per-run codename
 `REVIEW-WINDOW-<UTC_TIMESTAMP>-BATCH`, the window `[SINCE, UNTIL]`, the commit count, the
@@ -179,7 +188,7 @@ SUGGESTION that materially harms maintainability → `major`; cosmetic SUGGESTIO
 **NIT → drop** (informational only; never emit a FINDING block for a nit, never opens an
 issue).
 
-### 4b. Fan-out mode (> 5 commits)
+### 4b. Fan-out mode (> `T` commits)
 
 In a single Agent-tool message, spawn `COMMIT_COUNT` reviewers concurrently, each receiving
 exactly one commit's diff and the same finding-output contract as 4a, with a per-commit
@@ -195,17 +204,18 @@ issue triage.
 
 ## Step 5 — Open one issue per serious finding (orchestrator only)
 
-Aggregate all `FINDING:` blocks. **Filter:** skip any `SEVERITY=minor` **unless** its
-`CATEGORY` is `security` (security minors still get an issue — never silently drop a security
+Aggregate all `FINDING:` blocks. **Filter** by `scan_contract.review_all_day.finding_filter`:
+with `skip_minor`, skip any `SEVERITY=minor` **unless** its `CATEGORY` is in
+`keep_minor_categories` (security minors still get an issue — never silently drop a security
 finding). **Deduplicate** findings sharing the same `(FILE, CATEGORY, DESCRIPTION)` tuple —
 keep the highest severity.
 
 For each surviving finding, open a GitHub issue:
 
-- **Title** carries a stable, grep-able prefix so downstream watchers can regex on it — use a
-  consistent `[review-all-day] ` prefix (with the trailing space) character-for-character.
-- **Labels**: a base `review-finding` label, plus a `bug` label when the category is
-  `bug-insert`, `regression`, or `security`. Create labels idempotently.
+- **Title** carries a stable, grep-able prefix so downstream watchers can regex on it — use
+  `issue_creation.title_prefix` (with its trailing space) character-for-character.
+- **Labels**: exactly `issue_creation.labels` (the project's
+  `policy_pack.scan.issue_labels.review-all-day`). Create labels idempotently.
 - **Body**: render it deterministically and post the rendered body **verbatim** — never
   hand-write it: `keel render-report --kind scan-finding --payload finding.json > body.md`.
   Build `finding.json` as one object: `{ "problem": <DESCRIPTION>, "location": <path:line>,
@@ -267,9 +277,10 @@ Always print the final report on exit, even if partial.
   (fan-out) and never call any GitHub write API.
 - Branch scope is the trunk (`base_branch`) + active work branches only — never widen to all
   remote branches.
-- The span timezone + boundaries come from the project config via `keel window` — never inline
-  a timezone or offset, and keep it in lockstep with `/keel:ship`'s window resolution.
+- The span timezone + boundaries come from the project config via
+  `scan_contract.review_all_day.span` — never inline a timezone or offset, and keep it in
+  lockstep with `/keel:ship`'s window resolution.
 - Fail-soft (a missing tool/gate degrades to a skipped check, never aborts) · deterministic
   ordering (same commits ⇒ same findings ⇒ same issues).
 
-<!-- keel-generated: surface=plugin command=review-all-day keel_version=1.24.3 source_sha256=daa2ae8e9be63e205e1901a34be787929fd0ffcd6d66e34decde9c88515ac455 generated_sha256=daa2ae8e9be63e205e1901a34be787929fd0ffcd6d66e34decde9c88515ac455 -->
+<!-- keel-generated: surface=plugin command=review-all-day keel_version=1.24.3 source_sha256=b1122ac8becb1fe1a4e8ab01e37704cd904b56bb30eedf267639d8d3ec380215 generated_sha256=b1122ac8becb1fe1a4e8ab01e37704cd904b56bb30eedf267639d8d3ec380215 -->

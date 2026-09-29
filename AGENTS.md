@@ -81,7 +81,7 @@ The rules you will hit most often. Details follow below.
 make test       # offline unit suite (no network, no credentials)
 make lint       # ruff check .
 make coverage   # run tests under coverage + enforce the gate
-make validate   # validate every projects/*.yaml against the bundled schema
+make validate   # validate every projects/*.yaml and .keel/project.yaml against the bundled schema
 make site       # build the coverage report into website/ and serve at :8000
 ```
 
