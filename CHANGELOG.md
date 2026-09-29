@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.24.3] - 2026-09-29
+
+- A gate that cannot judge no longer reads as a pass: an unconfigured build or lint gate, or a jury with no `jury` CLI, is reported as such, and a plan in which nothing judges the change blocks the merge.
+- A first live run works or says what is missing: `keel setup` no longer writes a `make test` gate for a project without one, and `keel doctor` checks `gh` and which agent hosts are installed.
+- `keel cost-report` says when its figures are estimates, and the README, the site and the PyPI page claim only what keel does, with a real recording of keel stopping and clearing a change.
+
 ### Security
 - **The keel-visual swarm page writes run data as text, not markup.** `swarm.html` built its wave, cluster and worker cards as template literals assigned to `innerHTML`, and interpolated the run's values unescaped: a worker's `details` (which carry child `keel ship` output, and so can quote issue or pull-request text), its role, status, cluster id, step and issue number, and a cluster's id, role, issues and scope paths. Markup in any of them — an `<img onerror=...>` in a failed worker's details — ran when the page was opened, as a static file or under `--serve`. `render_swarm_html` escapes `<` in the embedded JSON, which protects the `<script>` block but not the page: the browser decodes it before the card is built. Every one of those values now passes through an `esc()` helper, and a status used as a CSS class must be one plain token (`[a-z_-]`) or the card falls back to `queued`. The run view (`runviz.html`) escapes its meta chips and step labels the same way; its values are already normalised by `runstate`, so there it is defence in depth, and it also makes the `s4` step's `</>` glyph show instead of being parsed as an empty tag. The board and dashboard build their DOM with `textContent` and were already safe. `keel-visual/tests/test_template_escaping.py` requires every interpolation in a markup template literal to be escaped; `keel-visual/tests/js/swarm.test.mjs` and `runviz.test.mjs` render hostile payloads and check they arrive as text.
 
