@@ -422,6 +422,26 @@ class TheRecordLock(unittest.TestCase):
             except OSError as exc:  # the contract: an I/O failure is "not held", not a raise
                 self.fail(f"record_lock raised {exc!r}")
 
+    def test_an_io_error_claiming_the_lock_is_not_held(self):
+        # The filesystem case above raises on POSIX, but on Windows the claim can come
+        # back "not granted" instead; this pins the I/O-error branch on every platform.
+        calls = []
+
+        def refuse(*args, **kwargs):
+            calls.append(args)
+            raise PermissionError("claim refused")
+
+        with tempfile.TemporaryDirectory() as d:
+            with patch.object(activity.lock, "claim_resource", refuse):
+                try:
+                    with activity.record_lock(
+                        d, "r1.json", owner="me", _sleep=calls.append
+                    ) as held:
+                        self.assertFalse(held)
+                except OSError as exc:  # the contract: an I/O failure is "not held"
+                    self.fail(f"record_lock raised {exc!r}")
+        self.assertEqual(1, len(calls))  # one claim, no retry and no sleep after an I/O error
+
 
 class RecordingIntoTheRun(unittest.TestCase):
     def _args(self, **kwargs):
