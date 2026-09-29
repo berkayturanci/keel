@@ -931,6 +931,24 @@ class TestMissingNamesOnly(unittest.TestCase):
             with self.subTest(output=output):
                 self.assertFalse(rc.missing_names_only(output))
 
+    def test_every_counted_failure_must_be_described(self):
+        """Codex, round 9: ``2 failed`` with one described ``NameError`` passed an addition,
+        though the other failure could have been anything."""
+        name = "NameError: name 'g' is not defined"
+        for output in (
+            f"FAILED tests/t.py::test_a - {name}\n2 failed in 0.10s\n",
+            f"{self.TB}{name}\n\nRan 3 tests in 0.1s\n\nFAILED (errors=2)\n",
+        ):
+            with self.subTest(output=output):
+                self.assertFalse(rc.missing_names_only(output))
+        described = (
+            f"FAILED tests/t.py::test_a - {name}\nFAILED tests/t.py::test_b - {name}\n"
+            "2 failed in 0.10s\n"
+        )
+        self.assertTrue(rc.missing_names_only(described))
+        both = f"{self.TB}{name}\n{self.TB}{name}\n\nRan 3 tests in 0.1s\n\nFAILED (errors=2)\n"
+        self.assertTrue(rc.missing_names_only(both))
+
 
 class TestVerdict(unittest.TestCase):
     def test_precheck_order(self):

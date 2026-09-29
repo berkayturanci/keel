@@ -713,9 +713,21 @@ def missing_names_only(output: str) -> bool:
     a ``nit`` only when the errors are the ones removing code can cause. A ``KeyError``, a
     ``TypeError``, an attribute missing from an *instance*, any exception keel cannot
     name, and output with no traceback at all are behaviour, and block.
+
+    **Every** failure the run counts must be described: a summary of ``2 failed`` whose
+    short summary names one ``NameError`` says nothing about the other, which could be an
+    assertion or a crash (#1289 review round 9). So pytest's undescribed failures
+    (:attr:`Tally.unclassified`) refuse it, and so does a count of failures and errors
+    larger than the exceptions keel read.
     """
     found = _raised(output)
-    return bool(found) and all(_MISSING_NAME.match(text) for text in found)
+    tally = read_output(output)
+    return (
+        bool(found)
+        and not tally.unclassified
+        and len(found) >= tally.errors + tally.assertions
+        and all(_MISSING_NAME.match(text) for text in found)
+    )
 
 
 # --- reading a test run --------------------------------------------------------------

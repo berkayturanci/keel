@@ -1385,7 +1385,9 @@ every one of its changed lines is a complete one-line Python import statement (r
 lines themselves, so an encoding cookie or a multi-line import's member line does not count);
 **and** every exception the run reports is a missing name — `NameError`, `UnboundLocalError`,
 `ImportError`/`ModuleNotFoundError`, or an `AttributeError` for a *module* or *class* attribute,
-read from each traceback's last line and pytest's short summary. Any other exception — a
+read from each traceback's last line and pytest's short summary — and every failure the run
+counts is one of them: `2 failed` with one described `NameError` blocks, because the other
+failure could be anything. Any other exception — a
 `KeyError`, a `TypeError`, an attribute missing from an instance, one keel cannot name — is
 behaviour a test should assert on, and blocks. Reverting a *modification* restores code that
 ran before, so a test that only errors against it (the `NameError` of a half-reverted fix)
