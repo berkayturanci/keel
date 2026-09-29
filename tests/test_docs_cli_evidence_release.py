@@ -302,7 +302,9 @@ class TheDelegateErrorCodesAreTheSource(unittest.TestCase):
 
     def test_the_table_is_the_vocabulary(self):
         vocabulary = self._vocabulary()
-        self.assertTrue({"bad-key", "unknown-vendor", "spawn-failed", "bad-run-id"} <= vocabulary)
+        self.assertLessEqual(
+            {"bad-key", "unknown-vendor", "spawn-failed", "bad-run-id"}, vocabulary
+        )
         table = _between(_page("cli.md"), "| `error_code` | meaning |", "\n\n")
         documented: set[str] = set()
         for line in table.splitlines():
