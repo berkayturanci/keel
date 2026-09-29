@@ -202,10 +202,11 @@ class TestSwarmLandingPureLogic(unittest.TestCase):
         c2 = SwarmCluster(
             cluster_id="c2", issues=(102,), role="core", combined_scope=("src/common.py",)
         )
+        # A wave the plan found orthogonal whose actual diffs overlap: the diffs decide.
         w_overlap = SwarmWave(
             wave_index=1,
-            mode="sequential_dependent",
-            eligible_direct_landing=False,
+            mode="orthogonal_parallel",
+            eligible_direct_landing=True,
             clusters=(c1, c2),
         )
         dec_overlap = evaluate_wave_landing_mode(

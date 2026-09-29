@@ -441,7 +441,7 @@
       stage.appendChild(el("div", "sc-lab", "multi-agent swarm (experimental) · DAG wave clustering & batch landing"));
       var plan = el("div", "lanes");
       var w1 = el("div", "chip", '<span class="dot"></span>Wave 1 · Direct Orthogonal Batch<span class="meta">2 parallel clusters</span>');
-      var w2 = el("div", "chip muted", '<span class="dot"></span>Wave 2 · Direct Batch<span class="meta">1 cluster</span>');
+      var w2 = el("div", "chip muted", '<span class="dot"></span>Wave 2 · Sequential Funnel<span class="meta">1 cluster</span>');
       plan.appendChild(w1); plan.appendChild(w2);
       stage.appendChild(plan);
 

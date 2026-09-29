@@ -11,7 +11,7 @@
   var PRESETS = {
     microservices: {
       name: "Microservices & Core Refactor",
-      description: "5 issues partitioned into 2 waves across Claude, Gemini & Codex with direct batch landing.",
+      description: "5 issues partitioned into 2 waves across Claude, Gemini & Codex — wave 1 lands as a direct batch, the dependent wave 2 through the rebase funnel.",
       issues: [
         { id: 742, title: "Viral PR watermark & SVG badges", files: ["src/keel/closure.py", "docs/keel/badges.md"], model: "gemini-3.8-flash-high", vendor: "Google", wave: 1 },
         { id: 740, title: "Smart stack init auto-detector", files: ["src/keel/scaffold.py", "src/keel/cli.py"], model: "claude-opus-5", vendor: "Anthropic", wave: 1 },

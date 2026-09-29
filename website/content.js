@@ -399,10 +399,10 @@ window.KEEL = {
         "</ul>" +
         "<p>Each cluster is meant to be reviewed inside its own <b>keel ship</b> run — on tier-3 work that can be the cross-vendor <b>AI Jury</b> panel (e.g. Anthropic + OpenAI + Google). <code>swarm-land</code> holds a cluster until an open pull request whose head matches the cluster branch clears the review-evidence gate, whichever model authored it — then lands it with a local merge, and never pushes or merges that pull request (<a href='https://github.com/berkayturanci/keel/issues/1287'>#1287</a>).</p>" +
         "<h3>3. Single-Writer Batch Landing</h3>" +
-        "<p>Swarm lands every wave the same way under the single-writer <code>merge_lock</code>:</p>" +
+        "<p>Swarm lands each wave under the single-writer <code>merge_lock</code>, in the mode the plan gave it:</p>" +
         "<ul>" +
-        "<li><b>Direct Orthogonal Batch Landing</b>: Disjoint branches with zero file collisions are merged into the base branch with <code>git merge --no-ff</code>, sequentially under the merge lock, with no rebases.</li>" +
-        "<li><b>Why one mode</b>: the planner only puts mutually disjoint clusters in a wave, so landing never needs a rebase. <code>swarm_landing.py</code> also implements an adaptive rebase funnel (marker-resolver healing, hold-and-rewind), but no <code>swarm-land</code> invocation selects it — it is reachable only from the library.</li>" +
+        "<li><b>Direct Orthogonal Batch Landing</b> (wave 1, and a later wave that depends on nothing earlier): disjoint branches are merged into the base branch with <code>git merge --no-ff</code>, sequentially under the merge lock, with no rebases.</li>" +
+        "<li><b>Sequential Funnel</b> (a wave that depends on an earlier one — in a fresh plan, every wave after the first): each branch was cut before the earlier wave landed, so it is rebased onto the moved base first; a conflict the marker resolver heals is held for re-review and rewound, never landed unreviewed (<a href='https://github.com/berkayturanci/keel/issues/1276'>#1276</a>).</li>" +
         "</ul>" +
         "<h3>4. 2D & Pseudo-3D Spatial Snapshot</h3>" +
         "<p><code>keel-visual swarm</code> renders an interactive DAG topological graph and a pseudo-3D spatial node view as an HTML page, showing the plan's waves, each cluster's running/passed/failed state, and the run's landing mode. It is a rendered snapshot — re-run to refresh.</p>",

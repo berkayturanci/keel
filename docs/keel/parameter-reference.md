@@ -2144,8 +2144,9 @@ keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--iss
 | `--live` | flag | off | Actually merge. Without it the command reports what it would land, including `would hold: <reason>` per cluster. |
 | `--json` | flag | off | Structured landing result. |
 
-There is **no `--mode` flag**: `evaluate_wave_landing_mode` derives the mode from the plan's
-predicted scopes for the wave, and for any planned wave that is always direct batch.
+There is **no `--mode` flag**: `evaluate_wave_landing_mode` derives the mode from the plan's wave
+mode — direct batch for wave 1 and for a later wave with no dependency on an earlier wave's issue,
+the sequential funnel for a `sequential_dependent` wave (#1276).
 
 ### Details — `knobs.swarm_review_evidence`
 

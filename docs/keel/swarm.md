@@ -109,7 +109,7 @@ an operator sees the chain at a glance.
                         ▼                                   ▼
               ┌───────────────────┐               ┌───────────────────┐
               │      Wave 1       │               │      Wave 2       │
-              │  (Direct Batch)   │               │  (Direct Batch)   │
+              │  (Direct Batch)   │               │(Sequential Funnel)│
               └─────────┬─────────┘               └─────────┬─────────┘
                         │                                   │
        ┌────────────────┴────────────────┐                  │
@@ -227,6 +227,14 @@ knobs:
   they are marked disjoint ($D_{ij} = 1$). If scopes intersect, a conflict edge is created ($C_{ij} = 1$).
 - **Topological Wave Partitioning**: Disjoint clusters are scheduled in Wave 1. Dependent or conflicting
   clusters are placed in subsequent waves (Wave 2, Wave 3...).
+- **Wave mode**: Wave 1 is `orthogonal_parallel` (`eligible_direct_landing: true`). A later wave is
+  `orthogonal_parallel` only when none of its clusters lists a `depends_on_issues` entry; otherwise it
+  is `sequential_dependent` (`eligible_direct_landing: false`), because the wave it depends on moves
+  the base its branches were cut from. A plan built from scratch always gives a later wave a
+  dependency — an issue only waits for a later wave because it overlaps something already placed —
+  so every wave after the first is `sequential_dependent` until a failure's rebalance drops its last
+  dependency ([#1276](https://github.com/berkayturanci/keel/issues/1276)). Before that fix every
+  wave claimed `orthogonal_parallel`.
 
 ### ASCII plan tree
 The `--tree` flag prints the plan as a terminal tree:
@@ -348,20 +356,27 @@ keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --
 
 ### What landing actually does
 
-Each cluster branch is merged into the configured base branch with `git merge --no-ff`, **one
-after another** inside the lock. A merge that conflicts is `git merge --abort`ed, the base is left
-untouched, and the cluster is reported `merge failed`.
+`evaluate_wave_landing_mode` picks one of two paths from the plan's wave mode:
 
-**Every wave lands in direct-batch mode today.** `build_swarm_plan` only admits an issue to a wave
-it conflicts with nothing in, so a wave's clusters are always mutually disjoint; the CLI also passes
-no PR diff map, so `evaluate_wave_landing_mode` returns `direct_batch` (`orthogonal_diff_trees`, or
-`single_cluster` for a wave of one) every time.
+- **Direct batch** — the wave is `orthogonal_parallel` (wave 1, or a later wave with no
+  dependency left). Each cluster branch is merged into the configured base branch with
+  `git merge --no-ff`, **one after another** inside the lock. A merge that conflicts is
+  `git merge --abort`ed, the base is left untouched, and the cluster is reported `merge failed`.
+  The decision's reason is `single_cluster` for a wave of one and `orthogonal_diff_trees`
+  otherwise: `build_swarm_plan` only admits an issue to a wave it conflicts with nothing in, and
+  the CLI passes no PR diff map, so a wave's own clusters never overlap each other.
+- **Sequential funnel** — the wave is `sequential_dependent`, whatever its size (reason
+  `depends_on_earlier_wave`, [#1276](https://github.com/berkayturanci/keel/issues/1276)). Each
+  cluster is rebased onto the moved base, adjacent conflicts are healed with the deterministic
+  marker resolver, anything the resolver touched is held for re-review and its branch rewound to
+  the reviewed commit, and a clean rebase merges. Before #1276 every wave claimed direct landing,
+  so `keel swarm-land --wave 2` merged a branch cut before wave 1 landed and reported the conflict
+  as `merge failed`.
 
-`swarm_landing.py` *does* implement an adaptive funnel — rebase each overlapping cluster onto the
-moved base, heal adjacent conflicts with the deterministic marker resolver, hold anything the
-resolver touched for re-review, and rewind a held branch. That path is reachable only by a library
-caller that supplies `pr_diff_map`; **no `keel swarm-land` invocation selects it.** It is described
-in [cli.md](cli.md) for callers who drive the library directly.
+The funnel is chosen from the plan's dependency edges, not from how far the base branch has
+actually moved since each branch was cut; comparing against that drift is the open half of #1276.
+A library caller that supplies `pr_diff_map` also funnels an `orthogonal_parallel` wave whose actual
+diffs overlap (`overlapping_diff_trees`); see [cli.md](cli.md).
 
 ### Review Evidence Gate (`knobs.swarm_review_evidence`)
 

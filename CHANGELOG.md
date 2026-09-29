@@ -7,6 +7,18 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A swarm wave's landing mode follows its dependencies** (#1276, part 1). The plan computed
+  the mode as "the wave is not empty", so every wave claimed `orthogonal_parallel` and direct
+  batch landing — including a wave that exists only because it overlaps an earlier one, whose
+  branches were cut before that wave moved the base. Wave 1, and a later wave none of whose
+  clusters depends on an earlier wave's issue, stay `orthogonal_parallel`; any other wave is now
+  `sequential_dependent`, and a rebalance after a failure re-derives it. **The JSON changes:**
+  `swarm-plan --json` and `swarm-run --json` (`wave_results`) report `"mode":
+  "sequential_dependent"` and `"eligible_direct_landing": false` for such a wave, and
+  `swarm-land --wave N --json` reports `"mode": "sequential_funnel"` for it: `swarm-land` now
+  rebases a dependent wave's clusters onto the moved base before merging, whatever the wave's
+  size, instead of merging them as a direct batch. Comparing each branch against how far the base
+  has actually moved (part 2) is still open.
 - **The Ship watermark names ai-jury only when a jury sat.** The s11 closure comment's
   signature said "with ai-jury consensus" on every run, including ones whose `Jury` line read
   `off`. It now adds the clause only when the record's `run_context.jury_mode` is `gating` or

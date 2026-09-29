@@ -3265,14 +3265,15 @@ keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
 ```
 
-The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's
-predicted scopes for the wave and, for any planned wave, always resolves to direct batch — so there
-is no `--mode` flag to get wrong. `--wave` selects the
+The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's mode for
+the wave — wave 1, and a later wave none of whose clusters depends on an earlier wave's issue, land
+as a direct batch; a `sequential_dependent` wave funnels (#1276) — so there is no `--mode` flag to
+get wrong. `--wave` selects the
 wave (default `1`); without `--live` the command reports what it would land.
 
 - **Direct Batch Mode**: Orthogonal disjoint diff trees are merged one after another with
   `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- **Adaptive Funnel Mode**: implemented in `swarm_landing.py` (rebase onto the moved base, marker-resolver healing, hold-and-rewind) but selected only when a caller supplies a PR diff map — **no `keel swarm-land` invocation reaches it today**, because a planned wave's clusters are always disjoint.
+- **Adaptive Funnel Mode**: rebase onto the moved base, marker-resolver healing, hold-and-rewind. Selected for every `sequential_dependent` wave — in a freshly built plan, every wave after the first — with the reason `depends_on_earlier_wave`, and for a wave whose supplied PR diff map overlaps (a library caller; the CLI passes none).
 - **Review evidence (#828)**: before a live landing, every cluster branch's open PR must pass
   the same pre-merge review-evidence verification `keel merge` enforces — armed gate label,
   tier-derived verdict count, verdicts pinned to the PR head. A cluster that does not verify is

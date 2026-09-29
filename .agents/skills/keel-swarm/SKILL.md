@@ -182,9 +182,9 @@ When an execution wave completes, land all passing clusters onto the project's
 keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
-- The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
-- **Orthogonal Batch Landing**: Disjoint diff trees are merged into `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- Every planned wave is internally disjoint, so landing always runs in direct-batch mode; the library's adaptive rebase funnel is not selected by this command.
+- The landing mode is **derived from the plan's wave mode**, not passed on the command line.
+- **Orthogonal Batch Landing** (wave 1, and any later wave none of whose clusters depends on an earlier wave's issue): disjoint diff trees are merged into `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **Sequential Funnel** (a `sequential_dependent` wave — in a fresh plan, every wave after the first): each cluster is rebased onto the moved base first; a conflict the marker resolver heals is held for re-review, not landed.
 
 ## Step 4 — Visual tracking & terminal dashboard
 
@@ -212,4 +212,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.24.3 source_sha256=a0a431da83a4e043c3599eda38ce53b9ce9dee611b3ce448cb40e82c285e872f generated_sha256=54e610fd2065d4f3b218029b387fa5b24f497c1c0060d6057ef41c93832c9ef8 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.24.3 source_sha256=4e72feb863c75c4ae4bdfa8480b150c25408e7ec16d2bbbc9cdb39cf9a4a47ef generated_sha256=ec466990f722183a2d620849ebe87310f602400d90327c0371b4ecae8da83e2f -->

@@ -903,13 +903,12 @@ def build_swarm_plan(
 
         assigned_prior_issues.update(current_wave_issues)
 
-        # Determine mode & direct landing eligibility
-        is_orthogonal = len(current_wave_issues) > 0
+        mode, eligible = wave_landing_mode(wave_idx, clusters)
         waves.append(
             SwarmWave(
                 wave_index=wave_idx,
-                mode="orthogonal_parallel" if is_orthogonal else "sequential_dependent",
-                eligible_direct_landing=is_orthogonal,
+                mode=mode,
+                eligible_direct_landing=eligible,
                 clusters=tuple(clusters),
             )
         )
@@ -923,6 +922,20 @@ def build_swarm_plan(
         conflict_map=frozen_conflicts,
         issue_scopes=scope_by_id,
     )
+
+
+def wave_landing_mode(wave_index: int, clusters: Sequence[SwarmCluster]) -> tuple[str, bool]:
+    """A wave's plan mode and whether it may land as a direct batch.
+
+    The first wave is ``orthogonal_parallel``: nothing lands before it. A later wave is
+    too only when none of its clusters depends on an issue from an earlier wave;
+    otherwise it is ``sequential_dependent`` and not eligible for the direct batch,
+    because the base it branched from moves when the wave it depends on lands. The
+    mode used to be computed as "the wave is not empty", which every wave is, so every
+    wave claimed direct landing (#1276).
+    """
+    orthogonal = wave_index == 1 or not any(c.depends_on_issues for c in clusters)
+    return ("orthogonal_parallel" if orthogonal else "sequential_dependent", orthogonal)
 
 
 def seat_label(seat: dict[str, Any] | None) -> str:
@@ -1225,11 +1238,14 @@ def rebalance_swarm_plan(plan: SwarmPlan, failed_issue: int) -> SwarmPlan:
                 )
             new_clusters.append(c)
         if new_clusters:
+            # Re-derived, not copied: dropping the failed issue can remove a wave's
+            # last dependency, and then nothing it waits on is going to land.
+            mode, eligible = wave_landing_mode(w.wave_index, new_clusters)
             new_waves.append(
                 SwarmWave(
                     wave_index=w.wave_index,
-                    mode=w.mode,
-                    eligible_direct_landing=w.eligible_direct_landing,
+                    mode=mode,
+                    eligible_direct_landing=eligible,
                     clusters=tuple(new_clusters),
                 )
             )
@@ -1268,8 +1284,21 @@ def evaluate_wave_landing_mode(
     wave: SwarmWave,
     pr_diff_map: dict[str, list[str] | tuple[str, ...]],
 ) -> LandingDecision:
-    """Evaluate whether a wave can directly land or requires sequential funneling."""
+    """Evaluate whether a wave can directly land or requires sequential funneling.
+
+    A wave the plan marked ``sequential_dependent`` funnels whatever its size: it
+    exists because its clusters overlap work an earlier wave lands, so its branches
+    were cut from a base that has since moved (#1276). Only a wave the plan found
+    orthogonal is then judged on its own clusters' diffs.
+    """
     cluster_ids = tuple(c.cluster_id for c in wave.clusters)
+    if not wave.eligible_direct_landing:
+        return LandingDecision(
+            mode="sequential_funnel",
+            eligible=False,
+            cluster_ids=cluster_ids,
+            reason="depends_on_earlier_wave",
+        )
     if len(cluster_ids) <= 1:
         return LandingDecision(
             mode="direct_batch",

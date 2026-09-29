@@ -179,9 +179,9 @@ When an execution wave completes, land all passing clusters onto the project's
 keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
-- The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
-- **Orthogonal Batch Landing**: Disjoint diff trees are merged into `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- Every planned wave is internally disjoint, so landing always runs in direct-batch mode; the library's adaptive rebase funnel is not selected by this command.
+- The landing mode is **derived from the plan's wave mode**, not passed on the command line.
+- **Orthogonal Batch Landing** (wave 1, and any later wave none of whose clusters depends on an earlier wave's issue): disjoint diff trees are merged into `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **Sequential Funnel** (a `sequential_dependent` wave — in a fresh plan, every wave after the first): each cluster is rebased onto the moved base first; a conflict the marker resolver heals is held for re-review, not landed.
 
 ## Step 4 — Visual tracking & terminal dashboard
 

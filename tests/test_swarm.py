@@ -1278,5 +1278,58 @@ class TestStaffedRendering(unittest.TestCase):
         self.assertEqual(swarm_module.seat_label(None), "unassigned")
 
 
+class AWavesLandingModeFollowsItsDependencies(unittest.TestCase):
+    """#1276 (part 1): the mode was ``len(current_wave_issues) > 0``, true of every wave,
+    so a wave that exists *because* it overlaps an earlier one still claimed direct
+    batch landing onto a base that wave had just moved."""
+
+    def _chain(self) -> swarm_module.SwarmPlan:
+        # Three issues on one file: one wave each, each depending on every earlier one.
+        scopes = [
+            IssueScope(issue=n, title=f"T{n}", predicted_files=("src/a.py",)) for n in (1, 2, 3)
+        ]
+        plan = build_swarm_plan(scopes, swarm_id="swarm-chain")
+        deps = [w.clusters[0].depends_on_issues for w in plan.waves]
+        self.assertEqual(deps, [(), (1,), (1, 2)], "fixture: a dependency chain")
+        return plan
+
+    def test_the_first_wave_is_orthogonal(self):
+        first = self._chain().waves[0]
+        self.assertEqual((first.mode, first.eligible_direct_landing), ("orthogonal_parallel", True))
+
+    def test_a_later_wave_with_a_dependency_is_sequential(self):
+        plan = self._chain()
+        modes = [(w.mode, w.eligible_direct_landing) for w in plan.waves[1:]]
+        self.assertEqual(modes, [("sequential_dependent", False)] * 2)
+        self.assertEqual(plan.to_dict()["waves"][1]["mode"], "sequential_dependent")
+        self.assertIn(
+            "Wave 2 [sequential_dependent] — sequential merge funnel", render_swarm_plan_text(plan)
+        )
+        tree = render_swarm_plan_tree(plan)
+        self.assertIn("⏳ Wave 2 [sequential_dependent] — Sequential Funnel", tree)
+        self.assertIn("Direct Landing Waves: 1 ", tree)
+
+    def test_a_later_wave_without_a_dependency_is_orthogonal(self):
+        # Issue 1 fails: wave 2 loses its only dependency, wave 3 still waits on #2.
+        after = swarm_module.rebalance_swarm_plan(self._chain(), failed_issue=1)
+        modes = {w.wave_index: (w.mode, w.eligible_direct_landing) for w in after.waves}
+        self.assertEqual(
+            modes,
+            {2: ("orthogonal_parallel", True), 3: ("sequential_dependent", False)},
+        )
+        free = SwarmCluster(cluster_id="c", issues=(9,), role="core", combined_scope=("b.py",))
+        self.assertEqual(swarm_module.wave_landing_mode(4, [free]), ("orthogonal_parallel", True))
+
+    def test_a_single_cluster_wave_lands_by_its_mode_not_its_size(self):
+        plan = self._chain()
+        first = swarm_module.evaluate_wave_landing_mode(plan.waves[0], {})
+        self.assertEqual((first.mode, first.reason), ("direct_batch", "single_cluster"))
+        later = swarm_module.evaluate_wave_landing_mode(plan.waves[1], {})
+        self.assertEqual(
+            (later.mode, later.eligible, later.reason),
+            ("sequential_funnel", False, "depends_on_earlier_wave"),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
