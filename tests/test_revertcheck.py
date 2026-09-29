@@ -407,10 +407,11 @@ class TestExecute(unittest.TestCase):
         self.assertIsNone(report.baseline)
         self.assertEqual(
             [(r.change.label, r.result) for r in report.results],
-            [("a", rc.CAUGHT), ("b", rc.UNNOTICED), ("c", rc.NOT_APPLIED), ("d", rc.INERT)],
+            [("a", rc.CAUGHT), ("b", rc.UNNOTICED), ("c", rc.NOT_APPLIED), ("d", rc.CAUGHT)],
         )
-        # The tests run once for the baseline and once per change that has behaviour;
-        # each run is limited by gate_timeout_s while the budget is larger.
+        # The tests run once for the baseline and once per change that was undone — `d`
+        # changes only formatting and is tested all the same; each run is limited by
+        # gate_timeout_s while the budget is larger.
         self.assertEqual(
             scratch.calls,
             [
@@ -421,8 +422,56 @@ class TestExecute(unittest.TestCase):
                 ("test", "b", 30),
                 ("revert", "c"),
                 ("revert", "d"),
+                ("test", "d", 30),
             ],
         )
+
+    def test_no_change_is_skipped_for_looking_harmless(self):
+        """Every undone change is tested — the "inert" shortcut is gone (#1289 review).
+
+        Each of these once skipped its run, and each changes behaviour: a `//go:embed`
+        directive, a Python encoding cookie, and a re-wrap that moves `f_lineno`.
+        """
+        repros = {
+            "embed": (
+                "a.go",
+                "//go:embed new.txt\nvar s string\n",
+                "//go:embed old.txt\nvar s string\n",
+                "-//go:embed old.txt\n+//go:embed new.txt",
+            ),
+            "cookie": (
+                "m.py",
+                "# coding: utf-8\nS = 'é'\n",
+                "# coding: latin-1\nS = 'é'\n",
+                "-# coding: latin-1\n+# coding: utf-8",
+            ),
+            "rewrap": (
+                "w.py",
+                "L = (\n    inspect.currentframe().f_lineno\n)\n",
+                "L = (inspect.currentframe().f_lineno\n\n)\n",
+                "-L = (inspect.currentframe().f_lineno\n-\n"
+                "+L = (\n+    inspect.currentframe().f_lineno",
+            ),
+            "comment": ("c.py", "x = 1  # new\n", "x = 1  # old\n", "-# old\n+# new"),
+        }
+        changes = [
+            rc.Change(name, path, f"diff --git a/x b/x\n@@ -1 +1 @@\n{body}\n", False)
+            for name, (path, _head, _undone, body) in repros.items()
+        ]
+        scratch = _Scratch(
+            reverted={
+                name: rc.Reverted(True, head, undone)
+                for name, (_path, head, undone, _body) in repros.items()
+            },
+            runs={None: _GREEN, **dict.fromkeys(repros, _GREEN)},
+        )
+        report, _ = _execute(changes, scratch=scratch)
+        tested = [call[1] for call in scratch.calls if call[0] == "test" and call[1]]
+        self.assertEqual(tested, list(repros))
+        self.assertEqual({r.result for r in report.results}, {rc.UNNOTICED})
+        verdict = rc.judge(rc.Plan(tuple(changes), (), ()), report)
+        self.assertFalse(verdict.ok)
+        self.assertIn("it looks comment-only", verdict.findings[-2].message)
 
     def test_a_result_knows_whether_its_change_only_adds(self):
         errored = rc.RunResult(exit_ok=False, output="Ran 1 test in 0s\nFAILED (errors=1)\n")
@@ -508,95 +557,15 @@ class TestImportsOnly(unittest.TestCase):
 
     def test_anything_else_is_not_imports_only(self):
         self.assertFalse(rc.imports_only(_py("m"), "import os\nx = 1\n", "x = 2\n"))
+        # Only imports: a docstring edit beside them is a change like any other.
+        self.assertFalse(
+            rc.imports_only(_py("m"), '"""New."""\nimport os\nf()\n', '"""Old."""\nf()\n')
+        )
         self.assertFalse(rc.imports_only(_py("m"), "def (:\n", "def (:\n"))
         self.assertFalse(rc.imports_only(_py("m"), None, "x = 1\n"))
         self.assertFalse(rc.imports_only(_py("m"), "x = 1\n", None))
         ts = rc.Change("x", "a.ts", "p", False)
         self.assertFalse(rc.imports_only(ts, "import a from 'a'\n", "\n"))
-
-
-class TestBehaviourFree(unittest.TestCase):
-    def test_python_comments_docstrings_and_formatting_have_no_behaviour(self):
-        head = (
-            '"""Module doc."""\n\n# a comment\ndef f(x):\n    """Doc."""\n'
-            '    y = x  # why\n    "attribute doc"\n    return y\n'
-        )
-        # Line for line, so nothing moves: the rule for a change that adds or removes
-        # lines is AChangeThatMovesLinesIsNeverInert's.
-        reverted = (
-            '"""Other doc."""\n\n# other\ndef f(x):\n    """Other."""\n'
-            '    y=x\n    "x"\n    return (y)\n'
-        )
-        self.assertTrue(rc.behaviour_free(_py("m"), head, reverted))
-        # An expression statement that is not a string is behaviour, and kept.
-        self.assertTrue(rc.behaviour_free(_py("m"), "log(1)\n", "log( 1 )  # note\n"))
-        self.assertFalse(rc.behaviour_free(_py("m"), "log(1)\n", "log(2)\n"))
-
-    def test_python_code_changes_have_behaviour(self):
-        self.assertFalse(rc.behaviour_free(_py("m"), "x = 1\n", "x = 2\n"))
-        # A string that is not a bare statement is behaviour.
-        self.assertFalse(rc.behaviour_free(_py("m"), 'X = "a"\n', 'X = "b"\n'))
-        # Unparseable on either side: when in doubt, the tests run.
-        self.assertFalse(rc.behaviour_free(_py("m"), "def (:\n", "def (:\n"))
-        self.assertFalse(rc.behaviour_free(_py("m"), "x = 1\n", "x = \0\n"))
-
-    def test_a_file_added_or_deleted_always_has_behaviour(self):
-        self.assertFalse(rc.behaviour_free(_py("m"), None, ""))
-        self.assertFalse(rc.behaviour_free(_py("m"), "", None))
-
-    def test_a_comment_line_inside_a_shell_string_is_not_inert(self):
-        """Review finding on #1385: a `#` line inside a multi-line string is text."""
-        patch = "diff --git a/run.sh b/run.sh\n@@ -2 +2 @@\n-# old value\n+# new value\n"
-        head = "printf '%s' '\n# new value\n'\n"
-        undone = "printf '%s' '\n# old value\n'\n"
-        self.assertFalse(rc.behaviour_free(rc.Change("x", "run.sh", patch, False), head, undone))
-
-    def test_only_languages_keel_can_read_whole_keep_the_shortcut(self):
-        def change(path, marker):
-            patch = f"diff --git a/x b/x\n@@ -1 +1 @@\n-{marker} old\n+{marker} new\n"
-            return rc.Change("x", path, patch, False)
-
-        # Same files once comments are stripped, every changed line a comment: still not
-        # proven, because these languages have literals the stripper cannot read.
-        for path in (
-            "a.ts",
-            "a.js",
-            "a.rs",
-            "a.cpp",
-            "a.h",
-            "a.mm",
-            "a.cs",
-            "a.java",
-            "a.kt",
-            "a.swift",
-            "a.dart",
-            "a.scala",
-            "a.php",
-            "a.fs",
-        ):
-            with self.subTest(path=path):
-                self.assertFalse(
-                    rc.behaviour_free(change(path, "//"), "// new\nx;\n", "// old\nx;\n")
-                )
-        for path, marker in (("a.rb", "#"), ("a.lua", "--"), ("a.clj", ";"), ("a.erl", "%")):
-            with self.subTest(path=path):
-                self.assertFalse(
-                    rc.behaviour_free(change(path, marker), f"{marker} new\n", f"{marker} old\n")
-                )
-        for path in ("a.c", "a.m", "a.go"):
-            with self.subTest(path=path):
-                self.assertTrue(
-                    rc.behaviour_free(change(path, "//"), "// new\nx;\n", "// old\nx;\n")
-                )
-        self.assertFalse(rc.behaviour_free(change("Makefile", "#"), "# new\n", "# old\n"))
-
-    def test_a_go_raw_string_escapes_nothing(self):
-        # With a backslash read as an escape, `C:\` swallowed its closing backtick and the
-        # next raw string's `// two` line was read as a comment: a false inert.
-        patch = "diff --git a/a.go b/a.go\n@@ -3 +3 @@\n-// one\n+// two\n"
-        head = "a := `C:\\`\nb := `\n// two\n`\n"
-        undone = "a := `C:\\`\nb := `\n// one\n`\n"
-        self.assertFalse(rc.behaviour_free(rc.Change("x", "a.go", patch, False), head, undone))
 
 
 class TestVerdict(unittest.TestCase):
@@ -673,14 +642,14 @@ class TestVerdict(unittest.TestCase):
         )
         code = rc.Change("run.sh @@", "run.sh", "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n", False)
         other = rc.Change(
-            "x.zig", "x.zig", "diff --git a/x b/x\n@@ -1 +1 @@\n-// a\n+// b\n", False
+            "f.c", "f.c", "diff --git a/x b/x\n@@ -1 +1 @@\n-*p = 1;\n+*p = 2;\n", False
         )
         results = tuple(rc.ChangeResult(c, rc.UNNOTICED, "passed") for c in (comment, code, other))
         verdict = rc.judge(rc.Plan((), (), ()), rc.Report(None, results))
         self.assertFalse(verdict.ok)
         first, second, third = (f.message for f in verdict.findings[:3])
-        self.assertIn("it looks comment-only, but keel proves a change inert only for", first)
-        self.assertIn(rc.INERT_LANGUAGES, first)
+        self.assertIn("it looks comment-only, and keel tests every change", first)
+        self.assertIn("encoding cookies, compiler directives, line numbers", first)
         self.assertIn("knobs.revert_check.paths", first)
         self.assertNotIn("comment-only", second)
         self.assertNotIn("comment-only", third)
@@ -695,154 +664,6 @@ class TestVerdict(unittest.TestCase):
         self.assertTrue(verdict.ok)
         self.assertEqual([f.severity for f in verdict.findings], ["nit", "nit"])
         self.assertIn("1 of 2", verdict.findings[-1].message)
-        self.assertNotIn("comments", verdict.findings[-1].message)
-
-    def test_an_inert_change_is_counted_apart_and_never_blocks(self):
-        results = (
-            rc.ChangeResult(_change("a"), rc.CAUGHT, "x"),
-            rc.ChangeResult(_change("doc"), rc.INERT, "only comments"),
-        )
-        verdict = rc.judge(rc.Plan((), (), ()), rc.Report(None, results))
-        self.assertTrue(verdict.ok)
-        self.assertEqual(
-            [(f.severity, f.message) for f in verdict.findings],
-            [
-                (
-                    "nit",
-                    "1 of 1 production change(s) made a test fail as an assertion when "
-                    "reverted alone; 1 changed only comments, docstrings or formatting and "
-                    "were not run",
-                )
-            ],
-        )
-
-
-class CFamilyInertnessNeedsTheCommentsToBeTheOnlyDifference(unittest.TestCase):
-    """A leading ``*`` is a comment only inside ``/* … */`` (gate finding on #1385)."""
-
-    @staticmethod
-    def _change(path: str, removed: str, added: str) -> rc.Change:
-        patch = f"diff --git a/{path} b/{path}\n@@ -1 +1 @@\n-{removed}\n+{added}\n"
-        return rc.Change("c", path, patch, False)
-
-    def test_a_pointer_write_is_not_a_comment(self):
-        change = self._change("main.c", "*p = 1;", "*p = 2;")
-        head = "void f(int *p) {\n*p = 2;\n}\n"
-        undone = "void f(int *p) {\n*p = 1;\n}\n"
-        self.assertFalse(rc.behaviour_free(change, head, undone))
-
-    def test_a_doc_comment_edit_is_inert(self):
-        change = self._change("main.c", " * old words", " * new words")
-        self.assertTrue(
-            rc.behaviour_free(
-                change, "/**\n * new words\n */\nint x;\n", "/**\n * old words\n */\nint x;\n"
-            )
-        )
-
-    def test_a_comment_marker_inside_a_string_is_text(self):
-        change = self._change("a.go", "// one", "// two")
-        head = "s := `\n// two\n`\n"
-        undone = "s := `\n// one\n`\n"
-        self.assertFalse(rc.behaviour_free(change, head, undone))
-
-    def test_a_line_comment_change_is_inert(self):
-        change = self._change("a.go", "// a", "// b")
-        self.assertTrue(rc.behaviour_free(change, "// b\nx := 1\n", "// a\nx := 1\n"))
-
-    def test_the_stripper_keeps_strings_and_escapes(self):
-        self.assertEqual(rc._strip_c_comments('a = "http://x"; // c\nb'), 'a = "http://x"; b')
-        self.assertEqual(rc._strip_c_comments('a = "x\\"//y"; /* z */ b'), 'a = "x\\"//y"; b')
-        self.assertEqual(rc._strip_c_comments("a /* never closed"), "a")
-        self.assertEqual(rc._strip_c_comments("a // to the end"), "a")
-        self.assertEqual(rc._strip_c_comments("'unterminated"), "'unterminated")
-        self.assertEqual(rc._strip_c_comments("  x  \n\t y "), "x y")
-
-
-class AChangeThatMovesLinesIsNeverInert(unittest.TestCase):
-    """Review round on 17155a82: a comment inserted above `__LINE__` changes its value."""
-
-    @staticmethod
-    def _change(path, added):
-        patch = f"diff --git a/{path} b/{path}\n@@ -1,0 +2 @@\n+{added}\n"
-        return rc.Change("c", path, patch, True)
-
-    def test_a_comment_inserted_above_line_is_not_inert(self):
-        head = "int f(void) {\n// inserted comment\nint value = __LINE__;\nreturn value;\n}\n"
-        undone = head.replace("// inserted comment\n", "")
-        self.assertFalse(
-            rc.behaviour_free(self._change("f.c", "// inserted comment"), head, undone)
-        )
-
-    def test_a_python_comment_that_shifts_lines_is_not_inert(self):
-        head = "import inspect\n# inserted\nLINE = inspect.currentframe().f_lineno\n"
-        undone = head.replace("# inserted\n", "")
-        self.assertFalse(rc.behaviour_free(self._change("m.py", "# inserted"), head, undone))
-        # A docstring that grows by a line moves every line below it too.
-        grown = '"""One.\n\nTwo."""\nx = 1\n'
-        self.assertFalse(rc.behaviour_free(_py("m"), grown, '"""One."""\nx = 1\n'))
-
-    def test_a_same_length_comment_edit_is_still_inert(self):
-        for path, head, undone in (
-            ("m.py", "x = 1  # new\n", "x = 1  # old\n"),
-            ("f.c", "int x; // new\n", "int x; // old\n"),
-            ("f.go", "x := 1 // new\n", "x := 1 // old\n"),
-        ):
-            with self.subTest(path=path):
-                patch = f"diff --git a/{path} b/{path}\n@@ -1 +1 @@\n-// old\n+// new\n"
-                change = rc.Change("c", path, patch, False)
-                self.assertTrue(rc.behaviour_free(change, head, undone))
-
-    def test_c_counts_lines_after_splicing_too(self):
-        # Same physical line count and the same text once comments go, but a backslash now
-        # joins the two comment lines into one logical line. Refused on the safe side: the
-        # rule is that no line is added or removed, before or after splicing.
-        head = "int x;\n// a\\\n// b\nint y;\n"
-        undone = "int x;\n// a\n// b\nint y;\n"
-        patch = "diff --git a/f.c b/f.c\n@@ -2 +2 @@\n-// a\n+// a\\\n"
-        self.assertFalse(rc.behaviour_free(rc.Change("c", "f.c", patch, False), head, undone))
-
-
-class CLexingComesBeforeTheComments(unittest.TestCase):
-    """Review round on 07030c52: a trailing backslash splices the next line into a comment."""
-
-    @staticmethod
-    def _change(path, removed, added):
-        patch = f"diff --git a/{path} b/{path}\n@@ -2 +2 @@\n-{removed}\n+{added}\n"
-        return rc.Change("c", path, patch, False)
-
-    def test_a_backslash_splices_the_next_line_into_the_comment(self):
-        for path, newline in (("f.c", "\n"), ("f.c", "\r\n"), ("f.m", "\n")):
-            with self.subTest(path=path, newline=repr(newline)):
-                head = newline.join(
-                    ["int f(void) {", "// note\\", "return 1;", "return 2;", "}", ""]
-                )
-                undone = head.replace("// note\\", "// note")
-                change = self._change(path, "// note", "// note\\")
-                # HEAD returns 2 (`return 1;` is spliced into the comment); the revert returns 1.
-                self.assertFalse(rc.behaviour_free(change, head, undone))
-
-    def test_go_does_not_splice(self):
-        head = "func f() int {\n// note\\\nreturn 1\n}\n"
-        undone = head.replace("// note\\", "// note")
-        self.assertTrue(
-            rc.behaviour_free(self._change("f.go", "// note", "// note\\"), head, undone)
-        )
-
-    def test_c_text_the_reader_cannot_vouch_for_is_never_inert(self):
-        base = "int x;\n// old\nint y;\n"
-        for label, extra in (
-            ("trigraph backslash", "// a ??/\nint z;\n"),
-            ("backslash then blanks", "// a \\  \nint z;\n"),
-            ("comment marker in a header name", "#include <sys//x.h>\n"),
-            ("block marker in an import", "#import <a/*b.h>\n"),
-        ):
-            with self.subTest(label=label):
-                change = self._change("f.c", "// old", "// new")
-                head = extra + base.replace("old", "new")
-                self.assertFalse(rc.behaviour_free(change, head, extra + base))
-        # Without any of them, the same comment edit is inert.
-        change = self._change("f.c", "// old", "// new")
-        self.assertTrue(rc.behaviour_free(change, base.replace("old", "new"), base))
 
 
 class TheDiffMustCarryNoContext(unittest.TestCase):

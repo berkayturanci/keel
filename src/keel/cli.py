@@ -363,8 +363,9 @@ def _revert_check_verdict(
 def _reverter(scratch: str, patch_path: str) -> revertcheck.Reverter:
     """The I/O half of one revert: clean the scratch tree, then undo the change in it.
 
-    The changed file is read on both sides of ``git apply -R`` so the core can tell a
-    change with no behaviour (a comment, a docstring) from one a test should notice.
+    The changed file is read on both sides of ``git apply -R`` so the core can tell, after
+    the run, a Python change that only touches imports (:func:`keel.revertcheck.imports_only`).
+    Nothing read here skips a run.
     """
 
     def read(path: str) -> str | None:

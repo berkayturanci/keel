@@ -1331,36 +1331,17 @@ change with that change undone by `git apply -R`, from a clean tree each time (`
 next). The worktree is removed when the check ends; a run killed outright can leave its
 entry behind, which `git worktree prune` clears.
 
-**A change proven to have no behaviour is not run.** Before the tests run for a reverted
-change, both whole files are read, string-aware, on each side of the revert. A change is
-*inert* — counted in the closing `nit`, never reported as unnoticed — only when that reading
-proves it:
-
-- **Python** (`.py`, `.pyi`): the two syntax trees are equal once positions and bare string
-  statements are set aside, so comments, docstrings and formatting do not count.
-- **C (`.c`), Objective-C (`.m`) and Go (`.go`)**: every changed line is blank or a comment,
-  *and* the two files are equal once `//` and `/* … */` comments are removed with every string
-  and character literal kept (Go's backtick raw strings included, where `\` escapes nothing).
-  A leading `*` is not enough on its own: `*p = 1;` is a pointer write. In C and Objective-C
-  backslash-newline splicing comes first, as in the compiler — `// note\` swallows the next
-  line — and a file with a `??/` trigraph, a backslash followed only by blanks, or `//` or
-  `/*` inside an `#include`/`#import` header name is never inert. Go does not splice.
-
-**And no line may move.** In every language, a change is inert only if both files have the
-same number of lines (in C and Objective-C, after splicing too). Adding or removing a line
-shifts every line below it, and programs can observe that: `__LINE__` in C, `runtime.Caller`
-in Go, tracebacks, `inspect` and `%(lineno)d` log fields in Python. So a comment or docstring
-edit that adds or removes a line is tested like any other change.
-
-**Every other language is always tested**, even when every changed line looks like a comment,
-because a line that looks like one may sit inside a string the reader cannot see: a `#` line
-inside a multi-line shell string, `//` inside a JavaScript template literal or regex literal
-(`/\/*/`), Rust `r#"…"#` and lifetimes, C++ `R"(…)"` (so `.h` and `.mm`, which may be C++, are
-out too), C# `@"…"` and `"""…"""`, the `"""…"""` text blocks of Java, Kotlin, Scala, Swift and
-Dart, PHP heredocs, F# `(* … *)`. When such a change is not noticed, the blocking *no test
-notices this change* finding says it looks comment-only and names the languages keel proves
-inert, so you can add a test or leave those files out with `revert_check.paths`. A new or
-deleted file is never inert.
+**Every change is tested — none is skipped as harmless.** Each production change in scope is
+reverted and the test command runs, including a change that only touches comments,
+docstrings or formatting. Proving that no test *can* observe a change is not possible in
+general, and every shortcut tried here had a hole: a Go `//go:embed` or `//go:build`
+directive and a cgo preamble are comments to a stripper and code to the compiler; a Python
+`# coding:` cookie changes how string literals decode; and adding, removing or re-wrapping a
+line moves what `__LINE__`, `runtime.Caller`, tracebacks and `f_lineno` report. When a change
+whose lines all look like comments is not noticed, the blocking *no test notices this change*
+finding says it looks comment-only and why keel tests it anyway, so you can add a test or
+leave such files out with `revert_check.paths`. That "looks comment-only" check only words
+the message; it never decides what runs.
 
 **What counts as production.** A changed file under any
 `policy_pack.test_groups.*.test_paths` glob is a test and is never reverted. Of the rest,

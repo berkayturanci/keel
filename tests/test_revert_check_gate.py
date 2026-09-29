@@ -163,12 +163,15 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         with patch.dict(os.environ, {"GIT_DIFF_OPTS": "--unified=5"}):
             outcome = _outcome(root)
         majors = [m for s, m in _messages(outcome) if s == "major"]
-        self.assertEqual(len(majors), 1, _messages(outcome))
-        self.assertTrue(majors[0].startswith("pkg/calc.py @@ -6,0 +9,4 @@: no test notices"))
-        self.assertIn("1 of 2 production change(s)", _messages(outcome)[-1][1])
-        self.assertIn(
-            "1 changed only comments, docstrings or formatting", _messages(outcome)[-1][1]
+        # Three separate changes, each undone: the whitespace fix (which only applies
+        # because `apply.whitespace` is pinned), the tested guard and the untested `double`.
+        self.assertEqual(
+            [m.split(":")[0] for m in majors],
+            ["pkg/calc.py @@ -2 +2 @@", "pkg/calc.py @@ -6,0 +9,4 @@"],
+            _messages(outcome),
         )
+        self.assertTrue(all("no test notices this change" in m for m in majors))
+        self.assertIn("1 of 3 production change(s)", _messages(outcome)[-1][1])
 
     def test_a_diff_with_context_cannot_judge(self):
         root = _repo(self.root, {"pkg/calc.py": _FEATURE_CALC})
@@ -250,8 +253,8 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertEqual(found[0][0], "nit")
         self.assertTrue(found[0][1].startswith("pkg/calc.py @@ -1 +1 @@: noticed only as an error"))
 
-    def test_a_comment_or_docstring_change_is_not_run(self):
-        # Same number of lines on both sides: nothing below the edits moves.
+    def test_a_comment_or_docstring_change_is_tested(self):
+        # Nothing is skipped as harmless: both edits are undone and the suite runs for each.
         documented = '"""Calc."""\n' + _BASE_CALC
         commented = '"""Calculator."""\n' + _BASE_CALC.replace(
             "    return 1\n", "    return 1  # always positive\n"
@@ -259,29 +262,25 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         root = _repo(self.root, {"pkg/calc.py": commented}, base_calc=documented)
         with patch("keel.cli.run_command", wraps=cli.run_command) as runs:
             outcome = _outcome(root)
-        self.assertTrue(outcome.ok, _messages(outcome))
-        self.assertEqual(runs.call_count, 1)  # the baseline, and nothing reverted was run
+        self.assertEqual(runs.call_count, 3)  # the baseline, then one run per change
+        self.assertFalse(outcome.ok)
         self.assertEqual(
-            _messages(outcome),
-            [
-                (
-                    "nit",
-                    "0 of 0 production change(s) made a test fail as an assertion when "
-                    "reverted alone; 2 changed only comments, docstrings or formatting and "
-                    "were not run",
-                )
-            ],
+            [m.split(":")[0] for s, m in _messages(outcome) if s == "major"],
+            ["pkg/calc.py @@ -1 +1 @@", "pkg/calc.py @@ -7 +7 @@"],
         )
+        self.assertIn("0 of 2 production change(s)", _messages(outcome)[-1][1])
 
-    def test_a_comment_that_moves_lines_is_tested_and_says_why(self):
+    def test_a_comment_only_change_is_tested_and_says_why(self):
         commented = _BASE_CALC.replace("def sign(x):\n", "# sign of x\ndef sign(x):\n")
         root = _repo(self.root, {"pkg/calc.py": commented})
-        outcome = _outcome(root)
+        with patch("keel.cli.run_command", wraps=cli.run_command) as runs:
+            outcome = _outcome(root)
+        self.assertEqual(runs.call_count, 2)
         self.assertFalse(outcome.ok)
         major = _messages(outcome)[0]
         self.assertEqual(major[0], "major")
         self.assertIn("no test notices this change", major[1])
-        self.assertIn("only when no line is added or removed", major[1])
+        self.assertIn("it looks comment-only, and keel tests every change", major[1])
 
     def test_a_suite_red_on_a_clean_head_cannot_judge(self):
         root = _repo(

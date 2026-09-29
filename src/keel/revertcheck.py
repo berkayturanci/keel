@@ -110,7 +110,6 @@ UNNOTICED = "unnoticed"  # the test command passed with the change reverted
 TIMED_OUT = "timed-out"
 UNREADABLE = "unreadable"  # the command failed and its output says no test failed
 NOT_APPLIED = "not-applied"  # the reverse patch did not apply on HEAD
-INERT = "inert"  # only comments, docstrings or formatting change: nothing to run
 
 _BLOCK = "major"
 
@@ -419,149 +418,17 @@ def _patch(header: Sequence[str], hunks: Sequence[Hunk]) -> str:
     return "\n".join(lines) + "\n"
 
 
-# --- changes with no behaviour ------------------------------------------------------
+# --- what a change looks like ------------------------------------------------------
+#
+# Nothing here skips a run. Every production change in scope is reverted and tested: an
+# earlier version skipped changes it judged "inert" (comments, docstrings, formatting),
+# and each proof of inertness had a hole — a Go ``//go:embed`` directive, a Python
+# ``# coding:`` cookie, a comment that moves ``__LINE__`` or ``f_lineno`` — because "no
+# test can observe this change" is not provable in general (#1289 review rounds).
 
-#: Line-comment markers by suffix. Used **only to word a finding** — a change whose every
-#: line looks like a comment but that keel cannot prove inert is still tested, and its
-#: "no test notices" finding says why. ``#`` is listed only where it starts a comment; in
-#: C it starts ``#include``/``#define``, which are code.
-_COMMENT_MARKERS: dict[str, tuple[str, ...]] = {
-    **dict.fromkeys(
-        (".py", ".pyi", ".sh", ".bash", ".rb", ".pl", ".pm", ".r", ".ex", ".exs"), ("#",)
-    ),
-    **dict.fromkeys(
-        (
-            ".js",
-            ".jsx",
-            ".mjs",
-            ".cjs",
-            ".ts",
-            ".tsx",
-            ".go",
-            ".rs",
-            ".java",
-            ".kt",
-            ".kts",
-            ".scala",
-            ".php",
-            ".cs",
-            ".fs",
-            ".c",
-            ".h",
-            ".cc",
-            ".cpp",
-            ".cxx",
-            ".hpp",
-            ".m",
-            ".mm",
-            ".swift",
-            ".dart",
-        ),
-        ("//", "/*", "*"),
-    ),
-    ".lua": ("--",),
-    ".clj": (";",),
-    ".erl": ("%",),
-}
-
-#: The C-family languages whose whole files :func:`_strip_c_comments` reads safely, so a
-#: comment-only change in them may skip its run: their only literals are ``"…"`` and
-#: ``'…'`` with backslash escapes, plus Go's backtick raw string, which has none.
-#:
-#: Left out, because a literal the stripper cannot read could hide code inside what it
-#: takes for a comment — and the rule is that inertness is *proven*, never guessed:
-#: C++ (``.cc``/``.cpp``/``.cxx``/``.hpp``, and ``.h``/``.mm``, which may be C++) for
-#: ``R"(…)"`` raw strings; Rust for ``r#"…"#`` and lifetimes (``'a``); C# for ``@"…"`` and
-#: ``"""…"""``; Java, Kotlin, Scala, Swift and Dart for ``"""…"""`` text blocks (and Dart's
-#: ``r'…'``); PHP for heredoc/nowdoc and ``#`` comments; F# for ``(* … *)`` and
-#: ``"""…"""``; and JavaScript/TypeScript for regex literals (``/\/*/``) and ``${…}``
-#: nesting inside template literals. Every other language — the ``#``-comment scripting
-#: languages, Lua, Clojure, Erlang — has no reader at all here.
-_C_INERT_SUFFIXES: dict[str, str] = {".c": "c", ".m": "c", ".go": "go"}
-
-#: C text the reader will not vouch for, so a change in such a file is never inert: a
-#: ``??/`` trigraph (a backslash before C23, so it can splice a comment's next line into
-#: it), a backslash followed only by blanks at the end of a line (GCC and Clang splice
-#: that too, with a warning), and a ``//`` or ``/*`` inside an ``#include``/``#import``
-#: header name, which is not a comment there.
-_C_UNSAFE = re.compile(
-    r"\?\?/|\\[ \t]+\r?$|^[ \t]*#[ \t]*(?:include|import)[ \t]*<[^>\n]*(?://|/\*)",
-    re.MULTILINE,
-)
-#: The languages :func:`behaviour_free` can prove inert, as a finding names them.
-INERT_LANGUAGES = "Python (.py, .pyi), C (.c), Objective-C (.m) and Go (.go)"
-
-
-class _DropStrings(ast.NodeTransformer):
-    """Remove every bare string statement — docstrings and attribute docstrings alike."""
-
-    def visit_Expr(self, node: ast.Expr) -> ast.AST | None:
-        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-            return None
-        return node
-
-
-class _DropImports(_DropStrings):
-    """…and every ``import`` / ``from … import`` statement too."""
-
-    def visit_Import(self, node: ast.Import) -> None:
-        return None
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        return None
-
-
-def _python_shape(text: str, *, imports: bool = True) -> str | None:
-    """The file's syntax tree without positions or bare strings (and, with ``imports``
-    false, without import statements); ``None`` if unparseable."""
-    try:
-        tree = ast.parse(text)
-    except (SyntaxError, ValueError):
-        return None
-    return ast.dump((_DropStrings() if imports else _DropImports()).visit(tree))
-
-
-def _strip_c_comments(text: str, *, raw_backticks: bool = False) -> str:
-    """``text`` without ``//`` and ``/* … */`` comments, whitespace outside strings collapsed.
-
-    String and character literals (``"…"`` and ``'…'``, with backslash escapes) are kept
-    verbatim, so a comment marker inside one is text, not a comment. With
-    ``raw_backticks`` (Go) a backtick string is kept verbatim too, and a backslash inside it
-    escapes nothing. Only the languages in :data:`_C_INERT_SUFFIXES` are read this way.
-    """
-    out: list[str] = []
-    i, n = 0, len(text)
-    pending_space = False
-    quotes = "\"'`" if raw_backticks else "\"'"
-    while i < n:
-        ch = text[i]
-        if ch in quotes:
-            end = i + 1
-            while end < n and text[end] != ch:
-                end += 2 if text[end] == "\\" and ch != "`" else 1
-            if pending_space and out:
-                out.append(" ")
-            pending_space = False
-            out.append(text[i : end + 1])
-            i = end + 1
-        elif text.startswith("//", i):
-            newline = text.find("\n", i)
-            i = n if newline == -1 else newline
-            pending_space = True
-        elif text.startswith("/*", i):
-            close = text.find("*/", i + 2)
-            i = n if close == -1 else close + 2
-            pending_space = True
-        elif ch.isspace():
-            pending_space = True
-            i += 1
-        else:
-            if pending_space and out:
-                out.append(" ")
-            pending_space = False
-            out.append(ch)
-            i += 1
-    return "".join(out)
+#: Leading text that makes a line **look** like a comment in some language. A wording
+#: heuristic only (:func:`looks_comment_only`): it never decides whether a change is run.
+_COMMENT_LOOKS: tuple[str, ...] = ("#", "//", "/*", "*/", "* ", "--", ";", "%")
 
 
 def _changed_lines(patch: str) -> list[str]:
@@ -570,85 +437,35 @@ def _changed_lines(patch: str) -> list[str]:
     return [line[1:] for line in body.split("\n") if line[:1] in ("+", "-")]
 
 
-def behaviour_free(change: Change, before: str | None, after: str | None) -> bool:
-    """Does reverting ``change`` leave the program's behaviour as it was?
-
-    ``before`` is the file on ``HEAD`` and ``after`` the file with the change undone (``None``
-    when the file does not exist on that side). No test can notice such a change as an
-    assertion, so it is not run — and not reported as unnoticed:
-
-    * **Python** — the two files parse to the same syntax tree once positions and bare
-      string statements (docstrings) are set aside: a change to comments, docstrings or
-      formatting. A file that does not parse on either side is never behaviour-free.
-    * **C, Objective-C and Go** (:data:`_C_INERT_SUFFIXES`) — every changed line looks like
-      a comment, *and* the two whole files are equal once :func:`_strip_c_comments` has
-      removed their comments with every string literal kept.
-
-    Inertness has to be proven by a string-aware reading of both whole files; a changed
-    line that merely *looks* like a comment proves nothing (it may sit inside a multi-line
-    string). So every other language — and a file added or deleted by the change — is
-    never behaviour-free: the tests run.
-
-    **And no line may move.** Both files must have the same number of lines (for C and
-    Objective-C, before and after splicing too): a comment added above ``int v =
-    __LINE__;`` changes ``v``, and Go's ``runtime.Caller``, a Python traceback, ``inspect``
-    or a ``%(lineno)d`` log field all observe line numbers the same way.
-    """
-    if before is None or after is None or _line_count(before) != _line_count(after):
-        return False
-    suffix = posixpath.splitext(change.path)[1].lower()
-    if suffix in (".py", ".pyi"):
-        shape = _python_shape(before)
-        return shape is not None and shape == _python_shape(after)
-    if suffix not in _C_INERT_SUFFIXES or not looks_comment_only(change):
-        return False
-    # A leading ``*`` is a block-comment continuation only inside ``/* … */`` — ``*p = 1;``
-    # is a pointer write. So the files must also match once their comments are stripped
-    # (strings kept verbatim), or the change is not inert.
-    mode = _C_INERT_SUFFIXES[suffix]
-    if mode == "c" and _line_count(_splice(before)) != _line_count(_splice(after)):
-        return False
-    head, undone = _c_source(before, mode), _c_source(after, mode)
-    return head is not None and head == undone
-
-
-def _line_count(text: str) -> int:
-    """Lines in ``text``, counted on ``\\n`` — a final line without one counts too."""
-    return len(text.split("\n"))
-
-
-def _splice(text: str) -> str:
-    """C translation phase 2: every backslash-newline removed, ``\\r\\n`` included."""
-    return text.replace("\\\r\n", "").replace("\\\n", "")
-
-
-def _c_source(text: str, mode: str) -> str | None:
-    """``text`` as the compiler's lexer sees it, comments removed; ``None`` if unreadable.
-
-    For C and Objective-C, backslash-newline splicing (translation phase 2) comes first:
-    a ``// note\\`` comment swallows the next line, so ``return 1;`` under it is comment
-    and not code. Go has no splicing and no trigraphs; its backtick strings are raw.
-    """
-    if mode == "go":
-        return _strip_c_comments(text, raw_backticks=True)
-    if _C_UNSAFE.search(text):
-        return None
-    return _strip_c_comments(_splice(text))
-
-
 def looks_comment_only(change: Change) -> bool:
-    """Is every changed line blank or led by its language's comment marker?
+    """Does every changed line look blank or like a comment? **Wording only.**
 
-    A *look*, not a proof: :func:`behaviour_free` requires more, and this alone only words
-    the finding for a change that looks comment-only yet was tested and not noticed.
+    Used to explain a blocking "no test notices this change" finding, never to skip a
+    run: a comment can still change behaviour.
     """
-    markers = _COMMENT_MARKERS.get(posixpath.splitext(change.path)[1].lower())
-    if markers is None:
-        return False
     return all(
-        not line.strip() or line.strip().startswith(markers)
+        not line.strip() or line.strip() == "*" or line.strip().startswith(_COMMENT_LOOKS)
         for line in _changed_lines(change.patch)
     )
+
+
+class _DropImports(ast.NodeTransformer):
+    """Remove every import statement; everything else, docstrings included, stays."""
+
+    def visit_Import(self, node: ast.Import) -> None:
+        return None
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        return None
+
+
+def _python_shape_without_imports(text: str) -> str | None:
+    """The syntax tree without positions or imports; ``None`` if unparseable."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return None
+    return ast.dump(_DropImports().visit(tree))
 
 
 def imports_only(change: Change, before: str | None, after: str | None) -> bool:
@@ -656,15 +473,16 @@ def imports_only(change: Change, before: str | None, after: str | None) -> bool:
 
     Reverting an import that the branch *added a name to* removes the name, and every test
     that reaches it can then only raise ``NameError`` — as with a hunk that only adds lines.
-    :func:`judge` treats both the same way. ``False`` for any file that is not Python,
-    added, deleted or unparseable.
+    :func:`judge` treats both the same way. It classifies a result *after* the run; it
+    never skips one. ``False`` for any file that is not Python, added, deleted or
+    unparseable.
     """
     if before is None or after is None:
         return False
     if posixpath.splitext(change.path)[1].lower() not in (".py", ".pyi"):
         return False
-    shape = _python_shape(before, imports=False)
-    return shape is not None and shape == _python_shape(after, imports=False)
+    shape = _python_shape_without_imports(before)
+    return shape is not None and shape == _python_shape_without_imports(after)
 
 
 # --- reading a test run --------------------------------------------------------------
@@ -873,8 +691,8 @@ def execute(
     ``max_changes`` caps how many changes are reverted; ``budget_s`` caps the wall clock
     of the baseline and every revert together, and each run's limit is the smaller of
     ``knobs.gate_timeout_s`` and what is left of it. A change either bound leaves out is
-    reported **not checked** — never as caught. A change :func:`behaviour_free` says has no
-    behaviour is reported **inert** without a run.
+    reported **not checked** — never as caught. Every change that is reverted is tested:
+    nothing is skipped for looking harmless.
     """
     start = clock()
 
@@ -906,11 +724,6 @@ def execute(
         if not undone.applied:
             results.append(
                 ChangeResult(change, NOT_APPLIED, "git apply -R could not undo it on HEAD")
-            )
-            continue
-        if behaviour_free(change, undone.before, undone.after):
-            results.append(
-                ChangeResult(change, INERT, "only comments, docstrings or formatting change")
             )
             continue
         # Re-read the clock: resetting, cleaning, applying and reading took time too, and a
@@ -995,8 +808,6 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
       errors against it (the ``NameError`` of a half-reverted fix) proves nothing.
     * A production file with no textual hunk (binary, mode-only) is a ``minor``: nothing
       to revert, so nothing checked, and said so.
-    * An **inert** change (:func:`behaviour_free`) is counted in the closing ``nit``, not
-      reported alone: a comment has no behaviour for a test to notice.
     * A diff with no production change is ``SKIPPED`` — judged, with nothing to check.
 
     ``report`` is ``None`` only when there was nothing to execute.
@@ -1028,13 +839,11 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
         )
     if report.baseline is not None:
         return cannot_judge(report.baseline)
-    caught = inert = 0
+    caught = 0
     for item in report.results:
         label = item.change.label
         if item.result == CAUGHT:
             caught += 1
-        elif item.result == INERT:
-            inert += 1
         elif item.result in (ERRORED, UNREADABLE) and item.adds_only:
             findings.append(
                 Finding(
@@ -1046,10 +855,10 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
             )
         elif item.result == UNNOTICED:
             hint = (
-                "; it looks comment-only, but keel proves a change inert only for "
-                f"{INERT_LANGUAGES}, and only when no line is added or removed (a moved "
-                "line changes what __LINE__, tracebacks and line-number lookups report) — "
-                "test it, or leave such files out with knobs.revert_check.paths"
+                "; it looks comment-only, and keel tests every change, because a comment can "
+                "still change behaviour (encoding cookies, compiler directives, line "
+                "numbers) — add a test that notices it, or scope such files out with "
+                "knobs.revert_check.paths if you do not want them checked"
                 if looks_comment_only(item.change)
                 else ""
             )
@@ -1062,13 +871,11 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
             )
     for change, why in report.not_checked:
         findings.append(Finding(_BLOCK, f"{change.label}: not checked — {why}", GATE_ID))
-    total = len(report.results) + len(report.not_checked) - inert
+    total = len(report.results) + len(report.not_checked)
     summary = (
         f"{caught} of {total} production change(s) made a test fail as an assertion when "
         "reverted alone"
     )
-    if inert:
-        summary += f"; {inert} changed only comments, docstrings or formatting and were not run"
     findings.append(Finding("nit", summary, GATE_ID))
     blocked = any(f.severity == _BLOCK for f in findings)
     return Verdict(not blocked, tuple(findings))
