@@ -47,6 +47,12 @@ def _check(report, name):
     return next(c for c in report["checks"] if c["name"] == name)
 
 
+#: What `_doctor()` with no facts reports as `skipped`: every check that had nothing to
+#: look at — checkout_binding, core_version, state_paths, python_toolchain and
+#: policy_labels. Four of them used to report `ok` (docs audit 2026-09-29).
+_SKIPPED_WITHOUT_FACTS = 5
+
+
 #: `keel doctor` without `--offline` asks `gh auth status`, which reaches GitHub. The
 #: suite is offline (AGENTS.md), so every test gets a canned answer unless it patches
 #: its own; the tests of that check below do.
@@ -186,8 +192,9 @@ class TestOrphanCheck(unittest.TestCase):
 
 class TestCoreVersionCheck(unittest.TestCase):
     def test_no_config_skips(self):
+        # The summary always said "skipped"; the status said `ok` (docs audit 2026-09-29).
         check = _check(_doctor(core_version=None), "core_version")
-        self.assertEqual(check["status"], "ok")
+        self.assertEqual(check["status"], "skipped")
         self.assertIn("skipped", check["summary"])
 
     def test_satisfied_is_ok(self):
@@ -206,8 +213,11 @@ class TestCoreVersionCheck(unittest.TestCase):
 
 
 class TestStatePathsCheck(unittest.TestCase):
-    def test_no_paths_is_ok(self):
-        self.assertEqual(_check(_doctor(state_paths=[]), "state_paths")["status"], "ok")
+    def test_no_paths_is_skipped(self):
+        # An empty list is what the CLI passes without a config: nothing was looked at.
+        check = _check(_doctor(state_paths=[]), "state_paths")
+        self.assertEqual(check["status"], "skipped")
+        self.assertIn("no project config", check["summary"])
 
     def test_present_and_missing_is_ok(self):
         paths = [
@@ -547,13 +557,14 @@ class TestCheckoutBinding(unittest.TestCase):
         check = _check(
             _doctor(module_path="/anywhere/src/keel", checkout_root=None), "checkout_binding"
         )
-        self.assertEqual(check["status"], "ok")
+        self.assertEqual(check["status"], "skipped")
         self.assertIn("not run against a keel checkout", check["summary"])
         self.assertIsNone(check["detail"]["checkout_root"])
 
     def test_defaults_skip_the_check(self):
-        # Callers predating the check omit both paths and keep their behaviour.
-        self.assertEqual(_check(_doctor(), "checkout_binding")["status"], "ok")
+        # Callers predating the check omit both paths: it could not look, so it says
+        # `skipped` rather than `ok` (docs audit 2026-09-29).
+        self.assertEqual(_check(_doctor(), "checkout_binding")["status"], "skipped")
 
     def test_unlocatable_module_warns(self):
         check = _check(_doctor(module_path=None, checkout_root="/repo"), "checkout_binding")
@@ -631,9 +642,9 @@ class TestPythonToolchainCheck(unittest.TestCase):
         base.update(toolchain)
         return _check(_doctor(python_toolchain=base), "python_toolchain")
 
-    def test_not_probed_is_ok(self):
+    def test_not_probed_is_skipped(self):
         check = _check(_doctor(), "python_toolchain")
-        self.assertEqual(check["status"], "ok")
+        self.assertEqual(check["status"], "skipped")
         self.assertIn("not probed", check["summary"])
         self.assertEqual(check["detail"], {})
 
@@ -1287,7 +1298,7 @@ class TestPolicyLabelsCheck(unittest.TestCase):
         check = _check(report, "policy_labels")
         self.assertEqual(check["status"], "skipped")
         self.assertIn("no project config", check["summary"])
-        self.assertEqual(report["counts"]["skipped"], 1)
+        self.assertEqual(report["counts"]["skipped"], _SKIPPED_WITHOUT_FACTS)
 
     def test_a_check_that_could_not_look_is_skipped_never_failed(self):
         facts = _labels(available=False, reason="gh not found on PATH — labels not read")
@@ -1332,7 +1343,7 @@ class TestRenderReportWithLabels(unittest.TestCase):
     def test_skipped_renders_as_a_four_character_state_and_is_counted(self):
         text = doctor.render_report(_doctor())
         self.assertIn("SKIP  policy_labels", text)
-        self.assertIn("1 skipped", text)
+        self.assertIn(f"{_SKIPPED_WITHOUT_FACTS} skipped", text)
 
     def test_the_fix_commands_are_printed_under_the_check(self):
         facts = _labels(

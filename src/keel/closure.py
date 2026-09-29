@@ -20,13 +20,29 @@ COMMENT_MARKER = f"<!-- {CLOSURE_SCHEMA_VERSION} -->"
 HEADING = "Ship outcome"
 JURY_LABEL = "AI Jury"
 WATERMARK_MARKER = "<!-- keel.watermark.v1 -->"
-WATERMARK_BODY = (
-    "⚓ **Shipped by [keel](https://github.com/berkayturanci/keel)** — "
-    "*Driven on fixed backbone `s0`→`s12` "
-    "(with [ai-jury](https://github.com/berkayturanci/ai-jury) consensus)*  \n"
-    "[⭐ Star on GitHub](https://github.com/berkayturanci/keel) · "
-    "[Add Keel to your repo](https://github.com/berkayturanci/keel#readme)"
-)
+#: The jury clause of the watermark. Appended only when the run's own record says a
+#: jury sat (see :func:`_jury_sat`): the watermark used to claim ai-jury consensus on
+#: every closure comment, including the ones whose ``Jury`` line three lines above it
+#: said ``off`` (docs audit 2026-09-29).
+WATERMARK_JURY_CLAUSE = " (with [ai-jury](https://github.com/berkayturanci/ai-jury) consensus)"
+#: The jury modes under which a jury actually reviewed the change; ``off`` and a
+#: missing value are the two that did not.
+_JURY_SAT_MODES = frozenset({"gating", "advisory"})
+#: Panel decisions under which the panel did **not** sit (#1066): a host bench reviewed
+#: instead, or the run was refused.
+_PANEL_DID_NOT_SIT = frozenset({"fallback", "block"})
+
+
+def watermark_body(*, jury: bool) -> str:
+    """The default watermark signature, naming ai-jury only when ``jury`` is true."""
+    clause = WATERMARK_JURY_CLAUSE if jury else ""
+    return (
+        "⚓ **Shipped by [keel](https://github.com/berkayturanci/keel)** — "
+        f"*Driven on fixed backbone `s0`→`s12`{clause}*  \n"
+        "[⭐ Star on GitHub](https://github.com/berkayturanci/keel) · "
+        "[Add Keel to your repo](https://github.com/berkayturanci/keel#readme)"
+    )
+
 
 # Project-neutral documentation detection. A changed file counts as docs when any
 # path component equals ``docs`` (case-insensitive) or its suffix is a documentation
@@ -115,7 +131,7 @@ def render_closure_comment(record: dict[str, Any]) -> str:
     lines.append(f"- **Capture:** {_capture(record.get('capture'))}")
     lines.append(f"- **Run id:** {_value(record.get('run_id'))}")
     lines.extend(_run_context(record.get("run_context"), _head_sha(record)))
-    lines.extend(_watermark(record.get("watermark")))
+    lines.extend(_watermark(record.get("watermark"), record.get("run_context")))
     return "\n".join(lines) + "\n"
 
 
@@ -483,14 +499,35 @@ def _value(value: Any) -> str:
     return "none"
 
 
-def _watermark(watermark: Any) -> list[str]:
-    """Render the optional attribution and viral watermark signature.
+def _watermark(watermark: Any, run_context: Any) -> list[str]:
+    """Render the attribution watermark signature.
 
-    Emitted by default (when ``watermark is not False``). Can be disabled via
-    ``watermark: false`` in record or customized with a string value.
+    Emitted by default. The renderer honours a ``watermark`` field on the record —
+    ``False`` omits it, a string replaces it — but nothing in keel writes that field:
+    there is no knob or flag for it, so only a hand-edited record changes it.
+
+    The default names ai-jury only when this run's record says a jury sat
+    (:func:`_jury_sat`); a comment whose ``Jury`` line says ``off`` no longer claims
+    ai-jury consensus beneath it.
     """
     if watermark is False:
         return []
     if isinstance(watermark, str) and watermark.strip():
         return ["", "---", watermark.strip()]
-    return ["", "---", WATERMARK_BODY]
+    return ["", "---", watermark_body(jury=_jury_sat(run_context))]
+
+
+def _jury_sat(run_context: Any) -> bool:
+    """Did a jury review this run? Read off the record's ``run_context`` only.
+
+    True when ``jury_mode`` is ``gating`` or ``advisory`` and the recorded panel
+    decision, if any, is not one where the panel failed to sit (``fallback`` /
+    ``block``). A record with no run context, or one written before the field existed,
+    reads as no jury — the watermark never claims more than the record shows.
+    """
+    block = run_context if isinstance(run_context, dict) else {}
+    if _jury_mode(block.get("jury_mode")) not in _JURY_SAT_MODES:
+        return False
+    panel = block.get("jury_panel")
+    decision = panel.get("decision") if isinstance(panel, dict) else None
+    return decision not in _PANEL_DID_NOT_SIT

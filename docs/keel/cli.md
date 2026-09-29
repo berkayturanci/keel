@@ -1668,7 +1668,10 @@ SCRATCH=$(keel scratch-dir --root .)
 keel scratch-dir --root . --no-create      # just the path
 ```
 
-Prints one line — the absolute path — and always exits 0.
+Prints one line — `<root>/.keel/scratch`, relative when `--root` is (the default `.` prints
+`.keel/scratch`) — and exits 0. When the directory cannot be created under that root (a
+read-only or missing-permission root) it prints one error line to stderr, nothing to
+stdout, and exits 1.
 
 ## `keel gc <project.yaml> [--root DIR] [--keep-activity N] [--no-scratch] [--no-activity] [--dry-run] [--json]`
 
@@ -2017,9 +2020,10 @@ The checks are:
   (e.g. a stale `ship-v2.md`); a `warn`, same scan as `keel adapter-status`.
 - **`core_version`** — the `core_version` constraint from `project.yaml` (e.g. `^1.0`)
   vs the installed CLI version. An unsatisfied constraint is a `fail`. Only runs when a
-  config path is given.
+  config path is given; without one it reports `skipped`.
 - **`state_paths`** — existence/validity of the configured ledger + checkpoint paths.
   Advisory: a missing path is fine (reported as empty history); an invalid path is a `warn`.
+  Without a config path there are no paths to look at, and it reports `skipped`.
 - **`python_toolchain`** — the interpreter `knobs.build_gate_cmd` will actually run on, its
   version, and whether PyYAML imports there. For a `make` gate doctor reports an exported
   `PY`, else `python3` on PATH. It does **not** execute the project's `scripts/find_python.sh`
@@ -2461,7 +2465,7 @@ with `--wizard-answer`.
 **A default is not a decision.** Only a question you actually answer becomes a flag; an
 unanswered one emits nothing and the command resolves it exactly as it would have without
 `--wizard`. That is what makes quick-start safe: the reviewer bench the wizard offers is
-derived at a nominal tier (the real one is not classified until s1, after the wizard has
+derived at a nominal tier (the real one is not classified until s5, after the wizard has
 run) and the jury question opens on whatever the flags and `knobs.team` already say, so
 writing those back would *override* the policy they were read from — a quick-start run on
 a tier-3 change would silently pass `--reviewers 2 --no-jury`. Pressing Enter keeps the

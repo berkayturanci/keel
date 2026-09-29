@@ -3743,12 +3743,13 @@ class TestShip(unittest.TestCase):
         self.assertEqual(data["verification"]["status"], "pass")
         self.assertEqual(data["verification"]["counts"]["review_verdict"], 2)
 
-    def _live_1013_fixtures(self, root, *, provenance, labels):
+    def _live_1013_fixtures(self, root, *, provenance, labels, ledger_record=True):
         """The observed state of the live PRs #2652/#2653 (issue #1013).
 
         Branch `fix/2467-slug` (no `issue-<N>`), no posted reviewer verdicts, and a
         ledger recording `gemini:gemini-3.8-flash-high` while the PR carries
-        `agent:gemini` / `model:gemini`.
+        `agent:gemini` / `model:gemini`. ``ledger_record=False`` leaves the ledger
+        empty, which is what a hosted runner sees: ``.keel/state/`` is gitignored.
         """
         pr_comments = root / "pr-comments.json"
         issue_comments = root / "issue-comments.json"
@@ -3785,7 +3786,9 @@ class TestShip(unittest.TestCase):
                 "tester": None,
             },
         }
-        ledger_jsonl.write_text(json.dumps(record) + "\n", encoding="utf-8")
+        ledger_jsonl.write_text(
+            json.dumps(record) + "\n" if ledger_record else "", encoding="utf-8"
+        )
         argv = [
             "evidence-verify",
             str(PROJECTS / "example-android.yaml"),
@@ -3814,17 +3817,36 @@ class TestShip(unittest.TestCase):
         return argv
 
     def test_live_1013_pr_is_ungated_without_the_provenance_comment(self):
-        # The reported regression, replayed: the gate designed to require review
-        # disarmed itself exactly when review had not happened.
+        # The reported regression, replayed as the hosted runner saw it — no ledger:
+        # the gate designed to require review disarmed itself exactly when review had
+        # not happened.
         with tempfile.TemporaryDirectory() as d:
             argv = self._live_1013_fixtures(
-                Path(d), provenance=False, labels=["agent:gemini", "model:gemini"]
+                Path(d),
+                provenance=False,
+                labels=["agent:gemini", "model:gemini"],
+                ledger_record=False,
             )
             _, out, _ = run(argv)
 
         data = json.loads(out)
         self.assertFalse(data["enforced"])
         self.assertEqual(data["gate"]["reason"], "no-ship-provenance")
+
+    def test_live_1013_pr_is_gated_by_its_own_ship_run_ledger_record(self):
+        # Where the ledger *is* readable, this PR's ship_run record arms the gate on its
+        # own. `gate_decision` accepted the signal but no caller passed it, so this
+        # reported `no-ship-provenance` (docs audit 2026-09-29).
+        with tempfile.TemporaryDirectory() as d:
+            argv = self._live_1013_fixtures(
+                Path(d), provenance=False, labels=["agent:gemini", "model:gemini"]
+            )
+            rc, out, _ = run(argv)
+
+        data = json.loads(out)
+        self.assertTrue(data["enforced"])
+        self.assertEqual(data["gate"]["reason"], "ship-run-ledger")
+        self.assertEqual(rc, 1)
 
     def test_live_1013_pr_is_gated_once_the_provenance_comment_exists(self):
         with tempfile.TemporaryDirectory() as d:
@@ -8387,6 +8409,47 @@ class TestCoreMerge(unittest.TestCase):
             ),
             payload["verification"]["findings"],
         )
+
+    def test_the_merge_gate_arms_from_the_prs_ship_run_ledger_record(self):
+        # The copy of the arming decision inside `_verify_merge_evidence` never received
+        # the ledger record it had just loaded, so signal 7 could not arm the merge gate
+        # (docs audit 2026-09-29). No other signal is present: no label, a non-ship
+        # branch, no comments.
+        args = Namespace(
+            path=str(PROJECTS / "example-android.yaml"),
+            root=str(REPO_ROOT),
+            pr=300,
+            reviewers=None,
+            review_comments="inline",
+            jury=False,
+            no_jury=True,
+            jury_advisory=False,
+            gate_label=None,
+            waiver_label=None,
+            issue=None,
+        )
+        artifacts = {
+            "pr_body": "Closes #1",
+            "pr_comments": [],
+            "issue_comments": [],
+            "pr_reviews": [],
+            "issue": 1,
+            "head_sha": "abc",
+            "head_ref": "feature/x",
+            "changed_files": ["src/keel/cli.py"],
+            "pr_labels": [],
+        }
+        record = {"record_type": "ship_run", "run_id": "R-300", "pull_request": {"number": 300}}
+        config = cli.cfg.load_config(args.path)
+        for loaded, expected in ((record, "ship-run-ledger"), (None, "no-ship-provenance")):
+            with (
+                self.subTest(expected),
+                patch("keel.cli._load_evidence_artifacts", return_value=artifacts),
+                patch("keel.cli._merge_ledger_record", return_value=loaded),
+            ):
+                payload = cli._verify_merge_evidence(args, config)
+            self.assertEqual(payload["gate"]["reason"], expected)
+            self.assertIs(payload["enforced"], loaded is not None)
 
     def test_merge_blocks_closed_window_snapshot_error_and_dirty_state(self):
         fake_report = _merge_capability_report()
