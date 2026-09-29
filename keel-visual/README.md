@@ -1,6 +1,6 @@
 # keel-visual
 
-An **optional** animated run visualizer for [keel](../README.md). It *renders* a
+An **optional** animated run visualizer for [keel](https://github.com/berkayturanci/keel). It *renders* a
 keel run — it never drives one. keel-visual depends on keel core; core never
 depends on keel-visual, so installing it is purely additive.
 
@@ -94,7 +94,7 @@ keel · 3 active runs
 
 A worktree with no live checkpoint is skipped; all per-run reads are fail-soft so
 one bad run never blanks the board. See
-[`screenshots/dash-board.png`](screenshots/dash-board.png).
+[`screenshots/dash-board.png`](https://github.com/berkayturanci/keel/blob/main/keel-visual/screenshots/dash-board.png).
 
 #### Across every project — `dash --all`
 
@@ -129,7 +129,7 @@ s7 jury surfaced), no tty needed:
 keel-visual render --all --root ~/code --out board.html && open board.html
 ```
 
-![keel-visual board — render --all](screenshots/board.png)
+![keel-visual board — render --all](https://raw.githubusercontent.com/berkayturanci/keel/main/keel-visual/screenshots/board.png)
 
 #### Live web dashboard — `keel-visual serve`
 
@@ -209,7 +209,7 @@ stamp their active phase as they run, so they appear live too, each with its own
 stamp simply don't show — render any command on its own with
 `play --command <name>`.)
 
-![keel-visual board — 3D scene](screenshots/board-3d.png)
+![keel-visual board — 3D scene](https://raw.githubusercontent.com/berkayturanci/keel/main/keel-visual/screenshots/board-3d.png)
 
 ### 1. Terminal — `keel-visual play` (runs in the CLI)
 
@@ -241,7 +241,7 @@ keel-visual play .keel/project.yaml --pr 361 --step 8     # a single frame (e.g.
 `render` and `play` both pick up the live checkpoint automatically when you
 don't pass `--checkpoint-step`. Colour is `--color auto` (only on a tty),
 `always`, or `never`. See
-[`screenshots/keel-visual-play.gif`](screenshots/keel-visual-play.gif) for the
+[`screenshots/keel-visual-play.gif`](https://github.com/berkayturanci/keel/blob/main/keel-visual/screenshots/keel-visual-play.gif) for the
 animation in motion.
 
 ### 2. Web — `keel-visual render` (the alternative)
@@ -303,7 +303,7 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 It reads the newest run under `.keel/state/swarm/` (or `--swarm-id ID`); `--json`
 prints the resolved data instead of writing a page. The page is a snapshot of the
 run state at render time — re-run it to refresh. Details: keel's
-[`docs/keel/swarm.md`](../docs/keel/swarm.md) §5.
+[`docs/keel/swarm.md`](https://github.com/berkayturanci/keel/blob/main/docs/keel/swarm.md) §5.
 
 ## Colour language
 
@@ -367,7 +367,7 @@ pip install -e ./ -e ./keel-visual   # editable: core + companion
 keel-visual --help
 ```
 
-See [`RELEASING.md`](RELEASING.md) for building and publishing keel-visual.
+See [`RELEASING.md`](https://github.com/berkayturanci/keel/blob/main/keel-visual/RELEASING.md) for building and publishing keel-visual.
 
 ## Develop
 
@@ -384,7 +384,7 @@ template is excluded from coverage (it is exercised by the screenshot harness).
 
 ## Screenshots
 
-See [`screenshots/`](screenshots/): `terminal-cli.png` (the `play` output),
+See [`screenshots/`](https://github.com/berkayturanci/keel/tree/main/keel-visual/screenshots): `terminal-cli.png` (the `play` output),
 `2d-s8-test.png` (a blocked test gate), `3d-s6-run.png` (the default `plexus` 3D
 style mid-run), `3d-styles.png` (the `combined` style with the style selector and
 the s7 jury), `3d-s10-merge.png` (the `line` style, merged and all-green),

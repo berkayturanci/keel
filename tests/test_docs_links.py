@@ -193,5 +193,67 @@ class TestSiteLinksIntoTheRepoResolve(unittest.TestCase):
         self.assertEqual(broken, [], "\n".join(broken))
 
 
+#: Any Markdown link or image target — `](target)` — badges and images included.
+MD_TARGET = re.compile(r'\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+#: An HTML `src`/`href`/`srcset` value, and a reference-style definition's target.
+HTML_TARGET = re.compile(r'\b(?:src|href|srcset)="([^"]+)"')
+REF_DEF = re.compile(r"^[ \t]{0,3}\[(?!\^)[^\]]+\]:[ \t]*(\S+)")
+#: A link into this repository at `main`: a GitHub page (`blob`/`tree`) or raw bytes.
+REPO_LINK = re.compile(
+    r"^(?:" + re.escape(REPO_URL) + r"/(?:blob|tree)/main/"
+    r"|https://raw\.githubusercontent\.com/berkayturanci/keel/main/)([^#\s]+)(?:#([\w\-]+))?$"
+)
+
+
+class TestTheKeelVisualReadmeWorksOnPyPI(unittest.TestCase):
+    """`keel-visual/README.md` is keel-visual's PyPI long description (#1371).
+
+    PyPI resolves nothing relative to the repository, so `](../docs/keel/swarm.md)`,
+    `](RELEASING.md)` and `![…](screenshots/board.png)` rendered as dead links and
+    broken images on pypi.org — eight of them in the 0.9.0 description. Core rewrites
+    its README at publish time (`scripts/absolutize_readme.py`); keel-visual's links
+    climb out of its own directory, so it states them absolute instead, and this
+    holds both halves: nothing relative, and every absolute link into this
+    repository still names a file that exists.
+    """
+
+    README = REPO_ROOT / "keel-visual" / "README.md"
+
+    def _targets(self):
+        text = self.README.read_text(encoding="utf-8")
+        for start, paragraph in _paragraphs(text):
+            for offset, line in enumerate(paragraph.splitlines()):
+                where = f"keel-visual/README.md:{start + offset}"
+                for pattern in (MD_TARGET, HTML_TARGET, REF_DEF):
+                    for match in pattern.finditer(line):
+                        yield where, match.group(1)
+
+    def test_no_link_or_image_is_relative(self):
+        relative, checked = [], 0
+        for where, target in self._targets():
+            checked += 1
+            if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith(("//", "#")):
+                continue
+            relative.append(f"{where} -> {target}")
+        self.assertGreater(checked, 10)
+        self.assertEqual(relative, [], "\n".join(relative))
+
+    def test_every_link_into_this_repository_resolves(self):
+        broken, checked = [], 0
+        for where, target in self._targets():
+            match = REPO_LINK.match(target)
+            if match is None:
+                continue
+            checked += 1
+            path, anchor = REPO_ROOT / match.group(1).rstrip("/"), match.group(2)
+            if not path.exists():
+                broken.append(f"{where} -> {target} (no such path)")
+            elif anchor and path.suffix == ".md" and anchor not in anchors(path):
+                broken.append(f"{where} -> {target} (no such heading)")
+        # The links, images and directory listing the README points into the repo.
+        self.assertGreaterEqual(checked, 7)
+        self.assertEqual(broken, [], "\n".join(broken))
+
+
 if __name__ == "__main__":
     unittest.main()
