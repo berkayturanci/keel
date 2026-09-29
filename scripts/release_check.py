@@ -46,6 +46,13 @@ With ``--tag v<x.y.z>`` a sixth guard runs: the tag names the declared version.
 The publish workflow passes it on a tag push, so a tag pushed at the wrong commit
 fails before the build.
 
+``--package keel-visual`` checks the other distribution instead: its two version
+markers agree, and with ``--tag keel-visual-v<x.y.z>`` the tag names the version
+``keel-visual/pyproject.toml`` declares. ``publish-visual.yml`` runs it before its
+build, because with ``skip-existing: true`` a tag that disagrees with the tree
+would otherwise publish, or silently skip, the wrong version (#1371). Core's
+guards are not run for it: core is on its own version line and its own tags.
+
 Deliberately stdlib-only and offline. It runs before the build job installs
 anything, and a guard that needs its own dependencies is a guard that can fail to
 run for reasons unrelated to the release.
@@ -67,7 +74,7 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from release_bump import VISUAL_EDITS, current_version  # noqa: E402
+from release_bump import VISUAL_EDITS, current_version, visual_version  # noqa: E402
 from release_notes import parse_highlights, requires_highlights  # noqa: E402
 from release_surfaces import RELEASE_SURFACES, versions_in  # noqa: E402
 
@@ -84,6 +91,12 @@ UNRELEASED = "Unreleased"
 PACKAGE_VERSION = re.compile(r'(?m)^__version__ = "([^"]+)"')
 
 TAG_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
+
+#: keel-visual's tag namespace, which ``publish-visual.yml`` triggers on.
+VISUAL_TAG_RE = re.compile(r"^keel-visual-v(\d+\.\d+\.\d+)$")
+
+#: The distributions this script can check, as ``release_bump.py --package`` names them.
+PACKAGES = ("core", "keel-visual")
 
 
 class Check(NamedTuple):
@@ -266,8 +279,28 @@ def check_tag(root: Path, tag: str) -> Check:
     return Check("tag", problems)
 
 
-def run_checks(root: Path, tag: str | None = None) -> list[Check]:
+def check_visual_tag(root: Path, tag: str) -> Check:
+    """A ``keel-visual-v*`` tag must name the version keel-visual declares (#1371)."""
+    declared = visual_version(root)
+    match = VISUAL_TAG_RE.match(tag)
+    if not match:
+        return Check("tag", [f"tag {tag!r} is not of the form keel-visual-vX.Y.Z"])
+    problems = []
+    if match.group(1) != declared:
+        problems.append(
+            f"tag {tag} does not name keel-visual's declared version {declared}; "
+            "the tag was cut at the wrong commit, or the bump never landed"
+        )
+    return Check("tag", problems)
+
+
+def run_checks(root: Path, tag: str | None = None, package: str = "core") -> list[Check]:
     """Every guard, in a fixed order. Deterministic — no clock, no network."""
+    if package == "keel-visual":
+        visual = [check_visual_markers(root)]
+        if tag is not None:
+            visual.append(check_visual_tag(root, tag))
+        return visual
     checks = [
         check_declared_version(root),
         check_changelog(root),
@@ -297,14 +330,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--tag",
         default=None,
-        help="also require this tag (vX.Y.Z) to name the declared version",
+        help="also require this tag (vX.Y.Z, or keel-visual-vX.Y.Z) to name the declared version",
+    )
+    parser.add_argument(
+        "--package",
+        choices=PACKAGES,
+        default="core",
+        help="which distribution to check; keel-visual is on its own version line",
     )
     args = parser.parse_args(argv)
 
     root = Path(args.root)
     try:
-        declared = current_version(root)
-        checks = run_checks(root, args.tag)
+        if args.package == "keel-visual":
+            declared = f"keel-visual {visual_version(root)}"
+        else:
+            declared = current_version(root)
+        checks = run_checks(root, args.tag, args.package)
     except (ValueError, OSError) as exc:
         print(f"release-check failed: {exc}", file=sys.stderr)
         return 1

@@ -6,6 +6,21 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The PyPI page's links and screenshots work** (#1371). The README is the PyPI long
+  description, and its eight relative targets (`../README.md`, `../docs/keel/swarm.md`,
+  `RELEASING.md`, `screenshots/…`) resolved against pypi.org, so the links were dead and the
+  board screenshots did not load. They are absolute GitHub URLs now, and a test fails on a
+  relative one or on an absolute link to a file that no longer exists.
+- **A release cannot publish a version its tag does not name** (#1371). `publish-visual.yml`
+  now runs `scripts/release_check.py --package keel-visual --tag "$TAG"` before building; with
+  `skip-existing: true`, a `keel-visual-v*` tag that disagreed with `pyproject.toml` used to
+  skip the upload, or publish a different version, without an error.
+- **The wheel names every template it ships** (#1371). `force-include` listed three of the
+  four templates (not `swarm.html`, which shipped only because the package directory is
+  included), and the workflow checked `runviz.html` alone. All four are listed, the workflow
+  checks every template in the source tree, and `RELEASING.md`'s manual check does the same.
+
 ## [0.9.0] — 2026-09-28
 
 - `keel-visual swarm` is in the published package: render a swarm run's waves, clusters and

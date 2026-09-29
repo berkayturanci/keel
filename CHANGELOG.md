@@ -6,6 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Companion
+- **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py
+  --package keel-visual [--tag keel-visual-vX.Y.Z]` checks keel-visual's two version markers
+  and that the tag names the version `keel-visual/pyproject.toml` declares, and
+  `publish-visual.yml` runs it before the build. The workflow also checks that every template
+  in the source tree is in the wheel (it checked `runviz.html` only), the wheel's
+  `force-include` lists `swarm.html`, and keel-visual's README links are absolute so they work
+  on PyPI.
+
 ## [1.24.3] - 2026-09-29
 
 - A gate that cannot judge no longer reads as a pass: an unconfigured build or lint gate, or a jury with no `jury` CLI, is reported as such, and a plan in which nothing judges the change blocks the merge.

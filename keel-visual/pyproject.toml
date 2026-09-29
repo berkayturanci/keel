@@ -20,6 +20,7 @@ packages = ["src/keel_visual"]
 "src/keel_visual/templates/runviz.html" = "keel_visual/templates/runviz.html"
 "src/keel_visual/templates/board.html" = "keel_visual/templates/board.html"
 "src/keel_visual/templates/dashboard.html" = "keel_visual/templates/dashboard.html"
+"src/keel_visual/templates/swarm.html" = "keel_visual/templates/swarm.html"
 
 [tool.coverage.run]
 branch = true
