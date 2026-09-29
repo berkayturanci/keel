@@ -90,8 +90,11 @@ knobs:
     jury: { mode: gating, min_vendors: 2 }
 ```
 
-A `provider` is resolved by the same registry `keel delegate run` uses, and
-`subagent:<name>` is the explicit spelling for a host (Claude-class) subagent. Full
+A `provider` names a built-in vendor or a `knobs.delegate_profiles` entry, and
+`subagent:<name>` is the explicit spelling for a host (Claude-class) subagent. It never
+names a machine-level `~/.keel/providers.yaml` entry: that registry is reachable per run
+through `--delegate` / `--review-delegate` (and `keel delegate run`), but `keel validate`
+refuses it in a committed `knobs.team`. Full
 reference: [`configuration.md#team`](configuration.md#team).
 
 The older `knobs.implementer_agents` still works and is mapped onto
@@ -298,7 +301,11 @@ Any provider or local server exposing an OpenAI-compatible `/v1/chat/completions
 
 > **SSRF Protection**:
 > - Loopback addresses (`localhost`, `127.0.0.1`, `[::1]`) are allowed by default.
-> - Remote hosts require setting `export KEEL_ALLOW_REMOTE_ENDPOINT=1` in your environment.
+> - Remote hosts require `KEEL_ALLOW_REMOTE_ENDPOINT` in your environment. Name the hosts
+>   (`export KEEL_ALLOW_REMOTE_ENDPOINT=openrouter.ai`, comma- or space-separated for more)
+>   and only those pass — a config pointing the key at any other host is still refused.
+>   The boolean form (`=1`, `true`, `yes`, `on`) allows **every** remote host and is kept
+>   for compatibility; `0`/`false`/`no`/`off` leave the opt-in off.
 > - Private ranges (`10.x`, `172.16–31.x`, `192.168.x`) need `export KEEL_ALLOW_INTERNAL_ENDPOINT=1`
 >   as well — permitting keel to reach *out* is not the same decision as permitting it to reach *in*.
 > - Cloud-metadata and link-local addresses are refused by **both** opt-ins, and every
@@ -321,7 +328,7 @@ knobs:
 
 ```bash
 export OPENROUTER_API_KEY="sk-or-v1-..."
-export KEEL_ALLOW_REMOTE_ENDPOINT=1
+export KEEL_ALLOW_REMOTE_ENDPOINT=openrouter.ai
 
 # Use default profile model (deepseek-r1)
 /keel:ship 42 --delegate openrouter
@@ -343,7 +350,7 @@ knobs:
 ```
 ```bash
 export DEEPSEEK_API_KEY="sk-..."
-export KEEL_ALLOW_REMOTE_ENDPOINT=1
+export KEEL_ALLOW_REMOTE_ENDPOINT=api.deepseek.com
 
 /keel:ship 42 --delegate deepseek:deepseek-reasoner
 ```
@@ -361,7 +368,7 @@ knobs:
 ```
 ```bash
 export GROQ_API_KEY="gsk_..."
-export KEEL_ALLOW_REMOTE_ENDPOINT=1
+export KEEL_ALLOW_REMOTE_ENDPOINT=api.groq.com
 
 /keel:ship 42 --delegate groq
 ```
@@ -375,6 +382,12 @@ knobs:
       endpoint: https://api.together.xyz/v1/chat/completions
       api_key_env: TOGETHER_API_KEY
       model: meta-llama/Llama-3.3-70B-Instruct-Turbo
+```
+```bash
+export TOGETHER_API_KEY="..."
+export KEEL_ALLOW_REMOTE_ENDPOINT=api.together.xyz
+
+/keel:ship 42 --delegate together
 ```
 
 ### Local vLLM / LM Studio / LiteLLM
@@ -482,28 +495,42 @@ keel delegate run --provider claude --role review --prompt-file rubric.md
 
 ## 5. Generic CLI Profiles
 
-You can wrap other AI coding tools (such as [Aider](https://aider.chat) or Cursor's CLI) as Keel delegates:
+You can wrap other AI coding tools (such as [Aider](https://aider.chat) or Cursor's CLI) as Keel delegates.
+keel builds the command line as `command`, then `args` (or `review_args` for a reviewer),
+then `<model_arg> <model>` when a model is set, and — with `prompt_mode: arg` — the prompt
+text last. A flag that takes the prompt as its value therefore has to end `args`, and
+nothing may be appended after it:
 
 ```yaml
 knobs:
   delegate_profiles:
+    # Aider reads a one-shot prompt only through --message, so --message must be the
+    # last flag. The model rides inside args for the same reason: a `model:` here would
+    # be appended between --message and the prompt. Use one profile per model rather
+    # than `--delegate aider:<model>`.
     aider:
       vendor: cli
       command: aider
-      args: ["--yes", "--no-git", "--message-file"]
+      args: ["--yes-always", "--no-git", "--model", "sonnet", "--message"]
+      review_args: ["--no-git", "--dry-run", "--model", "sonnet", "--message"]
       prompt_mode: arg
-      model_arg: "--model"
-      model: sonnet
-      review_args: ["--read-only"]
 
     cursor:
       vendor: cli
       command: cursor-agent
-      args: ["--force"]
-      prompt_mode: arg
-      model_arg: "--model"
-      model: cursor-grok-4.5-high
+      args: ["-p", "--force"]   # implementer: print mode + non-interactive approval
+      review_args: ["-p"]       # reviewer: same, minus permission to approve edits
+      prompt_mode: arg          # the prompt is cursor-agent's positional argument
+      model_arg: --model
 ```
+
+Aider: `aider --yes-always --no-git --model sonnet --message <prompt>`; its reviewer drops
+`--yes-always` and adds `--dry-run`, so it cannot write files. Cursor:
+`cursor-agent -p --force [--model <m>] <prompt>`, and `cursor-agent -p [--model <m>] <prompt>`
+for a reviewer — `-p` is what makes it answer and exit instead of opening an interactive
+session. A profile with no `review_args` reviews with its implementer `args` (`--force`
+included), which `keel delegate run` reports as a warning in its contract. The same shape
+is documented field by field in [`configuration.md`](configuration.md#delegate_profiles).
 
 ---
 
