@@ -468,8 +468,9 @@ class RecordingIntoTheRun(unittest.TestCase):
                 status = activity.record_delegate_usage(path, Path(d) / "locks", **self._args())
             except (TypeError, AttributeError) as exc:
                 self.fail(f"a missing record was built on: {exc!r}")
-            self.assertEqual("no-record", status)
-            self.assertFalse(path.exists())
+            else:
+                self.assertEqual("no-record", status)
+                self.assertFalse(path.exists())
 
     def test_a_busy_record_is_left_alone_rather_than_risk_a_lost_update(self):
         with tempfile.TemporaryDirectory() as d:
