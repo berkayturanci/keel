@@ -42,7 +42,7 @@ leave `pr_<n>_review.md`, `pr<n>.diff`, `issue.md`, or similar at the root.
 Drive an already-implemented branch from open PR to merge-ready over the fixed keel
 backbone (`s6`–`s12`): open the PR, wait for CI, run the review+gate+fix loop, and hand a
 clean PR to the windowed, locked merge. **Project-neutral** — every project specific
-(`base_branch`, `build_gate_cmd`, `lint_cmd`, `ci_workflows`, `implementer_agents`,
+(`base_branch`, `build_gate_cmd`, `lint_cmd`, `ci_workflows`, `team`,
 `tier3_globs`, `merge_window`, `merge_window_mode`) is read from `.keel/project.yaml` via
 the `keel` CLI. If you are about to type a literal branch name, build command, CI workflow
 name, timezone, or agent — stop and read it from config instead.
@@ -65,8 +65,8 @@ review/fix agent brief. Delegates may use only `approved_mutation_scopes`; scope
 blocks or escalates.
 
 Read the knobs you will need: `base_branch`, `ci_workflows` (name → path glob),
-`build_gate_cmd`, `lint_cmd`, `tier3_globs`, `implementer_agents`, `merge_window`,
-`merge_window_mode`.
+`build_gate_cmd`, `lint_cmd`, `tier3_globs`, `team` (its `implement.by_role` and `fix`
+seats), `merge_window`, `merge_window_mode`.
 
 Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
 `github_transport`). Use the selected transport for all issue/PR/check/comment/review
@@ -228,4 +228,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates`, but redirec
 state-changing `git`/`gh` write to a logged `DRY-RUN: <action>` line. No push, no PR, no
 merge.
 
-<!-- keel-generated: surface=claude command=pr-loop keel_version=1.24.3 source_sha256=c0c96dd41b9332ee7e2c7530427e607bf7d3ded55a2fbd099d7a0b31c26ccadc generated_sha256=c0c96dd41b9332ee7e2c7530427e607bf7d3ded55a2fbd099d7a0b31c26ccadc -->
+<!-- keel-generated: surface=claude command=pr-loop keel_version=1.24.3 source_sha256=72feffb95726f44a04f310d678447d5ede31520b98ec206f2b8360c681533c28 generated_sha256=72feffb95726f44a04f310d678447d5ede31520b98ec206f2b8360c681533c28 -->

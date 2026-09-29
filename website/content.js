@@ -113,7 +113,7 @@ window.KEEL = {
       slug: "overnight", name: "/keel:overnight", group: "Daily rhythm", featured: true, scene: "queue",
       one: "Unattended overnight work block, keyed on the merge window.",
       detail:
-        "Time-aware merge mode keyed on the merge window; runs /keel:ship over the queue until the window closes, then writes a session / morning report.",
+        "Time-aware merge mode keyed on the merge window; runs /keel:ship over the queue until the budget runs out or an open window closes (Night while it is closed, Day while it is open), then writes a session / morning report.",
     },
     {
       slug: "swarm", name: "/keel:swarm", group: "Daily rhythm", featured: true, scene: "swarm",

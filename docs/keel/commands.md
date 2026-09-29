@@ -91,7 +91,7 @@ contract.
 |---|---|
 | `/keel:morning` | Daily morning briefing — cross-session deferrals, shipped-since-last-brief, production/health signals, GitHub status, and a ranked focus list. |
 | `/keel:work-block` | Daytime multi-issue work block — process explicit issue numbers or a queue selector through `/keel:ship`, with per-issue worktrees, readiness refresh between items, operator-visible stop points, progress snapshots, and a final bucketed report. Accepts `--delegate` / `--review-delegate` / `--effort` / `--team <profile>` and hands them to every child ship. |
-| `/keel:overnight` | Unattended overnight work block — time-aware merge mode keyed on the merge window; runs `/keel:ship` over the queue until the window closes, then writes a session/morning report. Takes the same staffing flags as `/keel:work-block` and records the effective values in the report. |
+| `/keel:overnight` | Unattended overnight work block — time-aware merge mode keyed on the merge window; runs `/keel:ship` over the queue until the budget runs out or an open window closes (Night while it is closed, Day while it is open), then writes a session/morning report. Takes the same staffing flags as `/keel:work-block` and records the effective values in the report. |
 | `/keel:wrap` | Finish the current work session — run the configured gates, commit, push, open a PR, and record a session recap. |
 
 ## Audits

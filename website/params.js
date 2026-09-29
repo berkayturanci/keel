@@ -58,7 +58,7 @@ window.KEEL_ARGS = {
   ]
  },
  "overnight": {
-  "desc": "Unattended overnight work block — time-aware merge mode keyed on the merge window; runs /keel:ship over the queue until the window closes, then writes a session/morning report. Project-neutral; reads .keel/project.yaml.",
+  "desc": "Unattended overnight work block — time-aware merge mode keyed on the merge window (Night while it is closed, Day while it is open); runs /keel:ship over the queue until the budget runs out or an open window closes, then writes a session/morning report. Project-neutral; reads .keel/project.yaml.",
   "hint": "[hours] [--max <N>] [--review-comments <inline|summary>] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]",
   "flags": [
    "hours",
