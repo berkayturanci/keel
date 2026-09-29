@@ -369,8 +369,9 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
             outcome = _outcome(root)
         except UnicodeError as exc:  # the old strict write, measured
             self.fail(f"the revert crashed instead of applying: {exc!r}")
-        self.assertTrue(outcome.ok, _messages(outcome))
-        self.assertIn("1 of 1 production change(s)", _messages(outcome)[-1][1])
+        else:
+            self.assertTrue(outcome.ok, _messages(outcome))
+            self.assertIn("1 of 1 production change(s)", _messages(outcome)[-1][1])
 
     @unittest.skipIf(os.name == "nt", "git on Windows records no executable bit")
     def test_a_mode_change_is_checked_apart_from_the_content(self):
