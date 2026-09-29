@@ -67,7 +67,7 @@
   <h1>A squash merge silently reverted our release — and CI stayed green</h1>
   <p class="art-meta">17 August 2026 · a real incident, with the detection that eventually caught it</p>
 
-  <p>We published version 1.15.0. A day later it was gone from <code>main</code> — not reverted by anyone, not rolled back, just quietly absent. The git tag still pointed at 1.15.0. PyPI still served 1.15.0. Every test passed the entire time.</p>
+  <p>We published version 1.15.0. 84 minutes later it was gone from <code>main</code> — not reverted by anyone, not rolled back, just quietly absent. The git tag still pointed at 1.15.0. PyPI still served 1.15.0. Every test passed the entire time.</p>
 
   <p>This is a write-up of what happened, why the usual detection does not work, and the check that does.</p>
 
@@ -156,7 +156,7 @@ PyPI                 unchanged</code></pre>
   <p><a href="https://github.com/berkayturanci/keel">keel</a> ships this as <code>keel verify-merge</code>, which runs after a merge and reports drift by name:</p>
 
   <pre><code>pipx install keel-workflow
-keel verify-merge .keel/project.yaml --root . --pr 780</code></pre>
+keel verify-merge .keel/project.yaml --root . --pr N   # N: the pull request that just merged</code></pre>
 
   <p>It is open source and the detection logic is a few dozen lines of pure comparison — worth reading and reimplementing if you would rather not add a dependency. The point is the question it asks, not the tool that asks it.</p>
 

@@ -99,7 +99,7 @@ credential approval from project knowledge. Store `operator_consent.delegated_ag
 for every later delegated-agent brief.
 
 `keel validate`/`plan` resolve `base_branch`, the knob commands (`build_gate_cmd`,
-`lint_cmd`), `team`, `implementer_agents`, `delegate_profiles`, `tier3_globs`, `ci_workflows`,
+`lint_cmd`), `team`, `implementer_agents` (deprecated), `delegate_profiles`, `tier3_globs`, `ci_workflows`,
 `docs_gate_paths`, and the `tester` / `pre-merge` / `reviewers` / `capture` extensions. `keel window`
 evaluates `merge_window` in the project `timezone` and reports `merge_window_mode`
 (`pause` = halt outside the window; `freeze` = defer to the morning queue). The merge
@@ -423,7 +423,7 @@ criteria. Do not paraphrase them, and do not append your own.
 Read the implementer from `assignment.implementer` — core resolved it from
 `knobs.team.implement` (or the deprecated `implementer_agents`) by the issue's role label,
 **overridden by `--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag >
-`team.implement.by_role` > `team.implement.default` > `implementer_agents` > issue
+`team.implement.by_role` > `team.implement.default` > `implementer_agents` (deprecated) > issue
 `delegate:*` label > `HOST_AGENT`. Dispatch on `assignment.implementer.kind`:
 
 - **Host / Claude-class subagent** (`kind: "subagent"`) — run the standard implement brief
@@ -752,8 +752,8 @@ the merge decision. Tiers: **tier-3** (any `tier3_globs` match → most reviewer
 auto-on), **tier-1** (all paths in `docs_gate_paths` → fewest reviewers), **tier-2**
 (everything else). `--reviewers N` overrides the count but does **not** suppress the
 tier-3 jury auto-trigger logic below; log the detected tier and reason
-(`tier-<N> → reviewers=<N> (reason: <matched glob | docs-only>)`). When `--reviewers` is
-passed the tier is not computed, so the tier-3 jury auto-trigger does not apply.
+(`tier-<N> → reviewers=<N> (reason: <matched glob | docs-only>)`). The tier is classified
+from the diff whether or not `--reviewers` was passed; the flag only replaces the count.
 
 **Jury enablement** (always evaluated, even when `--reviewers` was passed; precedence
 `knobs.team` jury panel > `--no-jury` > `--jury` > tier-3 auto > off): tier-3 ⇒ auto-on.
@@ -1096,10 +1096,11 @@ raising `knobs.revert_check` bounds; a `cannot judge:` finding is the project's 
 An **`agentic` gate reports `NOT-RUN` here** — this command does not dispatch those, you
 do. `NOT-RUN` is not a pass: a gate declared `on_fail: block` that shows `NOT-RUN` blocks
 the merge decision and refuses to certify the run, so `keel merge` will reject the head.
-Dispatch the gate yourself (at s9 for `pre-merge` Lego), then **re-run the command with
-`--gate-result <id>=pass|fail`** to record what your dispatch found. A recorded result may
-only be given for a gate keel did not execute — the command refuses to override its own
-measurement of a gate it ran.
+Dispatch the gate yourself (at s9 for `pre-merge` Lego), then record what your dispatch
+found on **`keel ship … --gate-result <id>=pass|fail`** — `keel ship` is the only command
+that accepts the flag; `run-gates` has none, so re-running it reproduces the `NOT-RUN`. A
+recorded result may only be given for a gate keel did not execute — `keel ship` refuses to
+override its own measurement of a gate it ran.
 
 **One panel per head, never two.** When `review_merge_contract.reviewers.panel` is `jury`,
 s7 already ran the panel and `keel review --from-jury` already posted its ballots and its
@@ -1171,13 +1172,28 @@ While there are blocking findings and the budget (**≤3 review-fix rounds**) is
 aggregate findings → `keel fixloop brief` → dispatch the fixer it names → fix → push →
 re-run s6/s7/s8. **Do not decide who fixes, and never quietly fix it yourself** — the host
 absorbing a delegate's findings is the failure this step exists to prevent. Core decides,
-from the same `assignment` s4 dispatched:
+from the same inputs s4 resolved its `assignment` from — so hand it those inputs. Pass each
+of `--delegate`, `--role`, `--tier` (the s5 tier) and `--host-agent` that this run has a
+value for, and omit the ones it does not (an empty `--tier ''` is a parse error, not a
+default):
 
 ```bash
+FIX_ARGS=()
+[ -n "$DELEGATE" ]   && FIX_ARGS+=(--delegate "$DELEGATE")
+[ -n "$ROLE" ]       && FIX_ARGS+=(--role "$ROLE")
+[ -n "$TIER" ]       && FIX_ARGS+=(--tier "$TIER")
+[ -n "$HOST_AGENT" ] && FIX_ARGS+=(--host-agent "$HOST_AGENT")
 keel fixloop brief --project .keel/project.yaml --root . \
   --pr <PR> --findings <findings.json> --round <k> \
-  --head "$HEAD_SHA" --issue <N> --out "$FIX_BRIEF" --cwd "$WORKTREE" --json
+  --head "$HEAD_SHA" --issue <N> --out "$FIX_BRIEF" --cwd "$WORKTREE" \
+  "${FIX_ARGS[@]}" --json
 ```
+
+`keel fixloop brief` has **no `--team` or `--effort`**, so it cannot honour either. When this
+run was staffed with `--team <profile>`, its implementer came from that profile, which the
+brief cannot see — pass the seat s4 actually dispatched (`contract.assignment.implementer`,
+as `provider[:model]`) as `--delegate` so round 1 still goes back to it. A run's `--effort`
+is not carried onto the fix dispatch: the fixer runs at its own seat's effort.
 
 **Where `<findings.json>` comes from on a panel tier.** When `reviewers.panel` is `jury`,
 s7 already produced it: write the `panel.findings` array from `keel review --from-jury
@@ -1350,8 +1366,9 @@ refuse to certify the run at s10. Then
   the deferral comment via `keel post-comment`, leave the PR ready, and continue with the
   next issue; on a missing gates-pass for the current head, re-run `keel run-gates` (or
   ship with `--append-ledger`) against the head and retry — if the refusal names a
-  `NOT-RUN` blocking gate, the re-run needs `--gate-result <id>=pass|fail` for it, since
-  re-running alone reproduces the same not-run record; on a denied claim, treat it as
+  `NOT-RUN` blocking gate, re-run through `keel ship … --append-ledger --gate-result
+  <id>=pass|fail` for it (`run-gates` has no such flag), since re-running alone reproduces
+  the same not-run record; on a denied claim, treat it as
   lock contention (mark the issue blocked, comment, continue). For a blocker issue, pass
   `--hotfix` — the audited bypass of both the window and the gates-SHA requirement; it still
   requires the approved consent scopes and is recorded in the ledger. **The `--hotfix`

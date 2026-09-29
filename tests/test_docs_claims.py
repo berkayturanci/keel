@@ -287,6 +287,9 @@ class TestTheEnumeratedCommandsAreTheShippedOnes(unittest.TestCase):
     _ENUMERATIONS = (
         ("README.md", "shipped commands**", "Each is described in"),
         ("keel-visual/README.md", "`--command` accepts **all", "Each renders its own"),
+        # `keel install-adapter`'s reference named fifteen and left out `swarm` and
+        # `work-block` (docs audit 2026-09-29).
+        ("docs/keel/cli.md", "shipped set:", "Existing files are skipped"),
     )
 
     def test_every_enumeration_names_every_shipped_command(self):
@@ -2141,6 +2144,7 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
     )
     _NO_BINARY = {
         "README.md": _VERDICT_OWED,
+        "SECURITY.md": _VERDICT_OWED,
         "docs/keel/configuration.md": _VERDICT_OWED,
         "docs/keel/overview.md": _VERDICT_OWED,
         "docs/keel/cli.md": _VERDICT_OWED,

@@ -15,7 +15,7 @@ surfacing, and optional learning-quality decisions in the run ledger. Distinctiv
 - **Agent adapters** (Claude Code, Codex, Cursor (partial), Antigravity) behind one backbone.
 - **`.keel/project.yaml`** per project (base branch, build/lint/test commands, CI names, file globs) + pluggable "Lego" extension gates.
 - **Merge invariants**: timezone-aware merge *window* ("night no-merge"), `mkdir`-based merge *lock* (mutual exclusion), risk-tiered reviewer counts, fix-loop with capped budget.
-- **Pure-core + thin-IO, deterministic, stdlib-only ethos** (sibling `ai-jury` is the multi-agent review engine).
+- **Pure-core + thin-IO, deterministic, stdlib-first ethos** — one runtime dependency, PyYAML (plus `tzdata` on Windows only) (sibling `ai-jury` is the multi-agent review engine).
 
 The crux of keel's novelty hypothesis: nobody combines *(fixed issue→done ownership
 backbone)* + *(agent-agnostic adapters)* + *(merge-window/lock invariants)* +
@@ -201,7 +201,7 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 - **What**: Rego-based policy-as-code; Conftest tests structured config; both usable to gate PRs (validate commit/PR metadata, block merge on policy fail). **Apache-2.0**, CNCF. [github.com/open-policy-agent/conftest](https://github.com/open-policy-agent/conftest), [openpolicyagent.org/docs/cicd](https://www.openpolicyagent.org/docs/cicd)
 - **Overlap**: Declarative merge-gating policy.
 - **What keel does that it does not**: agent authoring/review/orchestration. OPA is a policy engine, not a pipeline.
-- **Idea to borrow (Assessment, with caveat)**: A *declarative policy layer* for keel's risk tiers / required gates is appealing, but adopting Rego/OPA would **violate keel's stdlib-only, deterministic, no-runtime-dep ethos.** Borrow the *concept* (policy expressed in `.keel/project.yaml`), not the engine.
+- **Idea to borrow (Assessment, with caveat)**: A *declarative policy layer* for keel's risk tiers / required gates is appealing, but adopting Rego/OPA would **violate keel's stdlib-first, deterministic, single-runtime-dependency ethos.** Borrow the *concept* (policy expressed in `.keel/project.yaml`), not the engine.
 
 ### Backstage software templates / scaffolder
 - **What**: Golden-path scaffolder; YAML-defined templates generate services with baked-in CI/security/golden paths. Backstage is CNCF (Apache-2.0); community template repos are MIT. [backstage.io/docs/features/software-templates](https://backstage.io/docs/features/software-templates/)
@@ -387,7 +387,7 @@ or a learning reader. The one real gap the category exposed — iterating s4 at 
   1. **An end-to-end fixed backbone** from *issue selection* through *merge + close* — agents stop at "opened a PR"; merge queues start at "PR exists." keel owns the whole arc.
   2. **Agent-agnostic adapters** over that backbone (run Claude Code *or* Codex *or* Cursor *or* Antigravity through the identical pipeline). OpenHands is *model*-agnostic; keel is *agent/CLI*-agnostic, which is a different and underserved axis.
   3. **Multi-agent debate→verify→synthesize review as a production gate** — this is research/skill-level elsewhere, not packaged.
-- The **merge window + `mkdir` lock as deterministic, stdlib invariants** are not conceptually novel (Mergify schedules; GitHub punts to self-failing Actions), but keel's framing — *native, deterministic, dependency-free, inside the agent pipeline* — is distinctive. The market evidence (GitHub's most-requested-but-absent scheduled-merge feature) confirms the need is real.
+- The **merge window + `mkdir` lock as deterministic, stdlib invariants** are not conceptually novel (Mergify schedules; GitHub punts to self-failing Actions), but keel's framing — *native, deterministic, standard-library code with no service behind it, inside the agent pipeline* — is distinctive. The market evidence (GitHub's most-requested-but-absent scheduled-merge feature) confirms the need is real.
 
 **Honest caveat**: keel is *not* a merge queue and shouldn't pretend to be — it lacks (and arguably shouldn't add) batching/bisection/parallel-lane serialization, which is the entire value of Mergify/Trunk/Graphite/bors. keel's "one issue at a time + lock" is a different problem (orchestrated authorship), not a competing one.
 
@@ -404,19 +404,19 @@ it runs that loop in s4 itself.
 | # | Feature (idea) | Inspired by | Why it fits keel | Effort |
 |---|---|---|---|---|
 | 1 | **Canonical "finding" schema for all gates** (line, severity, message), so build/lint/test/extension gates emit a uniform structure the fix-loop consumes | reviewdog | Pure-core, deterministic, makes the capped fix-loop's input consistent; no new deps | **S** |
-| 2 | **Freeze vs. Pause distinction for the merge window** — "freeze" blocks merge but lets gates/CI keep running; "pause" halts everything | Mergify (pause/freeze) | Direct upgrade to the existing window/lock invariants; pure config + clock logic | **S** |
-| 3 | **`keel init` golden-path scaffolder** that detects stack and writes a sensible default `.keel/project.yaml` | Backstage software templates; ai-jury's own `jury init` | Reinforces project-agnosticism; lowers onboarding; stdlib templating | **S/M** |
-| 4 | **Hotfix bypass** — a flagged emergency issue may skip the merge window (with audit log) | Graphite (out-of-order hotfix), Mergify | Operationally necessary; deterministic given an explicit flag | **S/M** |
+| 2 | **Shipped** (`merge_window_mode: freeze \| pause`). **Freeze vs. Pause distinction for the merge window** — "freeze" blocks merge but lets gates/CI keep running; "pause" halts everything | Mergify (pause/freeze) | Direct upgrade to the existing window/lock invariants; pure config + clock logic | **S** |
+| 3 | **Shipped** (`keel init`, `--auto`, `--wizard`). **`keel init` golden-path scaffolder** that detects stack and writes a sensible default `.keel/project.yaml` | Backstage software templates; ai-jury's own `jury init` | Reinforces project-agnosticism; lowers onboarding; stdlib templating | **S/M** |
+| 4 | **Shipped** (`keel merge --hotfix`, which records its justification). **Hotfix bypass** — a flagged emergency issue may skip the merge window (with audit log) | Graphite (out-of-order hotfix), Mergify | Operationally necessary; deterministic given an explicit flag | **S/M** |
 | 5 | **Bounded auto-fix-and-push for trivial lint failures** inside the existing fix-loop budget | pre-commit.ci | Reuses the capped-budget mechanism; opt-in to preserve determinism | **M** |
 | 6 | **Adaptive stability-based early stopping for debate rounds** (stop when reviewer consensus stabilizes) in ai-jury | MAD-for-LLM-judges research; Star Chamber | Cuts cost without losing rigor; must stay deterministic (fixed seed / KS-test on recorded scores, not wall-clock) | **M** |
 | 7 | **Declarative policy/gate surface** in `.keel/project.yaml` (express required gates / risk-tier rules as data, not code) | OPA/Conftest *concept*; Danger Dangerfile | Keeps logic data-driven and testable | **M** |
 | 8 | **Reproducible review-quality benchmark** for ai-jury (publish methodology/results) | CodeRabbit's Martian benchmark posture | Credibility for the multi-agent-review claim; pure tooling | **M/L** |
 
 **Ideas I deliberately skip (Assessment):**
-- **Adopting OPA/Rego as the policy engine** — violates the stdlib-only, zero-runtime-dependency ethos. Borrow the *concept*, not the binary.
+- **Adopting OPA/Rego as the policy engine** — violates the stdlib-first, single-runtime-dependency ethos. Borrow the *concept*, not the binary.
 - **Merge-queue batching/bisection/parallel lanes** (bors, Trunk) — keel processes one issue at a time behind a lock; batching is a different problem and would add nondeterminism and complexity for no in-scope benefit.
 - **Anti-flake auto-retry of failing checks** (Trunk) — tempting, but blind retries dent determinism and can mask real failures; only acceptable as an explicit, logged, single-retry opt-in per check.
-- **Building keel on LangGraph/CrewAI/AutoGen** — clashes with stdlib-only + deterministic + fixed-backbone design; their value is flexibility keel intentionally rejects.
+- **Building keel on LangGraph/CrewAI/AutoGen** — clashes with stdlib-first + deterministic + fixed-backbone design; their value is flexibility keel intentionally rejects.
 
 ---
 

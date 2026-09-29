@@ -482,6 +482,41 @@ class TestWatermark(unittest.TestCase):
         self.assertNotIn("⚓ **Shipped by [keel]", rendered)
         self.assertNotIn("⭐ Star on GitHub", rendered)
 
+    def test_watermark_names_ai_jury_only_when_the_record_says_a_jury_sat(self):
+        """The clause used to be unconditional (docs audit 2026-09-29).
+
+        A closure comment whose run-context ``Jury`` line said ``off`` still ended in
+        "with ai-jury consensus". Each case below is a record that did not sit a jury,
+        beside the two modes that did.
+        """
+        clause = "consensus)*"
+        no_jury = {
+            "mode off": {"jury_mode": "off"},
+            "mode missing": {},
+            "mode blank": {"jury_mode": "  "},
+            "panel fell back": {"jury_mode": "gating", "jury_panel": {"decision": "fallback"}},
+            "panel refused": {"jury_mode": "gating", "jury_panel": {"decision": "block"}},
+        }
+        for name, context in no_jury.items():
+            with self.subTest(name):
+                rendered = closure.render_closure_comment(_record(run_context=context))
+                self.assertNotIn("ai-jury", rendered)
+                self.assertIn("backbone `s0`→`s12`*  \n", rendered)
+        with self.subTest("no run context at all"):
+            record = _record()
+            del record["run_context"]
+            self.assertNotIn("ai-jury", closure.render_closure_comment(record))
+        sat = {
+            "gating": {"jury_mode": "gating"},
+            "advisory": {"jury_mode": "advisory"},
+            "panel sat": {"jury_mode": "gating", "jury_panel": {"decision": "available"}},
+        }
+        for name, context in sat.items():
+            with self.subTest(name):
+                rendered = closure.render_closure_comment(_record(run_context=context))
+                self.assertIn(closure.WATERMARK_JURY_CLAUSE + "*  \n", rendered)
+                self.assertIn(clause, rendered)
+
     def test_watermark_custom_string(self):
         record = _record(watermark="Custom team signature")
         rendered = closure.render_closure_comment(record)

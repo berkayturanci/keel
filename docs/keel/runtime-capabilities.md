@@ -47,9 +47,11 @@ the profile's `command` is the same `shell` subprocess surface the built-in `cod
 delegates already use, and it needs no key, so neither `secret-access` nor `api-token`
 applies.
 
-`providers` and `review-vendors` are detected **cheaply**: `keel capabilities` runs on every
-command, so it only does `PATH` lookups and reads env-var *names*. It never shells out and
-never opens a socket. The deep probe is a separate, explicit command.
+`providers` and `review-vendors` are detected **cheaply**: the capability report runs on every
+command, so those two rows only do `PATH` lookups and read env-var *names* — they never shell
+out and never open a socket. The report as a whole does run one subprocess: `gh auth status`
+(with a 10-second timeout, only when `gh` is on `PATH`) for the `gh-auth` row. The deep
+provider probe is a separate, explicit command.
 
 ## Probing providers: `keel doctor --providers`
 

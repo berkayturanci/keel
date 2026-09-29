@@ -37,7 +37,7 @@ timezone. Read every project-specific value from `.keel/project.yaml` via the
 
 > **Hard rule.** If you are about to type a literal like a base-branch name, a
 > build/lint command, an implementer agent, or a path glob — **stop** and read it
-> from config (`base_branch`, `build_gate_cmd`, `lint_cmd`, `implementer_agents`,
+> from config (`base_branch`, `build_gate_cmd`, `lint_cmd`, `team.implement`,
 > `tier3_globs`). Hardcoding a project specific here is the exact bug keel exists
 > to kill.
 
@@ -52,7 +52,7 @@ project's source-of-truth doc — `knobs.sot_doc`.)
 
 ```bash
 keel validate .keel/project.yaml --root .   # abort if config/extensions invalid
-keel plan     .keel/project.yaml --root .    # read base_branch, implementer_agents, tier3_globs
+keel plan     .keel/project.yaml --root .    # read base_branch, team, tier3_globs
 keel plan     .keel/project.yaml --root . --command implement --live --json
 ```
 
@@ -63,7 +63,8 @@ secrets, publishing, or calling production-adjacent systems, parse
 operator to rerun with the required `--approve-scope` values. Store
 `operator_consent.delegated_agent_scope` for Step 5.
 
-Read the knobs you will need: `base_branch`, `implementer_agents`, `tier3_globs`,
+Read the knobs you will need: `base_branch`, `team` (whose `implement.by_role` routes the
+implementer; `implementer_agents` is its deprecated spelling), `tier3_globs`,
 `build_gate_cmd`, `lint_cmd`.
 
 ## Step 1 — Fetch the issue
@@ -96,10 +97,22 @@ it or start fresh — do not silently clobber in-flight work.
 
 ## Step 3 — Resolve the implementer
 
-Resolve the implementer agent from `implementer_agents` keyed by the issue's
-**role/platform label**, overridden by `--delegate`, defaulting to the **host
-agent**. Do not hardcode an agent name — the mapping is config. The same value
-set as `/keel:ship` applies, including the hosted-API delegates
+Do not resolve the implementer yourself — ask core, which resolves it exactly as
+`/keel:ship` s4 does (`--delegate` > `team.implement.by_role` > `team.implement.default` >
+the deprecated `implementer_agents` > the **host agent**). Pass the issue's
+**role/platform label** as `--role`, and `--delegate` only when this run was given one:
+
+```bash
+PLAN_ARGS=()
+[ -n "$ROLE" ]     && PLAN_ARGS+=(--role "$ROLE")
+[ -n "$DELEGATE" ] && PLAN_ARGS+=(--delegate "$DELEGATE")
+keel plan .keel/project.yaml --root . --command ship "${PLAN_ARGS[@]}" --json
+```
+
+Read `contract.assignment.implementer` (`provider`, `kind`, `name`, `model`, `effort`,
+`source`) and dispatch that seat; never hardcode an agent name — the mapping is config. A
+`kind: subagent` seat runs under the host subagent it names. The same value set as
+`/keel:ship` applies, including the hosted-API delegates
 (`anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`), local models
 and configured `knobs.delegate_profiles`.
 
@@ -135,8 +148,15 @@ project)".
 Mint an agent run codename and record attribution. Use a deterministic,
 collision-free form: `<ROLE_PREFIX>-<issue>-<UTC timestamp>` where `ROLE_PREFIX`
 derives from the resolved implementer role and the timestamp is generated at run
-time (UTC, e.g. `YYYYMMDD-HHMMSS`). Attribution is `agent:<vendor>` plus a
-versionless `model:<base>`.
+time (UTC, e.g. `YYYYMMDD-HHMMSS`). **Never compose an `agent:` or `model:` label in
+prose** — ask core for the effective implementer's labels and apply them verbatim:
+
+```bash
+keel attribution --vendor <effective-vendor> --model <effective-model> \
+  --config .keel/project.yaml --json
+```
+
+or read the `attribution` block a `keel delegate run` result already carries.
 
 Post a start comment on the issue before delegating (via `gh` or the GitHub MCP
 comment tool), including: codename, chosen agent, implementer system (host agent
@@ -161,7 +181,9 @@ implementer must follow:
    git worktree add -b feature/issue-<N>-<slug> worktrees/issue-<N> origin/"$BASE_BRANCH"
    ```
    Run the gates from inside that path. After the PR merges, clean up with
-   `git worktree remove worktrees/issue-<N> --force`.
+   `keel worktree-remove worktrees/issue-<N> --root .`, which checks the path is nested
+   under the repo root and registered in `git worktree list` before removing it (never
+   `git worktree remove --force` on an implementer-supplied path).
 3. Implement all acceptance criteria with focused commits scoped to the issue.
 4. Run the applicable gates from inside the worktree via the keel CLI so the
    command strings stay config-driven:
@@ -190,4 +212,4 @@ review / CI / merge.
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
 
-<!-- keel-generated: surface=plugin command=implement keel_version=1.24.3 source_sha256=4d1b6a23af0cb08e75d705ea0cbf142dea7373530823900007558233787c36ce generated_sha256=4d1b6a23af0cb08e75d705ea0cbf142dea7373530823900007558233787c36ce -->
+<!-- keel-generated: surface=plugin command=implement keel_version=1.24.3 source_sha256=28dc2b88382a62166f360438472ecd6973002479bbefe1430bbe755bc4d7fd44 generated_sha256=28dc2b88382a62166f360438472ecd6973002479bbefe1430bbe755bc4d7fd44 -->
