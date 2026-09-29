@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import inspect
 import io
 import os
 import re
@@ -50,6 +51,7 @@ from keel import (
     ledger,
     model,
     runner,
+    team,
     workspace,
 )
 from keel import config as cfg
@@ -347,6 +349,22 @@ class TestTheRunLedgerIsNotDescribedAsCommitted(unittest.TestCase):
         self.assertTrue(ledger.DEFAULT_LEDGER_PATH.startswith(".keel/state/"))
         self.assertIn("state/", workspace.RUNTIME_IGNORE_ENTRIES)
 
+    #: "the run ledger is **committed**" (capture.py), "*committed*" (a test docstring)
+    #: and "the committed ledger" (captureverify.py), in any emphasis.
+    _COMMITTED = re.compile(r"ledger (?:is )?\**committed\**|committed (?:run )?ledger", re.I)
+
+    def test_no_module_or_test_says_it_is_committed(self):
+        """Docs audit 2026-09-29: #1185's `artifact_scope` rationale called it committed."""
+        sources = sorted((REPO_ROOT / "src" / "keel").rglob("*.py"))
+        sources += sorted((REPO_ROOT / "tests").glob("test_*.py"))
+        for path in sources:
+            if path.name == Path(__file__).name:
+                continue
+            text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+            with self.subTest(path=path.relative_to(REPO_ROOT).as_posix()):
+                found = self._COMMITTED.search(text)
+                self.assertIsNone(found, found and found.group(0))
+
     def test_configuration_md_does_not_say_it_is_committed(self):
         text = re.sub(r"\s+", " ", _read(CONFIG_DOC))
         self.assertIsNone(
@@ -455,15 +473,40 @@ class TestTheImplementerChainIsTheSameInBothReferences(unittest.TestCase):
         self.assertNotIn(-1, positions.values(), positions)
         return sorted(self._STEPS, key=positions.__getitem__)
 
-    def test_the_orders_agree(self):
+    #: The `ship` adapter's source and the copies `make adapters plugin` generates from it.
+    _SHIP_ADAPTERS = (
+        "src/keel/adapters/commands/ship.md",
+        "commands/ship.md",
+        ".claude/commands/keel/ship.md",
+        ".agents/skills/keel-ship/SKILL.md",
+    )
+
+    def _config_chain(self) -> str:
         config = _read(CONFIG_DOC)
         chain = config[
             config.index("--delegate / --review-delegate / --effort   (per-run flags)") :
         ]
-        chain = chain.split("```")[0]
+        return chain.split("```")[0]
+
+    def test_the_orders_agree(self):
         param = _read(PARAM_DOC)
         sentence = param[param.index("Implementer precedence at s4") :].split("HOST_AGENT")[0]
-        self.assertEqual(self._order(sentence), self._order(chain))
+        self.assertEqual(self._order(sentence), self._order(self._config_chain()))
+        self.assertNotIn("delegate:*", sentence)
+
+    def test_the_ship_adapter_states_the_same_order(self):
+        """Docs audit 2026-09-29: the adapter's s4 chain left out both benches and ranked an
+        issue `delegate:*` label above `HOST_AGENT`. `team.resolve_assignment` takes no
+        issue labels at all, so no label can be a member of the chain."""
+        params = set(inspect.signature(team.resolve_assignment).parameters)
+        self.assertEqual(set(), {"labels", "issue_labels"} & params)
+        config = self._order(self._config_chain())
+        for name in self._SHIP_ADAPTERS:
+            text = " ".join((REPO_ROOT / name).read_text(encoding="utf-8").split())
+            chain = text[text.index("Precedence: `--delegate` flag") :].split("`HOST_AGENT`")[0]
+            with self.subTest(page=name):
+                self.assertEqual(self._order(chain), config)
+                self.assertNotIn("delegate:*", chain)
 
 
 class TestACommittedTeamNeverNamesARegistryEntry(unittest.TestCase):

@@ -1058,8 +1058,10 @@ def artifact_scope(artifact: str | None, config: _HasPolicyPack | None = None) -
 
     An in-repo sink's path is recorded relative to ``--root``, so it means the same thing
     in every clone. A sink outside the checkout — a shared `~/knowledge` folder — is
-    recorded absolute, and the run ledger is **committed**: that path travels to teammates
-    and CI runners where it names nothing. Saying so in the record is what lets
+    recorded absolute, which names nothing on any other host. The run ledger is gitignored
+    per-host state by default (`.keel/state/run-ledger.jsonl`), but
+    `policy_pack.reports.run_ledger` may point it at a tracked file, and then that path
+    travels to teammates and CI runners with it. Saying so in the record is what lets
     `keel capture-verify` tell "written somewhere this host cannot see" from "never
     written", which are the same absence and very different facts (#1185).
 

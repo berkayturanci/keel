@@ -216,7 +216,7 @@ capture.
   `contract.implement_mode.loop` (`enabled`, `max_iterations`, `gate_output_max_bytes`,
   `source`, `wraps`) — never re-derive it.
 - `--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>` — the
-  **implementer**. Per-run override of any issue role/delegate label. `ollama:` and the
+  **implementer**. Per-run override of the configured implementer. `ollama:` and the
   `*-api:` values require a non-empty model. The `*-api:` values are the **hosted-API
   delegates** (no agent CLI needed — just `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GEMINI_API_KEY` in the
   environment; see s4). `PROFILE` is the name of a `knobs.delegate_profiles` entry — a
@@ -283,7 +283,7 @@ together; positionals are everything not consumed by a flag. Repeated single-val
 (e.g. `--reviewers 2 --reviewers 3`) are user error. With **no issue numbers**, run in
 watch mode: take the top of the backlog (s1). Resolve **`HOST_AGENT`** from the runtime
 (the CLI executing this command: `claude` / `codex` / `agy`) — it is the default
-implementer and reviewer; a delegate label or an explicit `--delegate`/`--review-delegate`
+implementer and reviewer; `knobs.team` or an explicit `--delegate`/`--review-delegate`
 overrides it. State the detected window state and host agent in your first user-facing line.
 
 ## The team — one resolved assignment, not four independent guesses
@@ -423,11 +423,14 @@ none were found. The lessons are context, not a checklist: they say what went wr
 last time work of this shape was done, and they do not replace the issue's acceptance
 criteria. Do not paraphrase them, and do not append your own.
 
-Read the implementer from `assignment.implementer` — core resolved it from
-`knobs.team.implement` (or the deprecated `implementer_agents`) by the issue's role label,
-**overridden by `--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag >
-`team.implement.by_role` > `team.implement.default` > `implementer_agents` (deprecated) > issue
-`delegate:*` label > `HOST_AGENT`. Dispatch on `assignment.implementer.kind`:
+Read the implementer from `assignment.implementer` — core resolved it from `knobs.team`
+(or the deprecated `implementer_agents`) by the issue's role label, **overridden by
+`--delegate`**, defaulting to `HOST_AGENT`. Precedence: `--delegate` flag >
+`team.profiles.<--team>` bench > `team.by_difficulty.<band>` bench (only where a band was
+scored, i.e. a `keel swarm-plan` cluster; `keel ship` scores none) > `team.implement.by_role` >
+`team.implement.default` > `implementer_agents` (deprecated) > `HOST_AGENT`. Core reads no
+`delegate:*` issue label; route one issue elsewhere with `--delegate`. Dispatch on
+`assignment.implementer.kind`:
 
 - **Host / Claude-class subagent** (`kind: "subagent"`) — run the standard implement brief
   under the subagent named by `assignment.implementer.name`.
@@ -1642,4 +1645,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.24.3 source_sha256=2d9b4fd5f4dd9ee14238c4dadb20a38f273f9147475d7609d81a7a27f716cd6c generated_sha256=e65e304dff80fe9343f2c0f86b25f6bb6051d49a99250dde341f6d8fb9e6bd66 -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.24.3 source_sha256=9e1686b2eddc1c42c8b50b28f8841e17a36f7ab1769a758c2564555ac83108ae generated_sha256=3ac52f6f7cea0e9af477c4a8abaf0ee13540fe78c16e90608be97b86d377f443 -->

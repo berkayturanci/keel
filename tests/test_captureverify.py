@@ -54,11 +54,12 @@ class TestReconcile(unittest.TestCase):
     def test_an_outside_sink_is_noted_not_faulted(self):
         """`applied-elsewhere` is a note: the absence is the sink's design (#1185).
 
-        A sink outside the checkout records an absolute path, and the run ledger is
-        committed — so that path travels to teammates and CI runners where it names
-        nothing. Reporting it as `applied-without-artifact` accused a run that did exactly
-        what it was configured to do, using the finding reserved for a file that is
-        genuinely missing.
+        A sink outside the checkout records an absolute path, which names nothing on any
+        other host — and the ledger carrying it can reach one when
+        `policy_pack.reports.run_ledger` points it at a tracked file (by default it is
+        gitignored `.keel/state/` state). Reporting it as `applied-without-artifact` accused
+        a run that did exactly what it was configured to do, using the finding reserved for
+        a file that is genuinely missing.
         """
         for artifact in ("/Users/b/knowledge/one.md", "~/knowledge/one.md"):
             with self.subTest(artifact=artifact):

@@ -1925,8 +1925,12 @@ If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturan
 its findings (file/line/severity) into keel findings (critical/major block). If `jury` is
 not installed the s8 gate is a **no-op**, but that does not waive the evidence: a tier-3
 merge still requires a `jury-verdict` unless the run passes `--no-jury`, and it relaxes to
-advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors. Its
-wall-clock limit is [`knobs.jury_timeout_s`](configuration.md#jury_timeout_s) (default
+advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors. That
+is the default policy: off a jury-panel tier, `team.jury.mode: advisory` or `--jury-advisory`
+never requires the verdict and `team.jury.min_vendors` may raise the 2; on a tier whose review
+is the jury panel, no flag or short panel relaxes it, and only a probe that finds the panel
+unstaffable turns that tier's jury off, under `team.jury.on_unavailable: fallback` (the
+default). Its wall-clock limit is [`knobs.jury_timeout_s`](configuration.md#jury_timeout_s) (default
 600s), separate from `gate_timeout_s` because a cross-vendor panel and a test suite have
 unrelated runtimes.
 

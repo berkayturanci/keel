@@ -2205,6 +2205,62 @@ class TestTheJuryDefaultIsTheOneResolveJuryImplements(unittest.TestCase):
         short = ship.resolve_jury(tier=3, participating_vendors=1)
         self.assertEqual("advisory", short["mode"])
 
+    #: The relaxation clause of `_VERDICT_OWED_IN_FULL`. It is the default policy only,
+    #: and read alone it is the whole rule: `team.jury.min_vendors` raises its 2, and on a
+    #: tier whose review is the jury panel neither a flag nor a short panel relaxes it.
+    _RELAXATION = "relaxes to advisory only when a posted verdict"
+    #: What every statement of that clause must say within the next few sentences.
+    _DEFAULT_ONLY = (
+        "That is the default policy",
+        "`team.jury.min_vendors`",
+        "tier whose review is the jury panel",
+        "`team.jury.on_unavailable: fallback`",
+    )
+    _RELAXATION_SURFACES = (
+        "README.md",
+        "docs/keel/cli.md",
+        "docs/keel/parameter-reference.md",
+        "src/keel/jury.py",
+        "website/content.js",
+        *_SHIP_ADAPTERS,
+    )
+
+    def test_every_relaxation_clause_says_it_is_the_default_policy(self):
+        """Docs audit 2026-09-29: "it relaxes to advisory only when … fewer than 2 vendors"
+        read as the whole rule on every surface but the adapter and configuration.md.
+
+        Measured in `resolve_jury`: `team.jury.min_vendors` raises the floor,
+        `team.jury.mode: advisory` relaxes it off a panel tier, a panel tier ignores both
+        flags and a short panel, and only the measured fallback turns that tier off.
+        """
+        raised = ship.resolve_jury(tier=3, participating_vendors=2, minimum_vendors=3)
+        self.assertEqual(("advisory", True), (raised["mode"], raised["downgraded"]))
+        self.assertEqual("advisory", ship.resolve_jury(tier=3, policy_mode="advisory")["mode"])
+        panel = ship.resolve_jury(
+            tier=3, panel_is_jury=True, no_jury=True, jury_advisory=True, participating_vendors=1
+        )
+        self.assertEqual("gating", panel["mode"])
+        fallback = ship.resolve_jury(tier=3, panel_is_jury=True, panel_unavailable=True)
+        self.assertEqual("off", fallback["mode"])
+        stated = {
+            where
+            for where, text in _public_pages().items()
+            if self._RELAXATION in _prose(where, text)
+        }
+        with self.subTest(check="every public page stating the clause is checked below"):
+            self.assertLessEqual(stated, set(self._RELAXATION_SURFACES))
+        for name in self._RELAXATION_SURFACES:
+            # Tags stripped and backticks dropped, so the site's `<code>` reads the same.
+            text = _prose(name, self._surface_text(name)).replace("`", "")
+            starts = [found.start() for found in re.finditer(self._RELAXATION, text)]
+            with self.subTest(page=name, check="states the clause"):
+                self.assertTrue(starts, f"{name} no longer states {self._RELAXATION!r}")
+            for start in starts:
+                window = " ".join(text[start : start + 800].split())
+                for phrase in self._DEFAULT_ONLY:
+                    with self.subTest(page=name, at=start, phrase=phrase):
+                        self.assertIn(phrase.replace("`", ""), window)
+
     #: "the optional jury verdict" (evidence.py) and "optional jury-verdict comments"
     #: (github-actions.md): at tier 3 it is required by default, binary or no binary.
     _OPTIONAL_VERDICT = re.compile(r"\boptional `?jury`?[- ]verdict", re.I)
