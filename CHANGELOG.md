@@ -6,6 +6,15 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Companion
+- **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py
+  --package keel-visual [--tag keel-visual-vX.Y.Z]` checks keel-visual's two version markers
+  and that the tag names the version `keel-visual/pyproject.toml` declares, and
+  `publish-visual.yml` runs it before the build. The workflow also checks that every template
+  in the source tree is in the wheel (it checked `runviz.html` only), the wheel's
+  `force-include` lists `swarm.html`, and keel-visual's README links are absolute so they work
+  on PyPI.
+
 - **`keel cost-report` can say "measured" for hosted-API delegate runs.** `keel delegate run` now reads the token usage the `anthropic-api`, `openai-api`, `google-api` and OpenAI-compatible responses carry, and returns it as `usage`. Only each vendor's documented fields are read, and a missing, malformed, non-integer, negative or zero count records nothing. With `--activity-run-id RUN` the counts go into run `RUN`'s activity record as a per-call `delegate_usage` entry, and every later phase stamp keeps them. A per-record lock stops parallel reviewers from dropping each other's counts. The ship adapter passes the flag in s4 and s7. The report prices each call at its own model, says that a measured count covers delegate calls and never the agent host's own tokens, and prints `the 1 run` instead of `all 1 runs`. Its title is now `Keel Token & Cost Report`, and the VS Code command is `View Token Counts & Estimated USD Cost`. The README, `docs/keel/cli.md` and the OpenRouter site card now describe what is recorded (#1373).
 
 ## [1.24.3] - 2026-09-29
