@@ -57,6 +57,7 @@ All notable changes to keel are documented here. The format follows
   `overview.md`, `ship-baseline.md` and `runtime-capabilities.md` are corrected too, and
   `tests/test_docs_cli_evidence_release.py` reads each list from the code it describes
   (docs audit 2026-09-29)
+- **The configuration, parameter, extension and model references match the code.** `parameter-reference.md` now lists every flag of every command it covers, drops a `--tier` that `keel ship` does not have, and names every command in each shared flag's "Accepted by" list. `configuration.md` says a missing preset tool fails at the preset's `on_fail` (a missing `gitleaks` blocks), and that the run ledger is gitignored, not committed. It also says a committed `knobs.team` cannot name a `~/.keel/providers.yaml` entry, a workflow file whose patch changes nothing privileged does not force TIER-3, and an unknown gate name is refused by `plan`/`run-gates`, not by `validate`. `extensions.md` says an extension that fails to load is skipped, even with `on_fail: block`; `keel validate --root` is what catches it. `models.md`'s Aider and Cursor profiles now build a working command line, and its remote-endpoint examples allow only their own host. `tests/test_docs_reference_accuracy.py` checks each of these claims against the parser, the schema or the deciding function (docs audit 2026-09-29).
 
 ### Companion
 - **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py

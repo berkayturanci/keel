@@ -298,10 +298,13 @@ A rung repeating an earlier one is dropped rather than dispatched twice, and the
 three-round review-fix budget is unaffected: the ladder decides who fixes, not how often.
 See [`cli.md`](cli.md) under `keel fixloop brief`.
 
-**Providers.** A `provider` names an entry the same registry `keel delegate run` resolves:
-a built-in vendor (`claude`, `codex`, `agy`, `ollama`, `anthropic-api`, `openai-api`,
-`google-api`), a [`delegate_profiles`](#delegate_profiles) entry, or a machine-level
-`~/.keel/providers.yaml` entry. Two spellings are reserved:
+**Providers.** A `provider` names a built-in vendor (`claude`, `codex`, `agy`, `ollama`,
+`anthropic-api`, `openai-api`, `google-api`) or a [`delegate_profiles`](#delegate_profiles)
+entry. It never names a machine-level `~/.keel/providers.yaml` entry: `keel delegate run`
+and the per-run `--delegate` / `--review-delegate` flags resolve through that registry, but
+`keel validate` refuses one in the committed `knobs.team` (`unknown provider …`), for the
+reason *A committed policy may only name built-ins* gives below. Two spellings are
+reserved:
 
 - `subagent:<name>` — a **host (Claude-class) subagent**, never a `keel delegate run`
   dispatch. This is the pre-`team` meaning of an `implementer_agents` value, made explicit.
@@ -673,7 +676,7 @@ Then: `/keel:ship 123 --delegate cursor`.
 
 | field | type | required | description |
 |---|---|---|---|
-| `vendor` | string | ✅ | the generic vendor. Only `cli` today |
+| `vendor` | string | ✅ | the generic vendor: `cli` (a local command) or `openai-compatible` (an OpenAI-shaped chat-completions endpoint) |
 | `command` | string | ✅ for `cli` | the executable keel runs, e.g. `cursor-agent` |
 | `args` | string[] | | standing flags the command always takes, e.g. `["-p", "--force"]` |
 | `review_args` | string[] \| null | | flags for the **reviewer** role; falls back to `args` when unset (`null` ≠ `[]`) |
@@ -923,6 +926,15 @@ Inspect the whole picture with [`keel doctor --providers`](cli.md#keel-doctor).
 Path globs that mark a diff as high risk. `keel ship` uses them to choose the strongest
 review posture, including the maximum reviewer count and auto-jury behavior when enabled
 by the command policy.
+
+A match makes the change TIER-3, with one exception (#801): a GitHub workflow file
+(`.github/workflows/*.yml` / `*.yaml`) is judged by **what its patch changes**, not by its
+path. When keel has that file's patch and the patch changes nothing privileged — no
+`uses:`, `secrets.`, `permissions:` / `: write` scope, `on:` trigger, network tool
+(`curl`, `wget`, `nc`, `ssh`, `scp`), `pip install`, `npm install`/`ci`, or `gh api`/`gh auth`
+on an added or removed non-comment line — the match does not raise the tier, and the
+change is classified as if that path matched no glob. No patch, or an empty or unreadable
+one, keeps TIER-3 (`keel.classify.privileged_change` fails closed).
 
 #### `ci_workflows`
 
@@ -1368,12 +1380,12 @@ Declarative security and SAST scanning presets (`1.13.0+`). Keel provides built-
 dependency-free preset definitions that automatically slot static analysis tools into
 the backbone without writing custom gate scripts:
 
-| preset | target tool | planned backbone step | fail-soft behavior |
-|---|---|---|---|
-| `bandit` | [Bandit](https://github.com/PyCQA/bandit) (Python SAST) | `s8 test` (as a gate) | degraded / skipped if `bandit` is not installed |
-| `gitleaks` | [Gitleaks](https://github.com/gitleaks/gitleaks) (Secret scanner) | `s3 guard` / `s8 test` | degraded / skipped if `gitleaks` is not installed |
-| `semgrep` | [Semgrep](https://github.com/semgrep/semgrep) (Static analysis) | `s8 test` | degraded / skipped if `semgrep` is not installed |
-| `trivy` | [Trivy](https://github.com/aquasecurity/trivy) (Vulnerability scanner) | `s8 test` | degraded / skipped if `trivy` is not installed |
+| preset | target tool | planned backbone step | `on_fail` | when the tool is not installed |
+|---|---|---|---|---|
+| `bandit` | [Bandit](https://github.com/PyCQA/bandit) (Python SAST) | `s8 test` | `suggest` | fails as a `minor` finding; does not block |
+| `gitleaks` | [Gitleaks](https://github.com/gitleaks/gitleaks) (Secret scanner) | `s3 guard` | `block` | fails as a `major` finding; **blocks** the run |
+| `semgrep` | [Semgrep](https://github.com/semgrep/semgrep) (Static analysis) | `s8 test` | `suggest` | fails as a `minor` finding; does not block |
+| `trivy` | [Trivy](https://github.com/aquasecurity/trivy) (Vulnerability scanner) | `s8 test` | `warn` | fails as a `nit` finding; does not block |
 
 Example enabling Bandit and Gitleaks on a Python repository:
 
@@ -1383,10 +1395,16 @@ policy_pack:
   presets: ["bandit", "gitleaks"]
 ```
 
-When enabled, `keel plan` automatically renders the preset gates under `s8 test`, and
-`keel run-gates` executes them. All presets are strictly fail-soft: if the host environment
-lacks the tool binary, the pipeline degrades cleanly with structured feedback rather than
-crashing.
+When enabled, `keel plan` renders each preset gate under its step (`gitleaks` under
+`s3 guard`, the other three under `s8 test`), and `keel run-gates` executes all of them.
+A preset is an ordinary command gate, **not** a fail-soft one. keel runs its command, and a
+host without the tool gets the shell's exit 127 (`<tool>: command not found`), which is
+reported as a failed gate at the preset's `on_fail` severity, exactly like any other
+failing command. So `gitleaks` on a machine without `gitleaks` prints
+`BLOCKED — merge is gated by the findings above` and exits 1, while a missing `semgrep`,
+`bandit` or `trivy` reports its finding and lets the run pass. Install the tool wherever
+the gates run — or leave the preset out of that project — rather than relying on it to
+step aside.
 
 ### `policy_pack.labels`
 
@@ -1537,8 +1555,10 @@ the ampersand and the backtick, so `__init__.py` reads as written rather than as
 
 **A sink outside the checkout is single-machine, by design.** A relative `path` is
 recorded in the ledger relative to `--root`, so it means the same file in every clone. An
-absolute or `~` path is recorded as written — and the run ledger is *committed*, so that
-path travels to teammates and CI runners where it names nothing. keel says so rather than
+absolute or `~` path is recorded as written, and it names a file on the machine that wrote
+it and nowhere else: the file never enters the checkout, so it never reaches the pull
+request, a teammate's clone or a CI runner. (The run ledger is not shared either — it lives
+under `.keel/state/`, which keel's scaffolded `.keel/.gitignore` ignores.) keel says so rather than
 pretending otherwise: the capture block records `artifact_scope: repository | machine`
 beside `artifact`, `keel capture-verify` reports a **note** (`applied-elsewhere`, never a
 finding) for a `machine`-scoped artifact instead of the `applied-without-artifact` finding
@@ -1623,9 +1643,10 @@ the checkout tracks is never removed.
 
 **A path outside the checkout needs no landing step, and is durable on the machine
 that wrote it, and only
-there.** The recorded `capture.artifact` is that machine's absolute path, and the run
-ledger *is* committed — so a teammate or a CI runner reading the same record finds no
-file, the dedupe cannot point at it, and the run records `applied` with no artifact.
+there.** The recorded `capture.artifact` is that machine's absolute path, and the file
+never enters the repository — so a teammate's clone or a CI runner has no such file, and
+a run there cannot find it or dedupe against it. (The record itself stays on the machine
+too: the run ledger lives under the gitignored `.keel/state/`.)
 An in-repo sink has no such problem: the path in the record is repo-relative and the
 file reaches the base branch in the same squash as the work, which is why it is the better
 default of the two.
@@ -1642,6 +1663,7 @@ issue N-40 hit the same trap.
 
 ```yaml
 policy_pack:
+  name: my-project
   capture:
     learning:
       source:
@@ -1997,7 +2019,10 @@ policy_pack:
 ## `gates` vs `extensions`
 
 - **`gates`** lists which **built-in** gates run (`build` / `lint` / `jury`). An unknown
-  name here is an error.
+  name here is an error — but not a `keel validate` one: the schema checks only that
+  `gates` is a list of strings, so `gates: [build, foo]` validates `OK`. The name is
+  refused where the gates are planned — `keel plan`, `keel run-gates` and `keel ship`
+  exit 1 with `unknown built-in gate 'foo'` — so it still fails before any gate runs.
 - **`extensions`** registers **project-provided** gates/steps (Lego pieces) into named
   backbone slots. They are add-only and run at their slot's step. See
   [extensions.md](extensions.md).

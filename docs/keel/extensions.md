@@ -92,9 +92,23 @@ timeout: 3600              # optional: seconds; overrides knobs.gate_timeout_s f
 
 ## Fail-soft
 
-A broken or erroring extension **degrades to a no-op** (logged), never aborting the run —
-**unless** it declared `on_fail: block`, in which case its error surfaces as a blocking
-finding (a hard gate can't silently pass). This mirrors keel's `fail_soft` invariant.
+Two different failures, with two different outcomes:
+
+- **An extension that fails to load** — a file keel cannot read, or frontmatter that does
+  not parse (a missing `id`, a `command` extension with no `run:`) — is **skipped**, and
+  `keel plan`, `keel run-gates` and `keel ship` each print
+  `! extension not loaded: <reason>` on stderr and carry on without it. That holds **even
+  when the file says `on_fail: block`**: a file that did not parse has no `on_fail` keel can
+  trust, so nothing of it runs and nothing of it blocks — `run-gates` exits 0 on the
+  remaining gates and a dry `keel ship` can still say `MERGE`. The check that catches it is
+  `keel validate <project.yaml> --root .`, which loads every extension strictly and exits 1
+  (`INVALID … (extensions)`) on the same file; run it in CI beside the gates.
+- **A loaded extension whose command fails** — a non-zero exit, a missing binary (exit
+  127), a timeout — is an ordinary failed gate. It is reported at its `on_fail` severity
+  (above), so an `on_fail: block` extension blocks the run exactly as a built-in gate does;
+  `warn` and `suggest` ones report without blocking.
+
+This mirrors keel's `fail_soft` invariant: nothing an extension does aborts the run.
 
 ## Agent-neutral
 
