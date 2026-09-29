@@ -33,12 +33,11 @@ lands in *every* issue's scope, so they all serialise instead (#1274). Neither i
 So: **`--plan-only` is the one that stops**, and it already renders the ASCII tree — `--tree` is
 passed on the `swarm-plan` calls either way, so adding it changes nothing. `--visual` is a
 different matter twice over: it is read at Step 4, *after* Step 2, so on its own
-`/keel:swarm <issues> --visual` walks straight into the live `swarm-run` and `swarm-land`; and
+`/keel:swarm <issues> --visual` walks straight into `swarm-run` and `swarm-land`; and
 with `--plan-only` it never runs at all — and could not show anything if it did, because
 `keel-visual swarm` reads the state file only `swarm-run` writes and falls back to an empty
-board without it. That cuts a worktree per cluster, leaves the
-`swarm/<swarm_id>/<cluster_id>` branches behind (nothing deletes them), and runs the N child gate
-suites above — for a run that lands nothing. Read the plan it renders as "what I passed", not
+board without it. That runs the N child gate suites above, one at a time in your checkout —
+for a run that lands nothing. Read the plan it renders as "what I passed", not
 "per-issue scope". For anything
 the user expects to be **merged**, say plainly that swarm cannot do it and run `/keel:ship` per
 issue instead.
@@ -136,19 +135,22 @@ actually dispatch rather than the default one.
 
 ## Step 2 — Launch one lead per cluster
 
-Launch parallel workers per cluster in dedicated git worktrees under `.keel/worktrees/<swarm_id>/<cluster_id>/`:
-
 ```bash
 keel swarm-run .keel/project.yaml --root . --issues <n,n,n>
 ```
 
-This is the dry run: it assesses each cluster in its worktree and commits nothing. Do not add
+This is the dry run: it assesses each cluster and commits nothing. A worker gets its own git
+worktree (`.keel/worktrees/<swarm_id>/<cluster_id>/`, branch `swarm/<swarm_id>/<cluster_id>`)
+only when worktrees are enabled **and** the run is not dry — so in the one mode this command
+allows, no worktree is created: each cluster's child assessment runs in your own checkout,
+one at a time (#1288). Do not add
 `--live` — it is refused (see the top of this command), because its workers could not pass
 `keel ship --live`'s operator-consent gate. The implementation is the leads' work, below.
 
 - Spawn **one team lead subagent per cluster**, briefed with that cluster's `assignment`
   and `difficulty` verbatim. The lead runs the cluster's issues through the standard
-  `keel ship` backbone steps (`s0`–`s12`) in the cluster's isolated worktree.
+  `keel ship` backbone steps (`s0`–`s12`) in an isolated worktree of its own, cut from
+  `base_branch` (config) — `swarm-run`'s dry run did not create one.
 - The lead passes its cluster's team to every child ship it starts, using the **same five
   flags a work block hands down** — `keel ship` accepts all of them:
 
@@ -167,20 +169,21 @@ This is the dry run: it assesses each cluster in its worktree and commits nothin
   `assignment.warnings`; the child resolves its role from the issue's own labels.
 - A lead never re-scores its cluster and never re-staffs it. If the work turns out heavier
   than the band said, it reports that through the worker record and the CTO re-plans.
-- When a cluster's issue fails, `rebalance_swarm_plan` drops the clusters carrying that issue from the remaining waves; there is no runtime file-divergence detection — clusters are kept apart by plan-time overlap partitioning and per-worktree isolation.
+- When a cluster's issue fails, `rebalance_swarm_plan` drops the clusters carrying that issue from the remaining waves; there is no runtime file-divergence detection — clusters are kept apart by plan-time overlap partitioning (and, in a non-dry run, per-worktree isolation).
 - Track live worker states with `keel swarm-status` — the board's `Lead` and `Band` columns
   are how the operator sees which lead owns which cluster and why it drew its provider.
 
 ## Step 3 — Batch landing under the merge lock
 
-When an execution wave completes, land all passing clusters onto `main`:
+When an execution wave completes, land all passing clusters onto the project's
+`base_branch` (config — `keel swarm-land` reads it; never assume a branch name):
 
 ```bash
 keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
 - The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
-- **Orthogonal Batch Landing**: Disjoint diff trees are merged into main with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **Orthogonal Batch Landing**: Disjoint diff trees are merged into `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
 - Every planned wave is internally disjoint, so landing always runs in direct-batch mode; the library's adaptive rebase funnel is not selected by this command.
 
 ## Step 4 — Visual tracking & terminal dashboard
@@ -209,4 +212,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.24.3 source_sha256=9a9c39d063a82bec740c71cfb8bbd78b7dd1b2abeec6bd7fcc136a353269fad2 generated_sha256=9ce63369fd99b24d36046d05ec068f1f7a2fb7cabf32585f11fa37974443c636 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.24.3 source_sha256=a0a431da83a4e043c3599eda38ce53b9ce9dee611b3ce448cb40e82c285e872f generated_sha256=54e610fd2065d4f3b218029b387fa5b24f497c1c0060d6057ef41c93832c9ef8 -->

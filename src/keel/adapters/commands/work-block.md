@@ -54,9 +54,9 @@ may use only `approved_mutation_scopes`; scope expansion blocks or escalates.
 `--wizard` is interactive opt-in only. Pass it through to the same Step 0 command; core
 runs the picker described in `/keel:ship`'s `--wizard` section, from the same provider
 probe, and in any non-interactive context degrades to a logged no-op that leaves the
-parsed flags exactly as they are. Work-block has no implementer or jury flag of its own,
-so core echoes those choices in the resolved flag set — hand them to every child
-`/keel:ship` verbatim rather than re-deciding them per issue.
+parsed flags exactly as they are. Work-block has no jury flag of its own (its implementer
+flag is `--delegate`, Step 0b), so core echoes the picker's choices in the resolved flag set
+— hand them to every child `/keel:ship` verbatim rather than re-deciding them per issue.
 
 Read `contract.session_contract.work_block`. It is the queue primitive shared with
 `/keel:overnight`: queue snapshot, readiness refresh, per-issue worktree isolation, ship
@@ -72,9 +72,18 @@ This block accepts `--delegate <provider[:model]>`, `--review-delegate <provider
 **every** child `/keel:ship`. Resolve them once, from the same preflight the rest of this
 command reads:
 
+Build the flag list from the values that were set — never pass an empty one, which the
+parser rejects (`--effort ''` is `invalid choice: ''`) or records as a value
+(`--delegate ''`):
+
 ```bash
-keel work-block .keel/project.yaml --root . --live --json \
-  --delegate "$DELEGATE" --review-delegate "$REVIEWER" --effort "$EFFORT" --team "$TEAM"
+STAFF=()
+[ -n "$DELEGATE" ]  && STAFF+=(--delegate "$DELEGATE")
+for r in "${REVIEW_DELEGATES[@]}"; do STAFF+=(--review-delegate "$r"); done  # one per slot, in order
+[ -n "$EFFORT" ]    && STAFF+=(--effort "$EFFORT")
+[ -n "$TEAM" ]      && STAFF+=(--team "$TEAM")
+[ -n "$REVIEWERS" ] && STAFF+=(--reviewers "$REVIEWERS")
+keel work-block .keel/project.yaml --root . --live --json "${STAFF[@]}"
 ```
 
 `contract.session_contract.work_block.delegation` comes back with the effective values and

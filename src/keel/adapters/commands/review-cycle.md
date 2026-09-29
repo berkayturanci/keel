@@ -43,7 +43,7 @@ The standalone review→fix loop (`s7` + `s9`) over one or more existing PRs. Fo
 set of reviewers reviews the same diff **in parallel**, findings are posted per the chosen
 posting mode, blocking findings drive a capped fix loop, and the loop exits clean or at the
 budget. **Project-neutral** — every project specific (`base_branch`, `build_gate_cmd`,
-`lint_cmd`, `ci_workflows`, `tier3_globs`, `implementer_agents`) is read from
+`lint_cmd`, `ci_workflows`, `tier3_globs`, `team`) is read from
 `.keel/project.yaml` via the `keel` CLI. Never inline a branch name, build command, CI
 workflow name, or agent here.
 

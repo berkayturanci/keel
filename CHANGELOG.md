@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The command adapters use the flags, contracts and helpers keel has.** `/keel:ship` s9 passes `keel fixloop brief` the `--delegate`, `--role`, `--tier` and `--host-agent` that pick the fixer, and says the command has no `--team` or `--effort`. s8 records an agentic gate's result on `keel ship --gate-result`, because `run-gates` has no such flag. s5 no longer claims `--reviewers` skips the tier. `/keel:work-block` and `/keel:overnight` build their staffing flags only from values that were set, so an unset `--effort` is no longer passed as `''`, and they pass `--reviewers` too. `/keel:implement` reads the implementer from `keel plan --command ship`, its labels from `keel attribution`, and removes worktrees with `keel worktree-remove`. `/keel:review-all-day` and `/keel:regression` take their numbers, labels and confidence filter from `scan_contract`. `/keel:overnight` states one window rule: only a window that closes during the session stops it. `/keel:triage`, `/keel:pr-loop` and `/keel:review-cycle` route by `team.implement.by_role`, and `/keel:swarm` says a dry run creates no worktree and lands onto `base_branch`. New tests check every `keel <cmd> --flag` in an adapter code block against the parser, and the attribution-prose ban now covers every adapter (docs audit 2026-09-29).
+
 ### Companion
 - **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py
   --package keel-visual [--tag keel-visual-vX.Y.Z]` checks keel-visual's two version markers
