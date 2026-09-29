@@ -1321,8 +1321,14 @@ setting the split depends on is pinned on the command (`diff.interHunkContext`, 
 `diff.relative`, `core.quotePath`, the algorithm, colour, textconv and external drivers, and
 `apply.whitespace`/`apply.ignoreWhitespace`/`apply.3way` for the revert), `GIT_DIFF_OPTS` is
 dropped from git's environment, and a diff whose hunks still carry context lines is refused
-(*cannot judge*). Changes are checked in path order. Each change is a hunk (`unit: hunk`, the default)
-or a whole file (`unit: file`); a new or deleted file is always one change. It then checks out
+(*cannot judge*). Changes are checked in path order. Each change is a hunk (`unit: hunk`, the
+default) or a whole file (`unit: file`, coarser: one caught hunk passes the file), and a
+deleted file is one change. Each change carries only itself: a **mode change** (`old mode` /
+`new mode`) is its own change, never copied into a content hunk; and **added code is split at
+its outermost blocks** — each top-level `def`/`class`/statement group of a new file or of a
+hunk that only adds lines, and each method added to a class, is reverted alone, so a test
+calling one of three new functions does not vouch for the other two. A new file that is one
+block stays one change, which deletes it. It then checks out
 the committed `HEAD` as a **scratch worktree under the OS temp directory** (with the
 repository's git hooks switched off for that checkout) — your checkout's files are never
 touched — and runs the test command there once unreverted (the *baseline*), then once per
@@ -1395,18 +1401,33 @@ rather than raising the budget. The gate is planned at the `pre-merge` phase, so
 
 **When it cannot judge, it fails — never passes.** With no test command (`cmd` and
 `build_gate_cmd` both unset), no declared `test_paths`, an unreadable diff, a scratch worktree
-git will not create, or a baseline that is red, times out, prints neither summary or runs no
-tests, the outcome is `FAIL` with a `major` `cannot judge: …` finding and is marked
+git will not create, or a baseline that is red, times out, prints neither summary, runs no
+tests, or **reports any failing or erroring test even though it exits 0** (`suite1; suite2`
+exits with the second suite's status), the outcome is `FAIL` with a `major` `cannot judge: …` finding and is marked
 unconfigured. When the guard or test gates are red it does not spend a run and fails with
 `not run: the guard and test gates are red …`. A branch with no production change is
 `SKIPPED`, with a `nit` saying so.
 
-**What it does not check.** The unit is a hunk, not a *behaviour*: two arms of one conditional
-edited in one contiguous block are one change, and a test that notices either passes it (#871).
-A passing check is also necessary, not sufficient — a test can fail without the fix and still
-be blind to what the fix broke, as #873's was (#1268). Both stay reviewer questions. Only
-unittest and pytest output is read today; any other runner's failures are *unreadable* and
-block.
+A revert counts as caught only by an assertion failure the baseline did not have: where the
+runner names its failing tests (unittest's `FAIL:` headers, pytest's short summary), a revert
+whose only assertion failures are tests that also failed without it is *unnoticed*.
+
+**What it does not check.** A passing check says a test *failed as an assertion* with the
+change undone — not that the test is about that change. These remain reviewer questions:
+
+- The unit is a hunk, not a *behaviour*: two arms of one conditional edited in one contiguous
+  block are one change, and a test that notices either passes it (#871).
+- A test can fail without the fix and still be blind to what the fix broke, as #873's was
+  (#1268).
+- An *addition* whose revert only raises missing-name errors is a `nit`, not a pass by
+  assertion: a test reaches it, and nothing says the test checks what it does.
+- A flaky test that happens to fail on a revert run, an `assert` in the code under test, and a
+  test that pins source text or generated files (a drift test fails for any edit) all count as
+  an assertion failure.
+- Changes outside the production scope (`paths`, or the source suffixes, and anything under
+  `test_paths`) are never reverted.
+- Only unittest and pytest output is read today; any other runner's failures are *unreadable*
+  and block.
 
 #### `swarm_review_evidence`
 

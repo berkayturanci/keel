@@ -309,6 +309,79 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertTrue(outcome.ok, _messages(outcome))
         self.assertIn("1 of 1 production change(s)", _messages(outcome)[-1][1])
 
+    @unittest.skipIf(os.name == "nt", "git on Windows records no executable bit")
+    def test_a_mode_change_is_checked_apart_from_the_content(self):
+        """Review round on ac298e19: a test of the executable bit caught every hunk."""
+        base = "A = 1\n\n\n\n\nB = 1\n"
+        root = _repo(
+            self.root,
+            {
+                "tests/test_tool.py": (
+                    "import os\nimport unittest\n\n\nclass M(unittest.TestCase):\n"
+                    "    def test_executable(self):\n"
+                    "        self.assertTrue(os.access('pkg/tool.py', os.X_OK))\n"
+                )
+            },
+        )
+        (root / "pkg" / "tool.py").write_text(base, encoding="utf-8")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-qm", "tool base")
+        _git(root, "branch", "-f", "main", "HEAD")
+        (root / "pkg" / "tool.py").write_text(base.replace("= 1", "= 2"), encoding="utf-8")
+        (root / "pkg" / "tool.py").chmod(0o755)
+        _git(root, "add", "-A")
+        _git(root, "commit", "-qm", "tool changes")
+        outcome = _outcome(root)
+        found = _messages(outcome)
+        self.assertFalse(outcome.ok, found)
+        self.assertEqual(
+            [m.split(":")[0] for s, m in found if s == "major"],
+            ["pkg/tool.py @@ -1 +1 @@", "pkg/tool.py @@ -6 +6 @@"],
+        )
+        self.assertIn("1 of 3 production change(s)", found[-1][1])
+
+    def test_a_baseline_that_reports_a_failure_cannot_judge(self):
+        """`suite1; suite2` exits with suite2's status while suite1 fails an assertion."""
+        root = _repo(
+            self.root,
+            {
+                "pkg/calc.py": _FEATURE_CALC,
+                "tests/test_red.py": (
+                    "import unittest\n\n\nclass R(unittest.TestCase):\n"
+                    "    def test_red(self):\n        self.assertEqual(1, 2)\n"
+                ),
+            },
+        )
+        both = (
+            f'"{sys.executable}" -c "import subprocess, sys; '
+            "subprocess.call([sys.executable, '-m', 'unittest', 'tests.test_red']); "
+            "sys.exit(subprocess.call([sys.executable, '-m', 'unittest', 'tests.test_calc']))\""
+        )
+        outcome = _outcome(root, _config(cmd=both))
+        self.assertEqual((outcome.ok, outcome.unconfigured), (False, True), _messages(outcome))
+        self.assertIn("reports failing tests", outcome.findings[0].message)
+
+    def test_each_added_function_must_be_noticed_on_its_own(self):
+        """Sweep after ac298e19: a new module undone whole was "noticed" by any import."""
+        root = _repo(
+            self.root,
+            {
+                "pkg/extra.py": "def used():\n    return 1\n\n\ndef untested():\n    return 2\n",
+                "tests/test_extra.py": (
+                    "import unittest\n\nfrom pkg import extra\n\n\nclass E(unittest.TestCase):\n"
+                    "    def test_used(self):\n        self.assertEqual(extra.used(), 1)\n"
+                ),
+            },
+        )
+        outcome = _outcome(root)
+        found = _messages(outcome)
+        self.assertFalse(outcome.ok, found)
+        self.assertEqual(
+            [(s, m.split(":")[0]) for s, m in found[:2]],
+            [("nit", "pkg/extra.py @@ -0,0 +1,4 @@"), ("major", "pkg/extra.py @@ -4,0 +5,2 @@")],
+        )
+        self.assertIn("no test notices this change", found[1][1])
+
     def test_a_suite_red_on_a_clean_head_cannot_judge(self):
         root = _repo(
             self.root,

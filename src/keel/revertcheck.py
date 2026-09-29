@@ -241,6 +241,25 @@ class FileDiff:
     hunks: tuple[Hunk, ...]
     status: str  # added | deleted | modified
 
+    @property
+    def mode(self) -> tuple[str, str] | None:
+        """``(old, new)`` when the diff changes the file's mode (``old mode`` / ``new mode``)."""
+        old = next((line[9:] for line in self.header if line.startswith("old mode ")), None)
+        new = next((line[9:] for line in self.header if line.startswith("new mode ")), None)
+        return (old, new) if old and new else None
+
+    @property
+    def binary(self) -> bool:
+        """git printed no text for it (``Binary files … differ``)."""
+        return any(line.startswith(("Binary files ", "GIT binary patch")) for line in self.header)
+
+    @property
+    def content_header(self) -> tuple[str, ...]:
+        """The header without its mode lines: a content hunk must not carry the mode along."""
+        return tuple(
+            line for line in self.header if not line.startswith(("old mode ", "new mode "))
+        )
+
 
 def _path_from(line: str, prefix: str) -> str | None:
     """The path on a ``--- a/x`` / ``+++ b/x`` line; ``None`` for ``/dev/null``.
@@ -377,36 +396,107 @@ class Plan:
 def plan_changes(
     files: Sequence[FileDiff], *, tests: Sequence[str], paths: Sequence[str], unit: str
 ) -> Plan:
-    """The production changes to revert, one per hunk (or per file), ordered by path.
+    """The production changes to revert, ordered by path.
 
     Ordered here, not by git: ``diff.orderFile`` reorders git's output, and the order
-    decides which changes ``max_changes`` reaches.
+    decides which changes ``max_changes`` reaches. Each change is reverted alone, so each
+    must carry only itself:
+
+    * **A mode change is its own change** (``old mode``/``new mode``). Copied into every
+      content hunk's patch, it was undone with each of them, and one test of the
+      executable bit "caught" every hunk of the file.
+    * **Added code is split at its top-level blocks** (:func:`_blocks`) — a hunk that
+      only adds lines, and a new file's content, whatever ``unit`` says for a new file.
+      Undone whole, three added functions where a test calls one read as "noticed" for
+      all three; undone one block at a time, each must be noticed on its own. A new file
+      that is one block stays one change, which deletes it.
+    * Otherwise one change per hunk (``unit: hunk``) or per file (``unit: file``); a
+      deleted file is one change, which restores it.
     """
     changes: list[Change] = []
     unrevertable: list[str] = []
     for f in sorted(files, key=lambda f: f.path):
         if not is_production(f.path, tests=tests, paths=paths):
             continue
-        if not f.hunks:
-            unrevertable.append(f.path)
+        if f.mode is not None and f.status == "modified":
+            old, new = f.mode
+            mode_patch = "\n".join((f.header[0], f"old mode {old}", f"new mode {new}")) + "\n"
+            changes.append(Change(f"{f.path} (mode {old} -> {new})", f.path, mode_patch, False))
+        if f.binary or not f.hunks:
+            if f.binary or f.mode is None:
+                unrevertable.append(f.path)
             continue
-        if unit == UNIT_FILE or f.status != "modified":
-            # A new or deleted file is one change whatever the unit: half a file's
-            # removal is not a state the branch ever had.
-            suffix = {"added": " (new file)", "deleted": " (deleted file)"}.get(f.status, "")
+        header = f.content_header
+        if f.status == "added":
+            blocks = _blocks(f.hunks[0]) if len(f.hunks) == 1 else []
+            if len(blocks) > 1:
+                plain = (header[0], f"--- a/{f.path}", f"+++ b/{f.path}")
+                changes.extend(_block_change(f.path, plain, block) for block in blocks)
+            else:
+                changes.append(
+                    Change(f"{f.path} (new file)", f.path, _patch(header, f.hunks), True)
+                )
+            continue
+        if unit == UNIT_FILE or f.status == "deleted":
+            suffix = " (deleted file)" if f.status == "deleted" else ""
             changes.append(
                 Change(
                     f"{f.path}{suffix}",
                     f.path,
-                    _patch(f.header, f.hunks),
+                    _patch(header, f.hunks),
                     all(h.pure_addition for h in f.hunks),
                 )
             )
             continue
         for hunk in f.hunks:
+            blocks = _blocks(hunk) if hunk.pure_addition else []
+            if len(blocks) > 1:
+                changes.extend(_block_change(f.path, header, block) for block in blocks)
+                continue
             label = f"{f.path} {hunk.header.split(' @@', 1)[0]} @@"
-            changes.append(Change(label, f.path, _patch(f.header, (hunk,)), hunk.pure_addition))
+            changes.append(Change(label, f.path, _patch(header, (hunk,)), hunk.pure_addition))
     return Plan(tuple(changes), tuple(unrevertable), tuple(f.path for f in files))
+
+
+def _blocks(hunk: Hunk) -> list[tuple[int, tuple[str, ...]]]:
+    """A pure-addition hunk's lines split at its outermost blocks, as ``(first line, lines)``.
+
+    A block starts at a non-blank line indented as little as the hunk's least-indented
+    line, following a blank line, once the block before it holds a non-blank line. So a
+    ``def`` or ``class`` stays whole with its body and decorators, two methods added to a
+    class are two blocks, and blank lines ride with the block before them (leading ones
+    with the first). A ``\\ No newline`` marker stays with its line. ``[]`` for a hunk
+    whose header cannot be read.
+    """
+    match = _HUNK_RE.match(hunk.header)
+    if not match:
+        return []
+    start = int(match.group(3))
+    added = [line[1:] for line in hunk.lines if line.startswith("+") and line[1:].strip()]
+    outer = min((len(text) - len(text.lstrip()) for text in added), default=0)
+    blocks: list[tuple[int, list[str]]] = []
+    offset = 0
+    previous_blank = True
+    for line in hunk.lines:
+        text = line[1:]
+        if line.startswith("+"):
+            indent = len(text) - len(text.lstrip())
+            boundary = bool(text.strip()) and indent == outer and previous_blank
+            if not blocks or (boundary and any(b[1:].strip() for b in blocks[-1][1])):
+                blocks.append((start + offset, []))
+            previous_blank = not text.strip()
+            offset += 1
+        blocks[-1][1].append(line)
+    return [(first, tuple(lines)) for first, lines in blocks]
+
+
+def _block_change(path: str, header: Sequence[str], block: tuple[int, tuple[str, ...]]) -> Change:
+    """One block of added lines as its own change: a patch that removes just those lines."""
+    first, lines = block
+    count = sum(1 for line in lines if line.startswith("+"))
+    hunk_header = f"@@ -{first - 1},0 +{first},{count} @@"
+    patch = "\n".join((*header, hunk_header, *lines)) + "\n"
+    return Change(f"{path} {hunk_header}", path, patch, True)
 
 
 def _patch(header: Sequence[str], hunks: Sequence[Hunk]) -> str:
@@ -536,9 +626,10 @@ _PYTEST_COUNT = re.compile(r"(\d+) ([a-z]+)")
 #: The node id may contain spaces — a parametrized id (``test_v[hello world]``) or a file
 #: name — so it is read as: a bracketed id up to its ``]``, else one word, else the
 #: shortest text before `` - ``; the reason is what follows `` - `` and may be absent.
-_PYTEST_LINE = re.compile(
-    r"^(FAILED|ERROR) (?!\()(?:\S*?\[.*?\]|\S+|.+?)(?: - (.*))?$", re.MULTILINE
-)
+_PYTEST_LINE = re.compile(r"^(FAILED|ERROR) (?!\()(\S*?\[.*?\]|\S+|.+?)(?: - (.*))?$", re.MULTILINE)
+#: A unittest failure section's header: ``FAIL: test_x (pkg.T.test_x)`` is an assertion,
+#: ``ERROR: …`` anything else. What the differential reading compares.
+_UNITTEST_HEADER = re.compile(r"^(FAIL|ERROR): (.+?)\s*$", re.MULTILINE)
 #: A pytest short-summary reason that is an assertion: a rewritten ``assert``, an
 #: ``AssertionError`` (unittest-style assertions under pytest), or ``pytest.fail``.
 #: ``Failed: Timeout`` is excluded: pytest-timeout reports a timed-out test that way, and
@@ -561,6 +652,15 @@ class Tally:
     errors: int = 0
     #: pytest counted a failure its short summary does not describe (``-rN``, truncation).
     unclassified: int = 0
+    #: The ids of the tests that failed as an assertion, where the runner names them.
+    assertion_ids: frozenset[str] = frozenset()
+    #: The ids of every failing test — assertion or not — where the runner names them.
+    failure_ids: frozenset[str] = frozenset()
+
+    @property
+    def failed(self) -> bool:
+        """Does the output report any failing or erroring test at all?"""
+        return bool(self.assertions or self.errors or self.unclassified or self.failure_ids)
 
 
 def read_output(output: str) -> Tally:
@@ -601,30 +701,58 @@ def read_output(output: str) -> Tally:
             elif word in ("error", "errors"):
                 errors += int(count)
     described = 0
+    asserted: set[str] = set()
+    failing: set[str] = set()
+    for kind, test_id in _UNITTEST_HEADER.findall(output):
+        failing.add(test_id)
+        if kind == "FAIL":
+            asserted.add(test_id)
     for match in _PYTEST_LINE.finditer(output):
+        failing.add(match.group(2))
         if match.group(1) != "FAILED":
             continue  # ERROR lines are already in the summary's error count
         described += 1
-        if _ASSERTION_REASON.match(match.group(2) or ""):
+        if _ASSERTION_REASON.match(match.group(3) or ""):
             assertions += 1
+            asserted.add(match.group(2))
         else:
             errors += 1
     unclassified = max(0, pytest_failed - described)
-    return Tally(recognized, ran, assertions, errors, unclassified)
+    return Tally(
+        recognized,
+        ran,
+        assertions,
+        errors,
+        unclassified,
+        frozenset(asserted),
+        frozenset(failing),
+    )
 
 
-def classify(*, exit_ok: bool, timed_out: bool, output: str) -> tuple[str, str]:
+def classify(
+    *, exit_ok: bool, timed_out: bool, output: str, baseline_failed: frozenset[str] = frozenset()
+) -> tuple[str, str]:
     """One reverted run -> ``(result, why)``. Only :data:`CAUGHT` is a pass.
 
     The exit code decides pass/fail; the output decides *how* it failed. A test that
     errored is not a test that asserted — reverting half a fix can raise ``NameError``
     in every test that imports it, and that proves the import, not the behaviour.
+
+    **Differential.** ``baseline_failed`` names the tests that failed without the revert.
+    Where the runner names the assertion failures, the change is caught only by one
+    *not* among them, so a failure that was already there cannot certify it.
+    (:func:`baseline_problem` already refuses a baseline with any failure; this holds the
+    rule on its own too.)
     """
     if timed_out:
         return TIMED_OUT, "the test command timed out with the change reverted"
     if exit_ok:
         return UNNOTICED, "the test command passed with the change reverted"
     tally = read_output(output)
+    if tally.assertion_ids and tally.assertion_ids <= baseline_failed:
+        return UNNOTICED, (
+            "the only tests that failed as an assertion also fail without the revert"
+        )
     if tally.assertions:
         return CAUGHT, f"{tally.assertions} test(s) failed as an assertion"
     if not tally.recognized:
@@ -663,6 +791,13 @@ def baseline_problem(*, exit_ok: bool, timed_out: bool, output: str) -> str | No
         )
     if tally.ran == 0:
         return "the test command ran no tests on a clean checkout of HEAD"
+    if tally.failed:
+        # `suite1; suite2` exits with suite2's status: a suite already failing an
+        # assertion would otherwise lend that assertion to every revert.
+        return (
+            "the test command exits 0 on a clean checkout of HEAD but its output reports "
+            "failing tests, so a failure with a change reverted would prove nothing"
+        )
     return None
 
 
@@ -743,6 +878,7 @@ def execute(
     problem = baseline_problem(exit_ok=base.exit_ok, timed_out=base.timed_out, output=base.output)
     if problem is not None:
         return Report(problem)
+    baseline_failed = read_output(base.output).failure_ids
     results: list[ChangeResult] = []
     skipped: list[tuple[Change, str]] = []
     for index, change in enumerate(changes):
@@ -773,7 +909,10 @@ def execute(
             continue
         outcome = test(limit(remaining))
         result, why = classify(
-            exit_ok=outcome.exit_ok, timed_out=outcome.timed_out, output=outcome.output
+            exit_ok=outcome.exit_ok,
+            timed_out=outcome.timed_out,
+            output=outcome.output,
+            baseline_failed=baseline_failed,
         )
         adds_only = (change.pure_addition or imports_only(change)) and missing_names_only(
             outcome.output

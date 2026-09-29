@@ -1,6 +1,7 @@
 """Unit tests for the pure half of the opt-in ``revert-check`` gate (#1289)."""
 
 import unittest
+import unittest.mock
 
 from keel import revertcheck as rc
 
@@ -228,10 +229,123 @@ class TestPlanChanges(unittest.TestCase):
         )
         self.assertIn("@@ -9,0 +12,2 @@", plan.changes[0].patch)
 
-    def test_a_production_file_with_no_hunk_is_unrevertable(self):
-        text = "diff --git a/bin/tool.sh b/bin/tool.sh\nold mode 100644\nnew mode 100755\n"
+    def test_a_binary_production_file_is_unrevertable(self):
+        text = (
+            "diff --git a/lib/a.so.py b/lib/a.so.py\n"
+            "Binary files a/lib/a.so.py and b/lib/a.so.py differ\n"
+        )
         plan = rc.plan_changes(rc.parse_diff(text), tests=["tests/**"], paths=[], unit="hunk")
-        self.assertEqual((plan.changes, plan.unrevertable), ((), ("bin/tool.sh",)))
+        self.assertEqual((plan.changes, plan.unrevertable), ((), ("lib/a.so.py",)))
+
+    def test_a_mode_change_is_its_own_change(self):
+        """Review round on ac298e19: the mode rode along with every content hunk."""
+        text = (
+            "diff --git a/bin/tool.sh b/bin/tool.sh\nold mode 100644\nnew mode 100755\n"
+            "index 1111111..2222222\n--- a/bin/tool.sh\n+++ b/bin/tool.sh\n"
+            "@@ -1 +1 @@\n-A=1\n+A=2\n@@ -5 +5 @@\n-B=1\n+B=2\n"
+            "diff --git a/bin/only.sh b/bin/only.sh\nold mode 100644\nnew mode 100755\n"
+        )
+        for unit in ("hunk", "file"):
+            with self.subTest(unit=unit):
+                plan = rc.plan_changes(rc.parse_diff(text), tests=["tests/**"], paths=[], unit=unit)
+                labels = [c.label for c in plan.changes]
+                self.assertEqual(labels[0], "bin/only.sh (mode 100644 -> 100755)")
+                self.assertEqual(labels[1], "bin/tool.sh (mode 100644 -> 100755)")
+                self.assertEqual(
+                    plan.changes[1].patch,
+                    "diff --git a/bin/tool.sh b/bin/tool.sh\nold mode 100644\nnew mode 100755\n",
+                )
+                self.assertEqual(len(labels), 4 if unit == "hunk" else 3)
+                for change in plan.changes[2:]:
+                    self.assertNotIn("mode", change.patch)
+                self.assertEqual(plan.unrevertable, ())
+
+
+class TestAddedCodeIsSplitIntoBlocks(unittest.TestCase):
+    """Sweep after ac298e19: one test calling one of three added functions "noticed" all
+    three when the hunk (or the new file) was undone whole."""
+
+    ADDED = "\n".join(
+        [
+            "diff --git a/src/n.py b/src/n.py",
+            "new file mode 100644",
+            "index 0000000..1111111",
+            "--- /dev/null",
+            "+++ b/src/n.py",
+            "@@ -0,0 +1,8 @@",
+            "+import os",
+            "+",
+            "+def f():",
+            "+    return 1",
+            "+",
+            "+@decorated",
+            "+def g():",
+            "+    return 2",
+            "\\ No newline at end of file",
+            "diff --git a/src/x.py b/src/x.py",
+            "--- a/src/x.py",
+            "+++ b/src/x.py",
+            "@@ -1,0 +2,6 @@ a",
+            "+",
+            "+def h():",
+            "+    return 3",
+            "+",
+            "+def k():",
+            "+    return 4",
+            "",
+        ]
+    )
+
+    def test_each_top_level_block_is_a_change(self):
+        plan = rc.plan_changes(rc.parse_diff(self.ADDED), tests=[], paths=[], unit="hunk")
+        self.assertEqual(
+            [c.label for c in plan.changes],
+            [
+                "src/n.py @@ -0,0 +1,2 @@",
+                "src/n.py @@ -2,0 +3,3 @@",
+                "src/n.py @@ -5,0 +6,3 @@",
+                "src/x.py @@ -1,0 +2,4 @@",
+                "src/x.py @@ -5,0 +6,2 @@",
+            ],
+        )
+        self.assertTrue(all(c.pure_addition for c in plan.changes))
+        # A new file's block is removed from the file, which stays: a plain header.
+        self.assertEqual(
+            plan.changes[2].patch,
+            "diff --git a/src/n.py b/src/n.py\n--- a/src/n.py\n+++ b/src/n.py\n"
+            "@@ -5,0 +6,3 @@\n+@decorated\n+def g():\n+    return 2\n"
+            "\\ No newline at end of file\n",
+        )
+        self.assertEqual(
+            plan.changes[3].patch,
+            "diff --git a/src/x.py b/src/x.py\n--- a/src/x.py\n+++ b/src/x.py\n"
+            "@@ -1,0 +2,4 @@\n+\n+def h():\n+    return 3\n+\n",
+        )
+
+    def test_methods_added_to_a_class_are_separate_blocks(self):
+        text = (
+            "diff --git a/k.py b/k.py\n--- a/k.py\n+++ b/k.py\n@@ -3,0 +4,6 @@ class K:\n"
+            "+    def a(self):\n+        return 1\n+\n+    def b(self):\n"
+            "+        return 2\n+\n"
+        )
+        plan = rc.plan_changes(rc.parse_diff(text), tests=[], paths=[], unit="hunk")
+        self.assertEqual(
+            [c.label for c in plan.changes], ["k.py @@ -3,0 +4,3 @@", "k.py @@ -6,0 +7,3 @@"]
+        )
+
+    def test_one_block_stays_one_change(self):
+        one = "diff --git a/a.py b/a.py\nnew file mode 100644\n--- /dev/null\n+++ b/a.py\n"
+        one += "@@ -0,0 +1,2 @@\n+def f():\n+    return 1\n"
+        (change,) = rc.plan_changes(rc.parse_diff(one), tests=[], paths=[], unit="hunk").changes
+        self.assertEqual(change.label, "a.py (new file)")
+        self.assertIn("new file mode", change.patch)
+        # The file unit keeps a new file whole only when it is one block, too.
+        plan = rc.plan_changes(rc.parse_diff(self.ADDED), tests=[], paths=[], unit="file")
+        self.assertEqual(len(plan.changes), 4)
+
+    def test_an_unreadable_header_is_not_split(self):
+        hunk = rc.Hunk("@@ nonsense", ("+a", "+", "+b"), 3, 0)
+        self.assertEqual(rc._blocks(hunk), [])
 
 
 class TestReadOutput(unittest.TestCase):
@@ -289,6 +403,19 @@ class TestReadOutput(unittest.TestCase):
             rc.CAUGHT,
         )
 
+    def test_failing_test_ids_are_read(self):
+        tally = rc.read_output(
+            "FAIL: test_a (t.T.test_a)\nERROR: test_b (t.T.test_b)\n"
+            "FAILED t.py::c[x y] - assert 0\nFAILED t.py::d - KeyError: 1\nERROR t.py - boom\n"
+        )
+        self.assertEqual(tally.assertion_ids, {"test_a (t.T.test_a)", "t.py::c[x y]"})
+        self.assertEqual(
+            tally.failure_ids,
+            {"test_a (t.T.test_a)", "test_b (t.T.test_b)", "t.py::c[x y]", "t.py::d", "t.py"},
+        )
+        self.assertTrue(tally.failed)
+        self.assertFalse(rc.read_output("Ran 1 test in 0s\n\nOK\n").failed)
+
     def test_a_pytest_timeout_is_not_an_assertion(self):
         tally = rc.read_output(
             "FAILED t.py::slow - Failed: Timeout >10.0s\n"
@@ -328,6 +455,52 @@ class TestClassify(unittest.TestCase):
         self.assertIn(
             "-rf", rc.classify(exit_ok=False, timed_out=False, output="1 failed in 1s")[1]
         )
+
+
+class OnlyANewAssertionFailureCounts(unittest.TestCase):
+    """Review round on ac298e19: a failure the baseline already had certified a revert."""
+
+    def test_an_assertion_the_baseline_already_had_does_not_catch(self):
+        output = "FAIL: test_a (t.T.test_a)\nRan 2 tests in 0s\nFAILED (failures=1)\n"
+        old = frozenset({"test_a (t.T.test_a)"})
+        result, why = rc.classify(
+            exit_ok=False, timed_out=False, output=output, baseline_failed=old
+        )
+        self.assertEqual(result, rc.UNNOTICED)
+        self.assertIn("also fail without the revert", why)
+        self.assertEqual(rc.classify(exit_ok=False, timed_out=False, output=output)[0], rc.CAUGHT)
+        newer = output.replace("FAIL: test_a", "FAIL: test_c (t.T.test_c)\nFAIL: test_a")
+        self.assertEqual(
+            rc.classify(exit_ok=False, timed_out=False, output=newer, baseline_failed=old)[0],
+            rc.CAUGHT,
+        )
+
+    def test_a_baseline_that_reports_failures_cannot_anchor(self):
+        # `suite1; suite2`: suite1 already fails an assertion, suite2 passes, exit 0.
+        for output in (
+            "FAIL: test_a (s1.T.test_a)\nRan 1 test in 0s\n\nFAILED (failures=1)\n"
+            "Ran 3 tests in 0s\n\nOK\n",
+            "Ran 3 tests in 0s\n\nFAILED (errors=1)\nRan 1 test in 0s\n\nOK\n",
+            "1 failed, 3 passed in 0.1s\n",
+            "3 passed, 1 error in 0.1s\n",
+        ):
+            with self.subTest(output=output):
+                problem = rc.baseline_problem(exit_ok=True, timed_out=False, output=output)
+                self.assertIsNotNone(problem)
+                self.assertIn("reports failing tests", problem)
+
+    def test_execute_hands_the_baseline_failures_to_classify(self):
+        seen = []
+        original = rc.classify
+
+        def spy(**kwargs):
+            seen.append(kwargs.get("baseline_failed"))
+            return original(**kwargs)
+
+        scratch = _Scratch(runs={None: _GREEN})
+        with unittest.mock.patch.object(rc, "classify", side_effect=spy):
+            _execute([_change("a")], scratch=scratch)
+        self.assertEqual(seen, [frozenset()])
 
 
 class TestBaseline(unittest.TestCase):
