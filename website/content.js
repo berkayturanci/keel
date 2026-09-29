@@ -47,7 +47,7 @@ window.KEEL = {
   invariants: [
     ["merge lock", "A mkdir lock means only one merge runs at a time."],
     ["night no-merge window", "Timezone-aware window keeps merges out of risky hours."],
-    ["fail-soft", "Optional gates that error become no-ops, never hard blocks."],
+    ["fail-soft", "An optional gate that errors is reported, not passed: SKIPPED beside another gate, and it blocks when it is the only gate planned."],
     ["orchestrator-only writes", "Only the orchestrator mutates git / PRs; agents propose."],
     ["vendor + model attribution", "Every action records which agent and model produced it."],
   ],
