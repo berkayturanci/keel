@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import inspect
 import io
 import os
 import re
@@ -50,6 +51,7 @@ from keel import (
     ledger,
     model,
     runner,
+    team,
     workspace,
 )
 from keel import config as cfg
@@ -347,6 +349,22 @@ class TestTheRunLedgerIsNotDescribedAsCommitted(unittest.TestCase):
         self.assertTrue(ledger.DEFAULT_LEDGER_PATH.startswith(".keel/state/"))
         self.assertIn("state/", workspace.RUNTIME_IGNORE_ENTRIES)
 
+    #: "the run ledger is **committed**" (capture.py), "*committed*" (a test docstring)
+    #: and "the committed ledger" (captureverify.py), in any emphasis.
+    _COMMITTED = re.compile(r"ledger (?:is )?\**committed\**|committed (?:run )?ledger", re.I)
+
+    def test_no_module_or_test_says_it_is_committed(self):
+        """Docs audit 2026-09-29: #1185's `artifact_scope` rationale called it committed."""
+        sources = sorted((REPO_ROOT / "src" / "keel").rglob("*.py"))
+        sources += sorted((REPO_ROOT / "tests").glob("test_*.py"))
+        for path in sources:
+            if path.name == Path(__file__).name:
+                continue
+            text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+            with self.subTest(path=path.relative_to(REPO_ROOT).as_posix()):
+                found = self._COMMITTED.search(text)
+                self.assertIsNone(found, found and found.group(0))
+
     def test_configuration_md_does_not_say_it_is_committed(self):
         text = re.sub(r"\s+", " ", _read(CONFIG_DOC))
         self.assertIsNone(
@@ -455,15 +473,93 @@ class TestTheImplementerChainIsTheSameInBothReferences(unittest.TestCase):
         self.assertNotIn(-1, positions.values(), positions)
         return sorted(self._STEPS, key=positions.__getitem__)
 
-    def test_the_orders_agree(self):
+    #: The `ship` and `implement` adapters' sources and the copies `make adapters plugin`
+    #: generates from them.
+    _CHAIN_ADAPTERS = tuple(
+        path
+        for command in ("ship", "implement")
+        for path in (
+            f"src/keel/adapters/commands/{command}.md",
+            f"commands/{command}.md",
+            f".claude/commands/keel/{command}.md",
+            f".agents/skills/keel-{command}/SKILL.md",
+        )
+    )
+
+    def _config_chain(self) -> str:
         config = _read(CONFIG_DOC)
         chain = config[
             config.index("--delegate / --review-delegate / --effort   (per-run flags)") :
         ]
-        chain = chain.split("```")[0]
+        return chain.split("```")[0]
+
+    def test_the_orders_agree(self):
         param = _read(PARAM_DOC)
         sentence = param[param.index("Implementer precedence at s4") :].split("HOST_AGENT")[0]
-        self.assertEqual(self._order(sentence), self._order(chain))
+        self.assertEqual(self._order(sentence), self._order(self._config_chain()))
+        self.assertNotIn("delegate:*", sentence)
+
+    def test_the_ship_and_implement_adapters_state_the_same_order(self):
+        """Docs audit 2026-09-29: the ship adapter's s4 chain left out both benches and
+        ranked an issue `delegate:*` label above `HOST_AGENT`, and the implement adapter's
+        left out both benches. `team.resolve_assignment` takes no issue labels at all, so no
+        label can be a member of the chain."""
+        params = set(inspect.signature(team.resolve_assignment).parameters)
+        self.assertEqual(set(), {"labels", "issue_labels"} & params)
+        config = self._order(self._config_chain())
+        for name in self._CHAIN_ADAPTERS:
+            text = " ".join((REPO_ROOT / name).read_text(encoding="utf-8").split())
+            start = text.find("Precedence: `--delegate` flag")
+            with self.subTest(page=name):
+                self.assertNotEqual(-1, start, f"{name} no longer states the chain")
+                chain = text[start:].split("`HOST_AGENT`")[0]
+                self.assertEqual(self._order(chain), config)
+                self.assertNotIn("delegate:*", chain)
+
+
+class TestNoDelegateLabelRoutesAnIssue(unittest.TestCase):
+    """Docs audit 2026-09-29: `models.md` offered `delegate:<vendor>` + `delegate-model:`
+    issue labels that "route implementation automatically", and five docstrings and pages
+    named `delegate-model:` as a source of the model token. Nothing in keel reads either."""
+
+    #: A `delegate:` or `delegate-model:` label, as Markdown or RST spells it.
+    _LABEL = re.compile(r"`delegate(?:-model)?:[^`\s]*`")
+
+    @staticmethod
+    def _surfaces() -> list[Path]:
+        paths = [REPO_ROOT / "README.md", *sorted(DOCS.glob("*.md"))]
+        paths += sorted((REPO_ROOT / "src" / "keel").rglob("*.py"))
+        paths += sorted(
+            p for p in (REPO_ROOT / "tests").glob("test_*.py") if p.name != Path(__file__).name
+        )
+        paths += sorted((REPO_ROOT / "src" / "keel" / "adapters" / "commands").glob("*.md"))
+        paths += sorted((REPO_ROOT / "commands").glob("*.md"))
+        paths += sorted((REPO_ROOT / ".claude" / "commands" / "keel").glob("*.md"))
+        paths += sorted((REPO_ROOT / ".agents" / "skills").glob("*/SKILL.md"))
+        return paths
+
+    def test_no_module_reads_one(self):
+        """A reader would need the prefix as a string literal; there is none."""
+        literal = re.compile(r"""["']delegate(?:-model)?:""")
+        for path in sorted((REPO_ROOT / "src" / "keel").rglob("*.py")):
+            with self.subTest(path=path.relative_to(REPO_ROOT).as_posix()):
+                found = literal.search(path.read_text(encoding="utf-8"))
+                self.assertIsNone(found, found and found.group(0))
+
+    def test_every_mention_says_keel_reads_none(self):
+        surfaces = self._surfaces()
+        for name in ("docs/keel/models.md", "src/keel/delegate.py", "src/keel/agents.py"):
+            self.assertIn(REPO_ROOT / name, surfaces)
+        mentions = 0
+        for path in surfaces:
+            text = " ".join(path.read_text(encoding="utf-8").split())
+            for sentence in re.split(r"(?<=\.)\s+", text):
+                if not self._LABEL.search(sentence):
+                    continue
+                mentions += 1
+                with self.subTest(path=path.relative_to(REPO_ROOT).as_posix(), at=sentence[:60]):
+                    self.assertIn("reads no", sentence)
+        self.assertGreater(mentions, 0, "the guard no longer sees the statement it pins")
 
 
 class TestACommittedTeamNeverNamesARegistryEntry(unittest.TestCase):

@@ -5,9 +5,13 @@ the change's diff and maps its findings into keel :class:`~keel.findings.Finding
 the ``jury`` binary the s8 run is a no-op (reported ``SKIPPED``, and blocking when ``jury`` is
 the only gate planned), but a tier-3 merge still requires a
 ``jury-verdict`` unless the run passes ``--no-jury``; it relaxes to advisory only when a
-posted verdict (or ``--jury-vendors``) reports fewer than 2 vendors. That requirement is
-not decided here: :func:`keel.ship.resolve_jury` resolves the mode, and
-:func:`keel.evidence.required_items` demands the verdict from it. Parsing is pure and
+posted verdict (or ``--jury-vendors``) reports fewer than 2 vendors. That is the default
+policy: off a jury-panel tier, ``team.jury.mode: advisory`` or ``--jury-advisory`` never
+requires the verdict and ``team.jury.min_vendors`` may raise the 2; on a tier whose review is
+the jury panel, no flag or short panel relaxes it, and only a probe that finds the panel
+unstaffable turns that tier's jury off, under ``team.jury.on_unavailable: fallback`` (the
+default). That requirement is not decided here: :func:`keel.ship.resolve_jury` resolves the
+mode, and :func:`keel.evidence.required_items` demands the verdict from it. Parsing is pure and
 unit-tested; the subprocess is behind the injectable ``_run`` seam.
 """
 

@@ -250,9 +250,9 @@ def attribution_labels(config: ProjectConfig | None = None) -> tuple[str, ...]:
     which is the same trade the registry already makes everywhere else, and is documented
     beside the field.
 
-    ``model:*`` is only enumerable that far. The effective model can arrive from
-    ``--delegate <vendor>:<model>`` or a ``delegate-model:`` issue label, so the labels
-    minted from those are unbounded and no check can list them ahead of time.
+    ``model:*`` is only enumerable that far. The effective model can arrive per run from
+    ``--delegate <vendor>:<model>`` or ``keel delegate run --model``, so the labels minted
+    from those are unbounded and no check can list them ahead of time.
     """
     vendors = {*BUILTIN_DELEGATE_VENDORS, HOST_DEFAULT}
     models: set[str] = set()
@@ -325,8 +325,8 @@ def profile_attribution(
 
 
 #: Characters a per-run model token may contain. Deliberately tight: the effective model
-#: can arrive from ``--delegate <profile>:<model>`` or a ``delegate-model:<name>`` issue
-#: label, which is a lower-trust source than the operator-authored ``command``, and it
+#: can arrive per run from ``--delegate <profile>:<model>`` or ``keel delegate run
+#: --model``, which is a lower-trust source than the operator-authored ``command``, and it
 #: ends up on a subprocess argv.
 _MODEL_TOKEN_OK = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 

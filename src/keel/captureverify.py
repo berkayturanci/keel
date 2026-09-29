@@ -34,7 +34,7 @@ FINDING_INVALID_MARKER = "invalid-marker"
 FINDING_APPLIED_WITHOUT_ARTIFACT = "applied-without-artifact"
 FINDING_REVIEWER_COUNT_MISMATCH = "reviewer-count-mismatch"
 #: A **note**, never a finding: the capture was applied to a sink outside the checkout,
-#: so the path in the committed ledger is host-specific and names nothing anywhere else.
+#: so the path in the ledger is host-specific and names nothing on any other host.
 #: That is the sink's design, not a gap — reporting it as `applied-without-artifact`
 #: accused a run that did exactly what it was configured to do (#1185).
 NOTE_APPLIED_ELSEWHERE = "applied-elsewhere"

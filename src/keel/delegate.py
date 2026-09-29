@@ -292,10 +292,10 @@ def resolve_provider(
     ``$HOME`` said it meant, which is exactly the shadowing those two checks exist to
     refuse; dispatch must not be the one place the rule is inverted.
 
-    The model half of the token is validated before anything else looks at it: it can
-    arrive from a ``delegate-model:`` issue label, which is a lower-trust source than the
-    operator-authored command beside it. **Which** rule applies depends on where the model
-    lands — see :func:`model_token_issue`.
+    The model half of the token is validated before anything else looks at it: it arrives
+    per run, on the command line (``--provider <name>:<model>`` or ``--model``), which is
+    a lower-trust source than the operator-authored command beside it. **Which** rule
+    applies depends on where the model lands — see :func:`model_token_issue`.
     """
     name, model = agents.split_delegate((token or "").strip())
     if not name:

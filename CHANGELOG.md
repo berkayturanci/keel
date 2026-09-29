@@ -58,6 +58,24 @@ All notable changes to keel are documented here. The format follows
   `tests/test_docs_cli_evidence_release.py` reads each list from the code it describes
   (docs audit 2026-09-29)
 - **The configuration, parameter, extension and model references match the code.** `parameter-reference.md` now lists every flag of every command it covers, drops a `--tier` that `keel ship` does not have, and names every command in each shared flag's "Accepted by" list. `configuration.md` says a missing preset tool fails at the preset's `on_fail` (a missing `gitleaks` blocks), and that the run ledger is gitignored, not committed. It also says a committed `knobs.team` cannot name a `~/.keel/providers.yaml` entry, a workflow file whose patch changes nothing privileged does not force TIER-3, and an unknown gate name is refused by `plan`/`run-gates`, not by `validate`. `extensions.md` says an extension that fails to load is skipped, even with `on_fail: block`; `keel validate --root` is what catches it. `models.md`'s Aider and Cursor profiles now build a working command line, and its remote-endpoint examples allow only their own host. `tests/test_docs_reference_accuracy.py` checks each of these claims against the parser, the schema or the deciding function (docs audit 2026-09-29).
+- **The jury relaxation, the s4 implementer chain and the run ledger are stated as the code
+  has them.** README, `cli.md`, `parameter-reference.md`, the site FAQ and `jury.py`'s
+  docstring said a tier-3 verdict "relaxes to advisory only when" fewer than 2 vendors report,
+  which is only the default: each now adds that `team.jury.mode: advisory` or `--jury-advisory`
+  also relaxes it off a jury-panel tier, `team.jury.min_vendors` may raise the 2, and on a tier
+  whose review is the panel nothing relaxes it but the measured
+  `team.jury.on_unavailable: fallback`. The ship and implement adapters' implementer
+  precedence gains the `team.profiles` and `team.by_difficulty` benches, and the ship
+  adapter's drops an issue `delegate:*` label that `team.resolve_assignment` never reads
+  (`parameter-reference.md` too). No code reads a `delegate:` or `delegate-model:` issue
+  label, so `models.md`'s "Issue Labels" section now describes the role label and the benches
+  that do route an issue. The `delegate.py`, `agents.py` and `api_delegate.py` docstrings,
+  `cli.md`, `parameter-reference.md` and the ship adapter no longer name such a label as a
+  source of the model token. `capture.py`,
+  `captureverify.py` and two test docstrings no longer call the run ledger committed: it is
+  gitignored `.keel/state/` state unless `policy_pack.reports.run_ledger` points it at a
+  tracked file. `tests/test_docs_claims.py` and `tests/test_docs_reference_accuracy.py` hold
+  each surface to it (docs audit 2026-09-29).
 
 ### Companion
 - **keel-visual's release is guarded like core's** (#1371). `scripts/release_check.py
