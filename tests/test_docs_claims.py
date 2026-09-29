@@ -1616,11 +1616,15 @@ class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
         self.assertTrue(self.reaches({"w": worker, "c": after}, "c.h"), "refused too late")
         self.assertTrue(self.reaches({"w": worker, "c": unguarded}, "c.h"))
 
-    def test_the_cli_writes_from_exactly_nine_commands(self):
+    def test_the_cli_writes_from_exactly_eleven_commands(self):
         """The hardening found nothing new, and the refusal rule drops `swarm-run`,
-        whose `--live` is refused before anything starts (#1281)."""
+        whose `--live` is refused before anything starts (#1281). `ship` and `run-gates`
+        joined with the opt-in `revert-check` gate, whose scratch worktree is added, reset
+        and removed through git (#1289)."""
         self.assertEqual(
             {
+                "ship",
+                "run-gates",
                 "merge",
                 "capture-land",
                 "post-comment",

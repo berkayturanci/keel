@@ -1655,6 +1655,10 @@ capabilities exit 1 before any gate runs; missing optional capabilities print a 
 notice and continue. Exits 1 when the summarized verdict blocks (`BLOCKED — merge is
 gated by the findings above`), so it wires directly into CI.
 
+When `gates:` lists the opt-in **`revert-check`** (see
+[`knobs.revert_check`](configuration.md#revert_check)), it is evaluated after the other gates
+as well, and reports every production change whose solo revert no test notices.
+
 Under `implement_mode: tdd` (or `--tdd`) the run also carries the pure **`tdd-order`**
 gate, evaluated **after** every other gate because its verdict includes theirs: it passes
 when the first non-merge commit on the branch touches only the project's test paths and

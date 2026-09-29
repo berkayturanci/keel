@@ -79,15 +79,23 @@ class CommandResult:
 
 
 def _result(proc) -> CommandResult:
-    out = proc.stdout or ""
-    err = proc.stderr or ""
+    out = _decoded(proc.stdout)
+    err = _decoded(proc.stderr)
     return CommandResult(proc.returncode == 0, proc.returncode, out + err, stdout=out, stderr=err)
 
 
 def run_command(
-    cmd: str, *, cwd: str | None = None, timeout: int = DEFAULT_GATE_TIMEOUT_S, _run=subprocess.run
+    cmd: str,
+    *,
+    cwd: str | None = None,
+    timeout: int = DEFAULT_GATE_TIMEOUT_S,
+    env: dict[str, str] | None = None,
+    _run=subprocess.run,
 ) -> CommandResult:
-    """Run ``cmd`` in a shell, capturing output. Fail-soft on timeout/OS error."""
+    """Run ``cmd`` in a shell, capturing output. Fail-soft on timeout/OS error.
+
+    ``env`` replaces the child's environment when given (``None`` inherits it).
+    """
     try:
         # Intentional shell boundary: cmd must come only from operator-controlled
         # project config or extension YAML, never from PR content or agent output.
@@ -110,6 +118,7 @@ def run_command(
             errors="surrogateescape",
             timeout=timeout,
             stdin=subprocess.DEVNULL,
+            env=env,
         )  # nosec B604
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s", timed_out=True)
@@ -124,9 +133,18 @@ def run_argv(
     cwd: str | None = None,
     timeout: int = 120,
     stdin_text: str | None = None,
+    env: dict[str, str] | None = None,
+    keep_line_endings: bool = False,
     _run=subprocess.run,
 ) -> CommandResult:
     """Run an argv list (no shell). Fail-soft on timeout/OS error. Used by git/gh wrappers.
+
+    ``keep_line_endings`` reads the output as bytes and decodes it here, the same way
+    (UTF-8, ``surrogateescape``), because text mode's universal newlines turn every
+    ``\\r\\n`` into ``\\n``: a diff of a CRLF file then no longer matches its own lines.
+
+    ``env`` replaces the child's environment when given (``None`` inherits it) — for a
+    caller that must keep a variable such as ``GIT_DIFF_OPTS`` away from the child.
 
     ``stdin_text`` feeds the child on standard input instead of closing it. Every delegate
     CLI keel dispatches to takes its prompt that way (:mod:`keel.delegate`): a prompt
@@ -139,7 +157,7 @@ def run_argv(
             argv,
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=not keep_line_endings,
             # **UTF-8, not the platform default.** `text=True` alone decodes with
             # `locale.getencoding()`, which on Windows is the ANSI code page: cp1252
             # leaves 0x81/8D/8F/90/9D undefined, so `git ls-tree -z` on a repository
@@ -149,10 +167,15 @@ def run_argv(
             # also round-trips undecodable bytes back out unchanged, which the landing
             # needs: the names it reads from `ls-tree` are written straight back to
             # `mktree`.
-            encoding="utf-8",
-            errors="surrogateescape",
+            encoding=None if keep_line_endings else "utf-8",
+            errors=None if keep_line_endings else "surrogateescape",
             timeout=timeout,
-            input=stdin_text,
+            env=env,
+            input=(
+                stdin_text.encode("utf-8")
+                if keep_line_endings and stdin_text is not None
+                else stdin_text
+            ),
             # Written out rather than assembled into a **kwargs dict: #879's sweep in
             # tests/test_missing_pins.py reads every spawn site's keywords out of the
             # AST, and a site that hides `stdin` behind a splat is a site the rule
@@ -165,6 +188,14 @@ def run_argv(
     except OSError as exc:
         return CommandResult(False, 127, str(exc), stderr=str(exc), spawn_failed=True)
     return _result(proc)
+
+
+def _decoded(data: bytes | str | None) -> str:
+    """Captured output as text: bytes (``keep_line_endings``) are decoded as text mode
+    would, minus its newline translation."""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", "surrogateescape")
+    return data or ""
 
 
 def _tail(text: str, n: int = 20) -> str:

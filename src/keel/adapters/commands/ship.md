@@ -1092,6 +1092,10 @@ implementer defensively without spending review budget unless it surfaces a bloc
 Under `implement_mode: tdd` (or `--tdd`, which `run-gates` also accepts) this run also
 carries the pure **`tdd-order`** gate — see **Test-first s4** — evaluated after the other
 gates because its verdict includes theirs.
+When `gates:` lists the opt-in **`revert-check`**, this run also reverts each production
+change on the branch alone in a scratch worktree and re-runs the tests; a `major` naming a
+hunk means no test fails as an assertion without it. Answer it with a test that does, not by
+raising `knobs.revert_check` bounds; a `cannot judge:` finding is the project's config to fix.
 An **`agentic` gate reports `NOT-RUN` here** — this command does not dispatch those, you
 do. `NOT-RUN` is not a pass: a gate declared `on_fail: block` that shows `NOT-RUN` blocks
 the merge decision and refuses to certify the run, so `keel merge` will reject the head.

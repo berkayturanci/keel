@@ -265,11 +265,20 @@ class TheIntegrationCardsClaimOnlyWhatKeelDoes(unittest.TestCase):
         self.assertNotIn("every non-Claude agent reads", self.cards)
 
     def test_keel_installs_no_git_hook(self):
-        """K71: the "Pre-Commit Quality Gates" card promised gates "before any commit"."""
+        """K71: the "Pre-Commit Quality Gates" card promised gates "before any commit".
+
+        No module writes a hook or points ``core.hooksPath`` at one with ``git config``.
+        The revert-check gate's per-command ``-c core.hooksPath=<empty dir>`` is the
+        opposite — it keeps the repository's hooks out of its scratch worktree — so the
+        search is for the setting, not the name (#1289 merge).
+        """
+        setting = r"hooks/pre-commit|config[\"',\s]+core\.hooksPath"
         for path in (REPO_ROOT / "src" / "keel").rglob("*.py"):
             text = path.read_text(encoding="utf-8")
             with self.subTest(module=path.name):
-                self.assertIsNone(re.search(r"hooks/pre-commit|core\.hooksPath", text))
+                self.assertIsNone(re.search(setting, text))
+        self.assertIsNotNone(re.search(setting, "git config core.hooksPath .githooks"))
+        self.assertIsNotNone(re.search(setting, '["git", "config", "core.hooksPath", d]'))
         self.assertNotIn("before any commit", self.cards)
         self.assertIn("keel installs no git hook", self.cards)
 
