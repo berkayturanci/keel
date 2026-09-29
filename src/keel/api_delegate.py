@@ -62,6 +62,7 @@ __all__ = [
     "has_api_token",
     "present_key_names",
     "merge_payload",
+    "parse_usage",
     "GuardedAddressError",
     "build_http_only_opener",
     "generate",
@@ -125,6 +126,18 @@ class ApiResult:
     #: ``network`` | ``bad-response``; ``None`` on success.
     error_code: str | None = None
     error: str | None = None
+    #: The token counts the vendor reported for this call (#1373), read by
+    #: :func:`parse_usage`. Both set or both ``None``: ``None`` means the response
+    #: carried no usable counts, never that the call was free.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+    @property
+    def usage(self) -> dict[str, int] | None:
+        """``{"prompt_tokens": …, "completion_tokens": …}``, or ``None`` when not reported."""
+        if self.prompt_tokens is None or self.completion_tokens is None:
+            return None
+        return {"prompt_tokens": self.prompt_tokens, "completion_tokens": self.completion_tokens}
 
 
 def env_key_name(vendor: str) -> str | None:
@@ -270,6 +283,85 @@ def _parse_content(vendor: str, data: object) -> str | None:
         return text if isinstance(text, str) and text else None
     except (KeyError, IndexError, TypeError, AttributeError):
         return None
+
+
+def _count(value: object) -> int | None:
+    """A token count as a vendor reported it: a non-negative ``int``, else ``None``.
+
+    ``bool`` is refused although it is an ``int`` subclass, and so is a float such as
+    ``12.0``: a count that arrives in any other shape is a gateway's invention, and
+    guessing what it meant is exactly what #1373 must not do.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _optional(usage: dict, name: str) -> object:
+    """An optional count field: absent or ``null`` is zero, anything else is checked."""
+    value = usage.get(name)
+    return 0 if value is None else value
+
+
+def parse_usage(vendor: str, data: object) -> tuple[int, int] | None:
+    """``(prompt_tokens, completion_tokens)`` from a decoded response, or ``None``.
+
+    Only the shapes each vendor documents are read (#1373):
+
+    - ``anthropic-api`` — ``usage.input_tokens`` / ``usage.output_tokens``. The prompt
+      side adds ``cache_creation_input_tokens`` and ``cache_read_input_tokens`` (either
+      may be absent or ``null``), because "Total input tokens in a request is the
+      summation" of all three:
+      https://docs.anthropic.com/en/api/messages (the ``usage`` object).
+    - ``openai-api`` — ``usage.prompt_tokens`` / ``usage.completion_tokens``
+      (``CompletionUsage`` in https://github.com/openai/openai-openapi; reasoning
+      tokens are a breakdown *of* ``completion_tokens``, not an addition).
+    - ``openai-compatible`` — the same OpenAI shape, which is what "compatible" means.
+      Confirmed for DeepSeek (https://api-docs.deepseek.com/api/create-chat-completion)
+      and OpenRouter (https://openrouter.ai/docs/use-cases/usage-accounting); any other
+      server that omits ``usage`` simply records nothing.
+    - ``google-api`` — ``usageMetadata.promptTokenCount`` for the prompt, and
+      ``candidatesTokenCount`` plus ``thoughtsTokenCount`` (absent for a model that does
+      not think) for the completion, since ``totalTokenCount`` is "prompt + thoughts +
+      response candidates": https://ai.google.dev/api/generate-content#UsageMetadata.
+
+    ``None`` whenever a required field is missing or any read field is not a
+    non-negative integer — one malformed field voids the whole reading rather than
+    being skipped, because a partial sum is a guess. A reading with a zero on either side
+    is ``None`` too: keel never sends an empty prompt, and a gateway that does not count
+    answers zeros, which recorded as-is would report a billed call as free. Dropping a
+    reading under-records; it never invents one.
+    """
+    key = "usageMetadata" if vendor == "google-api" else "usage"
+    usage = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    prompt_parts: tuple[object, ...]
+    completion_parts: tuple[object, ...]
+    if vendor == "google-api":
+        prompt_parts = (usage.get("promptTokenCount"),)
+        completion_parts = (
+            usage.get("candidatesTokenCount"),
+            _optional(usage, "thoughtsTokenCount"),
+        )
+    elif vendor == "anthropic-api":
+        prompt_parts = (
+            usage.get("input_tokens"),
+            _optional(usage, "cache_creation_input_tokens"),
+            _optional(usage, "cache_read_input_tokens"),
+        )
+        completion_parts = (usage.get("output_tokens"),)
+    else:  # openai-api and openai-compatible share the OpenAI shape
+        prompt_parts = (usage.get("prompt_tokens"),)
+        completion_parts = (usage.get("completion_tokens"),)
+    counts = [_count(value) for value in (*prompt_parts, *completion_parts)]
+    if None in counts:
+        return None
+    prompt = sum(counts[: len(prompt_parts)])  # type: ignore[arg-type]
+    completion = sum(counts[len(prompt_parts) :])  # type: ignore[arg-type]
+    if not prompt or not completion:
+        return None
+    return prompt, completion
 
 
 class GuardedAddressError(OSError):
@@ -500,9 +592,16 @@ def generate(
         data = json.loads(raw)
     except ValueError:
         return ApiResult(False, error_code="bad-response", error="response is not valid JSON")
+    # Read before the text is judged: a response with no usable completion was still
+    # a call the vendor counted, and its counts are as real as a success's (#1373).
+    usage = parse_usage(vendor, data)
+    counts = {} if usage is None else {"prompt_tokens": usage[0], "completion_tokens": usage[1]}
     text = _parse_content(vendor, data)
     if not text:
         return ApiResult(
-            False, error_code="bad-response", error="response carried no completion text"
+            False,
+            error_code="bad-response",
+            error="response carried no completion text",
+            **counts,
         )
-    return ApiResult(True, text=text)
+    return ApiResult(True, text=text, **counts)

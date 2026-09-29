@@ -6,6 +6,8 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+- **`keel cost-report` can say "measured" for hosted-API delegate runs.** `keel delegate run` now reads the token usage the `anthropic-api`, `openai-api`, `google-api` and OpenAI-compatible responses carry, and returns it as `usage`. Only each vendor's documented fields are read, and a missing, malformed, non-integer, negative or zero count records nothing. With `--activity-run-id RUN` the counts go into run `RUN`'s activity record as a per-call `delegate_usage` entry, and every later phase stamp keeps them. A per-record lock stops parallel reviewers from dropping each other's counts. The ship adapter passes the flag in s4 and s7. The report prices each call at its own model, says that a measured count covers delegate calls and never the agent host's own tokens, and prints `the 1 run` instead of `all 1 runs`. Its title is now `Keel Token & Cost Report`, and the VS Code command is `View Token Counts & Estimated USD Cost`. The README, `docs/keel/cli.md` and the OpenRouter site card now describe what is recorded (#1373).
+
 ## [1.24.3] - 2026-09-29
 
 - A gate that cannot judge no longer reads as a pass: an unconfigured build or lint gate, or a jury with no `jury` CLI, is reported as such, and a plan in which nothing judges the change blocks the merge.

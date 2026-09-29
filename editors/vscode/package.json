@@ -58,7 +58,7 @@
       },
       {
         "command": "keel.cost",
-        "title": "Keel: View Token & USD Cost Report",
+        "title": "Keel: View Token Counts & Estimated USD Cost",
         "category": "Keel"
       },
       {

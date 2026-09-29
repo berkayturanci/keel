@@ -17,7 +17,7 @@ Turn coding agents into work owners directly inside **VS Code** and **Cursor**.
     swarm lands nothing yet ([#1281](https://github.com/berkayturanci/keel/issues/1281))
   - `Keel: Check Merge Window Status`
   - `Keel: Run Command Gates (Test & Lint)`
-  - `Keel: View Token & USD Cost Report`
+  - `Keel: View Token Counts & Estimated USD Cost`
   - `Keel: Open Web Visualizer`
 
 ## Configuration
