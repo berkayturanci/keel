@@ -1324,10 +1324,12 @@ dropped from git's environment, and a diff whose hunks still carry context lines
 (*cannot judge*). Changes are checked in path order. Each change is a hunk (`unit: hunk`, the
 default) or a whole file (`unit: file`, coarser: one caught hunk passes the file), and a
 deleted file is one change. Each change carries only itself: a **mode change** (`old mode` /
-`new mode`) is its own change, never copied into a content hunk; and **added code is split at
-its outermost blocks** — each top-level `def`/`class`/statement group of a new file or of a
-hunk that only adds lines, and each method added to a class, is reverted alone, so a test
-calling one of three new functions does not vouch for the other two. A new file that is one
+`new mode`) is its own change, never copied into a content hunk; and **added Python code is
+split at its top-level definitions** — in a new `.py`/`.pyi` file or a hunk that only adds
+lines, each `def` and `class` (with its decorators), each method added to a class, and each
+run of other statements between them is reverted alone, so a test calling one of three new
+functions does not vouch for the other two. The split comes from parsing the added lines, not
+from blank lines, so a blank line inside a string never splits it. A new file that is one
 block stays one change, which deletes it. It then checks out
 the committed `HEAD` as a **scratch worktree under the OS temp directory** (with the
 repository's git hooks switched off for that checkout) — your checkout's files are never
@@ -1417,6 +1419,9 @@ change undone — not that the test is about that change. These remain reviewer 
 
 - The unit is a hunk, not a *behaviour*: two arms of one conditional edited in one contiguous
   block are one change, and a test that notices either passes it (#871).
+- Added code in other languages is not split, nor are added Python lines that do not parse on
+  their own (part of an expression, a string continued left of the hunk's indent): such a hunk
+  is one change, so a test of one function in it passes the others.
 - A test can fail without the fix and still be blind to what the fix broke, as #873's was
   (#1268).
 - An *addition* whose revert only raises missing-name errors is a `nit`, not a pass by

@@ -35,6 +35,7 @@ made the fix and the bug agree. Both remain a reviewer's questions.
 
 from __future__ import annotations
 
+import ast
 import fnmatch
 import posixpath
 import re
@@ -119,7 +120,7 @@ class Settings:
 
     #: The test command each revert runs; ``None`` when neither knob sets one.
     cmd: str | None
-    #: The knob that supplied :attr:`cmd` — named in the finding when it is missing.
+    #: The knob :attr:`cmd` came from (``knobs.build_gate_cmd`` when neither sets one).
     cmd_source: str
     #: Globs that select production files; empty means :data:`SOURCE_SUFFIXES`.
     paths: tuple[str, ...]
@@ -405,11 +406,12 @@ def plan_changes(
     * **A mode change is its own change** (``old mode``/``new mode``). Copied into every
       content hunk's patch, it was undone with each of them, and one test of the
       executable bit "caught" every hunk of the file.
-    * **Added code is split at its top-level blocks** (:func:`_blocks`) — a hunk that
-      only adds lines, and a new file's content, whatever ``unit`` says for a new file.
-      Undone whole, three added functions where a test calls one read as "noticed" for
-      all three; undone one block at a time, each must be noticed on its own. A new file
-      that is one block stays one change, which deletes it.
+    * **Added Python code is split at its top-level definitions** (:func:`_blocks`) — a
+      hunk that only adds lines, and a new file's content, whatever ``unit`` says for a
+      new file. Undone whole, three added functions where a test calls one read as
+      "noticed" for all three; undone one at a time, each must be noticed on its own. A
+      new file that is one block stays one change, which deletes it. Other languages, and
+      added lines that do not parse on their own, are not split.
     * Otherwise one change per hunk (``unit: hunk``) or per file (``unit: file``); a
       deleted file is one change, which restores it.
     """
@@ -428,7 +430,7 @@ def plan_changes(
             continue
         header = f.content_header
         if f.status == "added":
-            blocks = _blocks(f.hunks[0]) if len(f.hunks) == 1 else []
+            blocks = _blocks(f.hunks[0], f.path) if len(f.hunks) == 1 else []
             if len(blocks) > 1:
                 plain = (header[0], f"--- a/{f.path}", f"+++ b/{f.path}")
                 changes.extend(_block_change(f.path, plain, block) for block in blocks)
@@ -449,7 +451,7 @@ def plan_changes(
             )
             continue
         for hunk in f.hunks:
-            blocks = _blocks(hunk) if hunk.pure_addition else []
+            blocks = _blocks(hunk, f.path) if hunk.pure_addition else []
             if len(blocks) > 1:
                 changes.extend(_block_change(f.path, header, block) for block in blocks)
                 continue
@@ -458,36 +460,69 @@ def plan_changes(
     return Plan(tuple(changes), tuple(unrevertable), tuple(f.path for f in files))
 
 
-def _blocks(hunk: Hunk) -> list[tuple[int, tuple[str, ...]]]:
-    """A pure-addition hunk's lines split at its outermost blocks, as ``(first line, lines)``.
+#: Files whose added code :func:`_blocks` can split: it parses them.
+_PYTHON_SUFFIXES = (".py", ".pyi")
+_DEFINITIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
-    A block starts at a non-blank line indented as little as the hunk's least-indented
-    line, following a blank line, once the block before it holds a non-blank line. So a
-    ``def`` or ``class`` stays whole with its body and decorators, two methods added to a
-    class are two blocks, and blank lines ride with the block before them (leading ones
-    with the first). A ``\\ No newline`` marker stays with its line. ``[]`` for a hunk
-    whose header cannot be read.
+
+def _blocks(hunk: Hunk, path: str) -> list[tuple[int, tuple[str, ...]]]:
+    """A pure-addition hunk's lines split at its top-level definitions, as ``(first line, lines)``.
+
+    Only Python is split, and only when the added lines parse on their own
+    (:func:`_block_starts`): a boundary read from the text alone was wrong both ways — two
+    functions with no blank line between them stayed one change, so a test of one vouched
+    for the other, and a blank line inside a string literal split it, so each half's revert
+    was a syntax error. ``[]`` (keep the hunk whole) otherwise, and for a header that cannot
+    be read. Lines between blocks ride with the block before them (leading ones with the
+    first); a ``\\ No newline`` marker stays with its line.
     """
     match = _HUNK_RE.match(hunk.header)
-    if not match:
+    if not match or not path.endswith(_PYTHON_SUFFIXES):
         return []
-    start = int(match.group(3))
-    added = [line[1:] for line in hunk.lines if line.startswith("+") and line[1:].strip()]
-    outer = min((len(text) - len(text.lstrip()) for text in added), default=0)
+    starts = _block_starts([line[1:] for line in hunk.lines if line.startswith("+")])
+    if not starts:
+        return []
+    first = int(match.group(3))
     blocks: list[tuple[int, list[str]]] = []
     offset = 0
-    previous_blank = True
     for line in hunk.lines:
-        text = line[1:]
         if line.startswith("+"):
-            indent = len(text) - len(text.lstrip())
-            boundary = bool(text.strip()) and indent == outer and previous_blank
-            if not blocks or (boundary and any(b[1:].strip() for b in blocks[-1][1])):
-                blocks.append((start + offset, []))
-            previous_blank = not text.strip()
+            if not blocks or offset in starts:
+                blocks.append((first + offset, []))
             offset += 1
         blocks[-1][1].append(line)
-    return [(first, tuple(lines)) for first, lines in blocks]
+    return [(start, tuple(lines)) for start, lines in blocks]
+
+
+def _block_starts(added: Sequence[str]) -> set[int]:
+    """The 0-based added lines where a new block starts; empty when there is one block.
+
+    The lines are dedented by their common leading whitespace and parsed. Each ``def`` and
+    ``class`` (from its first decorator) is a block, and so is each run of other statements
+    between them. Empty when the lines do not parse on their own — part of an expression,
+    a string whose continuation sits left of the rest — or do not share one indent.
+    """
+    texts = [text for text in added if text.strip()]
+    if not texts:
+        return set()
+    width = min(len(text) - len(text.lstrip()) for text in texts)
+    indent = texts[0][:width]
+    if any(not text.startswith(indent) for text in texts):
+        return set()
+    source = "\n".join(text[width:] if text.strip() else "" for text in added) + "\n"
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return set()
+    starts: set[int] = set()
+    previous: bool | None = None
+    for node in tree.body:
+        definition = isinstance(node, _DEFINITIONS)
+        if previous is not None and (definition or previous):
+            decorators = getattr(node, "decorator_list", [])
+            starts.add(min([node.lineno, *(d.lineno for d in decorators)]) - 1)
+        previous = definition
+    return starts
 
 
 def _block_change(path: str, header: Sequence[str], block: tuple[int, tuple[str, ...]]) -> Change:
@@ -532,9 +567,10 @@ def looks_comment_only(change: Change) -> bool:
     Used to explain a blocking "no test notices this change" finding, never to skip a
     run: a comment can still change behaviour.
     """
-    return all(
+    lines = _changed_lines(change.patch)
+    return bool(lines) and all(
         not line.strip() or line.strip() == "*" or line.strip().startswith(_COMMENT_LOOKS)
-        for line in _changed_lines(change.patch)
+        for line in lines
     )
 
 

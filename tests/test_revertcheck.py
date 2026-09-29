@@ -345,7 +345,62 @@ class TestAddedCodeIsSplitIntoBlocks(unittest.TestCase):
 
     def test_an_unreadable_header_is_not_split(self):
         hunk = rc.Hunk("@@ nonsense", ("+a", "+", "+b"), 3, 0)
-        self.assertEqual(rc._blocks(hunk), [])
+        self.assertEqual(rc._blocks(hunk, "n.py"), [])
+
+    @staticmethod
+    def _labels(path, added, header="@@ -0,0 +1,{n} @@"):
+        body = "".join(f"+{line}\n" for line in added)
+        text = f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+        text += header.format(n=len(added)) + "\n" + body
+        plan = rc.plan_changes(rc.parse_diff(text), tests=[], paths=["*"], unit="hunk")
+        return [c.label for c in plan.changes]
+
+    def test_definitions_split_without_a_blank_line(self):
+        """Codex, round 8: with no blank line between them, ``used`` and ``untested`` were
+        one change, and a test of ``used`` passed ``untested``."""
+        added = ["def used():", "    return 1", "def untested():", "    return 2"]
+        self.assertEqual(
+            self._labels("n.py", added), ["n.py @@ -0,0 +1,2 @@", "n.py @@ -2,0 +3,2 @@"]
+        )
+
+    def test_a_blank_line_inside_a_string_does_not_split_it(self):
+        """Codex, round 8: the blank line and the column-0 ``world`` split one literal in
+        two, and each half's revert was a syntax error that blocked a tested constant."""
+        added = ['VALUE = """hello', "", "world", '"""', "", "def f():", "    return VALUE"]
+        self.assertEqual(
+            self._labels("n.py", added), ["n.py @@ -0,0 +1,5 @@", "n.py @@ -5,0 +6,2 @@"]
+        )
+
+    def test_statements_between_definitions_are_one_block(self):
+        added = ["A = 1", "B = 2", "@d", "class K:", "    x = A", "C = B", "D = C"]
+        self.assertEqual(
+            self._labels("n.py", added),
+            ["n.py @@ -0,0 +1,2 @@", "n.py @@ -2,0 +3,3 @@", "n.py @@ -5,0 +6,2 @@"],
+        )
+
+    def test_what_cannot_be_parsed_stays_one_change(self):
+        cases = {
+            # not Python: a boundary cannot be read from the text
+            "n.js": ["function a() {", "  return 1", "}", "", "function b() {", "  return 2", "}"],
+            # part of an expression
+            "p.py": ["    1,", "", "    2,"],
+            # a continuation left of the rest of the hunk
+            "q.py": ["    def a(self):", '        return """', "x", '"""', "    def b(self):"],
+            # one tab-indented line among space-indented ones
+            "r.py": ["    def a(self):", "        pass", "\tdef b(self):", "\t\tpass"],
+            # a null byte
+            "s.py": ["def a():", "    return '\x00'", "def b():", "    pass"],
+            # only blank lines
+            "t.py": ["", ""],
+        }
+        for path, added in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(len(self._labels(path, added)), 1)
+
+    def test_a_mode_only_change_does_not_look_comment_only(self):
+        """agy, round 8: no changed line made ``all()`` vacuously true."""
+        change = rc.Change("t.sh", "t.sh", "diff --git a/t.sh b/t.sh\nold mode 100644\n", False)
+        self.assertFalse(rc.looks_comment_only(change))
 
 
 class TestReadOutput(unittest.TestCase):
