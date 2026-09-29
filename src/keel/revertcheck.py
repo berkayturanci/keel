@@ -464,6 +464,48 @@ def _python_shape(text: str, *, imports: bool = True) -> str | None:
     return ast.dump((_DropStrings() if imports else _DropImports()).visit(tree))
 
 
+def _strip_c_comments(text: str) -> str:
+    """``text`` without ``//`` and ``/* … */`` comments, whitespace outside strings collapsed.
+
+    String and character literals (double-quoted, single-quoted and, for JS/Go, backtick) are kept
+    verbatim with their escapes, so a comment marker inside one is text, not a comment. A
+    reading that goes wrong makes two files differ, never match: the change is then
+    tested, which is the safe side.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    pending_space = False
+    while i < n:
+        ch = text[i]
+        if ch in "\"'`":
+            end = i + 1
+            while end < n and text[end] != ch:
+                end += 2 if text[end] == "\\" else 1
+            if pending_space and out:
+                out.append(" ")
+            pending_space = False
+            out.append(text[i : end + 1])
+            i = end + 1
+        elif text.startswith("//", i):
+            newline = text.find("\n", i)
+            i = n if newline == -1 else newline
+            pending_space = True
+        elif text.startswith("/*", i):
+            close = text.find("*/", i + 2)
+            i = n if close == -1 else close + 2
+            pending_space = True
+        elif ch.isspace():
+            pending_space = True
+            i += 1
+        else:
+            if pending_space and out:
+                out.append(" ")
+            pending_space = False
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def _changed_lines(patch: str) -> list[str]:
     """The ``+``/``-`` lines of a change's hunks, without their marker."""
     _header, _sep, body = patch.partition("\n@@")
@@ -495,10 +537,18 @@ def behaviour_free(change: Change, before: str | None, after: str | None) -> boo
     prefixes = _COMMENT_PREFIXES.get(suffix)
     if prefixes is None:
         return False
-    return all(
+    looks_like_comments = all(
         not line.strip() or line.strip().startswith(prefixes)
         for line in _changed_lines(change.patch)
     )
+    if not looks_like_comments:
+        return False
+    if "/*" not in prefixes:
+        return True
+    # C-family: a leading ``*`` is a block-comment continuation only inside ``/* … */`` —
+    # ``*p = 1;`` is a pointer write. So the files must also match once their comments
+    # are stripped (strings kept verbatim), or the change is not inert.
+    return _strip_c_comments(before) == _strip_c_comments(after)
 
 
 def imports_only(change: Change, before: str | None, after: str | None) -> bool:

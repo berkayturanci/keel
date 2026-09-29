@@ -614,5 +614,46 @@ class TestVerdict(unittest.TestCase):
         )
 
 
+class CFamilyInertnessNeedsTheCommentsToBeTheOnlyDifference(unittest.TestCase):
+    """A leading ``*`` is a comment only inside ``/* … */`` (gate finding on #1385)."""
+
+    @staticmethod
+    def _change(path: str, removed: str, added: str) -> rc.Change:
+        patch = f"diff --git a/{path} b/{path}\n@@ -1 +1 @@\n-{removed}\n+{added}\n"
+        return rc.Change("c", path, patch, False)
+
+    def test_a_pointer_write_is_not_a_comment(self):
+        change = self._change("main.c", "*p = 1;", "*p = 2;")
+        head = "void f(int *p) {\n*p = 2;\n}\n"
+        undone = "void f(int *p) {\n*p = 1;\n}\n"
+        self.assertFalse(rc.behaviour_free(change, head, undone))
+
+    def test_a_doc_comment_edit_is_inert(self):
+        change = self._change("main.c", " * old words", " * new words")
+        self.assertTrue(
+            rc.behaviour_free(
+                change, "/**\n * new words\n */\nint x;\n", "/**\n * old words\n */\nint x;\n"
+            )
+        )
+
+    def test_a_comment_marker_inside_a_string_is_text(self):
+        change = self._change("a.js", "// one", "// two")
+        head = "const s = `\n// two\n`;\n"
+        undone = "const s = `\n// one\n`;\n"
+        self.assertFalse(rc.behaviour_free(change, head, undone))
+
+    def test_a_line_comment_change_is_inert(self):
+        change = self._change("a.go", "// a", "// b")
+        self.assertTrue(rc.behaviour_free(change, "// b\nx := 1\n", "// a\nx := 1\n"))
+
+    def test_the_stripper_keeps_strings_and_escapes(self):
+        self.assertEqual(rc._strip_c_comments('a = "http://x"; // c\nb'), 'a = "http://x"; b')
+        self.assertEqual(rc._strip_c_comments('a = "x\\"//y"; /* z */ b'), 'a = "x\\"//y"; b')
+        self.assertEqual(rc._strip_c_comments("a /* never closed"), "a")
+        self.assertEqual(rc._strip_c_comments("a // to the end"), "a")
+        self.assertEqual(rc._strip_c_comments("'unterminated"), "'unterminated")
+        self.assertEqual(rc._strip_c_comments("  x  \n\t y "), "x y")
+
+
 if __name__ == "__main__":
     unittest.main()
