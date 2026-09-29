@@ -273,6 +273,9 @@ def revert_diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> s
     drivers. ``GIT_DIFF_OPTS`` outranks even the command line, so it is removed from the
     child's environment. :func:`keel.revertcheck.context_problem` still refuses a diff
     whose hunks carry context, whatever widened them.
+
+    **Line endings are kept** (``keep_line_endings``): read in text mode, a CRLF source's
+    ``\\r`` was dropped, and the reverse patch no longer matched ``HEAD``'s bytes.
     """
     result = run_argv(
         [
@@ -305,6 +308,7 @@ def revert_diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> s
         ],
         cwd=cwd,
         env={key: value for key, value in os.environ.items() if key != "GIT_DIFF_OPTS"},
+        keep_line_endings=True,
         **_kw(_run),
     )
     return result.stdout if result.ok else None

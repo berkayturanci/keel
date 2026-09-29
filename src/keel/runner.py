@@ -79,8 +79,8 @@ class CommandResult:
 
 
 def _result(proc) -> CommandResult:
-    out = proc.stdout or ""
-    err = proc.stderr or ""
+    out = _decoded(proc.stdout)
+    err = _decoded(proc.stderr)
     return CommandResult(proc.returncode == 0, proc.returncode, out + err, stdout=out, stderr=err)
 
 
@@ -134,9 +134,14 @@ def run_argv(
     timeout: int = 120,
     stdin_text: str | None = None,
     env: dict[str, str] | None = None,
+    keep_line_endings: bool = False,
     _run=subprocess.run,
 ) -> CommandResult:
     """Run an argv list (no shell). Fail-soft on timeout/OS error. Used by git/gh wrappers.
+
+    ``keep_line_endings`` reads the output as bytes and decodes it here, the same way
+    (UTF-8, ``surrogateescape``), because text mode's universal newlines turn every
+    ``\\r\\n`` into ``\\n``: a diff of a CRLF file then no longer matches its own lines.
 
     ``env`` replaces the child's environment when given (``None`` inherits it) — for a
     caller that must keep a variable such as ``GIT_DIFF_OPTS`` away from the child.
@@ -152,7 +157,7 @@ def run_argv(
             argv,
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=not keep_line_endings,
             # **UTF-8, not the platform default.** `text=True` alone decodes with
             # `locale.getencoding()`, which on Windows is the ANSI code page: cp1252
             # leaves 0x81/8D/8F/90/9D undefined, so `git ls-tree -z` on a repository
@@ -162,11 +167,15 @@ def run_argv(
             # also round-trips undecodable bytes back out unchanged, which the landing
             # needs: the names it reads from `ls-tree` are written straight back to
             # `mktree`.
-            encoding="utf-8",
-            errors="surrogateescape",
+            encoding=None if keep_line_endings else "utf-8",
+            errors=None if keep_line_endings else "surrogateescape",
             timeout=timeout,
             env=env,
-            input=stdin_text,
+            input=(
+                stdin_text.encode("utf-8")
+                if keep_line_endings and stdin_text is not None
+                else stdin_text
+            ),
             # Written out rather than assembled into a **kwargs dict: #879's sweep in
             # tests/test_missing_pins.py reads every spawn site's keywords out of the
             # AST, and a site that hides `stdin` behind a splat is a site the rule
@@ -179,6 +188,14 @@ def run_argv(
     except OSError as exc:
         return CommandResult(False, 127, str(exc), stderr=str(exc), spawn_failed=True)
     return _result(proc)
+
+
+def _decoded(data: bytes | str | None) -> str:
+    """Captured output as text: bytes (``keep_line_endings``) are decoded as text mode
+    would, minus its newline translation."""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", "surrogateescape")
+    return data or ""
 
 
 def _tail(text: str, n: int = 20) -> str:

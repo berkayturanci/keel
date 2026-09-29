@@ -51,6 +51,10 @@ def _git(root, *args):
     ).stdout
 
 
+def _git_bytes(root, *args):
+    return subprocess.run(["git", *args], cwd=root, check=True, capture_output=True).stdout
+
+
 def _config(cmd=_CMD, test_paths=("tests/**",), knob=None):
     group = {"command": "x", "paths": ["pkg/**", "tests/**"]}
     if test_paths:
@@ -70,21 +74,30 @@ def _config(cmd=_CMD, test_paths=("tests/**",), knob=None):
     )
 
 
-def _repo(root: Path, files: dict[str, str], *, base_calc: str = _BASE_CALC) -> Path:
-    """`main` holds the base; `feat` (checked out) adds ``files`` on top of it."""
+def _repo(
+    root: Path, files: dict[str, str], *, base_calc: str = _BASE_CALC, autocrlf: str = ""
+) -> Path:
+    """`main` holds the base; `feat` (checked out) adds ``files`` on top of it.
+
+    Files are written with the line endings their text holds (``newline=""``), and
+    ``autocrlf`` pins ``core.autocrlf`` when given, so a CRLF test commits CRLF on Windows too.
+    """
     _git(root, "init", "-q", "-b", "main")
-    for key, value in (
+    settings = [
         ("user.email", "t@example.com"),
         ("user.name", "T"),
         ("gc.auto", "0"),
         ("maintenance.auto", "false"),
-    ):
+    ]
+    if autocrlf:
+        settings.append(("core.autocrlf", autocrlf))
+    for key, value in settings:
         _git(root, "config", key, value)
     (root / "pkg").mkdir()
     (root / "tests").mkdir()
     (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
     (root / "tests" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "pkg" / "calc.py").write_text(base_calc, encoding="utf-8")
+    (root / "pkg" / "calc.py").write_text(base_calc, encoding="utf-8", newline="")
     (root / "tests" / "test_calc.py").write_text(_BASE_TEST, encoding="utf-8")
     (root / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
     _git(root, "add", "-A")
@@ -93,7 +106,7 @@ def _repo(root: Path, files: dict[str, str], *, base_calc: str = _BASE_CALC) -> 
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text, encoding="utf-8", newline="")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "feat")
     return root
@@ -152,6 +165,25 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertEqual((root / "pkg" / "calc.py").read_text(encoding="utf-8"), edited)
         self.assertEqual((root / "notes.txt").read_text(encoding="utf-8"), "untracked\n")
         self.assertIn("pkg/calc.py", _git(root, "status", "--porcelain"))
+        majors = [m for s, m in _messages(outcome) if s == "major"]
+        self.assertEqual(len(majors), 1)
+        self.assertTrue(majors[0].startswith("pkg/calc.py @@ -6,0 +9,4 @@: no test notices"))
+
+    def test_a_crlf_source_reverts_byte_for_byte(self):
+        """Codex, round 9: the diff was read in text mode, which drops ``\\r``, so a CRLF
+        file's reverse patch no longer matched ``HEAD`` and every change in it was
+        reported *could not undo*."""
+        crlf = {"pkg/calc.py": _FEATURE_CALC.replace("\n", "\r\n")}
+        root = _repo(
+            self.root,
+            {**crlf, "tests/test_calc.py": _BASE_TEST + _SIGN_TEST},
+            base_calc=_BASE_CALC.replace("\n", "\r\n"),
+            autocrlf="false",
+        )
+        self.assertIn(b"\r\n", _git_bytes(root, "show", "HEAD:pkg/calc.py"))
+        outcome = _outcome(root)
+        messages = [m for _s, m in _messages(outcome)]
+        self.assertFalse(any("could not undo" in m for m in messages), messages)
         majors = [m for s, m in _messages(outcome) if s == "major"]
         self.assertEqual(len(majors), 1)
         self.assertTrue(majors[0].startswith("pkg/calc.py @@ -6,0 +9,4 @@: no test notices"))

@@ -1393,8 +1393,8 @@ behaviour a test should assert on, and blocks. Reverting a *modification* restor
 ran before, so a test that only errors against it (the `NameError` of a half-reverted fix)
 proves nothing and blocks. The gate ends with a `nit` counting how many changes were caught.
 
-The patch for each change is written back byte for byte, so a Latin-1 or other non-UTF-8
-source reverts exactly.
+The diff is read, and each change's patch written back, byte for byte, so a Latin-1 or other
+non-UTF-8 source, and a file with CRLF line endings, reverts exactly.
 
 **Cost bounds.** Each run is limited by [`gate_timeout_s`](#gate_timeout_s); the baseline and
 every revert together by `budget_s` (default `1800`), with the time spent resetting and

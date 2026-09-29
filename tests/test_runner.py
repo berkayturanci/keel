@@ -1,6 +1,7 @@
 """Unit tests for the shell-command gate runner (injected subprocess)."""
 
 import subprocess
+import sys
 import unittest
 
 from keel import runner
@@ -273,6 +274,36 @@ class TestFirstLocation(unittest.TestCase):
         # ``C:\`` drive letter is read as ``path=C`` then a non-digit ``\``, so
         # the whole thing fails to match -> ``(None, None)``.
         self.assertEqual(runner.first_location(r"C:\proj\x.py:10: err"), (None, None))
+
+
+class RunArgvKeepsLineEndings(unittest.TestCase):
+    """#1289 review round 9: text mode's universal newlines dropped a CRLF diff's ``\\r``."""
+
+    def test_output_is_read_as_bytes_and_decoded_without_translation(self):
+        seen = {}
+
+        def run(argv, **kw):
+            seen.update(kw)
+            return subprocess.CompletedProcess(argv, 0, b"-x = 1\r\n+x = \xe9\r\n", None)
+
+        r = runner.run_argv(["git", "diff"], keep_line_endings=True, stdin_text="in", _run=run)
+        self.assertEqual(r.stdout, "-x = 1\r\n+x = \udce9\r\n")
+        self.assertEqual((r.stderr, r.ok), ("", True))
+        self.assertEqual((seen["text"], seen["encoding"], seen["errors"]), (False, None, None))
+        self.assertEqual(seen["input"], b"in")
+
+    def test_a_real_child_keeps_its_carriage_returns(self):
+        code = "import sys; sys.stdout.buffer.write(b'a\\r\\nb\\r\\n')"
+        kept = runner.run_argv([sys.executable, "-c", code], keep_line_endings=True)
+        translated = runner.run_argv([sys.executable, "-c", code])
+        self.assertEqual((kept.stdout, translated.stdout), ("a\r\nb\r\n", "a\nb\n"))
+
+    def test_a_fake_that_answers_in_text_is_passed_through(self):
+        def run(argv, **kw):
+            return subprocess.CompletedProcess(argv, 1, "out", None)
+
+        r = runner.run_argv(["x"], keep_line_endings=True, _run=run)
+        self.assertEqual((r.stdout, r.stderr, r.code), ("out", "", 1))
 
 
 class RunArgvStdinTest(unittest.TestCase):
