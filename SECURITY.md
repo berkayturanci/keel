@@ -21,11 +21,15 @@ We aim to acknowledge within 48 hours when possible.
 
 ## Security Notes
 
-keel is a workflow core. The deterministic `keel` CLI (`validate`, `plan`, `run-gates`,
-`window`, `init`, `install-adapter`) only reads your `.keel/project.yaml` + extensions and
-runs the **gate commands you configured** through a thin subprocess wrapper, and ships a
-single runtime dependency (PyYAML). It sends **no telemetry**. Its outbound network calls
-are listed under [Outbound network calls](#outbound-network-calls) below.
+keel is a workflow core. The deterministic `keel` CLI reads your `.keel/project.yaml` +
+extensions (`validate`, `plan`, `window`) and runs the **gate commands you configured**
+through a thin subprocess wrapper (`run-gates`). Two commands write into the repository you
+point them at: `init` scaffolds `.keel/project.yaml` and `.keel/.gitignore`, and
+`install-adapter` writes the `/keel:<command>` adapters under `.claude/commands/keel/` and
+`.agents/skills/`. It has a single runtime dependency on Linux/macOS (PyYAML); on Windows
+it adds the pure-data `tzdata` package, which the stdlib `zoneinfo` needs there. It sends
+**no telemetry**. Its outbound network calls are listed under
+[Outbound network calls](#outbound-network-calls) below.
 
 Be aware that:
 
@@ -40,7 +44,9 @@ Be aware that:
 - **The optional `jury` gate** invokes the separate
   [ai-jury](https://github.com/berkayturanci/ai-jury) CLI on the change's diff when it is
   installed and listed in `gates:`. keel passes only the diff to that tool and takes no
-  runtime dependency on it; when `jury` is absent the gate is a fail-soft no-op.
+  runtime dependency on it. Without the `jury` binary the s8 run is a no-op (reported
+  `SKIPPED`; with no other gate planned it blocks), but a tier-3 merge still requires a
+  `jury-verdict` unless the run passes `--no-jury`.
 
 ## Security Audits
 

@@ -17,6 +17,22 @@ All notable changes to keel are documented here. The format follows
 
 - **`keel cost-report` can say "measured" for hosted-API delegate runs.** `keel delegate run` now reads the token usage the `anthropic-api`, `openai-api`, `google-api` and OpenAI-compatible responses carry, and returns it as `usage`. Only each vendor's documented fields are read, and a missing, malformed, non-integer, negative or zero count records nothing. With `--activity-run-id RUN` the counts go into run `RUN`'s activity record as a per-call `delegate_usage` entry, and every later phase stamp keeps them. A per-record lock stops parallel reviewers from dropping each other's counts. The ship adapter passes the flag in s4 and s7. The report prices each call at its own model, says that a measured count covers delegate calls and never the agent host's own tokens, and prints `the 1 run` instead of `all 1 runs`. Its title is now `Keel Token & Cost Report`, and the VS Code command is `View Token Counts & Estimated USD Cost`. The README, `docs/keel/cli.md` and the OpenRouter site card now describe what is recorded (#1373).
 
+### Fixed
+- **SECURITY, CONTRIBUTING, keel-visual and the swarm pages match the code.** SECURITY.md no
+  longer calls a missing `jury` binary a fail-soft no-op (the s8 run reports `SKIPPED`, blocks
+  when it is the only gate, and a tier-3 merge still owes a `jury-verdict`), and says what `init`
+  and `install-adapter` write and that Windows adds `tzdata`. CONTRIBUTING.md lists the `dev`
+  extra as `ruff`, `coverage`, `bandit`, creates the `.venv` the interpreter resolver looks for,
+  and says `make validate` checks `.keel/project.yaml` too. `docs/keel/plugin.md` counts four
+  JSON manifests; `docs/keel/overview.md` gives keel-visual's floor as `keel-workflow >= 1.15.0`;
+  keel-visual's README names `dash`/`render`/`serve --all` instead of saying it cannot aggregate,
+  and shows `triage`'s real phases. `docs/keel/swarm.md` describes the wave skip (#1268) and the
+  `LockError` (#1272) as fixed, `docs/keel/commands.md` says a swarm worker is a
+  `keel ship --dry-run` and marks team leads, vendor routing and per-cluster review as design,
+  and `docs/keel/keel-visual.md` labels its `swarm` view experimental. Tests in
+  `tests/test_docs_root_claims.py` and `keel-visual/tests/test_readme.py` hold each page to the
+  file or code it describes (docs audit 2026-09-29).
+
 ## [1.24.3] - 2026-09-29
 
 - A gate that cannot judge no longer reads as a pass: an unconfigured build or lint gate, or a jury with no `jury` CLI, is reported as such, and a plan in which nothing judges the change blocks the merge.
