@@ -85,9 +85,17 @@ def _result(proc) -> CommandResult:
 
 
 def run_command(
-    cmd: str, *, cwd: str | None = None, timeout: int = DEFAULT_GATE_TIMEOUT_S, _run=subprocess.run
+    cmd: str,
+    *,
+    cwd: str | None = None,
+    timeout: int = DEFAULT_GATE_TIMEOUT_S,
+    env: dict[str, str] | None = None,
+    _run=subprocess.run,
 ) -> CommandResult:
-    """Run ``cmd`` in a shell, capturing output. Fail-soft on timeout/OS error."""
+    """Run ``cmd`` in a shell, capturing output. Fail-soft on timeout/OS error.
+
+    ``env`` replaces the child's environment when given (``None`` inherits it).
+    """
     try:
         # Intentional shell boundary: cmd must come only from operator-controlled
         # project config or extension YAML, never from PR content or agent output.
@@ -110,6 +118,7 @@ def run_command(
             errors="surrogateescape",
             timeout=timeout,
             stdin=subprocess.DEVNULL,
+            env=env,
         )  # nosec B604
     except subprocess.TimeoutExpired:
         return CommandResult(False, 124, f"timed out after {timeout}s", timed_out=True)

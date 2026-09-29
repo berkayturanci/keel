@@ -131,6 +131,37 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertTrue(majors[0].startswith("pkg/calc.py @@ -6,0 +9,4 @@: no test notices"))
         self.assertIn("1 of 2 production change(s)", _messages(outcome)[-1][1])
 
+    def test_an_inherited_git_dir_cannot_reach_the_operators_checkout(self):
+        """Codex, round 9: run from a git hook (``GIT_DIR`` set) or under ``GIT_WORK_TREE``,
+        the scratch tree's ``reset --hard`` and ``clean -fdx`` acted on the operator's
+        checkout, discarding its edits and untracked files."""
+        root = _repo(
+            self.root,
+            {"pkg/calc.py": _FEATURE_CALC, "tests/test_calc.py": _BASE_TEST + _SIGN_TEST},
+        )
+        edited = _FEATURE_CALC + "\n# work in progress\n"
+        (root / "pkg" / "calc.py").write_text(edited, encoding="utf-8")
+        (root / "notes.txt").write_text("untracked\n", encoding="utf-8")
+        env = {
+            "GIT_DIR": str(root / ".git"),
+            "GIT_WORK_TREE": str(root),
+            "GIT_INDEX_FILE": str(root / ".git" / "index"),
+        }
+        with patch.dict(os.environ, env):
+            outcome = _outcome(root)
+        self.assertEqual((root / "pkg" / "calc.py").read_text(encoding="utf-8"), edited)
+        self.assertEqual((root / "notes.txt").read_text(encoding="utf-8"), "untracked\n")
+        self.assertIn("pkg/calc.py", _git(root, "status", "--porcelain"))
+        majors = [m for s, m in _messages(outcome) if s == "major"]
+        self.assertEqual(len(majors), 1)
+        self.assertTrue(majors[0].startswith("pkg/calc.py @@ -6,0 +9,4 @@: no test notices"))
+
+    def test_the_suite_does_not_see_the_repository_variables(self):
+        probe = f"\"{sys.executable}\" -c \"import os; print(os.environ.get('GIT_DIR', 'unset'))\""
+        with patch.dict(os.environ, {"GIT_DIR": str(self.root)}):
+            result = cli._revert_tester(str(self.root), probe)(60)
+        self.assertEqual((result.exit_ok, result.output.strip()), (True, "unset"))
+
     def test_the_users_git_config_cannot_merge_or_rename_changes(self):
         """Review round on 07030c52: `--unified=0` does not override `diff.interHunkContext`,
         and at 10000 it merged `sign`'s guard and the untested `double` into one change,

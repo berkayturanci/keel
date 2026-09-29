@@ -397,6 +397,36 @@ class TestRevertCheckGit(unittest.TestCase):
         self.assertEqual(seen["env"]["K"], "v")
         self.assertIsNone(git.revert_diff("a", "b", _run=_Recorder(code=128)))
 
+    def test_scratch_commands_drop_the_repository_variables(self):
+        """Codex, round 9: inherited, ``GIT_DIR`` / ``GIT_WORK_TREE`` sent the scratch
+        tree's ``reset --hard`` and ``clean -fdx`` to the operator's checkout."""
+        inherited = {"GIT_DIR": "/op/.git", "GIT_WORK_TREE": "/op", "GIT_INDEX_FILE": "/op/i"}
+        with unittest.mock.patch.dict(os.environ, {**inherited, "K": "v"}):
+            full = git.scratch_env()
+            checkout = git.scratch_env(git.CHECKOUT_ENV_VARS)
+            seen = []
+
+            def run(argv, **kw):
+                seen.append(kw.get("env"))
+                return _Recorder()(argv, **kw)
+
+            git.reset_clean(cwd="/wt", _run=run)
+            git.apply_reverse("/p", cwd="/wt", _run=run)
+            git.worktree_add_detached("/wt", SHA_A, hooks_path="/h", _run=run)
+        self.assertEqual(full["K"], "v")
+        self.assertTrue(inherited.keys().isdisjoint(full))
+        # `worktree add` runs in the operator's repository: it keeps GIT_DIR, never the
+        # work tree or index.
+        self.assertEqual((checkout["GIT_DIR"], "GIT_WORK_TREE" in checkout), ("/op/.git", False))
+        self.assertNotIn("GIT_INDEX_FILE", checkout)
+        self.assertEqual(seen, [full, full, full, checkout])
+
+    def test_the_repository_variables_are_gits_own_list(self):
+        listed = git.run_argv(["git", "rev-parse", "--local-env-vars"]).stdout.split()
+        self.assertTrue(listed, "git lists its repository-local variables")
+        self.assertLessEqual(set(listed), git.REPO_ENV_VARS)
+        self.assertLessEqual(git.CHECKOUT_ENV_VARS, git.REPO_ENV_VARS)
+
     def test_the_scratch_worktree_is_detached(self):
         rec = _Recorder()
         self.assertTrue(git.worktree_add_detached("/tmp/wt", SHA_A, hooks_path="/h", _run=rec).ok)

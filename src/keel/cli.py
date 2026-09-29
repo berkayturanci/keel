@@ -381,10 +381,14 @@ def _reverter(scratch: str, patch_path: str) -> revertcheck.Reverter:
 
 
 def _revert_tester(scratch: str, cmd: str | None) -> revertcheck.Tester:
-    """Run the test command in the scratch tree as it stands."""
+    """Run the test command in the scratch tree as it stands.
+
+    Without git's repository variables (:func:`keel.git.scratch_env`): a suite that runs git
+    must reach the scratch tree, not the repository an inherited ``GIT_DIR`` names.
+    """
 
     def test(timeout: int) -> revertcheck.RunResult:
-        result = run_command(cmd or "", cwd=scratch, timeout=timeout)
+        result = run_command(cmd or "", cwd=scratch, timeout=timeout, env=git.scratch_env())
         return revertcheck.RunResult(result.ok, result.timed_out, result.output)
 
     return test

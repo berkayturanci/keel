@@ -1333,7 +1333,9 @@ from blank lines, so a blank line inside a string never splits it. A new file th
 block stays one change, which deletes it. It then checks out
 the committed `HEAD` as a **scratch worktree under the OS temp directory** (with the
 repository's git hooks switched off for that checkout) — your checkout's files are never
-touched — and runs the test command there once unreverted (the *baseline*), then once per
+touched, even when keel runs with `GIT_DIR` or `GIT_WORK_TREE` set (from a git hook, say):
+every command in the scratch tree, the test command included, runs without git's
+repository variables — and runs the test command there once unreverted (the *baseline*), then once per
 change with that change undone by `git apply -R`, from a clean tree each time (`git reset
 --hard` + `git clean -fdx`, so neither the previous revert nor its bytecode answers for the
 next). The worktree is removed when the check ends; a run killed outright can leave its

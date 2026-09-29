@@ -310,6 +310,42 @@ def revert_diff(base: str, head: str, *, cwd: str | None = None, _run=None) -> s
     return result.stdout if result.ok else None
 
 
+#: What ``git rev-parse --local-env-vars`` lists: the variables that tie a git command to
+#: one repository, work tree or index instead of the directory it runs in. keel run from a
+#: git hook inherits ``GIT_DIR``, and a wrapper may set ``GIT_WORK_TREE``; passed to a
+#: command meant for the scratch worktree, they aimed ``reset --hard`` and ``clean -fdx``
+#: at the operator's checkout (#1289 review).
+REPO_ENV_VARS = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    }
+)
+#: The subset that picks a work tree or an index: dropped even where the repository the
+#: variables name is the right one (``git worktree add``, run in the operator's repository).
+CHECKOUT_ENV_VARS = frozenset(
+    {"GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX"}
+)
+
+
+def scratch_env(drop: frozenset[str] = REPO_ENV_VARS) -> dict[str, str]:
+    """``os.environ`` without ``drop``: for a command that must act where it runs."""
+    return {key: value for key, value in os.environ.items() if key not in drop}
+
+
 def worktree_add_detached(
     path: str, commit: str, *, hooks_path: str, cwd: str | None = None, _run=None
 ) -> CommandResult:
@@ -317,7 +353,8 @@ def worktree_add_detached(
 
     ``hooks_path`` replaces the repository's hooks for this one command: a worktree shares
     its repository's hooks, and a ``post-checkout`` hook would otherwise run in the scratch
-    tree. Pass an empty directory.
+    tree. Pass an empty directory. :data:`CHECKOUT_ENV_VARS` are dropped, so an inherited
+    work tree or index cannot receive the checkout.
     """
     return run_argv(
         [
@@ -332,6 +369,7 @@ def worktree_add_detached(
             commit,
         ],
         cwd=cwd,
+        env=scratch_env(CHECKOUT_ENV_VARS),
         **_kw(_run),
     )
 
@@ -346,7 +384,7 @@ def apply_reverse(patch_path: str, *, cwd: str | None = None, _run=None) -> Comm
     The user's ``apply.*`` settings are pinned: ``apply.whitespace=error`` would refuse a
     change whose lines carry trailing blanks (a false "could not undo"), and
     ``apply.ignoreWhitespace`` or ``apply.3way`` would let a patch land where it does not
-    match exactly.
+    match exactly. It runs with :func:`scratch_env`, so it patches the tree at ``cwd``.
     """
     return run_argv(
         [
@@ -362,6 +400,7 @@ def apply_reverse(patch_path: str, *, cwd: str | None = None, _run=None) -> Comm
             patch_path,
         ],
         cwd=cwd,
+        env=scratch_env(),
         **_kw(_run),
     )
 
@@ -372,11 +411,15 @@ def reset_clean(*, cwd: str | None = None, _run=None) -> bool:
     ``clean -x`` removes *ignored* files too, and that is the point: a ``__pycache__``
     written while one change was reverted must not answer for the next run, since a
     ``.pyc`` whose source was restored within the same second can be served stale.
+
+    Both run with :func:`scratch_env`: an inherited ``GIT_DIR`` or ``GIT_WORK_TREE`` would
+    otherwise send them to the operator's checkout.
     """
-    reset = run_argv(["git", "reset", "--hard", "--quiet", "HEAD"], cwd=cwd, **_kw(_run))
+    env = scratch_env()
+    reset = run_argv(["git", "reset", "--hard", "--quiet", "HEAD"], cwd=cwd, env=env, **_kw(_run))
     if not reset.ok:
         return False
-    return run_argv(["git", "clean", "-fdxq"], cwd=cwd, **_kw(_run)).ok
+    return run_argv(["git", "clean", "-fdxq"], cwd=cwd, env=env, **_kw(_run)).ok
 
 
 def hash_object(path: str, *, cwd: str | None = None, _run=None) -> str | None:

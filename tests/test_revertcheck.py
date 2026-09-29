@@ -163,7 +163,49 @@ class TestParseDiff(unittest.TestCase):
             'diff --git "a/q\\"x.py" "b/q\\"x.py"\n'
             '--- "a/q\\"x.py"\n+++ "b/q\\"x.py"\n@@ -1 +1 @@\n-a\n+b\n'
         )
-        self.assertEqual([f.path for f in rc.parse_diff(text)], ["my file.py", 'q\\"x.py'])
+        self.assertEqual([f.path for f in rc.parse_diff(text)], ["my file.py", 'q"x.py'])
+
+    def test_a_quoted_name_is_unescaped(self):
+        cases = {
+            '"a/caf\\303\\251.py"': "café.py",
+            '"a/tab\\there.py"': "tab\there.py",
+            '"a/back\\\\slash.py"': "back\\slash.py",
+            # an escape git never writes, and a lone trailing backslash, are kept
+            '"a/odd\\q.py\\"': "odd\\q.py\\",
+            '"a/short\\30"': "short\\30",
+            "a/plain.py": "plain.py",
+        }
+        for written, name in cases.items():
+            with self.subTest(written=written):
+                self.assertEqual(rc._path_from("--- " + written, "a/"), name)
+
+    def test_a_file_with_no_hunk_is_named_from_a_quoted_header(self):
+        """Codex, round 9: a quoted ``diff --git`` header left the name ending in a quote,
+        so a mode-only or binary ``.py`` change was not production and passed unseen."""
+        mode = (
+            'diff --git "a/src/q\\"x.py" "b/src/q\\"x.py"\n'
+            "old mode 100644\nnew mode 100755\n"
+            'diff --git "a/src/b\\"in.py" "b/src/b\\"in.py"\n'
+            "index 1111111..2222222 100644\n"
+            'Binary files "a/src/b\\"in.py" and "b/src/b\\"in.py" differ\n'
+        )
+        files = rc.parse_diff(mode)
+        self.assertEqual([f.path for f in files], ['src/q"x.py', 'src/b"in.py'])
+        plan = rc.plan_changes(files, tests=[], paths=[], unit="hunk")
+        self.assertEqual([c.label for c in plan.changes], ['src/q"x.py (mode 100644 -> 100755)'])
+        self.assertEqual(plan.unrevertable, ('src/b"in.py',))
+        self.assertFalse(rc.judge(plan, None).ok)
+
+    def test_an_unquoted_header_splits_in_the_middle(self):
+        cases = {
+            "diff --git a/x b/y.py b/x b/y.py": "x b/y.py",
+            # neither form: the text after the last " b/"
+            "diff --git a/x b/y": "y",
+            'diff --git "a/unterminated b/z': "z",
+        }
+        for line, name in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(rc._header_path(line), name)
 
     def test_a_file_without_hunks_keeps_its_diff_git_name(self):
         text = (
@@ -396,6 +438,15 @@ class TestAddedCodeIsSplitIntoBlocks(unittest.TestCase):
         for path, added in cases.items():
             with self.subTest(path=path):
                 self.assertEqual(len(self._labels(path, added)), 1)
+
+    def test_a_quoted_new_files_blocks_keep_its_quoted_name(self):
+        text = (
+            'diff --git "a/q\\"x.py" "b/q\\"x.py"\nnew file mode 100644\n--- /dev/null\n'
+            '+++ "b/q\\"x.py"\n@@ -0,0 +1,4 @@\n+def a():\n+    pass\n+def b():\n+    pass\n'
+        )
+        plan = rc.plan_changes(rc.parse_diff(text), tests=[], paths=[], unit="hunk")
+        self.assertEqual(len(plan.changes), 2)
+        self.assertIn('\n--- "a/q\\"x.py"\n+++ "b/q\\"x.py"\n', plan.changes[1].patch)
 
     def test_a_mode_only_change_does_not_look_comment_only(self):
         """agy, round 8: no changed line made ``all()`` vacuously true."""

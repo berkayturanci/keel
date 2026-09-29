@@ -262,19 +262,83 @@ class FileDiff:
         )
 
 
+#: git's C-style escapes in a quoted path (``quote_c_style``), beside ``\\ooo`` octal bytes.
+_C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def _unquote(name: str) -> str:
+    """A path as git wrote it -> the path itself.
+
+    git wraps a name in double quotes when it holds a control character, a quote or a
+    backslash, and escapes those inside (``"a/q\\"x.py"``); a byte is ``\\ooo`` octal. An
+    unquoted name is returned as it is.
+    """
+    if len(name) < 2 or not (name.startswith('"') and name.endswith('"')):
+        return name
+    body, out, i = name[1:-1], bytearray(), 0
+    while i < len(body):
+        char = body[i]
+        octal = body[i + 1 : i + 4]
+        if char == "\\" and body[i + 1 : i + 2] in _C_ESCAPES:
+            out.append(_C_ESCAPES[body[i + 1]])
+            i += 2
+        elif char == "\\" and len(octal) == 3 and all(c in "01234567" for c in octal):
+            out.append(int(octal, 8) & 0xFF)
+            i += 4
+        else:
+            out += char.encode("utf-8", "surrogateescape")
+            i += 1
+    return out.decode("utf-8", "surrogateescape")
+
+
+def _closing_quote(text: str) -> int:
+    """The index of the quote that closes the quoted name opening ``text``; ``-1`` if none."""
+    i = 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == '"':
+            return i
+        i += 1
+    return -1
+
+
+def _strip(name: str, prefix: str) -> str:
+    return name[len(prefix) :] if name.startswith(prefix) else name
+
+
 def _path_from(line: str, prefix: str) -> str | None:
     """The path on a ``--- a/x`` / ``+++ b/x`` line; ``None`` for ``/dev/null``.
 
-    git ends the line with a tab when the name contains a space, and wraps a name in
-    double quotes when it holds a control character, a quote or a backslash; both are
-    stripped so the name matches the project's globs.
+    git ends the line with a tab when the name contains a space, and quotes a name that
+    holds a control character, a quote or a backslash (:func:`_unquote`); the path is read
+    back so it matches the project's globs.
     """
     name = line[4:].rstrip("\t")
     if name == "/dev/null":
         return None
-    if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
-        name = name[1:-1]
-    return name[len(prefix) :] if name.startswith(prefix) else name
+    return _strip(_unquote(name), prefix)
+
+
+def _header_path(line: str) -> str:
+    """The path on a ``diff --git a/x b/x`` line — the only name a file with no ``---`` /
+    ``+++`` lines (a mode change, a binary file) carries.
+
+    With renames off both names are the same file, so an unquoted pair splits in the middle
+    (a name may hold ``" b/"``), and a quoted one ends at its closing quote. A header that
+    reads neither way falls back to the text after the last ``" b/"``.
+    """
+    rest = line[len("diff --git ") :]
+    if rest.startswith('"'):
+        end = _closing_quote(rest)
+        if end > 0:
+            return _strip(_unquote(rest[: end + 1]), "a/")
+    half = (len(rest) - 5) // 2
+    name = rest[2 : 2 + half]
+    if rest.startswith("a/") and rest[2 + half :] == f" b/{name}":
+        return name
+    return rest.rsplit(" b/", 1)[-1]
 
 
 def parse_diff(text: str) -> tuple[FileDiff, ...]:
@@ -293,8 +357,7 @@ def parse_diff(text: str) -> tuple[FileDiff, ...]:
             i += 1
             continue
         header = [lines[i]]
-        # `diff --git a/x b/x`: the fallback name for a file with no ---/+++ lines.
-        fallback = lines[i].rsplit(" b/", 1)[-1]
+        fallback = _header_path(lines[i])
         old = new = None
         i += 1
         while i < len(lines) and not lines[i].startswith(("@@", "diff --git ")):
@@ -432,7 +495,7 @@ def plan_changes(
         if f.status == "added":
             blocks = _blocks(f.hunks[0], f.path) if len(f.hunks) == 1 else []
             if len(blocks) > 1:
-                plain = (header[0], f"--- a/{f.path}", f"+++ b/{f.path}")
+                plain = (header[0], _old_side(header), *(h for h in header if h[:4] == "+++ "))
                 changes.extend(_block_change(f.path, plain, block) for block in blocks)
             else:
                 changes.append(
@@ -463,6 +526,14 @@ def plan_changes(
 #: Files whose added code :func:`_blocks` can split: it parses them.
 _PYTHON_SUFFIXES = (".py", ".pyi")
 _DEFINITIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _old_side(header: Sequence[str]) -> str:
+    """A new file's ``--- a/x`` line, from its ``+++ b/x`` line as git wrote it (quoting and
+    all), so a patch that removes part of the file names the file that stays."""
+    new = next(h for h in header if h[:4] == "+++ ")
+    name = new[4:]
+    return "--- " + ('"a/' + name[3:] if name.startswith('"b/') else "a/" + name[2:])
 
 
 def _blocks(hunk: Hunk, path: str) -> list[tuple[int, tuple[str, ...]]]:
