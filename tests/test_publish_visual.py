@@ -18,6 +18,7 @@ wheel check's own script against wheels built for the purpose.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -64,6 +65,9 @@ def _release_check(*argv: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # The child writes UTF-8 whatever the console code page; on Windows it
+        # would write cp1252, which this side cannot decode (the "—" in messages).
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         check=False,
     )
 
@@ -170,6 +174,7 @@ class TestThePublishVisualWorkflow(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
                 check=False,
             )
 
