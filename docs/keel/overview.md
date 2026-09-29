@@ -243,6 +243,6 @@ landed) rather than a soft `done`, so the board distinguishes a green confirmed-
 a closed-out run; runs whose `--run-id` ends in their issue/PR (`ship-585`) are labelled
 `#585` even when no explicit issue is passed.
 
-Depends on this core (`keel-workflow >= 1.6.0`); the core never depends on it (it only
+Depends on this core (`keel-workflow >= 1.15.0`); the core never depends on it (it only
 reads records, and probes `shutil.which("jury")` — never imports ai-jury). See
 [`keel-visual/README.md`](../../keel-visual/README.md).
