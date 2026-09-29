@@ -233,7 +233,9 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertEqual([s for s, _ in found], ["major", "nit", "nit"])
         self.assertTrue(found[0][1].startswith("pkg/calc.py @@ -1,2 +1,2 @@: no test failed"))
         self.assertIn("errored and none failed as an assertion", found[0][1])
-        self.assertTrue(found[1][1].startswith("pkg/extra.py (new file): noticed only as an error"))
+        self.assertTrue(
+            found[1][1].startswith("pkg/extra.py (new file): noticed only as a missing name")
+        )
 
     def test_a_name_added_to_an_import_is_an_addition(self):
         base = "from math import floor\n\n\n" + _BASE_CALC
@@ -251,7 +253,9 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertTrue(outcome.ok, _messages(outcome))
         found = _messages(outcome)
         self.assertEqual(found[0][0], "nit")
-        self.assertTrue(found[0][1].startswith("pkg/calc.py @@ -1 +1 @@: noticed only as an error"))
+        self.assertTrue(
+            found[0][1].startswith("pkg/calc.py @@ -1 +1 @@: noticed only as a missing name")
+        )
 
     def test_a_comment_or_docstring_change_is_tested(self):
         # Nothing is skipped as harmless: both edits are undone and the suite runs for each.
@@ -281,6 +285,29 @@ class TestRevertCheckOnARealRepository(unittest.TestCase):
         self.assertEqual(major[0], "major")
         self.assertIn("no test notices this change", major[1])
         self.assertIn("it looks comment-only, and keel tests every change", major[1])
+
+    def test_a_latin_1_source_reverts_byte_for_byte(self):
+        """Review round on 1d1326a4: a strict UTF-8 write of the patch raised
+        UnicodeEncodeError on the surrogate git's Latin-1 byte decodes to."""
+        root = _repo(self.root, {"README.md": "enc\n"})
+        cookie = b"# -*- coding: latin-1 -*-\n"
+        (root / "pkg" / "enc.py").write_bytes(cookie + b"VALUE = '\xe9'\n")
+        (root / "tests" / "test_enc.py").write_text(
+            "import unittest\n\nfrom pkg import enc\n\n\nclass E(unittest.TestCase):\n"
+            "    def test_value(self):\n        self.assertEqual(enc.VALUE, '\\u00e8')\n",
+            encoding="utf-8",
+        )
+        _git(root, "add", "-A")
+        _git(root, "commit", "-qm", "enc base")
+        _git(root, "branch", "-f", "main", "HEAD")
+        (root / "pkg" / "enc.py").write_bytes(cookie + b"VALUE = '\xe8'\n")
+        _git(root, "commit", "-qam", "enc")
+        try:
+            outcome = _outcome(root)
+        except UnicodeError as exc:  # the old strict write, measured
+            self.fail(f"the revert crashed instead of applying: {exc!r}")
+        self.assertTrue(outcome.ok, _messages(outcome))
+        self.assertIn("1 of 1 production change(s)", _messages(outcome)[-1][1])
 
     def test_a_suite_red_on_a_clean_head_cannot_judge(self):
         root = _repo(

@@ -289,6 +289,13 @@ class TestReadOutput(unittest.TestCase):
             rc.CAUGHT,
         )
 
+    def test_a_pytest_timeout_is_not_an_assertion(self):
+        tally = rc.read_output(
+            "FAILED t.py::slow - Failed: Timeout >10.0s\n"
+            "FAILED t.py::fail - Failed: expected\n2 failed in 11s\n"
+        )
+        self.assertEqual((tally.assertions, tally.errors), (1, 1))
+
     def test_a_pytest_failure_nobody_describes_is_unclassified(self):
         tally = rc.read_output("FAILED t.py::a\n2 failed, 1 passed in 1.0s (0:00:01)\n")
         self.assertEqual((tally.assertions, tally.errors, tally.unclassified), (0, 1, 1))
@@ -344,7 +351,7 @@ def _change(label, pure_addition=False):
 
 _GREEN = rc.RunResult(exit_ok=True, output="Ran 2 tests in 0s\n\nOK\n")
 _CAUGHT = rc.RunResult(exit_ok=False, output="Ran 2 tests in 0s\nFAILED (failures=1)\n")
-_CODE = rc.Reverted(True, "x = 1\n", "x = 2\n")
+_CODE = rc.Reverted(True)
 
 
 class _Clock:
@@ -399,7 +406,7 @@ class TestExecute(unittest.TestCase):
 
     def test_each_change_is_run_alone_and_classified(self):
         scratch = _Scratch(
-            reverted={"c": rc.Reverted(False), "d": rc.Reverted(True, "x = 1\n", "x  =  1\n")},
+            reverted={"c": rc.Reverted(False), "d": rc.Reverted(True)},
             runs={None: _GREEN, "a": _CAUGHT, "b": _GREEN},
         )
         changes = [rc.Change(name, f"{name}.py", "p", False) for name in "abcd"]
@@ -459,10 +466,7 @@ class TestExecute(unittest.TestCase):
             for name, (path, _head, _undone, body) in repros.items()
         ]
         scratch = _Scratch(
-            reverted={
-                name: rc.Reverted(True, head, undone)
-                for name, (_path, head, undone, _body) in repros.items()
-            },
+            reverted={name: rc.Reverted(True) for name in repros},
             runs={None: _GREEN, **dict.fromkeys(repros, _GREEN)},
         )
         report, _ = _execute(changes, scratch=scratch)
@@ -474,30 +478,59 @@ class TestExecute(unittest.TestCase):
         self.assertIn("it looks comment-only", verdict.findings[-2].message)
 
     def test_a_result_knows_whether_its_change_only_adds(self):
-        errored = rc.RunResult(exit_ok=False, output="Ran 1 test in 0s\nFAILED (errors=1)\n")
-        scratch = _Scratch(
-            reverted={
-                "added": _CODE,
-                "import": rc.Reverted(
-                    True, "from m import a, b\nx = 1\n", "from m import a\nx = 1\n"
-                ),
-                "code": _CODE,
-            },
-            runs={None: _GREEN, "added": errored, "import": errored, "code": errored},
+        missing = rc.RunResult(
+            exit_ok=False,
+            output=(
+                "ERROR: test_x (t.T.test_x)\nTraceback (most recent call last):\n"
+                '  File "t.py", line 3, in test_x\n    f()\n'
+                "NameError: name 'f' is not defined\n\nRan 1 test in 0s\nFAILED (errors=1)\n"
+            ),
         )
+        behaviour = rc.RunResult(
+            exit_ok=False,
+            output=(
+                'Traceback (most recent call last):\n  File "t.py", line 3\n'
+                "KeyError: 'é'\n\nRan 1 test in 0s\nFAILED (errors=1)\n"
+            ),
+        )
+        imports = "diff --git a/x b/x\n@@ -1 +1 @@\n-from m import a\n+from m import a, b\n"
+        cookie = "diff --git a/x b/x\n@@ -1 +1 @@\n-# coding: latin-1\n+# coding: utf-8\n"
         changes = [
             rc.Change("added", "added.py", "p", True),
-            rc.Change("import", "import.py", "p", False),
+            rc.Change("import", "import.py", imports, False),
             rc.Change("code", "code.py", "p", False),
+            rc.Change("added-keyerror", "k.py", "p", True),
+            rc.Change("cookie", "c.py", cookie, False),
         ]
+        scratch = _Scratch(
+            runs={
+                None: _GREEN,
+                "added": missing,
+                "import": missing,
+                "code": missing,
+                "added-keyerror": behaviour,
+                "cookie": behaviour,
+            },
+        )
         report, _ = _execute(changes, scratch=scratch)
         self.assertEqual(
             [(r.change.label, r.result, r.adds_only) for r in report.results],
             [
                 ("added", rc.ERRORED, True),
                 ("import", rc.ERRORED, True),
+                # A modification's errors never read as an addition's.
                 ("code", rc.ERRORED, False),
+                # Review round on 1d1326a4: an addition (or a cookie) whose revert raises
+                # a KeyError changed behaviour; only a missing name is lenient.
+                ("added-keyerror", rc.ERRORED, False),
+                ("cookie", rc.ERRORED, False),
             ],
+        )
+        verdict = rc.judge(rc.Plan(tuple(changes), (), ()), report)
+        self.assertFalse(verdict.ok)
+        self.assertEqual(
+            [f.severity for f in verdict.findings],
+            ["nit", "nit", "major", "major", "major", "nit"],
         )
 
     def test_max_changes_leaves_the_rest_not_checked(self):
@@ -548,24 +581,76 @@ def _py(label, patch="p"):
     return rc.Change(label, f"{label}.py", patch, False)
 
 
+def _diff(path, *lines):
+    return rc.Change(
+        "x", path, "diff --git a/x b/x\n@@ -1 +1 @@\n" + "\n".join(lines) + "\n", False
+    )
+
+
 class TestImportsOnly(unittest.TestCase):
-    def test_only_an_import_differs(self):
-        head = "import os\nfrom m import a, b\n\n\ndef f():\n    return a\n"
-        self.assertTrue(
-            rc.imports_only(_py("m"), head, "from m import a\n\n\ndef f():\n    return a\n")
-        )
+    """Read from the change's own lines (review round on 1d1326a4)."""
+
+    def test_whole_import_lines_are_imports_only(self):
+        for lines in (
+            ("+import os",),
+            ("-import os",),
+            ("-import os.path as p", "+import os.path as p, sys"),
+            ("-from m import a", "+from m import a, b as c", "+"),
+            ("+from . import x",),
+            ("+from ..pkg.mod import (a, b,)",),
+            ("+from m import *",),
+        ):
+            with self.subTest(lines=lines):
+                self.assertTrue(rc.imports_only(_diff("m.py", *lines)))
 
     def test_anything_else_is_not_imports_only(self):
-        self.assertFalse(rc.imports_only(_py("m"), "import os\nx = 1\n", "x = 2\n"))
-        # Only imports: a docstring edit beside them is a change like any other.
-        self.assertFalse(
-            rc.imports_only(_py("m"), '"""New."""\nimport os\nf()\n', '"""Old."""\nf()\n')
-        )
-        self.assertFalse(rc.imports_only(_py("m"), "def (:\n", "def (:\n"))
-        self.assertFalse(rc.imports_only(_py("m"), None, "x = 1\n"))
-        self.assertFalse(rc.imports_only(_py("m"), "x = 1\n", None))
-        ts = rc.Change("x", "a.ts", "p", False)
-        self.assertFalse(rc.imports_only(ts, "import a from 'a'\n", "\n"))
+        for lines in (
+            # codex's repro: an encoding cookie is not an import, whatever the AST says.
+            ("-# coding: latin-1", "+# coding: utf-8"),
+            ("+import os", "+# coding: utf-8"),
+            # A multi-line import's member line, and its opening line.
+            ("+    b,",),
+            ("+from m import (",),
+            ("+import os  # noqa",),
+            ("+import os; x = 1",),
+            ("+x = 1",),
+            ("+",),
+        ):
+            with self.subTest(lines=lines):
+                self.assertFalse(rc.imports_only(_diff("m.py", *lines)))
+        self.assertFalse(rc.imports_only(_diff("a.ts", "+import a from 'a'")))
+
+
+class TestMissingNamesOnly(unittest.TestCase):
+    TB = 'Traceback (most recent call last):\n  File "t.py", line 1, in f\n    g()\n'
+
+    def test_missing_names_are_lenient(self):
+        for exc in (
+            "NameError: name 'g' is not defined",
+            "builtins.NameError: name 'g' is not defined",
+            "UnboundLocalError: cannot access local variable 'v'",
+            "ImportError: cannot import name 'g' from 'm'",
+            "ModuleNotFoundError: No module named 'm'",
+            "AttributeError: module 'm' has no attribute 'g'",
+            "AttributeError: partially initialized module 'm' has no attribute 'g'",
+            "AttributeError: type object 'K' has no attribute 'g'",
+        ):
+            with self.subTest(exc=exc):
+                self.assertTrue(rc.missing_names_only(self.TB + exc + "\n"))
+        self.assertTrue(rc.missing_names_only("FAILED t.py::a - NameError: name 'g'\n"))
+
+    def test_any_other_error_is_behaviour(self):
+        for output in (
+            self.TB + "KeyError: 'é'\n",
+            self.TB + "AttributeError: 'NoneType' object has no attribute 'g'\n",
+            self.TB + "tests.Boom: custom\n",
+            self.TB + "StopIteration\n",
+            self.TB + "NameError: x\n\nDuring handling\n\n" + self.TB + "TypeError: y\n",
+            "FAILED t.py::a - TypeError: no\n",
+            "make: *** [test] Error 2\n",
+        ):
+            with self.subTest(output=output):
+                self.assertFalse(rc.missing_names_only(output))
 
 
 class TestVerdict(unittest.TestCase):
@@ -590,13 +675,14 @@ class TestVerdict(unittest.TestCase):
         self.assertEqual(verdict.findings[0].severity, "nit")
         self.assertIn("none of the 1 changed file(s)", verdict.findings[0].message)
 
-    def test_an_unrevertable_file_is_named_as_a_suggestion(self):
+    def test_an_unrevertable_file_blocks_as_not_checked(self):
+        # The gate never certifies what it did not check (sweep after 1d1326a4).
         verdict = rc.judge(rc.Plan((), ("bin/tool.sh",), ("bin/tool.sh",)), None)
-        self.assertTrue(verdict.ok)
+        self.assertFalse(verdict.ok)
         self.assertFalse(verdict.skipped)
         self.assertEqual(
             [(f.severity, f.message.split(":")[0]) for f in verdict.findings],
-            [("minor", "bin/tool.sh")],
+            [("major", "bin/tool.sh")],
         )
 
     def test_a_baseline_problem_cannot_judge(self):

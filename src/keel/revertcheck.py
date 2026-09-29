@@ -35,7 +35,6 @@ made the fix and the bug agree. Both remain a reviewer's questions.
 
 from __future__ import annotations
 
-import ast
 import fnmatch
 import posixpath
 import re
@@ -449,40 +448,77 @@ def looks_comment_only(change: Change) -> bool:
     )
 
 
-class _DropImports(ast.NodeTransformer):
-    """Remove every import statement; everything else, docstrings included, stays."""
-
-    def visit_Import(self, node: ast.Import) -> None:
-        return None
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        return None
-
-
-def _python_shape_without_imports(text: str) -> str | None:
-    """The syntax tree without positions or imports; ``None`` if unparseable."""
-    try:
-        tree = ast.parse(text)
-    except (SyntaxError, ValueError):
-        return None
-    return ast.dump(_DropImports().visit(tree))
+_NAMES = r"[A-Za-z_]\w*(?:\s+as\s+[A-Za-z_]\w*)?(?:\s*,\s*[A-Za-z_]\w*(?:\s+as\s+[A-Za-z_]\w*)?)*"
+_DOTTED = r"[A-Za-z_][\w.]*(?:\s+as\s+[A-Za-z_]\w*)?"
+#: One complete import statement on one line, and nothing else on it — no trailing
+#: comment, no ``;``, no open parenthesis left for a continuation line.
+_IMPORT_LINE = re.compile(
+    rf"^\s*(?:import\s+{_DOTTED}(?:\s*,\s*{_DOTTED})*"
+    rf"|from\s+(?:\.+[\w.]*|[A-Za-z_][\w.]*)\s+import\s+"
+    rf"(?:\*|{_NAMES}|\(\s*{_NAMES}\s*,?\s*\)))\s*$"
+)
 
 
-def imports_only(change: Change, before: str | None, after: str | None) -> bool:
-    """Does reverting ``change`` alter nothing in a Python file but its imports?
+def imports_only(change: Change) -> bool:
+    """Is ``change`` a Python change whose every changed line is a whole import statement?
 
-    Reverting an import that the branch *added a name to* removes the name, and every test
-    that reaches it can then only raise ``NameError`` — as with a hunk that only adds lines.
-    :func:`judge` treats both the same way. It classifies a result *after* the run; it
-    never skips one. ``False`` for any file that is not Python, added, deleted or
-    unparseable.
+    Read from the change's **own** lines, never from a comparison of the two files: an
+    AST cannot see an encoding cookie, and ``# coding: latin-1`` beside an import once
+    passed as "imports only" while it changed what a string literal decodes to. Blank
+    lines are ignored; a comment, a cookie, a continuation line of a multi-line import or
+    anything else makes the answer ``False`` — that change's errors then block, which is
+    the safe side. It classifies a result *after* its run; it never skips one.
     """
-    if before is None or after is None:
-        return False
     if posixpath.splitext(change.path)[1].lower() not in (".py", ".pyi"):
         return False
-    shape = _python_shape_without_imports(before)
-    return shape is not None and shape == _python_shape_without_imports(after)
+    lines = [line for line in _changed_lines(change.patch) if line.strip()]
+    return bool(lines) and all(_IMPORT_LINE.match(line) for line in lines)
+
+
+#: The exceptions that say "a name the tests reach is gone" — all a revert of pure
+#: added code (or of an imported name) can produce. ``AttributeError`` counts only for a
+#: *module* or *class* attribute: ``'NoneType' object has no attribute`` is behaviour.
+_MISSING_NAME = re.compile(
+    r"^(?:NameError|UnboundLocalError|ImportError|ModuleNotFoundError)\b"
+    r"|^AttributeError: (?:(?:partially initialized )?module '[^']*'|type object '[^']*') "
+    r"has no attribute\b"
+)
+#: The start of a Python traceback; its exception line is the first unindented line after it.
+_TRACEBACK = "Traceback (most recent call last):"
+#: A pytest short-summary line's reason (`` - <Exception>: message``), any exception name.
+_PYTEST_REASON = re.compile(r"^(?:FAILED|ERROR) .*? - ([A-Za-z_][\w.]*(?::.*)?)$", re.MULTILINE)
+
+
+def _raised(output: str) -> list[str]:
+    """Every exception the output reports, as ``Name: message`` with the module dropped.
+
+    Read from each traceback's final line — whatever the exception is called, so a
+    custom ``Boom`` or a ``StopIteration`` is seen too — and from pytest's short summary.
+    """
+    found: list[str] = []
+    lines = output.split("\n")
+    for i, line in enumerate(lines):
+        if line.strip() != _TRACEBACK:
+            continue
+        rest = (text for text in lines[i + 1 :] if text.strip() and not text[:1].isspace())
+        found.append(next(rest, ""))
+    found.extend(match.group(1) for match in _PYTEST_REASON.finditer(output))
+    return [
+        name.rsplit(".", 1)[-1] + sep + message
+        for name, sep, message in (text.partition(":") for text in found)
+    ]
+
+
+def missing_names_only(output: str) -> bool:
+    """Does every exception the run reports say only that a name is missing?
+
+    The evidence a lenient reading needs: the error-only result of undoing an addition is
+    a ``nit`` only when the errors are the ones removing code can cause. A ``KeyError``, a
+    ``TypeError``, an attribute missing from an *instance*, any exception keel cannot
+    name, and output with no traceback at all are behaviour, and block.
+    """
+    found = _raised(output)
+    return bool(found) and all(_MISSING_NAME.match(text) for text in found)
 
 
 # --- reading a test run --------------------------------------------------------------
@@ -505,7 +541,9 @@ _PYTEST_LINE = re.compile(
 )
 #: A pytest short-summary reason that is an assertion: a rewritten ``assert``, an
 #: ``AssertionError`` (unittest-style assertions under pytest), or ``pytest.fail``.
-_ASSERTION_REASON = re.compile(r"^(?:assert\b|AssertionError\b|Failed:)")
+#: ``Failed: Timeout`` is excluded: pytest-timeout reports a timed-out test that way, and
+#: a hang is not an assertion.
+_ASSERTION_REASON = re.compile(r"^(?:assert\b|AssertionError\b|Failed:(?! Timeout\b))")
 
 
 @dataclass(frozen=True)
@@ -646,9 +684,6 @@ class Reverted:
 
     #: The tree was reset and the reverse patch applied.
     applied: bool
-    #: The changed file on ``HEAD`` and with the change undone; ``None`` where it is absent.
-    before: str | None = None
-    after: str | None = None
 
 
 @dataclass(frozen=True)
@@ -656,8 +691,10 @@ class ChangeResult:
     change: Change
     result: str
     why: str
-    #: The change only adds code or names to an import (:attr:`Change.pure_addition`, or
-    #: :func:`imports_only`), so undoing it can only make a test error, never assert.
+    #: The change only adds code or import lines (:attr:`Change.pure_addition`, or
+    #: :func:`imports_only`) **and** every error its run reports is a missing name
+    #: (:func:`missing_names_only`) — the one error-only result :func:`judge` reads as a
+    #: ``nit``.
     adds_only: bool = False
 
 
@@ -738,7 +775,9 @@ def execute(
         result, why = classify(
             exit_ok=outcome.exit_ok, timed_out=outcome.timed_out, output=outcome.output
         )
-        adds_only = change.pure_addition or imports_only(change, undone.before, undone.after)
+        adds_only = (change.pure_addition or imports_only(change)) and missing_names_only(
+            outcome.output
+        )
         results.append(ChangeResult(change, result, why, adds_only))
     return Report(None, tuple(results), tuple(skipped))
 
@@ -800,14 +839,16 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
     * **unnoticed**, **timed out**, **unreadable**, **not applied** and **not checked**
       each block, naming the change: a change the gate did not see fail is not a pass.
     * **errored** — and **unreadable**, where the suite crashed before its summary — block,
-      except for a change that only *adds* lines or only changes imports. Reverting an
-      addition removes a name or a branch, and a test that calls it can then only error:
-      no assertion can fail against code that is not there. The error does prove a test
-      depends on the addition, so it is reported as a ``nit`` rather than a pass or a
-      block. Reverting a *modification* restores code that ran before; a test that only
-      errors against it (the ``NameError`` of a half-reverted fix) proves nothing.
-    * A production file with no textual hunk (binary, mode-only) is a ``minor``: nothing
-      to revert, so nothing checked, and said so.
+      except for a change that only *adds* lines or only changes import lines **and**
+      whose run reported nothing but missing names (``NameError``, ``ImportError``, a
+      module or class attribute). Reverting such an addition removes a name, and a test
+      that calls it can then only error: no assertion can fail against code that is not
+      there. The error does prove a test depends on it, so it is a ``nit``. Any other
+      error — a ``KeyError``, a ``TypeError``, an instance attribute — is behaviour a test
+      should assert on, and blocks, as does any error after reverting a modification.
+    * A production file with no textual hunk (binary, mode-only) blocks as **not
+      checked**: nothing could be reverted, and the gate never certifies what it did not
+      check.
     * A diff with no production change is ``SKIPPED`` — judged, with nothing to check.
 
     ``report`` is ``None`` only when there was nothing to execute.
@@ -816,14 +857,14 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
     for path in plan.unrevertable:
         findings.append(
             Finding(
-                "minor",
+                _BLOCK,
                 f"{path}: not checked — no textual hunk to revert (a binary or mode-only change)",
                 GATE_ID,
             )
         )
     if report is None:
         if findings:
-            return Verdict(True, tuple(findings))
+            return Verdict(False, tuple(findings))
         touched = len(plan.touched)
         return Verdict(
             True,
@@ -848,8 +889,8 @@ def judge(plan: Plan, report: Report | None) -> Verdict:
             findings.append(
                 Finding(
                     "nit",
-                    f"{label}: noticed only as an error — {item.why}; the change only adds "
-                    "code or imported names, so no assertion can fail without it",
+                    f"{label}: noticed only as a missing name — {item.why}; the change only "
+                    "adds code or import lines, so no assertion can fail without it",
                     GATE_ID,
                 )
             )

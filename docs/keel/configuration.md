@@ -1354,26 +1354,35 @@ group's `paths` are selectors that usually include the implementation too.
 keel reads **unittest** (`FAILED (failures=…, errors=…)`: failures are assertions, errors are
 not) and **pytest** (the short test summary, `-rfE` by default since pytest 6: a `FAILED` line
 whose reason is `assert …`, `AssertionError…` or `Failed:` is an assertion, any other exception
-is an error; a node id may contain spaces, as a parametrized `test_x[hello world]` does). Each
+is an error — `Failed: Timeout` from pytest-timeout included; a node id may contain spaces,
+as a parametrized `test_x[hello world]` does). Each
 reverted change is then one of:
 
 | result | meaning | verdict |
 |---|---|---|
 | caught | a test failed as an assertion | pass |
 | unnoticed | the suite passed with the change reverted | `major` — *no test notices this change* |
-| errored | tests failed, none as an assertion (an exception, an import error) | `major`; a `nit` when the change only **adds** lines or only changes Python imports |
+| errored | tests failed, none as an assertion (an exception, an import error) | `major`; a `nit` only for an addition whose errors are all missing names (below) |
 | timed out | the run hit its limit | `major` |
-| unreadable | the command failed and its output has no unittest/pytest summary (a crash at import), or pytest failures its summary does not describe | `major`; a `nit` for an addition, as above |
+| unreadable | the command failed and its output has no unittest/pytest summary (a crash at import), or pytest failures its summary does not describe | `major`; a `nit` for an addition, on the same evidence |
 | not applied | `git apply -R` could not undo it on `HEAD` | `major` |
-| not checked | over `max_changes`, or the budget ran out | `major` |
+| not checked | over `max_changes`, the budget ran out, or a production file with no textual hunk (binary, mode-only) | `major` |
 
-The **errored** exception is deliberate: reverting an *addition* removes a name or a branch, and
-a test that calls it can then only error — no assertion can fail against code that is not
-there, though the error does prove a test depends on it. A Python change whose only effect is
-on its imports (a name added to `from x import …`) is an addition in this sense. Reverting a *modification* restores
-code that ran before, so a test that only errors against it (the `NameError` of a half-reverted
-fix) proves nothing. A production file with no textual hunk (binary, mode-only) is a `minor`,
-named as not checked. The gate ends with a `nit` counting how many changes were caught.
+The **errored** exception is narrow on purpose. Reverting an *addition* removes a name, and a
+test that calls it can then only error — no assertion can fail against code that is not there —
+so the error is a `nit`, but only with evidence on both sides: the change only adds lines, or
+every one of its changed lines is a complete one-line Python import statement (read from the
+lines themselves, so an encoding cookie or a multi-line import's member line does not count);
+**and** every exception the run reports is a missing name — `NameError`, `UnboundLocalError`,
+`ImportError`/`ModuleNotFoundError`, or an `AttributeError` for a *module* or *class* attribute,
+read from each traceback's last line and pytest's short summary. Any other exception — a
+`KeyError`, a `TypeError`, an attribute missing from an instance, one keel cannot name — is
+behaviour a test should assert on, and blocks. Reverting a *modification* restores code that
+ran before, so a test that only errors against it (the `NameError` of a half-reverted fix)
+proves nothing and blocks. The gate ends with a `nit` counting how many changes were caught.
+
+The patch for each change is written back byte for byte, so a Latin-1 or other non-UTF-8
+source reverts exactly.
 
 **Cost bounds.** Each run is limited by [`gate_timeout_s`](#gate_timeout_s); the baseline and
 every revert together by `budget_s` (default `1800`), with the time spent resetting and

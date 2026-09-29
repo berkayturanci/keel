@@ -363,25 +363,19 @@ def _revert_check_verdict(
 def _reverter(scratch: str, patch_path: str) -> revertcheck.Reverter:
     """The I/O half of one revert: clean the scratch tree, then undo the change in it.
 
-    The changed file is read on both sides of ``git apply -R`` so the core can tell, after
-    the run, a Python change that only touches imports (:func:`keel.revertcheck.imports_only`).
-    Nothing read here skips a run.
+    The patch is written back **byte for byte**: git's output was decoded as UTF-8 with
+    ``surrogateescape`` (:func:`keel.runner.run_argv`), so a Latin-1 or otherwise non-UTF-8
+    source line holds surrogates, and encoding them the same way restores its bytes. A
+    strict encode raised ``UnicodeEncodeError`` before ``git apply`` ever ran.
     """
-
-    def read(path: str) -> str | None:
-        try:
-            return Path(scratch, path).read_text(encoding="utf-8", errors="surrogateescape")
-        except OSError:
-            return None
 
     def revert(change: revertcheck.Change) -> revertcheck.Reverted:
         if not git.reset_clean(cwd=scratch):
             return revertcheck.Reverted(applied=False)
-        before = read(change.path)
-        Path(patch_path).write_text(change.patch, encoding="utf-8", newline="\n")
-        if not git.apply_reverse(patch_path, cwd=scratch).ok:
-            return revertcheck.Reverted(applied=False)
-        return revertcheck.Reverted(True, before, read(change.path))
+        Path(patch_path).write_text(
+            change.patch, encoding="utf-8", errors="surrogateescape", newline="\n"
+        )
+        return revertcheck.Reverted(git.apply_reverse(patch_path, cwd=scratch).ok)
 
     return revert
 
