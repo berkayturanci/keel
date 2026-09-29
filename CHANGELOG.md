@@ -64,9 +64,14 @@ All notable changes to keel are documented here. The format follows
   which is only the default: each now adds that `team.jury.mode: advisory` or `--jury-advisory`
   also relaxes it off a jury-panel tier, `team.jury.min_vendors` may raise the 2, and on a tier
   whose review is the panel nothing relaxes it but the measured
-  `team.jury.on_unavailable: fallback`. The ship adapter's implementer precedence gains the
-  `team.profiles` and `team.by_difficulty` benches and drops an issue `delegate:*` label that
-  `team.resolve_assignment` never reads (`parameter-reference.md` too). `capture.py`,
+  `team.jury.on_unavailable: fallback`. The ship and implement adapters' implementer
+  precedence gains the `team.profiles` and `team.by_difficulty` benches, and the ship
+  adapter's drops an issue `delegate:*` label that `team.resolve_assignment` never reads
+  (`parameter-reference.md` too). No code reads a `delegate:` or `delegate-model:` issue
+  label, so `models.md`'s "Issue Labels" section now describes the role label and the benches
+  that do route an issue. The `delegate.py`, `agents.py` and `api_delegate.py` docstrings,
+  `cli.md`, `parameter-reference.md` and the ship adapter no longer name such a label as a
+  source of the model token. `capture.py`,
   `captureverify.py` and two test docstrings no longer call the run ledger committed: it is
   gitignored `.keel/state/` state unless `policy_pack.reports.run_ledger` points it at a
   tracked file. `tests/test_docs_claims.py` and `tests/test_docs_reference_accuracy.py` hold

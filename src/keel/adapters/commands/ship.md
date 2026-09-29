@@ -525,8 +525,8 @@ scored, i.e. a `keel swarm-plan` cluster; `keel ship` scores none) > `team.imple
 - **Model and effort selection.** `--provider <name>:<model>` or `--model <token>` picks
   the model; a per-run choice wins over the profile's or the registry entry's, and core
   validates the token (`agents.is_safe_model_token`) before it can reach an argv or a URL
-  path — a `delegate-model:<name>` issue label is a lower-trust source than config, so an
-  unsafe value is refused rather than escaped. `--effort low|medium|high` is translated
+  path — a per-run token is a lower-trust source than config, so an unsafe value is
+  refused rather than escaped. `--effort low|medium|high` is translated
   per vendor; a provider that cannot express it returns `effort_applied: false` with a
   warning instead of silently running at its default.
 - **Configured providers.** A `knobs.delegate_profiles` entry (`vendor: cli` or

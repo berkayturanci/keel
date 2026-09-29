@@ -2053,7 +2053,7 @@ The checks are:
   with its group, so `role: ["core"]` means `role:core`), `policy_pack.scan.issue_labels.*`,
   and the attribution vocabulary: `agent:<vendor>` for every built-in vendor plus each
   `knobs.delegate_profiles` entry's vendor, and `model:<base>` for a model a profile pins.
-  A `model:*` minted from `--delegate vendor:model` or a `delegate-model:` issue label is
+  A `model:*` minted from `--delegate vendor:model` or `keel delegate run --model` is
   unbounded and cannot be enumerated ahead of time, so the check does not try.
   Missing labels are a `warn` that prints the exact `gh label create` commands under the
   check; **never a `fail`**. Only runs when a config path names an `owner`/`repo`, and one
@@ -2173,8 +2173,8 @@ redefined, the same invariant `keel validate` enforces for `knobs.delegate_profi
 `keel doctor --providers` reports for the registry.
 
 `--model` overrides the model half. Either way the token is validated before use, because
-it can arrive from a `delegate-model:` issue label — and **which rule applies depends on
-where the model lands**:
+it arrives per run on the command line, a lower-trust source than config — and **which
+rule applies depends on where the model lands**:
 
 | destination | accepted | why |
 | --- | --- | --- |

@@ -525,8 +525,8 @@ scored, i.e. a `keel swarm-plan` cluster; `keel ship` scores none) > `team.imple
 - **Model and effort selection.** `--provider <name>:<model>` or `--model <token>` picks
   the model; a per-run choice wins over the profile's or the registry entry's, and core
   validates the token (`agents.is_safe_model_token`) before it can reach an argv or a URL
-  path — a `delegate-model:<name>` issue label is a lower-trust source than config, so an
-  unsafe value is refused rather than escaped. `--effort low|medium|high` is translated
+  path — a per-run token is a lower-trust source than config, so an unsafe value is
+  refused rather than escaped. `--effort low|medium|high` is translated
   per vendor; a provider that cannot express it returns `effort_applied: false` with a
   warning instead of silently running at its default.
 - **Configured providers.** A `knobs.delegate_profiles` entry (`vendor: cli` or
@@ -1642,4 +1642,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.24.3 source_sha256=9e1686b2eddc1c42c8b50b28f8841e17a36f7ab1769a758c2564555ac83108ae generated_sha256=9e1686b2eddc1c42c8b50b28f8841e17a36f7ab1769a758c2564555ac83108ae -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.24.3 source_sha256=544dd1d5b0eb8eb68f4ed214c450e11c663063cb10518ad8a8c2a11202523a81 generated_sha256=544dd1d5b0eb8eb68f4ed214c450e11c663063cb10518ad8a8c2a11202523a81 -->

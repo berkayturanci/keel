@@ -2226,8 +2226,7 @@ compound `workflow_profile`. `--compound` composes with every other flag
 
 Value set `claude | codex | agy | ollama:MODEL | anthropic-api:MODEL | openai-api:MODEL | google-api:MODEL`,
 plus the name of any `knobs.delegate_profiles` entry;
-`ollama:` and the `*-api:` values require a non-empty model
-(per-issue model overrides can also come from a `delegate-model:<name>` label).
+`ollama:` and the `*-api:` values require a non-empty model.
 Implementer precedence at s4, most specific first: `--delegate` flag >
 `knobs.team.profiles.<--team>` (the operator-named bench) > `knobs.team.by_difficulty.<band>`
 (the scored bench) > `knobs.team.implement.by_role` (by the issue's role label) >

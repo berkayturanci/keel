@@ -252,9 +252,9 @@ class TestOpenAICompatible(unittest.TestCase):
 class TestGoogleModelIsUrlPathInput(unittest.TestCase):
     """google-api is the only vendor that puts the model in the URL path (#666).
 
-    The model arrives from `--delegate google-api:MODEL` or a `delegate-model:`
-    issue label, so for this vendor it is untrusted input reaching a URL that also
-    carries an API key header.
+    The model arrives per run from `--delegate google-api:MODEL` or
+    `keel delegate run --model`, so for this vendor it is untrusted input reaching a URL
+    that also carries an API key header.
     """
 
     ENV = {"GEMINI_API_KEY": "k"}
