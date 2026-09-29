@@ -55,7 +55,7 @@
       name: "Google Antigravity",
       category: "assistants",
       badge: "AI Assistant",
-      desc: "First-class Antigravity paired programming skills, reactive message wakeups, and AGENTS.md rules.",
+      desc: "Installs as an agy plugin: agy imports the repository root's commands/ and skills/, so it gets the /keel:&lt;command&gt; set and the keel-onboard skill.",
       cmd: "keel ship .keel/project.yaml --host-agent agy",
       logo: "logos/google-antigravity.png"
     },
@@ -133,7 +133,7 @@
       name: "Hermes Agent",
       category: "assistants",
       badge: "Autonomous Agent",
-      desc: "Lightweight autonomous agent runner. Usable as a delegate on any keel command; the swarm fan-out it was written for is experimental.",
+      desc: "Lightweight autonomous agent runner. Usable as a delegate wherever a keel command takes --delegate (implement, ship, work-block and overnight among them); the swarm fan-out it was written for is experimental.",
       cmd: "keel ship .keel/project.yaml --issue 12 --delegate hermes",
       note: "Needs a <code>knobs.delegate_profiles.hermes</code> entry naming the agent's binary — keel ships no profile for it. The swarm variant of this command (<code>keel swarm-run … --delegate hermes</code>) is <b>experimental</b> and lands nothing yet — see <a href='https://github.com/berkayturanci/keel/issues/1281' target='_blank' rel='noopener'>#1281</a>. See <a href='https://github.com/berkayturanci/keel/blob/main/docs/keel/models.md#5-generic-cli-profiles' target='_blank' rel='noopener'>Generic CLI Profiles</a>.",
       logo: "logos/hermes.png"
@@ -202,7 +202,7 @@
       name: "Addy Osmani Agent Skills",
       category: "skills",
       badge: "Skill Library",
-      desc: "Third-party skill libraries live beside keel's own keel-&lt;command&gt; skills in .agents/skills/, which every non-Claude agent reads.",
+      desc: "Third-party skill libraries live beside keel's own keel-&lt;command&gt; skills in .agents/skills/, the shared skill surface keel writes for non-Claude hosts that discover skills there.",
       cmd: "keel install-adapter skills --root .",
       logo: "logos/addyosmani.png"
     },
@@ -246,10 +246,10 @@
     },
     {
       id: "pre-commit",
-      name: "Pre-Commit Quality Gates",
+      name: "Local Quality Gates",
       category: "skills",
       badge: "Quality Gate",
-      desc: "Deterministic local gates ensuring code formatting, security, and schema validation before any commit.",
+      desc: "Run the gates your config plans for the s8 test step, on demand. keel installs no git hook; call keel run-gates from your own pre-commit hook if you want them before each commit.",
       cmd: "keel run-gates .keel/project.yaml",
       logo: "logos/precommit.svg"
     },
