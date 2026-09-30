@@ -14,6 +14,7 @@ flow keeps working.
 | `coverage.html` | Animated coverage report with a per-file table, generated at build time |
 | `silent-revert.html` | Article: a squash merge silently reverted a release |
 | `long-runs.html` | Article: six practices for long unattended runs, and a real run keel stopped at the merge |
+| `revert-check.html` | Article: what 100 % coverage cannot tell you, and the opt-in `revert-check` gate |
 | `404.html` | Not-found page |
 
 ## How content updates work (important)
@@ -75,7 +76,7 @@ coverage badge endpoint is `coverage-badge.json`, also produced by CI.
 
 ## Analytics
 
-All six pages load Cloudflare Web Analytics
+All seven pages load Cloudflare Web Analytics
 (`static.cloudflareinsights.com/beacon.min.js`), which is cookieless and needs no
 consent banner. They report into a Cloudflare site of this site's own
 (`keel-ship.dev`, since 2026-09-21); until then keel-ship.dev and the sibling

@@ -19,6 +19,7 @@
 
 - [A squash merge silently reverted our release — and CI stayed green](https://keel-ship.dev/silent-revert.html): a stale branch overwrote a published release while every test passed, and the timing check that catches it
 - [Long unattended agent runs: where keel stops them, and why](https://keel-ship.dev/long-runs.html): six practices for long agent runs, what keel does for each, and a real run it stopped at the merge with the missing evidence named
+- [100% coverage didn't prove our fixes were tested](https://keel-ship.dev/revert-check.html): coverage says every line ran, not that a test fails when a fix is undone; keel's opt-in revert-check gate reverts each change alone, a real run of it, and what it does not check
 
 ## Source
 
