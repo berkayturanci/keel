@@ -3398,6 +3398,12 @@ keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live
   --approve-scope filesystem,git,github --operator "$USER"
 ```
 
+**Prerequisites.** A cluster lands only where `keel merge` would merge its pull request: CI must
+run on it, and the PR needs its review verdicts (which also arm keel merge's evidence gate).
+Without them every cluster is held with `keel merge`'s reason (for example *CI did not run on a
+non-docs PR (empty check set)* or *evidence gate is not enforced*) and the command exits 1 — see
+[swarm.md](swarm.md#4-landing-keel-swarm-land).
+
 **Which plan lands ([#1275](https://github.com/berkayturanci/keel/issues/1275)).** The run is
 `--swarm-id`, else the most recently written state file under `.keel/state/swarm/` (a
 `<id>.plan.json` never counts as a run). When `swarm-run` persisted a plan for that run,

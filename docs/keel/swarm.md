@@ -276,6 +276,13 @@ returned, and `--declared-file` counts as a declaration; beside several issues t
 because handing the same text to every issue is what made every plan either one flat wave or
 fully serial before #1274.
 
+**The declared scope is also the implementer's fence.** A live worker's brief tells the seat to
+change only files inside the cluster's scope, and in the first end-to-end run the seat kept to
+it: an issue whose text also asked for an export from `calc/__init__.py` left that file alone,
+because its `Scope:` line named only `calc/subtract.py` and its test. So list **every** file the
+change has to touch — the package's `__init__.py`, a registry, the docs page — not just the new
+module; a file left out is a file the implementer will not edit.
+
 ### Scope Prediction Heuristics
 These apply only to an issue with no declared scope, and what they find sits **beside** `*`,
 so they inform the tier and the difficulty score and never make an issue look disjoint.
@@ -641,6 +648,17 @@ its atomic merge lock (`.keel/state/locks/merge-<sha12>.lock`):
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live \
   --approve-scope filesystem,git,github --operator you
 ```
+
+**Before a wave can land.** Because each merge is `keel merge`'s, the repository needs what
+`keel merge` needs, or every cluster is **held** with its reason — which is the design, not a
+fault. Measured on the first end-to-end run: with no CI on pull requests each cluster was held
+as *CI did not run on a non-docs PR (empty check set)*, and once CI ran, as *evidence gate is not
+enforced*. So, before the first landing: CI must run on the cluster pull requests, and each
+cluster pull request needs its review verdicts like any other. keel merge's evidence gate arms
+on a keel signal on the pull request (the `keel:ship` gate label, a ship provenance comment, a
+review verdict, …, see [evidence.md](evidence.md)); a cluster pull request carries none of them
+when it is opened, so it is held as *evidence gate is not enforced* until its review verdicts are
+posted — fail closed, never merged unreviewed.
 
 ### Which plan lands
 
