@@ -94,6 +94,7 @@ class TestLedgerContract(unittest.TestCase):
         self.assertTrue(contract["capture_health"]["consumer_neutral"])
         self.assertIn("ship", contract["append_owner"])
         self.assertIn("morning", contract["readers"])
+        self.assertEqual(contract["unknown_record_types"], "skip-with-warning")
 
     def test_reports_override_changes_path_only(self):
         config = _config(run_ledger="state/runs.jsonl")
@@ -553,12 +554,132 @@ class TestLedgerRecords(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "unsupported schema_version"):
             ledger.encode_record(bad_schema)
 
+        # The writer stays strict: it only ever writes a kind this keel knows. A reader
+        # skipping an unknown kind is TestForwardCompatibleLedger's subject.
         bad_type = dict(_record(), record_type="other")
         with self.assertRaisesRegex(ledger.LedgerError, "unsupported record_type"):
-            ledger.parse_records(ledger.encode_record(_record()) + "\n" + json.dumps(bad_type))
+            ledger.encode_record(bad_type)
 
         with self.assertRaisesRegex(ledger.LedgerError, "record must be an object"):
             ledger.parse_records("[]")
+
+
+def _future_line(**extra) -> str:
+    """A record of a kind a later keel might append (#1400), in this ledger's schema."""
+    record = {
+        "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+        "record_type": "future_kind",
+        "pull_request": {"number": 7},
+        "assessment": {"merge": {"action": "merge"}},
+        "capture": {"status": "applied", "marker": "m"},
+        **extra,
+    }
+    return json.dumps(record) + "\n"
+
+
+def _read(text: str = "", *, path: Path | None = None, warn=None):
+    """The records read, or the refusal as a value.
+
+    A refused ledger then fails these tests as an assertion (``'refused: …' != [...]``)
+    rather than as an error raised out of the test — which is what the strict reader
+    this class replaced does with every one of them.
+    """
+    try:
+        if path is not None:
+            return ledger.read_records(path, warn=warn)
+        return ledger.parse_records(text, warn=warn)
+    except ledger.LedgerError as exc:
+        return f"refused: {exc}"
+
+
+class TestForwardCompatibleLedger(unittest.TestCase):
+    """A reader skips a record kind it does not know instead of refusing the ledger."""
+
+    def test_unknown_kind_between_records_is_skipped(self):
+        first = dict(_record(), run_id="RUN-1")
+        second = dict(_record(), run_id="RUN-2")
+        known = ledger.encode_record(first) + ledger.encode_record(second)
+        mixed = ledger.encode_record(first) + _future_line() + ledger.encode_record(second)
+
+        self.assertEqual(_read(mixed), _read(known))
+        self.assertEqual(_read(mixed), [first, second])
+
+    def test_warns_once_per_kind_naming_the_first_line(self):
+        warnings: list[str] = []
+        text = (
+            ledger.encode_record(_record())
+            + _future_line()
+            + _future_line()
+            + _future_line(record_type="other_kind")
+        )
+
+        records = _read(text, warn=warnings.append)
+
+        self.assertEqual(records, [_record()])
+        self.assertEqual(len(warnings), 2)
+        self.assertIn("line 2", warnings[0])
+        self.assertIn("'future_kind'", warnings[0])
+        self.assertIn("line 4", warnings[1])
+        self.assertIn("'other_kind'", warnings[1])
+
+    def test_no_warning_sink_skips_silently(self):
+        self.assertEqual(_read(_future_line()), [])
+
+    def test_warning_escapes_and_bounds_the_kind(self):
+        message = ledger.unknown_kind_warning("k" * 200, 3)
+        self.assertIn("'" + "k" * 80 + "...'", message)
+        self.assertNotIn("k" * 81, message)
+        self.assertIn(r"'bad\x1bkind'", ledger.unknown_kind_warning("bad\x1bkind", 1))
+
+    def test_read_records_skips_unknown_kind(self):
+        warnings: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run-ledger.jsonl"
+            path.write_text(_future_line() + ledger.encode_record(_record()), encoding="utf-8")
+            self.assertEqual(_read(path=path, warn=warnings.append), [_record()])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("line 1", warnings[0])
+
+    def test_record_without_record_type_is_still_refused(self):
+        record = _record()
+        del record["record_type"]
+        with self.assertRaisesRegex(ledger.LedgerError, "line 1: unsupported record_type"):
+            ledger.parse_records(json.dumps(record))
+
+    def test_blank_or_non_string_record_type_is_still_refused(self):
+        for kind in ("", "   ", 5, None, ["ship_run"]):
+            with self.subTest(kind=kind):
+                line = json.dumps(dict(_record(), record_type=kind))
+                with self.assertRaisesRegex(ledger.LedgerError, "unsupported record_type"):
+                    ledger.parse_records(line)
+
+    def test_unknown_kind_under_another_schema_is_still_refused(self):
+        with self.assertRaisesRegex(ledger.LedgerError, "unsupported schema_version"):
+            ledger.parse_records(_future_line(schema_version="keel.run-ledger.v2"))
+
+    def test_malformed_known_record_is_still_refused(self):
+        bad_schema = json.dumps(dict(_record(), schema_version="other"))
+        with self.assertRaisesRegex(ledger.LedgerError, "line 2: unsupported schema_version"):
+            ledger.parse_records(_future_line() + bad_schema)
+        with self.assertRaisesRegex(ledger.LedgerError, "line 2: invalid JSON"):
+            ledger.parse_records(_future_line() + "{")
+        with self.assertRaisesRegex(ledger.LedgerError, "line 2: record must be an object"):
+            ledger.parse_records(_future_line() + "[]")
+
+    def test_ship_run_readers_ignore_unknown_kind(self):
+        record = dict(_record(), pull_request={"number": 7}, git={"head_sha": "abc"})
+        known = ledger.encode_record(record)
+        mixed = _future_line(git={"head_sha": "abc"}) + known
+        readers = {
+            "latest_ship_run_for_pr": lambda rs: ledger.latest_ship_run_for_pr(rs, 7),
+            "gates_pass_for_head": lambda rs: ledger.gates_pass_for_head(rs, 7, "abc"),
+            "capture_health_summary": ledger.capture_health_summary,
+        }
+        mixed_records, known_records = _read(mixed), _read(known)
+        self.assertEqual(mixed_records, known_records)
+        for name, reader in readers.items():
+            with self.subTest(reader=name):
+                self.assertEqual(reader(mixed_records), reader(known_records))
 
 
 class TestLatestShipRunForPr(unittest.TestCase):

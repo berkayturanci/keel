@@ -241,6 +241,27 @@ The block records:
 - `missing_handling: treat-as-empty`
 - append owners (`ship`) and offline readers (`morning`, `wrap`,
   `overnight`, `capture-verification`, `ledger`)
+- `record_types` — the kinds this keel reads and writes (`ship_run`)
+- `unknown_record_types: skip-with-warning` — see below
+
+**Readers skip a record kind they do not know, so a later keel may add kinds.** The
+ledger is append-only and shared by every keel that runs on a checkout, so a newer keel
+can append a record an older one has never seen. Every reader — `ledger`, `status`,
+`ship --append-ledger`, `merge`, `evidence-verify`, `scope-verify`, `consent-verify`,
+`close-reconcile`, `dryrun-verify`, `capture-verify`, `capture-reconcile`,
+`capture-land`, and `keel-visual` — skips such a record: it is never read as a ship run,
+never counted, and never a reason to refuse the ledger. The CLI says so once per skipped
+kind, on stderr, naming the kind and the line it was first seen on:
+
+```text
+warning: run ledger line 2: skipped record_type 'future_kind', which this keel does not know (a newer keel may have written it); later records of that type are skipped too
+```
+
+Only a record that *names* its kind is skipped. A line that is not JSON, not an object,
+not `schema_version: keel.run-ledger.v1`, or has no `record_type` (or one that is not a
+non-blank string) is still refused, and a record of a known kind is validated exactly as
+before. The writer is not forward compatible in the same way: keel only ever appends a
+kind it knows.
 
 `keel ship --live --append-ledger` appends exactly one structured `ship_run` record after
 the ship assessment succeeds. `keel ship --json` always includes the would-be record under

@@ -32,6 +32,17 @@ All notable changes to keel are documented here. The format follows
     them, and nothing lands them (#1287). The run ledger is not written.
 
 ### Fixed
+- **A run-ledger reader skips a record kind it does not know instead of refusing the ledger**
+  (#1400, groundwork). Every reader parsed the ledger through one validator that refused the
+  **whole** file on the first record whose `record_type` was not `ship_run`, so any record kind
+  a newer keel appended would have locked an older keel on the same checkout out of its own
+  history — `ship`, `merge`, `evidence-verify`, `consent-verify`, `scope-verify`,
+  `dryrun-verify`, `close-reconcile`, `status`, `ledger` and the `capture-*` commands would all
+  have failed on it. Such a record is now skipped — never read as a ship run, never counted by
+  `status` — with one `warning:` line on stderr per kind, naming the kind and the line it was
+  first seen on. A record of a known kind is validated exactly as before, and a record with no
+  `record_type` is still refused. The ledger contract publishes the rule as
+  `unknown_record_types: skip-with-warning`. No new record kind is written yet.
 - **`swarm-land` lands the plan `swarm-run` executed, not a re-plan of the issues** (#1275, core;
   `keel-visual` follows separately). The swarm plan was written nowhere, so `swarm-land` rebuilt
   it from `--issues` — and once an issue was re-scoped, relabelled or edited between the run and

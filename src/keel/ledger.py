@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,14 @@ LEDGER_SCHEMA_VERSION = "keel.run-ledger.v1"
 CAPTURE_HEALTH_SCHEMA_VERSION = "keel.capture-health.v1"
 DEFAULT_LEDGER_PATH = ".keel/state/run-ledger.jsonl"
 RECORD_TYPE_SHIP_RUN = "ship_run"
+# The record kinds this keel reads. A reader skips any other kind (#1400): the ledger is
+# append-only and shared by every keel on a checkout, so a kind a newer keel adds must not
+# make an older keel refuse the history it can still read. The writer stays strict —
+# :func:`encode_record` only ever writes a kind named here.
+KNOWN_RECORD_TYPES: frozenset[str] = frozenset({RECORD_TYPE_SHIP_RUN})
+UNKNOWN_RECORD_TYPE_HANDLING = "skip-with-warning"
+# A skipped kind is named in a warning; a hostile or corrupt line must not flood it.
+_KIND_DISPLAY_LIMIT = 80
 
 
 class LedgerError(ValueError):
@@ -36,6 +44,7 @@ def ledger_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "capture_contract": capture.contract_as_dict(config),
         "capture_health": capture_health_contract_as_dict(),
         "record_types": [RECORD_TYPE_SHIP_RUN],
+        "unknown_record_types": UNKNOWN_RECORD_TYPE_HANDLING,
     }
 
 
@@ -337,9 +346,26 @@ def encode_record(record: dict[str, Any]) -> str:
     return json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
 
 
-def parse_records(text: str) -> list[dict[str, Any]]:
-    """Parse ledger JSONL text into validated records."""
+def parse_records(
+    text: str,
+    *,
+    warn: Callable[[str], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Parse ledger JSONL text into validated records of the kinds this keel knows.
+
+    **Forward compatible** (#1400): a well-formed record whose ``record_type`` names a
+    kind outside :data:`KNOWN_RECORD_TYPES` is skipped, never returned and never a
+    reason to refuse the ledger — so no reader can mistake it for a ship run, and a
+    kind a newer keel appends does not lock an older keel out of its own history.
+    ``warn`` is told once per skipped kind, with the line it was first seen on.
+
+    Everything else is refused exactly as before: invalid JSON, a non-object, a wrong
+    ``schema_version``, a record with no ``record_type`` at all (or one that is not a
+    non-blank string), and — through :func:`_validate_record` — any record of a known
+    kind. Only a record that *names* a kind can be set aside as one.
+    """
     records: list[dict[str, Any]] = []
+    skipped: set[str] = set()
     for line_number, raw in enumerate(text.splitlines(), start=1):
         if not raw.strip():
             continue
@@ -347,17 +373,40 @@ def parse_records(text: str) -> list[dict[str, Any]]:
             record = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise LedgerError(f"line {line_number}: invalid JSON") from exc
+        kind = _unknown_kind(record)
+        if kind is not None:
+            if warn is not None and kind not in skipped:
+                warn(unknown_kind_warning(kind, line_number))
+            skipped.add(kind)
+            continue
         _validate_record(record, line_number=line_number)
         records.append(record)
     return records
 
 
-def read_records(path: str | Path) -> list[dict[str, Any]]:
-    """Read a ledger file; a missing ledger is a valid empty history."""
+def unknown_kind_warning(kind: str, line_number: int) -> str:
+    """The one warning a reader gives for a record kind it skips."""
+    shown = kind if len(kind) <= _KIND_DISPLAY_LIMIT else kind[:_KIND_DISPLAY_LIMIT] + "..."
+    return (
+        f"run ledger line {line_number}: skipped record_type {shown!r}, which this keel "
+        "does not know (a newer keel may have written it); later records of that type "
+        "are skipped too"
+    )
+
+
+def read_records(
+    path: str | Path,
+    *,
+    warn: Callable[[str], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Read a ledger file; a missing ledger is a valid empty history.
+
+    Record kinds this keel does not know are skipped as :func:`parse_records` does.
+    """
     ledger_path = Path(path)
     if not ledger_path.exists():
         return []
-    return parse_records(ledger_path.read_text(encoding="utf-8"))
+    return parse_records(ledger_path.read_text(encoding="utf-8"), warn=warn)
 
 
 def latest_ship_run_for_pr(
@@ -694,6 +743,21 @@ def sanitize_record(
     sanitized = dict(result.value)
     sanitized["redaction"] = result.audit
     return sanitized
+
+
+def _unknown_kind(record: Any) -> str | None:
+    """The ``record_type`` of a record of a kind this keel does not know, else ``None``.
+
+    Only a record that is otherwise in this ledger's schema and *names* its kind
+    qualifies: a missing, blank or non-string ``record_type`` is not a kind to skip but
+    a malformed record, and :func:`_validate_record` refuses it as it always has.
+    """
+    if not isinstance(record, dict) or record.get("schema_version") != LEDGER_SCHEMA_VERSION:
+        return None
+    kind = record.get("record_type")
+    if not isinstance(kind, str) or not kind.strip() or kind in KNOWN_RECORD_TYPES:
+        return None
+    return kind
 
 
 def _validate_record(record: Any, *, line_number: int | None = None) -> None:

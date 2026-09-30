@@ -17896,5 +17896,384 @@ class TestLandedLesson(unittest.TestCase):
         self.assertEqual(reader.call_count, cli._COVERED_HEADS_LIMIT)
 
 
+def _future_kind_line(pr: int, *, head_sha: str | None = None) -> str:
+    """A record of a kind a later keel might append (#1400), shaped to mislead a reader.
+
+    It carries every field a ship-run reader looks at — the pull request, a head, a
+    merge, a blocking verdict, a capture marker, consent — so a reader that took it for
+    a ship run would answer differently, not merely the same.
+    """
+    record = {
+        "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+        "record_type": "future_kind",
+        "run_id": "FUTURE-1",
+        "issue": {"number": 8},
+        "pull_request": {"number": pr},
+        "git": {"head_sha": head_sha, "branch": "feature/issue-8"},
+        "verdict": {"blocked": True},
+        "gates": [{"gate": "build", "ok": False, "skipped": False, "error": "future"}],
+        "assessment": {"merge": {"action": "defer", "reason": "future"}},
+        "capture": {"status": "deferred", "marker": "future-marker", "artifact": "future.md"},
+        "declared": {"file_count": 0, "files": []},
+        "run_context": {"consent": {"status": "denied", "scopes": []}},
+    }
+    return json.dumps(record) + "\n"
+
+
+def _with_future_kind(text: str, pr: int, *, head_sha: str | None = None) -> str:
+    """``text`` with a future-kind record between its first record and the rest."""
+    lines = text.splitlines(keepends=True)
+    return "".join([*lines[:1], _future_kind_line(pr, head_sha=head_sha), *lines[1:]])
+
+
+class TestLedgerReadersSkipUnknownKinds(unittest.TestCase):
+    """Every run-ledger reader skips a record kind it does not know (#1400).
+
+    Each test runs one reader twice over the same ledger — once as written, once with a
+    ``future_kind`` line between its records — and requires the same exit code and the
+    same output, plus one warning naming the skipped kind and its line. Before #1400
+    the second run refused the whole ledger.
+    """
+
+    WARNING = "warning: run ledger line 2: skipped record_type 'future_kind'"
+
+    def _same_result(self, known: str, invoke, *, pr: int, head_sha: str | None = None):
+        self.assertEqual(len(known.splitlines()), 2, "the future line must sit between two")
+        rc_known, out_known, err_known = invoke(known)
+        rc_mixed, out_mixed, err_mixed = invoke(_with_future_kind(known, pr, head_sha=head_sha))
+        self.assertEqual((rc_mixed, out_mixed), (rc_known, out_known))
+        self.assertNotIn("future_kind", err_known)
+        self.assertIn(self.WARNING, err_mixed)
+        return rc_known, out_known
+
+    def _ship_applied(self, config: str, root: str, pr: int, *, artifact: str = "") -> None:
+        rc, _, err = run(
+            [
+                "ship",
+                config,
+                "--root",
+                root,
+                "--live",
+                "--append-ledger",
+                "--pull-request",
+                str(pr),
+                "--capture-status",
+                "applied",
+                "--capture-artifact",
+                artifact or f"artifacts/{pr}.md",
+                "--approve-scope",
+                "filesystem,git,github",
+                "--operator",
+                "tester",
+            ]
+        )
+        self.assertEqual(rc, 0, err)
+
+    def _shipped(self, root: str, *prs: int) -> tuple[str, Path, str]:
+        """A config and a ledger holding one real `ship --append-ledger` record per PR."""
+        config = _write_config_with_state_paths("'true'")
+        for pr in prs:
+            self._ship_applied(config, root, pr)
+        path = Path(root) / "state" / "runs.jsonl"
+        return config, path, path.read_text(encoding="utf-8")
+
+    def _file_invoker(self, path: Path, argv: list[str]):
+        def invoke(text: str):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            return run(argv)
+
+        return invoke
+
+    def test_ledger_command(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, path, known = self._shipped(d, 160, 161)
+            invoke = self._file_invoker(path, ["ledger", config, "--root", d, "--json"])
+            rc, out = self._same_result(known, invoke, pr=160)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(json.loads(out)["records"]), 2)
+
+    def test_status(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, path, known = self._shipped(d, 160, 161)
+            invoke = self._file_invoker(path, ["status", config, "--root", d, "--json"])
+            rc, out = self._same_result(known, invoke, pr=160)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["snapshot"]["history"]["total"], 2)
+
+    def test_capture_verify(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, path, known = self._shipped(d, 160, 161)
+            fixture = Path(d) / "merged.json"
+            _write_json_fixture(fixture, [{"number": 160}, {"number": 161}])
+            argv = ["capture-verify", config, "--root", d, "--merged-prs-json", str(fixture)]
+            invoke = self._file_invoker(path, [*argv, "--json"])
+            rc, out = self._same_result(known, invoke, pr=160)
+        self.assertEqual(rc, 0, out)
+
+    def test_capture_reconcile(self):
+        with tempfile.TemporaryDirectory() as d:
+            config, path, known = self._shipped(d, 160, 161)
+            argv = ["capture-reconcile", config, "--root", d, "--merged-pr", "160", "--json"]
+            rc, out = self._same_result(known, self._file_invoker(path, argv), pr=160)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["reconcile"]["status"], "complete")
+
+    def test_ship_append_ledger(self):
+        # s11's writer reads the ledger to refuse a second marker for the same
+        # (pull request, head); the skipped record's marker is not one of them.
+        with tempfile.TemporaryDirectory() as d:
+            config, path, known = self._shipped(d, 160, 161)
+
+            def invoke(text):
+                path.write_text(text, encoding="utf-8")
+                rc, out, err = run(
+                    [
+                        "ship",
+                        config,
+                        "--root",
+                        d,
+                        "--live",
+                        "--json",
+                        "--append-ledger",
+                        "--pull-request",
+                        "162",
+                        "--capture-status",
+                        "applied",
+                        "--approve-scope",
+                        "filesystem,git,github",
+                        "--operator",
+                        "tester",
+                    ]
+                )
+                if rc != 0:
+                    return rc, out, err
+                written = path.read_text(encoding="utf-8").splitlines()
+                appended = json.loads(written[-1])["pull_request"]["number"]
+                run_ledger = json.loads(out)["result"]["run_ledger"]
+                return rc, json.dumps([run_ledger["appended"], appended]), err
+
+            rc, out = self._same_result(known, invoke, pr=162)
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out), [True, 162])
+
+    def test_capture_land_reads_the_artifact_from_the_ship_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_raw(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\n"
+                "repo: tmp\ngates: [build]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "policy_pack:\n  name: tmp\n  reports:\n"
+                "    run_ledger: 'state/runs.jsonl'\n" + "\n".join(_LAND_SINK_LINES) + "\n"
+            )
+            for pr in (160, 161):
+                self._ship_applied(config, d, pr, artifact=f".keel/learning/{pr}.md")
+            path = Path(d) / "state" / "runs.jsonl"
+            known = path.read_text(encoding="utf-8")
+            argv = ["capture-land", config, "--root", d, "--pr", "160", "--dry-run", "--json"]
+            _, out = self._same_result(known, self._file_invoker(path, argv), pr=160)
+        self.assertEqual(json.loads(out)["plan"]["path"], ".keel/learning/160.md", out)
+
+    def _both_sources(self, command: list[str], known: str, *, pr: int):
+        """Run a reader over a ``--ledger-jsonl`` fixture, then over the configured ledger.
+
+        The four readers that take a fixture read the configured ledger without one, and
+        each branch is its own call site — so each is held to the same rule.
+        """
+        results = {}
+        for source in ("fixture", "configured"):
+            with tempfile.TemporaryDirectory() as d:
+                if source == "fixture":
+                    path = Path(d) / "ledger.jsonl"
+                    tail = ["--root", str(REPO_ROOT), "--ledger-jsonl", str(path), "--json"]
+                else:
+                    path = Path(d) / ledger.DEFAULT_LEDGER_PATH
+                    tail = ["--root", d, "--json"]
+                invoke = self._file_invoker(path, [*command, *tail])
+                results[source] = self._same_result(known, invoke, pr=pr)
+        return results
+
+    def test_scope_verify(self):
+        command = [
+            "scope-verify",
+            str(PROJECTS / "example-android.yaml"),
+            "--pr",
+            "300",
+            "--dry-run",
+            "--changed-file",
+            "a.py",
+        ]
+        known = _scope_ledger(["a.py"]) + _scope_ledger(["b.py"], pr=301)
+        for source, (rc, out) in self._both_sources(command, known, pr=300).items():
+            with self.subTest(source=source):
+                self.assertEqual(rc, 0)
+                self.assertEqual(json.loads(out)["verification"]["status"], "pass")
+
+    def test_consent_verify(self):
+        command = [
+            "consent-verify",
+            str(PROJECTS / "example-android.yaml"),
+            "--pr",
+            "300",
+            "--offline",
+            "--pr-exists",
+            "--merged",
+        ]
+        known = _consent_ledger(scopes=["git", "github"]) + _consent_ledger(scopes=["git"], pr=301)
+        for source, (rc, out) in self._both_sources(command, known, pr=300).items():
+            with self.subTest(source=source):
+                self.assertEqual(rc, 0)
+                self.assertEqual(json.loads(out)["reconcile"]["verdict"], "pass")
+
+    def test_close_reconcile(self):
+        command = [
+            "close-reconcile",
+            str(PROJECTS / "example-android.yaml"),
+            "--offline",
+            "--issue",
+            "8",
+            "--closed",
+        ]
+        known = _close_ledger(action="merge") + _close_ledger(action="merge", issue=9)
+        for source, (rc, out) in self._both_sources(command, known, pr=300).items():
+            with self.subTest(source=source):
+                self.assertEqual(rc, 0, out)
+
+    def test_evidence_verify(self):
+        record = {
+            "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+            "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+            "pull_request": {"number": 300},
+        }
+        other = dict(record, pull_request={"number": 301})
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for name in ("pr-comments.json", "issue-comments.json", "reviews.json"):
+                (root / name).write_text("[]", encoding="utf-8")
+            (root / "body.md").write_text("Closes #8", encoding="utf-8")
+            command = [
+                "evidence-verify",
+                str(PROJECTS / "example-android.yaml"),
+                "--pr",
+                "300",
+                "--reviewers",
+                "1",
+                "--pr-comments-json",
+                str(root / "pr-comments.json"),
+                "--issue-comments-json",
+                str(root / "issue-comments.json"),
+                "--pr-reviews-json",
+                str(root / "reviews.json"),
+                "--pr-body-file",
+                str(root / "body.md"),
+            ]
+            known = ledger.encode_record(record) + ledger.encode_record(other)
+            results = self._both_sources(command, known, pr=300)
+        for source, (_, out) in results.items():
+            with self.subTest(source=source):
+                # Armed by the ship run the ledger holds for this PR, and by nothing else.
+                self.assertEqual(json.loads(out)["gate"]["reason"], "ship-run-ledger", out)
+
+    def test_dryrun_verify_live_after_snapshot(self):
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["git", "for-each-ref"]:
+                return _proc("main\n")
+            if argv[:3] == ["gh", "pr", "list"]:
+                return _proc("[]")
+            return _proc("unexpected", ok=False)
+
+        records = [
+            {
+                "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+                "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+                "run_id": run_id,
+            }
+            for run_id in ("r1", "r2")
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            before = Path(d) / "before.json"
+            before.write_text(
+                json.dumps({"ledger_run_ids": ["r1", "r2"], "branches": ["main"]}),
+                encoding="utf-8",
+            )
+            path = Path(d) / ".keel" / "state" / "run-ledger.jsonl"
+            argv = [
+                "dryrun-verify",
+                str(PROJECTS / "example-android.yaml"),
+                "--root",
+                d,
+                "--run-id",
+                "dry-8",
+                "--issue",
+                "8",
+                "--before-json",
+                str(before),
+                "--json",
+            ]
+            known = "".join(ledger.encode_record(r) for r in records)
+            with (
+                patch("keel.cli.run_argv", side_effect=fake_run),
+                patch("keel.git.run_argv", side_effect=fake_run),
+                patch("keel.github.run_argv", side_effect=fake_run),
+            ):
+                rc, out = self._same_result(known, self._file_invoker(path, argv), pr=8)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(out)["reconcile"]["verdict"], "clean")
+
+    def test_merge_gates_sha(self):
+        # The skipped record names this PR and the current head, and failed: read as a
+        # ship run it would be the latest record for that head, and refuse the merge.
+        records = [
+            {
+                "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+                "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+                "run_id": f"RUN-{pr}",
+                "pull_request": {"number": pr},
+                "git": {"head_sha": "head-new"},
+                "verdict": {"blocked": False},
+                "gates": [{"gate": "build", "ok": True, "skipped": False, "error": None}],
+            }
+            for pr in (123, 124)
+        ]
+
+        def invoke(text):
+            def read_records(path, *, warn=None):
+                return ledger.parse_records(text, warn=warn)
+
+            with (
+                patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+                patch("keel.cli.window.is_merge_open", return_value=True),
+                patch(
+                    "keel.cli.github.pr_merge_snapshot",
+                    return_value=_json_result(
+                        {
+                            "headRefOid": "head-new",
+                            "mergeStateStatus": "CLEAN",
+                            "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                        }
+                    ),
+                ),
+                patch(
+                    "keel.cli._verify_merge_evidence",
+                    return_value={
+                        "head_sha": "head-new",
+                        "enforced": True,
+                        "verification": {"status": "pass", "missing": []},
+                    },
+                ),
+                patch("keel.cli.ledger.read_records", side_effect=read_records),
+                patch(
+                    "keel.cli._merge_drift_report",
+                    return_value={"status": "clean", "reason": "no overtaking merge"},
+                ),
+                patch("keel.cli.github.merge_pr", return_value=_proc("merged")),
+            ):
+                return run(_merge_args(json_out=True))
+
+        known = "".join(ledger.encode_record(r) for r in records)
+        rc, out = self._same_result(known, invoke, pr=123, head_sha="head-new")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(json.loads(out)["gates_sha"]["matched"])
+
+
 if __name__ == "__main__":
     unittest.main()

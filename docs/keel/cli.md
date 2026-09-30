@@ -574,7 +574,10 @@ keel ledger .keel/project.yaml --root . --limit 10
 
 Missing ledgers are not errors: JSON output returns `status: "missing"` and
 `records: []`. Invalid JSONL or unsupported record schemas are errors because adapters
-must not build morning/wrap/capture reports from corrupted history.
+must not build morning/wrap/capture reports from corrupted history. A record whose
+`record_type` names a kind this keel does not know is the one exception: it is skipped,
+with one `warning:` line on stderr per kind, so a later keel may add record kinds (see
+[forward compatibility](command-contracts.md#run-ledger-block)).
 
 `ship` (in either profile) can append one `ship_run` record with:
 
