@@ -404,6 +404,13 @@ issue, so a live swarm depends on no agent host. `swarm-run --live` runs, per cl
 7. **Open one pull request** for the cluster against `base_branch` (`keel.github.open_pr`). Its
    body says `Refs #N` for each issue — never `Closes`, since nothing has reviewed it — and records
    the implementer seat, the commit the gates passed at, and the consent delegation.
+8. **Stamp its provenance.** Right after the pull request opens, keel posts on it the
+   `keel.ship-provenance.v1` comment a live `keel ship` run posts on its own
+   (`keel.artifacts.render_ship_provenance`: run id `<swarm_id>/<cluster_id>`, the issue, the
+   pushed head, the seat's attribution), which arms `keel merge`'s evidence gate — the cluster
+   branch matches no ship-branch pattern. The worker record says `provenance_posted`. A post
+   that fails stops nothing: the pull request stays open and the run warns that it will be held
+   as *evidence gate is not enforced* until the comment or its review verdicts are posted.
 
 **What a worker leaves behind.** On success: a committed, pushed cluster branch and one open pull
 request, reported as the cluster's `pr_url` and recorded as the worker's `pull_request` number in
@@ -429,8 +436,8 @@ is guidance, not enforcement: nothing stops a seat from writing outside its scop
 the gates run on the commit before anything is pushed and why the pull request still has to be
 reviewed. The issue text is untrusted input to the seat, as it is in `/keel:ship` s4.
 
-**The implementer cannot reach the remote.** Only keel's own push and `gh pr create` — steps 6
-and 7, made in keel's process with the operator's environment, after the implementer has exited
+**The implementer cannot reach the remote.** Only keel's own push, `gh pr create` and the
+provenance comment — steps 6 to 8, made in keel's process with the operator's environment, after the implementer has exited
 — are meant to reach the forge. The implementer seat runs under
 `keel.swarm_worker.implementer_env`:
 
@@ -471,8 +478,8 @@ send keel's push elsewhere. The worker defends each step:
 
 The gates and keel's own local git steps also run without the forge tokens
 (`keel.swarm_worker.worker_env`): `keel run-gates --phases guard,test --defer-jury` reads nothing
-from GitHub, and neither do `git status`/`add`/`commit`. Only keel's push and `gh pr create` hold
-them.
+from GitHub, and neither do `git status`/`add`/`commit`. Only keel's push, `gh pr create` and
+the provenance comment hold them.
 
 Two limits remain, by design:
 
@@ -653,12 +660,17 @@ keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --
 `keel merge` needs, or every cluster is **held** with its reason — which is the design, not a
 fault. Measured on the first end-to-end run: with no CI on pull requests each cluster was held
 as *CI did not run on a non-docs PR (empty check set)*, and once CI ran, as *evidence gate is not
-enforced*. So, before the first landing: CI must run on the cluster pull requests, and each
+enforced* — a cluster pull request then carried no keel signal, which is now fixed. So, before the first landing: CI must run on the cluster pull requests, and each
 cluster pull request needs its review verdicts like any other. keel merge's evidence gate arms
 on a keel signal on the pull request (the `keel:ship` gate label, a ship provenance comment, a
-review verdict, …, see [evidence.md](evidence.md)); a cluster pull request carries none of them
-when it is opened, so it is held as *evidence gate is not enforced* until its review verdicts are
-posted — fail closed, never merged unreviewed.
+review verdict, …, see [evidence.md](evidence.md)). A live worker arms it at creation: right
+after `gh pr create` it posts the same `keel.ship-provenance.v1` comment a live `keel ship` run
+posts on its own pull request — by keel, with the operator's credentials, after the implementer
+has exited. So a cluster is held as *missing evidence: …* until its review verdicts are posted —
+fail closed, never merged unreviewed. Should that post fail, the pull request stays open, the
+worker record says `provenance_posted: false`, and the run warns that the cluster will be held
+as *evidence gate is not enforced* until the comment (`keel post-comment --artifact
+ship-provenance`) or its verdicts are posted.
 
 ### Which plan lands
 

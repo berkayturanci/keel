@@ -86,6 +86,21 @@ All notable changes to keel are documented here. The format follows
   flag — so the operator sizes it to their quota and machine. No config key was added.
 
 ### Fixed
+- **A swarm cluster's pull request arms keel merge's evidence gate at creation.** Found on the
+  first end-to-end `swarm-run --live` run (a sandbox repository, agy as the implementer): the
+  cluster pull request carried no keel signal the evidence gate arms on — its branch
+  `swarm/<id>/<cluster>` matches no ship-branch pattern — so `swarm-land` held every cluster as
+  *evidence gate is not enforced*, a hold that did not name the review evidence it was missing.
+  A live worker now posts the ship-provenance comment a live `keel ship` run posts
+  (`keel.ship-provenance.v1`, rendered by the same `artifacts.render_ship_provenance`: run id
+  `<swarm_id>/<cluster_id>`, the cluster's first issue, the pushed head and the seat's
+  attribution) on the pull request right after `gh pr create` succeeds — by keel, with the
+  operator's credentials, after the implementer exited, like the push and the pull request, so
+  the implementer's lockdown is unchanged. A cluster is then held as *missing evidence: …* until
+  its review verdicts are posted. The worker record gains `provenance_posted`; a post that fails
+  keeps the pull request open, marks nothing failed, and is reported as a run warning (and in the
+  worker's details) saying the pull request will be held until the comment or its verdicts are
+  posted. A settled worktree's warnings no longer replace the worker's own.
 - **Swarm worktrees are pruned, removed honestly, kept when a worker fails, and recoverable**
   (#1278).
   - `remove_swarm_worktree` returned `True` unconditionally and its caller discarded it. It now

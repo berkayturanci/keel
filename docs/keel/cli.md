@@ -3399,9 +3399,10 @@ keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live
 ```
 
 **Prerequisites.** A cluster lands only where `keel merge` would merge its pull request: CI must
-run on it, and the PR needs its review verdicts (which also arm keel merge's evidence gate).
-Without them every cluster is held with `keel merge`'s reason (for example *CI did not run on a
-non-docs PR (empty check set)* or *evidence gate is not enforced*) and the command exits 1 — see
+run on it, and the PR needs its review verdicts. The live worker arms keel merge's evidence gate
+when it opens the PR, with the ship-provenance comment a live `keel ship` run posts. Without CI
+or the verdicts every cluster is held with `keel merge`'s reason (for example *CI did not run on
+a non-docs PR (empty check set)* or *missing evidence: …*) and the command exits 1 — see
 [swarm.md](swarm.md#4-landing-keel-swarm-land).
 
 **Which plan lands ([#1275](https://github.com/berkayturanci/keel/issues/1275)).** The run is
