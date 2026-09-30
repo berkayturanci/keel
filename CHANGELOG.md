@@ -7,6 +7,29 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Each swarm issue is planned from its own scope, and an issue that declares none conflicts
+  with everything** (#1274). `swarm-plan`, `swarm-run` and `swarm-land` handed the same
+  `--issue-title`/`--issue-body`/`--issue-label`/`--declared-file` to every issue and read
+  nothing from GitHub, so a scope-less issue got a private `scope/issue-N/*` glob that by
+  construction conflicted with nothing: every multi-issue plan came out as one parallel wave
+  (or, with a shared path, fully serial) whatever the issues touched. Now:
+  - each named issue is read once with `gh issue view N --json title,body,labels`, and its
+    declared scope is, strongest first, `--issue-scope N=…`, a `Scope:` line or a
+    `## Scope` bullet list in its body, or its `area:<name>` labels mapped through
+    `policy_pack.scan.areas`;
+  - **an issue that declares none is planned as `*`, so it is serialised against every
+    other issue** — plans over issues without scope now come out sequential, one wave per
+    issue, where they used to come out as one parallel wave. Every wave after the first then
+    depends on an earlier one, so it is `sequential_dependent` and `swarm-land` refuses it
+    (#1276): land wave 1, re-plan the rest, and land again. Paths its text merely mentions
+    are kept beside the `*` (the tier and difficulty read them), never instead of it. Each
+    such issue is named on stderr, and so is an issue that could not be read (no `gh`, no
+    auth, no network), which gets the same `*`;
+  - the new repeatable `--issue-scope N=glob[,glob…]` on all three commands wins over what
+    the issue says; `N` must be a positive integer named by `--issues`/`--issue`, with at
+    least one glob;
+  - the four one-issue flags are refused beside several issues, since sharing them was the
+    bug; with one issue they still describe it. Each issue's `scope_source` is in `--json`.
 - **A swarm wave's landing mode follows its dependencies, and `swarm-land` refuses a dependent
   wave** (#1276, part 1). The plan computed the mode as "the wave is not empty", so every wave
   claimed `orthogonal_parallel` and direct batch landing — including a wave that exists only

@@ -8,12 +8,15 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from keel import swarm as swarm_module
 from keel import team as team_module
 from keel.cli import main
 from keel.config import Knobs, ProjectConfig
+from keel.runner import CommandResult
 from keel.swarm import (
     CHILD_OUTPUT_TAIL_CHARS,
     AssignmentOverrides,
@@ -44,6 +47,22 @@ from keel.swarm import (
     worker_seed,
 )
 from keel.team import parse_team
+
+#: swarm-plan/-run/-land read every named issue with `gh issue view` (#1274). The suite
+#: is offline (AGENTS.md), so every test gets an unreadable issue unless it patches its
+#: own, as the issue-scope tests below do.
+_ISSUE_STUB = patch(
+    "keel.github.issue_facts",
+    return_value=CommandResult(False, 1, "stubbed: the suite never runs gh"),
+)
+
+
+def setUpModule():
+    _ISSUE_STUB.start()
+
+
+def tearDownModule():
+    _ISSUE_STUB.stop()
 
 
 class TestSwarmPathExtraction(unittest.TestCase):
@@ -179,9 +198,10 @@ class TestSwarmScopeExtraction(unittest.TestCase):
         scope_cli = extract_issue_scope(105, title="Fix CLI flags", labels=["role:cli"])
         self.assertIn("src/keel/cli.py", scope_cli.predicted_files)
 
-        # Generic fallback
+        # Nothing describes it: everything (#1274), not a private `scope/issue-106/*`
         scope_gen = extract_issue_scope(106, title="Do something unknown")
-        self.assertIn("scope/issue-106/*", scope_gen.predicted_files)
+        self.assertEqual(scope_gen.predicted_files, ("*",))
+        self.assertEqual(scope_gen.scope_source, "default")
         self.assertEqual(scope_gen.role, "core")
 
     def test_extract_issue_scope_with_project_config(self):
@@ -706,10 +726,10 @@ class TestSwarmCLI(unittest.TestCase):
                     "101",
                     "--issue",
                     "102",
-                    "--declared-file",
-                    "src/keel/swarm.py",
-                    "--issue-label",
-                    "role:core,area:swarm",
+                    "--issue-scope",
+                    "101=src/keel/swarm.py",
+                    "--issue-scope",
+                    "102=docs/keel/swarm.md",
                     "--json",
                 ]
             )
@@ -1276,6 +1296,439 @@ class TestStaffedRendering(unittest.TestCase):
 
     def test_seat_label_reports_an_unassigned_seat(self):
         self.assertEqual(swarm_module.seat_label(None), "unassigned")
+
+
+class TheScopeDeclaration(unittest.TestCase):
+    """`Scope:` in an issue body is the issue's own statement of what it touches (#1274)."""
+
+    parse = staticmethod(swarm_module.parse_scope_declaration)
+
+    def test_a_scope_line_lists_globs(self):
+        body = "Fix the planner.\n\nScope: src/keel/swarm*.py, `docs/keel/swarm.md`\n"
+        self.assertEqual(self.parse(body), ("src/keel/swarm*.py", "docs/keel/swarm.md"))
+
+    def test_a_scope_heading_takes_the_bullet_list_under_it(self):
+        body = (
+            "## Scope\n\n- `src/keel/cli.py` — the flags\n* tests/test_swarm.py\n\n"
+            "The rest is prose about src/other.py\n- src/not-scope.py\n"
+        )
+        self.assertEqual(self.parse(body), ("src/keel/cli.py", "tests/test_swarm.py"))
+
+    def test_the_list_ends_at_the_next_heading(self):
+        self.assertEqual(self.parse("### scope ###\n- a/b.py\n## Notes\n- c/d.py\n"), ("a/b.py",))
+
+    def test_fenced_code_is_never_a_declaration(self):
+        body = "```\nScope: src/x.py\n## Scope\n- src/y.py\n```\nScope: docs/z.md\n"
+        self.assertEqual(self.parse(body), ("docs/z.md",))
+        # A fence also ends a heading's list: the bullet after it is prose again.
+        self.assertEqual(self.parse("## Scope\n~~~\nx\n~~~\n- src/late.py\n"), ())
+
+    def test_declarations_add_up_and_repeat_once(self):
+        self.assertEqual(self.parse("Scope: a/b.py\nscope: a/b.py, c/*\n"), ("a/b.py", "c/*"))
+
+    def test_a_body_that_declares_nothing(self):
+        for body in ("", "Scope:", "Scope: the planner", "Scope: a/..", "No scope here."):
+            with self.subTest(body=body):
+                self.assertEqual(self.parse(body), ())
+
+
+def _areas_config(areas) -> ProjectConfig:
+    return ProjectConfig(
+        extends="base",
+        core_version="^1.0",
+        base_branch="main",
+        knobs=Knobs(build_gate_cmd="make test"),
+        policy_pack={"scan": {"areas": areas}},
+    )
+
+
+class AreaLabelsMapThroughTheProjectsAreas(unittest.TestCase):
+    """`area:<name>` reads `policy_pack.scan.areas`, the mapping the scan commands use."""
+
+    def test_the_mapping_is_the_projects_scan_areas(self):
+        config = _areas_config({"docs": ["docs/**", "README.md"], "bad": "not-a-list"})
+        self.assertEqual(swarm_module.scope_areas(config), {"docs": ("docs/**", "README.md")})
+
+    def test_no_mapping_reads_as_empty(self):
+        self.assertEqual(swarm_module.scope_areas(None), {})
+        self.assertEqual(swarm_module.scope_areas(_areas_config(["docs/**"])), {})
+        no_scan = replace(_areas_config({}), policy_pack={"scan": "docs"})
+        self.assertEqual(swarm_module.scope_areas(no_scan), {})
+
+    def test_only_mapped_areas_contribute(self):
+        areas = {"docs": ("docs/**", "README.md"), "blank": ("", "a/b")}
+        self.assertEqual(
+            swarm_module.area_label_scope(("area:docs", "area:unknown", "role:core"), areas),
+            ("docs/**", "README.md"),
+        )
+        self.assertEqual(swarm_module.area_label_scope(("area:blank",), areas), ("a/b",))
+
+    def test_an_area_label_is_a_scope_source(self):
+        scope = extract_issue_scope(
+            7, title="Docs pass", labels=["area:docs"], config=_areas_config({"docs": ["docs/**"]})
+        )
+        self.assertEqual(scope.predicted_files, ("docs/**",))
+        self.assertEqual(scope.scope_source, "area-label")
+
+
+class TheIssueScopeOverride(unittest.TestCase):
+    parse = staticmethod(swarm_module.parse_issue_scope_override)
+
+    def test_a_valid_override(self):
+        self.assertEqual(self.parse("12=src/a.py, docs/*"), (12, ("src/a.py", "docs/*")))
+        self.assertEqual(self.parse("#7=a/b.py,a/b.py"), (7, ("a/b.py",)))
+
+    def test_a_malformed_override_says_why(self):
+        for text, reason in (
+            ("12", "expected N=glob"),
+            ("x=a.py", "positive integer"),
+            ("0=a.py", "positive integer"),
+            ("²=a.py", "positive integer"),
+            ("12=", "at least one glob"),
+            ("12= , ", "at least one glob"),
+        ):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, reason):
+                self.parse(text)
+
+
+class IssueFactsFromJson(unittest.TestCase):
+    parse = staticmethod(swarm_module.issue_facts_from_json)
+
+    def test_the_three_fields(self):
+        payload = json.dumps({"title": "T", "body": "B", "labels": [{"name": "area:docs"}]})
+        self.assertEqual(self.parse(payload), ("T", "B", ("area:docs",)))
+
+    def test_a_reply_that_is_not_an_object_is_unreadable(self):
+        self.assertIsNone(self.parse("not json"))
+        self.assertIsNone(self.parse("[]"))
+
+    def test_a_field_of_the_wrong_type_reads_as_empty(self):
+        payload = json.dumps(
+            {"title": 3, "body": None, "labels": [{"name": "a"}, {"name": 2}, "x"]}
+        )
+        self.assertEqual(self.parse(payload), ("", "", ("a",)))
+        self.assertEqual(self.parse(json.dumps({"labels": "a"})), ("", "", ()))
+
+
+class TheScopeResolvesStrongestFirst(unittest.TestCase):
+    def test_the_body_declaration_wins_over_paths_named_in_prose(self):
+        scope = extract_issue_scope(
+            1, body="Touches `src/keel/cli.py` today.\nScope: src/keel/swarm.py"
+        )
+        self.assertEqual(scope.predicted_files, ("src/keel/swarm.py",))
+        self.assertEqual(scope.scope_source, "issue-body")
+
+    def test_the_override_wins_over_the_body(self):
+        scope = extract_issue_scope(1, body="Scope: src/keel/swarm.py", scope=["docs/x.md"])
+        self.assertEqual(scope.predicted_files, ("docs/x.md",))
+        self.assertEqual(scope.scope_source, "override")
+
+    def test_declared_files_add_to_a_declared_scope(self):
+        scope = extract_issue_scope(1, body="Scope: a/b.py", declared_files=["tests/t.py"])
+        self.assertEqual(scope.predicted_files, ("a/b.py", "tests/t.py"))
+
+    def test_a_path_the_text_names_is_a_guess_kept_beside_everything(self):
+        named = extract_issue_scope(1, body="See `a/b.py`")
+        self.assertEqual(named.predicted_files, ("*", "a/b.py"))
+        self.assertEqual(named.scope_source, "default")
+        hinted = extract_issue_scope(2, labels=["area:visual"])
+        self.assertEqual(hinted.predicted_files, ("*", "keel-visual/*"))
+
+    def test_a_declared_file_is_the_operators_statement(self):
+        scope = extract_issue_scope(1, body="See `a/b.py`", declared_files=["c/d.py"])
+        self.assertEqual(scope.predicted_files, ("a/b.py", "c/d.py"))
+        self.assertEqual(scope.scope_source, "declared-file")
+
+
+class ScopeLessIssuesConflict(unittest.TestCase):
+    """The safe direction (#1274): an issue nobody described is never assumed disjoint."""
+
+    def test_two_issues_that_declare_nothing_run_one_after_the_other(self):
+        plan = build_swarm_plan(
+            [extract_issue_scope(1, title="Refactor"), extract_issue_scope(2, title="Tidy")],
+            swarm_id="s",
+        )
+        self.assertEqual(plan.conflict_map, {1: (2,), 2: (1,)})
+        self.assertEqual([[c.issues for c in w.clusters] for w in plan.waves], [[(1,)], [(2,)]])
+
+    def test_the_wave_a_scope_less_issue_is_pushed_into_is_refused_by_landing(self):
+        # With #1276, the later wave depends on the earlier one, so swarm-land refuses it
+        # until wave 1 lands and the rest is re-planned — slow, never a collision.
+        plan = build_swarm_plan(
+            [extract_issue_scope(1, body="Scope: docs/a.md"), extract_issue_scope(2)],
+            swarm_id="s",
+        )
+        self.assertEqual(
+            [(w.mode, w.eligible_direct_landing) for w in plan.waves],
+            [("orthogonal_parallel", True), ("sequential_dependent", False)],
+        )
+        self.assertEqual(plan.waves[1].clusters[0].depends_on_issues, (1,))
+
+    def test_issues_that_only_mention_disjoint_paths_still_serialise(self):
+        # The #1274 failure: two issues naming different files in prose, both of which end
+        # up editing `src/keel/cli.py`. A mention is not a declaration.
+        plan = build_swarm_plan(
+            [
+                extract_issue_scope(1, body="The bug is in `src/keel/swarm.py`."),
+                extract_issue_scope(2, body="Reword `docs/keel/swarm.md`."),
+            ],
+            swarm_id="s",
+        )
+        self.assertEqual(plan.conflict_map, {1: (2,), 2: (1,)})
+        self.assertEqual(len(plan.waves), 2)
+
+    def test_a_scope_less_issue_waits_for_scoped_ones(self):
+        plan = build_swarm_plan(
+            [
+                extract_issue_scope(1, body="Scope: docs/a.md"),
+                extract_issue_scope(2, body="Scope: src/b.py"),
+                extract_issue_scope(3, title="Mystery"),
+            ],
+            swarm_id="s",
+        )
+        self.assertEqual(
+            [[c.issues for c in w.clusters] for w in plan.waves], [[(1,), (2,)], [(3,)]]
+        )
+
+
+def _issue_reader(replies):
+    """A `gh issue view` stand-in. A dict is the issue's JSON, a string a raw reply,
+    ``False`` a failure with nothing said, and a missing issue a 404."""
+
+    def fake(issue, *, cwd=None, fields="title,labels", _run=None):
+        fake.calls.append((int(issue), fields))
+        reply = replies.get(int(issue))
+        if reply is False:
+            return CommandResult(False, 7, "")
+        if reply is None:
+            return CommandResult(False, 1, "", stderr="gh: HTTP 404: Not Found\nmore\n")
+        payload = reply if isinstance(reply, str) else json.dumps(reply)
+        return CommandResult(True, 0, payload, stdout=payload)
+
+    fake.calls = []
+    return fake
+
+
+_REPLIES = {
+    101: {"title": "Planner", "body": "Scope: src/keel/swarm.py", "labels": []},
+    102: {"title": "Docs", "body": "## Scope\n- docs/keel/swarm.md\n", "labels": []},
+    103: {"title": "Mystery", "body": "Something is off.", "labels": []},
+}
+
+
+def _cli(argv, replies=_REPLIES):
+    reader = _issue_reader(replies)
+    out, err = io.StringIO(), io.StringIO()
+    with patch("keel.github.issue_facts", reader), redirect_stdout(out), redirect_stderr(err):
+        rc = main(argv)
+    return rc, out.getvalue(), err.getvalue(), reader.calls
+
+
+def _waves(plan):
+    return [[c.issues[0] for c in w.clusters] for w in plan.waves]
+
+
+class SwarmCommandsReadEachIssue(unittest.TestCase):
+    """swarm-plan, -run and -land plan each issue from what that issue says (#1274)."""
+
+    def test_swarm_plan_reads_each_issue_once_and_plans_its_own_scope(self):
+        rc, out, err, calls = _cli(
+            ["swarm-plan", ".keel/project.yaml", "--issues", "101,102,103", "--json"]
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(calls, [(n, "title,body,labels") for n in (101, 102, 103)])
+        parsed = json.loads(out)
+        scopes = {
+            k: (v["predicted_files"], v["scope_source"]) for k, v in parsed["issue_scopes"].items()
+        }
+        self.assertEqual(
+            scopes,
+            {
+                "101": (["src/keel/swarm.py"], "issue-body"),
+                "102": (["docs/keel/swarm.md"], "issue-body"),
+                "103": (["*"], "default"),
+            },
+        )
+        waves = [[c["issues"][0] for c in w["clusters"]] for w in parsed["waves"]]
+        self.assertEqual(waves, [[101, 102], [103]])
+        self.assertIn("issue #103 declares no scope", err)
+        self.assertNotIn("#101", err)
+
+    def test_an_unreadable_issue_is_planned_as_everything_with_a_warning(self):
+        replies = {**_REPLIES, 104: "not json", 105: False}
+        rc, out, err, _ = _cli(
+            ["swarm-plan", ".keel/project.yaml", "--issues", "101,102,104,105,106", "--json"],
+            replies,
+        )
+        self.assertEqual(rc, 0, err)
+        scopes = json.loads(out)["issue_scopes"]
+        for issue in ("104", "105", "106"):
+            self.assertEqual(scopes[issue]["predicted_files"], ["*"])
+        self.assertIn("could not read issue #104 (the reply was not a JSON object)", err)
+        self.assertIn("could not read issue #105 (exit 7)", err)
+        self.assertIn("could not read issue #106 (gh: HTTP 404: Not Found)", err)
+        self.assertIn("issue #106 declares no scope", err)
+
+    def test_the_override_wins_over_what_the_issue_says(self):
+        rc, out, err, _ = _cli(
+            [
+                "swarm-plan",
+                ".keel/project.yaml",
+                "--issues",
+                "101,102",
+                "--issue-scope",
+                "101=docs/keel/*",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0, err)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["issue_scopes"]["101"]["predicted_files"], ["docs/keel/*"])
+        self.assertEqual(parsed["issue_scopes"]["101"]["scope_source"], "override")
+        self.assertEqual(parsed["conflict_map"], {"101": [102], "102": [101]})
+
+    def test_repeated_overrides_for_one_issue_add_up(self):
+        rc, out, err, _ = _cli(
+            [
+                "swarm-plan",
+                ".keel/project.yaml",
+                "--issue",
+                "103",
+                "--issue-scope",
+                "103=a/b.py",
+                "--issue-scope",
+                "103=c/d.py",
+                "--json",
+            ]
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(
+            json.loads(out)["issue_scopes"]["103"]["predicted_files"], ["a/b.py", "c/d.py"]
+        )
+        self.assertEqual(err, "")
+
+    def test_swarm_run_plans_each_issues_own_scope(self):
+        captured = {}
+
+        def fake_run(plan, **_kwargs):
+            captured["plan"] = plan
+            return swarm_module.SwarmRunResult(
+                swarm_id=plan.swarm_id,
+                status="success",
+                total_workers=0,
+                passed_count=0,
+                failed_count=0,
+                dry_run=True,
+            )
+
+        with patch("keel.swarm_runtime.run_swarm_orchestration", side_effect=fake_run):
+            rc, _out, err, calls = _cli(
+                ["swarm-run", ".keel/project.yaml", "--issues", "101,102,103", "--json"]
+            )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([n for n, _ in calls], [101, 102, 103])
+        self.assertEqual(_waves(captured["plan"]), [[101, 102], [103]])
+
+    def test_swarm_land_plans_each_issues_own_scope(self):
+        captured = {}
+
+        def fake_land(plan, **_kwargs):
+            captured["plan"] = plan
+            return swarm_module.SwarmLandingResult(
+                swarm_id=plan.swarm_id,
+                wave_index=1,
+                mode="direct_batch",
+                landed_clusters=(),
+                healed_clusters=(),
+                failed_clusters=(),
+                status="success",
+            )
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
+        ):
+            rc, _out, err, calls = _cli(
+                [
+                    "swarm-land",
+                    ".keel/project.yaml",
+                    "--root",
+                    tmpdir,
+                    "--swarm-id",
+                    "s",
+                    "--issues",
+                    "101,102,103",
+                    "--json",
+                ]
+            )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([n for n, _ in calls], [101, 102, 103])
+        self.assertEqual(_waves(captured["plan"]), [[101, 102], [103]])
+
+    def test_one_issue_flags_are_refused_beside_several(self):
+        for flag in (
+            ["--declared-file", "src/a.py"],
+            ["--issue-title", "t"],
+            ["--issue-body", "Scope: a/b.py"],
+            ["--issue-label", "area:docs"],
+        ):
+            with self.subTest(flag=flag[0]):
+                rc, _out, err, calls = _cli(
+                    ["swarm-plan", ".keel/project.yaml", "--issues", "101,102", *flag]
+                )
+                self.assertEqual(rc, 1)
+                self.assertIn("describe one issue, and 2 were named", err)
+                self.assertEqual(calls, [])
+
+    def test_swarm_run_and_swarm_land_refuse_before_doing_anything(self):
+        for command in ("swarm-run", "swarm-land"):
+            with (
+                self.subTest(command=command),
+                patch("keel.swarm_runtime.run_swarm_orchestration", side_effect=AssertionError),
+                patch("keel.swarm_landing.land_wave_clusters", side_effect=AssertionError),
+            ):
+                rc, _out, err, calls = _cli(
+                    [command, ".keel/project.yaml", "--issues", "101", "--issue-scope", "9=a.py"]
+                )
+                self.assertEqual(rc, 1)
+                self.assertIn("--issue-scope names #9", err)
+                self.assertEqual(calls, [])
+
+    def test_one_issue_flags_still_describe_a_single_issue(self):
+        rc, out, err, calls = _cli(
+            [
+                "swarm-plan",
+                ".keel/project.yaml",
+                "--issue",
+                "103",
+                "--issue-body",
+                "Scope: src/a.py",
+                "--issue-label",
+                "priority:high",
+                "--json",
+            ],
+            {103: {"title": "Mystery", "body": "", "labels": [{"name": "size:l"}]}},
+        )
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(len(calls), 1)
+        scope = json.loads(out)["issue_scopes"]["103"]
+        self.assertEqual(scope["predicted_files"], ["src/a.py"])
+        self.assertEqual(scope["title"], "Mystery")
+        self.assertEqual(scope["labels"], ["priority:high", "size:l"])
+
+    def test_an_override_for_an_issue_not_named_is_refused(self):
+        rc, _out, err, calls = _cli(
+            ["swarm-plan", ".keel/project.yaml", "--issues", "101", "--issue-scope", "999=a.py"]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("--issue-scope names #999", err)
+        self.assertEqual(calls, [])
+
+    def test_a_malformed_override_is_a_usage_error(self):
+        with redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as caught:
+            main(["swarm-plan", ".keel/project.yaml", "--issue", "1", "--issue-scope", "1="])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("at least one glob", err.getvalue())
 
 
 class AWavesLandingModeFollowsItsDependencies(unittest.TestCase):

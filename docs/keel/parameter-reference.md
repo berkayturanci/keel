@@ -160,7 +160,8 @@ once here in full; the per-command sections below only note deviations.
   the same readiness decision without blocking. On `keel ship`, `--issue-title` and the
   labels are also stamped into the run-ledger record.
 - **Accepted by:** `plan`, `ship`, `implement`, and the swarm commands `swarm-plan`,
-  `swarm-run` and `swarm-land` (all three flags). `guard` and `merge` take `--issue-title`
+  `swarm-run` and `swarm-land` (all three flags — there they describe a single issue and are
+  refused beside several; each issue's own text is read from GitHub, #1274). `guard` and `merge` take `--issue-title`
   alone, beside a single comma-separated `--issue-labels` string, as offline input to the
   blocker rule — no intake contract, no readiness decision.
 - **Example:**
@@ -2127,7 +2128,8 @@ contract described below.
 
 ```
 keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N]
-                [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY]
+                [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH]
+                [--issue-title TITLE] [--issue-body BODY]
                 [--issue-label LABEL] [--swarm-id ID] [--delegate PROVIDER]
                 [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE]
                 [--reviewers 1|2|3] [--live] [--json]
@@ -2138,7 +2140,9 @@ keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--iss
 | `path` | file path | required | Project config. |
 | `--root DIR` | path | `.` | Repo root for git, the swarm state and the merge lock. |
 | `--wave N` | int | `1` | Which execution wave to land. |
-| `--issues N,N` / `--issue N` | comma list / repeatable int | none (required) | Issue set the wave is re-planned from; no plan is persisted, so omitting both leaves nothing to land. |
+| `--issues N,N` / `--issue N` | comma list / repeatable int | none (required) | Issue set the wave is re-planned from; no plan is persisted, so omitting both leaves nothing to land. Each issue is read with `gh issue view` and planned from its own `Scope:`, or as `*` when it declares none ([swarm.md](swarm.md#declaring-an-issues-scope)). |
+| `--issue-scope N=GLOB[,GLOB…]` | repeatable | none | Issue `N`'s scope for this run, winning over what the issue says. `N` must be a positive integer also named by `--issues`/`--issue`; at least one glob is required. Pass the same ones the run was planned with. |
+| `--declared-file` / `--issue-title` / `--issue-body` / `--issue-label` | one-issue flags | none | Describe a single issue; refused beside several (#1274). |
 | `--swarm-id ID` | string | derived | Reuse an existing swarm's state and branch names; the plan itself is always rebuilt from the issue flags. |
 | `--delegate` / `--review-delegate` / `--effort` / `--team` / `--reviewers` | shared staffing flags | `knobs.team` | Handed to every child ship; see [Staffing a batch](#staffing-a-batch---team---effort-and-the-difficulty-bench). |
 | `--live` | flag | off | Actually merge. Without it the command reports what it would land, including `would hold: <reason>` per cluster. A live run refuses a dirty `--root` checkout (tracked or untracked changes, keel's own `.keel/` runtime files excepted) and returns HEAD to where it started (#1279). |

@@ -40,6 +40,22 @@ from keel.swarm_landing import (
     resolve_conflict_content,
 )
 
+#: swarm-plan/-run/-land read every named issue with `gh issue view` (#1274). The suite
+#: is offline (AGENTS.md), so every test gets an unreadable issue unless it patches its
+#: own; the scope then comes from the flags, or is `*`.
+_ISSUE_STUB = patch(
+    "keel.github.issue_facts",
+    return_value=CommandResult(False, 1, "stubbed: the suite never runs gh"),
+)
+
+
+def setUpModule():
+    _ISSUE_STUB.start()
+
+
+def tearDownModule():
+    _ISSUE_STUB.stop()
+
 
 def _home(runner, branch: str = "feature"):
     """Answer a live landing's clean-tree and HEAD reads as a clean checkout on ``branch``.
@@ -1394,7 +1410,8 @@ class TestSwarmLandCLI(unittest.TestCase):
                         ]
                     )
             self.assertIsNone(captured["evidence_checker"])
-            self.assertEqual(buf_err_dry.getvalue(), "")
+            # stderr still carries the issue-read warnings (#1274), never the banner
+            self.assertNotIn("swarm review evidence", buf_err_dry.getvalue())
 
             # dry run with the knob on -> the checker IS built, so the
             # preview can report what a live run would hold (read-only)
@@ -2515,8 +2532,12 @@ class SwarmLandRefusesADependentWave(unittest.TestCase):
                     tmpdir,
                     "--issues",
                     "1,2",
-                    "--declared-file",
-                    "src/a.py",
+                    # Both issues on one file, each declaring it (#1274): a shared
+                    # --declared-file is refused beside several issues.
+                    "--issue-scope",
+                    "1=src/a.py",
+                    "--issue-scope",
+                    "2=src/a.py",
                     "--swarm-id",
                     "swarm-cli-dep",
                     "--json",

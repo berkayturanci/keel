@@ -1983,7 +1983,7 @@ Project-owned scan scope for `regression` and `review-all-day`.
 
 | field | type | used for |
 |---|---|---|
-| `areas` | map name→string[] | module/path fan-out groups for scan reviewers |
+| `areas` | map name→string[] | module/path fan-out groups for scan reviewers; also the scope of an `area:<name>` issue label in a swarm plan |
 | `active_branch_patterns` | string[] | branch globs considered active work during time-window scans |
 | `issue_labels` | map command→string[] | labels for issues opened by scan commands |
 | `near_text_similarity` | number 0..1 | deterministic duplicate-finding threshold |
@@ -2111,7 +2111,9 @@ policy_pack:
     large_diff_max_bytes: 200000
 ```
 
-`areas` drives regression fan-out and remains project-specific. `active_branch_patterns`
+`areas` drives regression fan-out and remains project-specific. The swarm commands read it
+too: an issue labelled `area:<name>` whose body declares no `Scope:` is planned over that
+area's globs ([swarm.md](swarm.md#declaring-an-issues-scope)). `active_branch_patterns`
 drives review-all-day's active branch scope. `near_text_similarity` is the deterministic
 dedupe threshold. Review-all-day's issue title prefix is intentionally core-owned and fixed
 as `[review-all-day] ` so issue searches and created titles stay parity-safe.

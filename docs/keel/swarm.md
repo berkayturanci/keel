@@ -20,14 +20,14 @@
 >   would fail every worker and leave `swarm/<id>/…` branches behind
 >   ([#1281](https://github.com/berkayturanci/keel/issues/1281)).
 >
-> Planning runs, but not on real scope. `--issue-title`, `--issue-body`, `--issue-label` and
-> `--declared-file` take one value (or, for the repeatable ones, one list) that is shared by
-> **every** issue — nothing fetches an issue's own text. So with no scope text and no
-> directory-hinting label a multi-issue plan clusters synthetic per-issue globs and returns one
-> `orthogonal_parallel` wave
-> ([#1274](https://github.com/berkayturanci/keel/issues/1274)), and naming a path — in
-> `--declared-file`, in the shared body, or via an `--issue-label` that maps to a directory hint —
-> puts it in *every* issue's scope, so they all overlap and serialise. Neither is per-issue scope. `keel-visual swarm` rebuilds its scopes
+> Planning reads each issue's own scope, and is only as parallel as the issues say it can be:
+> every named issue is read from GitHub, and an issue that declares no scope is planned as `*`
+> and serialised against every other issue
+> ([#1274](https://github.com/berkayturanci/keel/issues/1274)). A backlog whose issues carry no
+> `Scope:` line plans one wave per issue, and every wave after the first is then
+> `sequential_dependent`, which `swarm-land` refuses until the earlier wave lands and the
+> rest is re-planned — see
+> [Declaring an issue's scope](#declaring-an-issues-scope). `keel-visual swarm` rebuilds its scopes
 > without predicted files, so its DAG is always one flat wave
 > ([#1275](https://github.com/berkayturanci/keel/issues/1275),
 > [#1280](https://github.com/berkayturanci/keel/issues/1280)).
@@ -206,29 +206,76 @@ knobs:
         review:    jury
 ```
 
+### Declaring an issue's scope
+
+`swarm-plan`, `swarm-run` and `swarm-land` read every issue named by `--issues`/`--issue`
+once, with `gh issue view N --json title,body,labels` run in `--root`
+([#1274](https://github.com/berkayturanci/keel/issues/1274)). An issue's **declared** scope is
+the first of these that names anything:
+
+1. **`--issue-scope N=glob[,glob…]`** — repeatable, one per issue (repeating an `N` adds its
+   globs). It wins over whatever the issue says. `N` must be a positive integer that
+   `--issues`/`--issue` also names, and at least one glob must follow the `=`; anything else is
+   refused.
+2. **A `Scope:` declaration in the issue body**, in either spelling:
+
+   ```markdown
+   Scope: src/keel/swarm*.py, docs/keel/swarm.md
+   ```
+
+   ```markdown
+   ## Scope
+   - `src/keel/swarm.py` — the planner
+   - tests/test_swarm.py
+   ```
+
+   The line form is any line starting with `Scope:`; the heading form is a `Scope` heading of
+   any level followed by a bullet list, which ends at the first line that is neither a bullet
+   nor blank. Globs are separated by commas or spaces and may be backticked; a word with no
+   `/`, `.` or wildcard is read as prose and skipped (write `./Makefile` for a bare file name).
+   Declarations inside a fenced code block are ignored, and several declarations add up.
+3. **`area:<name>` labels**, each mapped through the project's own
+   [`policy_pack.scan.areas`](configuration.md) — the area-to-globs map the scan commands
+   already use. A project without that map, or a label naming an area it does not list,
+   contributes nothing here; swarm adds no mapping of its own.
+
+An issue with **no declared scope gets `*` — everything** — so it conflicts with every other
+issue and gets a wave to itself; stderr names each such issue. Past wave 1 that wave depends
+on every issue before it, so it is `sequential_dependent` and `swarm-land` refuses it (#1276)
+until the earlier waves land and the rest is re-planned — slow, but never a collision. The
+paths its title and body
+happen to name, and the label hints below, are still kept in its scope (the risk tier and the
+difficulty score read them), but beside `*`, never instead of it: a mention of `a.py` is not a
+promise that the change stays out of `cli.py`.
+
+An issue that cannot be read — no `gh`, no auth, no network, an unparseable reply — is named on
+stderr and planned from the flags alone, which for a multi-issue plan means `*`. It is never
+assumed disjoint. Each issue's resolved `predicted_files` and its `scope_source` (`override`,
+`issue-body`, `area-label`, `declared-file` or `default`) are in `swarm-plan --json`'s
+`issue_scopes`.
+
+`--issue-title`, `--issue-body`, `--issue-label` and `--declared-file` describe **one** issue.
+With a single issue they fill in for (title, body) or add to (labels, files) what GitHub
+returned, and `--declared-file` counts as a declaration; beside several issues they are refused,
+because handing the same text to every issue is what made every plan either one flat wave or
+fully serial before #1274.
+
 ### Scope Prediction Heuristics
-- **Title / Body Path Parsing**: a path written in the title or body expands the predicted scope —
+These apply only to an issue with no declared scope, and what they find sits **beside** `*`,
+so they inform the tier and the difficulty score and never make an issue look disjoint.
+
+- **Title / Body Path Parsing**: a path written in the title or body is added to the scope —
   `touch src/keel/*.py` yields `src/keel/*`. It is path matching, not language awareness, and it
-  cuts
-  both ways: `tests/test_*.py` yields nothing, because the extractor does not accept the `test_*`
-  segment — while a **backticked** module name is taken as a file. A bare `keel.swarm` yields
-  nothing,
-  but `` `keel.swarm` `` — how anyone writes a module in an issue — becomes the phantom path
-  `keel.swarm`. It suppresses the label fallback below, and it matches no real file, so the only
-  things it conflicts with are `*`, a `--declared-file` glob that happens to match it, and an
-  *identical* phantom. That last one is not an edge case — it is the **only** case a multi-issue
-  plan can produce, because nothing fetches an issue's own text: one backticked module in the shared
-  body gives every issue the same phantom, they all conflict, and the plan serialises into one wave
-  per issue —
-  the opposite of the isolation the path appears to describe. Measured: three issues, body
-  ``touch `keel.swarm` `` → three single-cluster waves. Check what a scope actually resolved to
-  with `swarm-plan --tree` rather
-  than assuming a mention was understood.
-- **Label / Role Fallback**: only when the text and `--declared-file` predicted *nothing*, a
+  cuts both ways: `tests/test_*.py` yields nothing, because the extractor does not accept the
+  `test_*` segment — while a **backticked** module name is taken as a file, so
+  `` `keel.swarm` `` becomes the phantom path `keel.swarm`. Before #1274 such a phantom was the
+  whole scope, and it matched no real file, so the issue looked disjoint from everything; now it
+  rides next to `*`. Check what a scope actually resolved to with `swarm-plan --tree` (or
+  `issue_scopes` in `--json`) rather than assuming a mention was understood.
+- **Label / Role Fallback**: only when the text and `--declared-file` named *nothing*, a
   substring match over the role **and every label** maps `docs`/`website`/`visual` to a directory
-  glob and `cli` to the single file `src/keel/cli.py`. Whatever it maps to is the same for every
-  issue in the run, which is why a shared label serialises the whole plan
-  ([#1274](https://github.com/berkayturanci/keel/issues/1274)).
+  glob and `cli` to the single file `src/keel/cli.py`. For a scope that holds, use an
+  `area:<name>` label backed by `policy_pack.scan.areas` instead.
 - **Disjointness Matrix**: If two issues touch non-overlapping directory trees or orthogonal subsystems,
   they are marked disjoint ($D_{ij} = 1$). If scopes intersect, a conflict edge is created ($C_{ij} = 1$).
 - **Topological Wave Partitioning**: Disjoint clusters are scheduled in Wave 1. Dependent or conflicting
@@ -266,10 +313,12 @@ The `--tree` flag prints the plan as a terminal tree:
     └── Team: lead claude → implementer claude, review claude, claude
 ```
 
-(The three issues above touch disjoint trees, so they share one wave. Issues whose predicted
+(The three issues above declare disjoint scopes, so they share one wave; had any of them declared
+none, it would be planned as `*` and sit in a wave of its own. Issues whose predicted
 scopes overlap are pushed into later waves instead — each wave stays internally disjoint. Such a
 wave prints as `⏳ Wave 2 [sequential_dependent] — Dependent — refused until re-planned`, because
-`swarm-land` refuses it until the earlier wave lands; see [Landing](#4-landing-keel-swarm-land).)
+`swarm-land` refuses it until the earlier wave lands; see [Landing](#4-landing-keel-swarm-land).
+A `*` issue in a later wave always does: it overlaps everything before it.)
 
 ---
 

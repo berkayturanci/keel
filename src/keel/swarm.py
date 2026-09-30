@@ -61,6 +61,30 @@ _PATH_GENERAL_RE = re.compile(
     r"(?:^|[\s(\[])([a-zA-Z0-9_\-./]+/(?:[a-zA-Z0-9_\-./]+\.[a-zA-Z0-9_\-]+|[a-zA-Z0-9_\-]+/|\*))"
 )
 
+#: The scope of an issue nobody described: everything. It intersects every other path
+#: (:func:`_normalized_paths_intersect`), so an undescribed issue is serialised against
+#: every other issue instead of being assumed disjoint from all of them (#1274). The
+#: fallback used to be a unique ``scope/issue-N/*`` per issue, which by construction
+#: conflicted with nothing and put every undescribed issue in wave 1.
+SCOPE_ANY = "*"
+
+#: Where an issue's scope came from, strongest first. ``override`` is ``--issue-scope``;
+#: ``issue-body`` a ``Scope:`` declaration in the issue; ``area-label`` an ``area:<name>``
+#: label mapped through ``policy_pack.scan.areas``; ``declared-file`` the operator's
+#: ``--declared-file`` (plus the paths the text names); ``default`` means nothing declared
+#: a scope, so it holds :data:`SCOPE_ANY` beside whatever paths the text happened to name.
+SCOPE_SOURCES = ("override", "issue-body", "area-label", "declared-file", "default")
+
+#: ``Scope: a, b`` — the one-line declaration.
+_SCOPE_LINE_RE = re.compile(r"^\s*scope\s*:(.*)$", re.IGNORECASE)
+#: ``## Scope`` — the heading form, any level; the bullet list under it is the scope.
+_SCOPE_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s*scope\s*#*\s*$", re.IGNORECASE)
+_SCOPE_BULLET_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
+_FENCE_RE = re.compile(r"^\s{0,3}(```|~~~)")
+#: A token counts as a glob only if it looks like one — a bare word is the prose around
+#: the list (`src/a.py — the parser`), not a path. ``./Makefile`` names a bare file.
+_GLOB_MARKS = frozenset("/.*?[")
+
 
 @dataclass(frozen=True)
 class IssueScope:
@@ -73,6 +97,9 @@ class IssueScope:
     declared_files: tuple[str, ...] = ()
     predicted_files: tuple[str, ...] = ()
     role: str = "core"
+    #: Where ``predicted_files`` came from — one of :data:`SCOPE_SOURCES` — so a plan
+    #: that serialises everything can be read back to the issue that declared nothing.
+    scope_source: str = "default"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +109,7 @@ class IssueScope:
             "labels": list(self.labels),
             "declared_files": list(self.declared_files),
             "predicted_files": list(self.predicted_files),
+            "scope_source": self.scope_source,
         }
 
 
@@ -422,6 +450,130 @@ def extract_predicted_paths(text: str) -> list[str]:
     return sorted(found)
 
 
+def _scope_globs(text: str) -> list[str]:
+    """The globs in one declaration item: comma- or space-separated, prose skipped."""
+    globs: list[str] = []
+    for token in re.split(r"[\s,]+", text):
+        if _GLOB_MARKS.isdisjoint(token):
+            continue
+        glob = _normalize_path(token)
+        if glob and glob != ".":
+            globs.append(glob)
+    return globs
+
+
+def parse_scope_declaration(body: str) -> tuple[str, ...]:
+    """The path globs an issue body declares as its scope, in order, de-duplicated.
+
+    Two spellings, both line-based, both ignored inside a fenced code block:
+
+    * a line ``Scope: src/keel/swarm*.py, docs/keel/swarm.md``;
+    * a heading ``## Scope`` (any level) followed by a bullet list, one or more globs
+      per bullet, ending at the first line that is neither a bullet nor blank.
+
+    Globs are separated by commas or whitespace and may be backticked. A token with no
+    ``/``, ``.`` or wildcard is prose and is skipped. Several declarations add up. An
+    empty tuple means the body declares nothing.
+    """
+    found: list[str] = []
+    in_fence = False
+    in_heading = False
+    for line in body.splitlines():
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            in_heading = False
+            continue
+        if in_fence:
+            continue
+        if in_heading:
+            bullet = _SCOPE_BULLET_RE.match(line)
+            if bullet:
+                found.extend(_scope_globs(bullet.group(1)))
+                continue
+            if not line.strip():
+                continue
+            in_heading = False
+        if _SCOPE_HEADING_RE.match(line):
+            in_heading = True
+            continue
+        declared = _SCOPE_LINE_RE.match(line)
+        if declared:
+            found.extend(_scope_globs(declared.group(1)))
+    return tuple(dict.fromkeys(found))
+
+
+def scope_areas(config: ProjectConfig | None) -> dict[str, tuple[str, ...]]:
+    """``policy_pack.scan.areas`` — area name to path globs — or ``{}`` without one.
+
+    The mapping an ``area:<name>`` label is read through. It is the project's own
+    grouping of its tree (the scan commands use it too); keel adds no second one.
+    """
+    pack = config.policy_pack if config is not None else {}
+    scan = pack.get("scan")
+    areas = scan.get("areas") if isinstance(scan, dict) else None
+    if not isinstance(areas, dict):
+        return {}
+    return {
+        str(name): tuple(str(glob) for glob in globs)
+        for name, globs in areas.items()
+        if isinstance(globs, list)
+    }
+
+
+def area_label_scope(labels: Sequence[str], areas: Mapping[str, Sequence[str]]) -> tuple[str, ...]:
+    """The globs the ``area:<name>`` labels map to; an area not in ``areas`` adds none."""
+    found: list[str] = []
+    for label in labels:
+        if label.startswith("area:"):
+            for glob in areas.get(label.removeprefix("area:"), ()):
+                normalized = _normalize_path(glob)
+                if normalized:
+                    found.append(normalized)
+    return tuple(dict.fromkeys(found))
+
+
+def parse_issue_scope_override(text: str) -> tuple[int, tuple[str, ...]]:
+    """``N=glob[,glob…]`` → ``(N, globs)``, for ``--issue-scope``.
+
+    Raises ``ValueError`` with the reason when ``N`` is not a positive issue number or
+    no glob survives normalisation — an override that names nothing is a typo, not a
+    request to plan the issue as :data:`SCOPE_ANY`.
+    """
+    number, sep, rest = text.partition("=")
+    number = number.strip().lstrip("#")
+    if not sep:
+        raise ValueError(f"expected N=glob[,glob…], got {text!r}")
+    if not (number.isascii() and number.isdigit()) or int(number) < 1:
+        raise ValueError(f"the issue number must be a positive integer, got {number!r}")
+    globs = tuple(dict.fromkeys(g for g in (_normalize_path(p) for p in rest.split(",")) if g))
+    if not globs:
+        raise ValueError(f"issue #{int(number)} needs at least one glob after '='")
+    return int(number), globs
+
+
+def issue_facts_from_json(payload: str) -> tuple[str, str, tuple[str, ...]] | None:
+    """``(title, body, labels)`` from ``gh issue view --json title,body,labels``.
+
+    ``None`` when the payload is not a JSON object — the caller treats that exactly like
+    an issue it could not read. A field of the wrong type reads as empty.
+    """
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    title = data.get("title") if isinstance(data.get("title"), str) else ""
+    body = data.get("body") if isinstance(data.get("body"), str) else ""
+    raw_labels = data.get("labels") if isinstance(data.get("labels"), list) else []
+    labels = tuple(
+        item["name"]
+        for item in raw_labels
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    )
+    return title, body, labels
+
+
 def extract_issue_scope(
     issue: int,
     *,
@@ -430,16 +582,33 @@ def extract_issue_scope(
     labels: list[str] | tuple[str, ...] | None = None,
     declared_files: list[str] | tuple[str, ...] | None = None,
     config: ProjectConfig | None = None,
+    scope: Sequence[str] | None = None,
 ) -> IssueScope:
-    """Extract and normalize predicted files and roles for an issue."""
+    """Extract and normalize the predicted files and role for an issue.
+
+    The declared scope is the first of these that names anything
+    (:data:`SCOPE_SOURCES`): ``scope`` (the ``--issue-scope`` override), the body's
+    ``Scope:`` declaration (:func:`parse_scope_declaration`), and the ``area:<name>``
+    labels mapped through ``policy_pack.scan.areas``. ``declared_files`` are added to it.
+    Without one, the paths the title and body name and the role hints are kept, and an
+    issue with no ``declared_files`` either also gets :data:`SCOPE_ANY`, so it conflicts
+    with every other issue.
+    """
     norm_labels = tuple(sorted(set(labels or ())))
     norm_declared = tuple(
         sorted(set(_normalize_path(f) for f in (declared_files or ()) if _normalize_path(f)))
     )
 
-    predicted = set(norm_declared)
-    combined_text = f"{title}\n{body}"
-    predicted.update(extract_predicted_paths(combined_text))
+    candidates = (
+        ("override", tuple(g for g in (_normalize_path(p) for p in (scope or ())) if g)),
+        ("issue-body", parse_scope_declaration(body)),
+        ("area-label", area_label_scope(norm_labels, scope_areas(config))),
+    )
+    source, declared_scope = next(((s, g) for s, g in candidates if g), ("", ()))
+
+    predicted = set(norm_declared) | set(declared_scope)
+    if not declared_scope:
+        predicted.update(extract_predicted_paths(f"{title}\n{body}"))
 
     # Resolve role from labels or config
     resolved_role = "core"
@@ -465,8 +634,18 @@ def extract_issue_scope(
             predicted.add("website/*")
         elif "cli" in resolved_role or any("cli" in lbl for lbl in norm_labels):
             predicted.add("src/keel/cli.py")
+
+    # A path the text mentions, or a role hint, is a guess about the issue, not a statement
+    # of what it touches: an issue that names `a.py` and also edits `cli.py` is the
+    # collision #1274 describes. So the guesses stay in the scope — the tier and the
+    # difficulty read them — but unless something *declared* a scope, the issue also gets
+    # SCOPE_ANY and is serialised rather than assumed disjoint on the strength of a mention.
+    if not declared_scope:
+        if norm_declared:
+            source = "declared-file"
         else:
-            predicted.add(f"scope/issue-{issue}/*")
+            predicted.add(SCOPE_ANY)
+            source = "default"
 
     return IssueScope(
         issue=issue,
@@ -476,6 +655,7 @@ def extract_issue_scope(
         declared_files=norm_declared,
         predicted_files=tuple(sorted(predicted)),
         role=resolved_role,
+        scope_source=source,
     )
 
 

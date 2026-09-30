@@ -36,6 +36,22 @@ from keel.swarm_runtime import (
     run_swarm_orchestration,
 )
 
+#: swarm-plan/-run/-land read every named issue with `gh issue view` (#1274). The suite
+#: is offline (AGENTS.md), so every test gets an unreadable issue unless it patches its
+#: own; the scope then comes from the flags, or is `*`.
+_ISSUE_STUB = patch(
+    "keel.github.issue_facts",
+    return_value=CommandResult(False, 1, "stubbed: the suite never runs gh"),
+)
+
+
+def setUpModule():
+    _ISSUE_STUB.start()
+
+
+def tearDownModule():
+    _ISSUE_STUB.stop()
+
 
 class TestSwarmRuntimeHelpers(unittest.TestCase):
     def test_default_runner_success_and_failure(self):
