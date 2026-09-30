@@ -60,6 +60,28 @@ All notable changes to keel are documented here. The format follows
   - **The guards.** `tests/test_site_seo.py` and `tests/test_website_csp.py` enumerate it with the other articles. `tests/test_revert_check_article.py` rebuilds the article's fixture from its configuration block, requires `git diff -U0` to print the diff it shows and `keel run-gates` to print its output line for line, runs the follow-up it describes, and holds the stated defaults to `revertcheck`, the off-by-default claim to `projects/keel.yaml` and `.keel/project.yaml`, and the audit's framing to the CHANGELOG.
 
 ### Fixed
+- **Swarm worktrees are pruned, removed honestly, kept when a worker fails, and recoverable**
+  (#1278).
+  - `remove_swarm_worktree` returned `True` unconditionally and its caller discarded it. It now
+    answers from the directory's own state (`git worktree remove --force`, `rmtree` of what is
+    left, `git worktree prune` when git refused), and a removal or branch deletion that fails is
+    a `warnings` entry of the run result (`swarm-run --json`, the text summary) and leaves the
+    path as `worktree` on the worker record.
+  - A live worker runs `git worktree prune` before cutting its worktree, so a crashed run's
+    stale registration no longer fails the next run of the same `--swarm-id` with "already used
+    by worktree".
+  - The worktree is settled however the worker ends — returned or raised: removed when its pull
+    request is open (the branch stays: it heads the pull request); **kept for inspection**, with
+    its branch, when the worker failed after its implementer seat ran, and named at the end of
+    the worker's output; removed with the `swarm/<id>/<cluster>` branch keel cut when the worker
+    failed before its seat ran; untouched when the worker never created it. The per-run
+    `.keel/worktrees/<swarm_id>/` directory, and `.keel/worktrees/`, go once a wave leaves them
+    empty.
+  - New `keel swarm-status --orphans` lists the worktrees, directories and branches swarm runs
+    left under keel's own paths and branch namespace, and `--clean` removes them — never an
+    unfinished run's unless `--swarm-id` names it, never a branch whose worker pushed it or opened
+    a pull request, nothing outside `.keel/worktrees/<id>/<cluster>` and `swarm/<id>/<cluster>`.
+    Worker records gain `worktree` and `pushed`; `SwarmRunResult` gains `warnings`.
 - **A run-ledger reader skips a record kind it does not know instead of refusing the ledger**
   (#1400, groundwork). Every reader parsed the ledger through one validator that refused the
   **whole** file on the first record whose `record_type` was not `ship_run`, so any record kind

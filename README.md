@@ -31,7 +31,7 @@
    `keel doctor --fix` creates, and the branch and pull request per cluster that the experimental
    `keel swarm-run --live` pushes and opens, and `keel swarm-land --live` merges each such pull
    request through `keel merge`. Locally: `keel worktree-remove` removes a
-   worktree, `keel rollback` (or `keel canary --auto-revert`) commits a revert, and the opt-in
+   worktree, `keel swarm-status --clean` removes what swarm runs left behind, `keel rollback` (or `keel canary --auto-revert`) commits a revert, and the opt-in
    `revert-check` gate has `keel run-gates` and `keel ship` add and remove a temp worktree.
 3. **A pull request merges only through `keel merge`**, which takes the merge lock,
    re-checks the merge window, reads the live CI rollup and verifies the head-pinned review

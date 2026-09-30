@@ -612,5 +612,138 @@ class WhatAWorkerWrites(unittest.TestCase):
         self.assertIn("no review evidence yet", body)
 
 
+class AWorkerLeavesBehindOnlyWhatIsWorthKeeping(unittest.TestCase):
+    """#1278: what becomes of a live worker's worktree and branch when it ends."""
+
+    def _decide(self, ok, created, ran):
+        d = swarm_worker.worktree_disposal(ok=ok, worktree_created=created, implementer_ran=ran)
+        return d.worktree, d.delete_branch
+
+    def test_a_worker_that_created_nothing_touches_nothing(self):
+        # What is at its path — a previous run's kept worktree — is not its own.
+        self.assertEqual(self._decide(False, False, False), ("none", False))
+        self.assertEqual(self._decide(True, False, False), ("none", False))
+
+    def test_a_successful_worker_removes_its_worktree_and_keeps_its_branch(self):
+        self.assertEqual(self._decide(True, True, True), ("remove", False))
+
+    def test_a_worker_that_failed_after_its_seat_ran_keeps_both(self):
+        self.assertEqual(self._decide(False, True, True), ("keep", False))
+
+    def test_a_worker_that_failed_before_its_seat_ran_removes_both(self):
+        self.assertEqual(self._decide(False, True, False), ("remove", True))
+
+
+class LeftoversAreOnlyKeelsOwn(unittest.TestCase):
+    """#1278: parsing git's listings, and deciding what `swarm-status --clean` may remove."""
+
+    def test_the_worktree_list_is_parsed_with_its_prunable_verdict(self):
+        porcelain = (
+            "worktree /r\r\nHEAD abc\r\nbranch refs/heads/main\r\n\r\n"
+            "worktree /r/.keel/worktrees/s/c\nHEAD abc\nbranch refs/heads/swarm/s/c\n"
+            "prunable gitdir file points to non-existent location\n\n"
+            "worktree /d\nHEAD abc\ndetached\nprunable\n\n"
+            "junk that is no block\n\n"
+        )
+        entries = swarm_worker.parse_worktree_list(porcelain)
+        self.assertEqual(
+            [(e.path, e.branch, e.prunable) for e in entries],
+            [
+                ("/r", "refs/heads/main", False),
+                ("/r/.keel/worktrees/s/c", "refs/heads/swarm/s/c", True),
+                ("/d", None, True),
+            ],
+        )
+
+    def test_only_the_exact_swarm_branch_shape_is_keels(self):
+        self.assertEqual(swarm_worker.swarm_branch_ids("swarm/s1/c1"), ("s1", "c1"))
+        self.assertEqual(swarm_worker.swarm_branch_ids("refs/heads/swarm/s1/c1"), ("s1", "c1"))
+        for other in ("main", "swarm/s1", "swarm/s1/c1/x", "swarm//c1", "feature/swarm/s/c"):
+            with self.subTest(branch=other):
+                self.assertIsNone(swarm_worker.swarm_branch_ids(other))
+
+    def _classify(self, runs, named=None):
+        return {
+            (x.kind, x.target): (x.action, x.reason)
+            for x in swarm_worker.classify_leftovers(
+                worktrees=[
+                    ("done", "c1", "/w/done/c1", False),
+                    ("done", "c9", "/w/done/c9", True),
+                    ("live", "c1", "/w/live/c1", False),
+                ],
+                directories=[("done", "c2", "/w/done/c2"), ("gone", "", "/w/gone")],
+                branches=[
+                    "refs/heads/swarm/done/c1",
+                    "swarm/done/c3",
+                    "swarm/done/c4",
+                    "swarm/live/c1",
+                    "swarm/nostate/c1",
+                    "feature/x",
+                ],
+                runs=runs,
+                named=named,
+            )
+        }
+
+    RUNS = {
+        "done": swarm_worker.SwarmRunRecord(
+            unfinished=False, pull_requests={"c3": 12}, pushed=frozenset({"c4"})
+        ),
+        "live": swarm_worker.SwarmRunRecord(unfinished=True),
+    }
+
+    def test_a_finished_runs_leftovers_are_removed_and_its_pushed_branches_kept(self):
+        got = self._classify(self.RUNS)
+        self.assertEqual(got[("worktree", "/w/done/c1")][0], "remove")
+        self.assertEqual(got[("registration", "/w/done/c9")][0], "remove")
+        self.assertEqual(got[("directory", "/w/done/c2")], ("remove", "not a registered worktree"))
+        self.assertEqual(got[("directory", "/w/gone")], ("remove", "an empty run directory"))
+        self.assertEqual(
+            got[("branch", "swarm/done/c1")],
+            ("remove", "nothing was pushed and no pull request was opened"),
+        )
+        self.assertEqual(got[("branch", "swarm/done/c3")], ("keep", "it heads pull request #12"))
+        self.assertEqual(got[("branch", "swarm/done/c4")], ("keep", "it was pushed"))
+        self.assertEqual(got[("branch", "swarm/nostate/c1")][0], "keep")
+        self.assertIn("no run state", got[("branch", "swarm/nostate/c1")][1])
+        self.assertNotIn(("branch", "feature/x"), got)
+
+    def test_an_unfinished_run_is_kept_unless_the_operator_names_it(self):
+        got = self._classify(self.RUNS)
+        for key in (("worktree", "/w/live/c1"), ("branch", "swarm/live/c1")):
+            with self.subTest(key=key):
+                self.assertEqual(got[key][0], "keep")
+                self.assertIn("--swarm-id live", got[key][1])
+        named = self._classify(self.RUNS, named="live")
+        self.assertEqual(named[("worktree", "/w/live/c1")][0], "remove")
+        self.assertEqual(named[("branch", "swarm/live/c1")][0], "remove")
+        # An unfinished run's directory is kept the same way.
+        runs = {"done": swarm_worker.SwarmRunRecord(unfinished=True)}
+        self.assertEqual(self._classify(runs)[("directory", "/w/done/c2")][0], "keep")
+
+    def test_the_listing_is_ordered_and_serialisable(self):
+        found = swarm_worker.classify_leftovers(
+            worktrees=[("s", "c", "/w/s/c", False)],
+            directories=[],
+            branches=["swarm/s/c", "swarm/a/c"],
+            runs={},
+        )
+        self.assertEqual(
+            [(x.swarm_id, x.kind) for x in found],
+            [("a", "branch"), ("s", "worktree"), ("s", "branch")],
+        )
+        self.assertEqual(
+            found[1].to_dict(),
+            {
+                "kind": "worktree",
+                "swarm_id": "s",
+                "cluster_id": "c",
+                "target": "/w/s/c",
+                "action": "remove",
+                "reason": "no running swarm run owns it",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
