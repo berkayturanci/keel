@@ -85,6 +85,85 @@ _FENCE_RE = re.compile(r"^\s{0,3}(```|~~~)")
 #: the list (`src/a.py — the parser`), not a path. ``./Makefile`` names a bare file.
 _GLOB_MARKS = frozenset("/.*?[")
 
+#: The two modes a wave is planned in (:func:`wave_landing_mode`).
+WAVE_MODES = ("orthogonal_parallel", "sequential_dependent")
+
+
+class SwarmPlanError(ValueError):
+    """A persisted swarm plan keel will not land from (#1275).
+
+    Unreadable, not JSON, the wrong shape, or a schema version this keel does not know.
+    The loader refuses rather than guessing: a plan read half-right lands a wave nobody
+    ran, which is the defect persisting the plan exists to remove.
+    """
+
+
+#: A plan key that is an issue number exactly as :meth:`SwarmPlan.to_dict` writes one —
+#: ``str(int)`` — so a key that parses but would be written back differently (``"07"``,
+#: ``"+7"``, ``" 7"``) is refused instead of silently renamed.
+_ISSUE_KEY_RE = re.compile(r"\A(0|-?[1-9][0-9]*)\Z")
+
+
+def _plan_object(value: Any, where: str) -> Mapping[str, Any]:
+    if not isinstance(value, dict):
+        raise SwarmPlanError(f"{where}: expected an object, found {type(value).__name__}")
+    return value
+
+
+def _plan_field(data: Mapping[str, Any], key: str, where: str) -> Any:
+    if key not in data:
+        raise SwarmPlanError(f"{where}: missing '{key}'")
+    return data[key]
+
+
+def _plan_int(data: Mapping[str, Any], key: str, where: str) -> int:
+    value = _plan_field(data, key, where)
+    # `bool` is an `int` to isinstance; `true` in a count is a malformed file, not 1.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SwarmPlanError(f"{where}.{key}: expected an integer, found {value!r}")
+    return value
+
+
+def _plan_str(data: Mapping[str, Any], key: str, where: str) -> str:
+    value = _plan_field(data, key, where)
+    if not isinstance(value, str):
+        raise SwarmPlanError(f"{where}.{key}: expected a string, found {value!r}")
+    return value
+
+
+def _plan_bool(data: Mapping[str, Any], key: str, where: str) -> bool:
+    value = _plan_field(data, key, where)
+    if not isinstance(value, bool):
+        raise SwarmPlanError(f"{where}.{key}: expected true or false, found {value!r}")
+    return value
+
+
+def _plan_list(data: Mapping[str, Any], key: str, where: str) -> list[Any]:
+    value = _plan_field(data, key, where)
+    if not isinstance(value, list):
+        raise SwarmPlanError(f"{where}.{key}: expected a list, found {type(value).__name__}")
+    return value
+
+
+def _plan_strs(data: Mapping[str, Any], key: str, where: str) -> tuple[str, ...]:
+    items = _plan_list(data, key, where)
+    if not all(isinstance(item, str) for item in items):
+        raise SwarmPlanError(f"{where}.{key}: expected a list of strings")
+    return tuple(items)
+
+
+def _plan_ints(data: Mapping[str, Any], key: str, where: str) -> tuple[int, ...]:
+    items = _plan_list(data, key, where)
+    if not all(isinstance(item, int) and not isinstance(item, bool) for item in items):
+        raise SwarmPlanError(f"{where}.{key}: expected a list of integers")
+    return tuple(items)
+
+
+def _plan_issue_key(key: Any, where: str) -> int:
+    if not isinstance(key, str) or not _ISSUE_KEY_RE.match(key):
+        raise SwarmPlanError(f"{where}: key {key!r} is not an issue number")
+    return int(key)
+
 
 @dataclass(frozen=True)
 class IssueScope:
@@ -111,6 +190,28 @@ class IssueScope:
             "predicted_files": list(self.predicted_files),
             "scope_source": self.scope_source,
         }
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str = "issue scope") -> IssueScope:
+        """The inverse of :meth:`to_dict` (#1275); ``body`` is not serialised, so it is empty.
+
+        Raises :class:`SwarmPlanError` for a record of the wrong shape.
+        """
+        obj = _plan_object(data, where)
+        source = _plan_str(obj, "scope_source", where)
+        if source not in SCOPE_SOURCES:
+            raise SwarmPlanError(
+                f"{where}.scope_source: {source!r} is not one of {', '.join(SCOPE_SOURCES)}"
+            )
+        return cls(
+            issue=_plan_int(obj, "issue", where),
+            title=_plan_str(obj, "title", where),
+            labels=_plan_strs(obj, "labels", where),
+            declared_files=_plan_strs(obj, "declared_files", where),
+            predicted_files=_plan_strs(obj, "predicted_files", where),
+            role=_plan_str(obj, "role", where),
+            scope_source=source,
+        )
 
 
 @dataclass(frozen=True)
@@ -143,6 +244,28 @@ class Difficulty:
             "signals": [{"name": name, "points": points} for name, points in self.signals],
         }
 
+    @classmethod
+    def from_dict(cls, data: Any, where: str = "difficulty") -> Difficulty:
+        """The inverse of :meth:`to_dict` (#1275); raises :class:`SwarmPlanError`."""
+        obj = _plan_object(data, where)
+        signals = []
+        for n, raw in enumerate(_plan_list(obj, "signals", where)):
+            signal = _plan_object(raw, f"{where}.signals[{n}]")
+            signals.append(
+                (
+                    _plan_str(signal, "name", f"{where}.signals[{n}]"),
+                    _plan_int(signal, "points", f"{where}.signals[{n}]"),
+                )
+            )
+        return cls(
+            score=_plan_int(obj, "score", where),
+            band=_plan_str(obj, "band", where),
+            tier=_plan_int(obj, "tier", where),
+            file_count=_plan_int(obj, "file_count", where),
+            dependency_depth=_plan_int(obj, "dependency_depth", where),
+            signals=tuple(signals),
+        )
+
 
 @dataclass(frozen=True)
 class SwarmCluster:
@@ -169,6 +292,28 @@ class SwarmCluster:
             "assignment": self.assignment,
         }
 
+    @classmethod
+    def from_dict(cls, data: Any, where: str = "cluster") -> SwarmCluster:
+        """The inverse of :meth:`to_dict` (#1275); raises :class:`SwarmPlanError`."""
+        obj = _plan_object(data, where)
+        raw_difficulty = _plan_field(obj, "difficulty", where)
+        assignment = _plan_field(obj, "assignment", where)
+        if assignment is not None and not isinstance(assignment, dict):
+            raise SwarmPlanError(f"{where}.assignment: expected an object or null")
+        return cls(
+            cluster_id=_plan_str(obj, "cluster_id", where),
+            issues=_plan_ints(obj, "issues", where),
+            role=_plan_str(obj, "role", where),
+            combined_scope=_plan_strs(obj, "combined_scope", where),
+            depends_on_issues=_plan_ints(obj, "depends_on_issues", where),
+            difficulty=(
+                None
+                if raw_difficulty is None
+                else Difficulty.from_dict(raw_difficulty, f"{where}.difficulty")
+            ),
+            assignment=assignment,
+        )
+
 
 @dataclass(frozen=True)
 class SwarmWave:
@@ -186,6 +331,23 @@ class SwarmWave:
             "eligible_direct_landing": self.eligible_direct_landing,
             "clusters": [c.to_dict() for c in self.clusters],
         }
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str = "wave") -> SwarmWave:
+        """The inverse of :meth:`to_dict` (#1275); raises :class:`SwarmPlanError`."""
+        obj = _plan_object(data, where)
+        mode = _plan_str(obj, "mode", where)
+        if mode not in WAVE_MODES:
+            raise SwarmPlanError(f"{where}.mode: {mode!r} is not one of {', '.join(WAVE_MODES)}")
+        return cls(
+            wave_index=_plan_int(obj, "wave_index", where),
+            mode=mode,
+            eligible_direct_landing=_plan_bool(obj, "eligible_direct_landing", where),
+            clusters=tuple(
+                SwarmCluster.from_dict(raw, f"{where}.clusters[{n}]")
+                for n, raw in enumerate(_plan_list(obj, "clusters", where))
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -206,6 +368,47 @@ class SwarmPlan:
             "conflict_map": {str(k): list(v) for k, v in self.conflict_map.items()},
             "issue_scopes": {str(k): v.to_dict() for k, v in self.issue_scopes.items()},
         }
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str = "plan") -> SwarmPlan:
+        """The inverse of :meth:`to_dict`: ``from_dict(p.to_dict()).to_dict() == p.to_dict()``.
+
+        Strict (#1275). Every field :meth:`to_dict` writes must be present with its type,
+        an issue-number key must be written exactly as ``to_dict`` writes one, and an
+        issue scope must sit under its own issue's key; anything else raises
+        :class:`SwarmPlanError` naming where. A plan is what ``swarm-land`` lands, so a
+        field read by guesswork would land a wave the run never planned.
+        """
+        obj = _plan_object(data, where)
+        raw_conflicts = _plan_object(
+            _plan_field(obj, "conflict_map", where), f"{where}.conflict_map"
+        )
+        conflict_map = {
+            _plan_issue_key(key, f"{where}.conflict_map"): _plan_ints(
+                raw_conflicts, key, f"{where}.conflict_map"
+            )
+            for key in raw_conflicts
+        }
+        raw_scopes = _plan_object(_plan_field(obj, "issue_scopes", where), f"{where}.issue_scopes")
+        issue_scopes: dict[int, IssueScope] = {}
+        for key, raw in raw_scopes.items():
+            issue = _plan_issue_key(key, f"{where}.issue_scopes")
+            scope = IssueScope.from_dict(raw, f"{where}.issue_scopes[{key!r}]")
+            if scope.issue != issue:
+                raise SwarmPlanError(
+                    f"{where}.issue_scopes[{key!r}]: holds the scope of issue #{scope.issue}"
+                )
+            issue_scopes[issue] = scope
+        return cls(
+            swarm_id=_plan_str(obj, "swarm_id", where),
+            total_issues=_plan_int(obj, "total_issues", where),
+            waves=tuple(
+                SwarmWave.from_dict(raw, f"{where}.waves[{n}]")
+                for n, raw in enumerate(_plan_list(obj, "waves", where))
+            ),
+            conflict_map=conflict_map,
+            issue_scopes=issue_scopes,
+        )
 
 
 @dataclass(frozen=True)
@@ -1411,6 +1614,142 @@ def _stored_scopes(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
     return tuple(scope for scope in value if isinstance(scope, str))
+
+
+#: What a persisted plan file says it is (#1275), and the one layout this keel reads.
+#: The version is bumped whenever :meth:`SwarmPlan.to_dict` changes shape; a file of any
+#: other version is refused rather than read by guesswork.
+SWARM_PLAN_SCHEMA = "keel.swarm-plan"
+SWARM_PLAN_VERSION = 1
+#: A plan lives beside its run's state file: ``<swarm_id>.json`` is the state,
+#: ``<swarm_id>.plan.json`` the plan that run executed.
+SWARM_PLAN_SUFFIX = ".plan.json"
+
+
+def swarm_plan_payload(plan: SwarmPlan) -> dict[str, Any]:
+    """The persisted form of ``plan``: its :meth:`SwarmPlan.to_dict` under a versioned envelope."""
+    return {"schema": SWARM_PLAN_SCHEMA, "version": SWARM_PLAN_VERSION, "plan": plan.to_dict()}
+
+
+def swarm_plan_from_payload(data: Any) -> SwarmPlan:
+    """The plan in a :func:`swarm_plan_payload`, or :class:`SwarmPlanError` saying why not."""
+    envelope = _plan_object(data, "the file")
+    if envelope.get("schema") != SWARM_PLAN_SCHEMA:
+        raise SwarmPlanError(f"not a keel swarm plan (its 'schema' is not {SWARM_PLAN_SCHEMA!r})")
+    version = envelope.get("version")
+    if isinstance(version, bool) or version != SWARM_PLAN_VERSION:
+        raise SwarmPlanError(
+            f"schema version {version!r} is not one this keel reads ({SWARM_PLAN_VERSION}); "
+            "land it with the keel that wrote it, or re-plan with --issues after removing it"
+        )
+    return SwarmPlan.from_dict(_plan_field(envelope, "plan", "the file"), "plan")
+
+
+def swarm_plan_path(swarm_id: str, root: str | Path = ".") -> Path:
+    """Where ``swarm-run`` persists the plan of run ``swarm_id``."""
+    return Path(root) / ".keel" / "state" / "swarm" / f"{swarm_id}{SWARM_PLAN_SUFFIX}"
+
+
+def save_swarm_plan(plan: SwarmPlan, root: str | Path = ".") -> Path:
+    """Persist the plan a run executes beside its state file (#1275).
+
+    ``swarm-land`` lands this file's waves rather than re-planning from the issues, which
+    can partition differently once an issue's text, scope or labels change. Written with
+    the same atomic, durable writer as the state.
+    """
+    resolve_swarm_state_dir(root)
+    file_path = swarm_plan_path(plan.swarm_id, root)
+    workspace.write_text_atomic(file_path, json.dumps(swarm_plan_payload(plan), indent=2))
+    return file_path
+
+
+def load_swarm_plan(swarm_id: str, root: str | Path = ".") -> SwarmPlan | None:
+    """The plan run ``swarm_id`` persisted, ``None`` when it persisted none.
+
+    A file that exists and cannot be used — unreadable, not JSON, malformed, an unknown
+    schema version, or the plan of another run — raises :class:`SwarmPlanError`. Unlike
+    the state (:func:`load_swarm_state`), a plan is not fail-soft: ``None`` would send the
+    caller to re-plan, which is exactly the silent switch this file exists to prevent.
+    """
+    file_path = swarm_plan_path(swarm_id, root)
+    if not file_path.exists():
+        return None
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SwarmPlanError(f"{file_path}: cannot be read ({exc})") from exc
+    except ValueError as exc:
+        raise SwarmPlanError(f"{file_path}: not JSON ({exc})") from exc
+    try:
+        plan = swarm_plan_from_payload(data)
+    except SwarmPlanError as exc:
+        raise SwarmPlanError(f"{file_path}: {exc}") from exc
+    if plan.swarm_id != swarm_id:
+        raise SwarmPlanError(
+            f"{file_path}: holds the plan of swarm {plan.swarm_id!r}, not {swarm_id!r}"
+        )
+    return plan
+
+
+def latest_swarm_id(root: str | Path = ".") -> str | None:
+    """The most recently written run under ``.keel/state/swarm/``, or ``None``.
+
+    Only state files count: a ``<id>.plan.json`` beside them is a run's plan, and its
+    stem (``<id>.plan``) names no run (#1275).
+    """
+    state_dir = Path(root) / ".keel" / "state" / "swarm"
+    if not state_dir.exists():
+        return None
+    files = sorted(
+        (p for p in state_dir.glob("*.json") if not p.name.endswith(SWARM_PLAN_SUFFIX)),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return files[0].stem if files else None
+
+
+def _plan_issues(plan: SwarmPlan) -> tuple[int, ...]:
+    return tuple(sorted({i for w in plan.waves for c in w.clusters for i in c.issues}))
+
+
+def _scope_text(scope: IssueScope) -> str:
+    return f"{', '.join(scope.predicted_files) or '(none)'} ({scope.scope_source})"
+
+
+def swarm_plan_drift(persisted: SwarmPlan, current: SwarmPlan) -> tuple[str, ...]:
+    """How the plan the issues give *now* differs from the plan a run executed (#1275).
+
+    One line per difference, in a stable order: the issue set, then each wave whose
+    clusters differ, then each issue whose scope moved. Staffing is not compared — it
+    follows the machine's providers, not the issues. Empty when the two agree.
+    """
+    lines: list[str] = []
+    ran, now = _plan_issues(persisted), _plan_issues(current)
+    if ran != now:
+        lines.append(
+            f"issues: the run planned {', '.join(f'#{i}' for i in ran) or 'none'}; "
+            f"the issues named now are {', '.join(f'#{i}' for i in now) or 'none'}"
+        )
+    ran_waves = {w.wave_index: tuple(c.cluster_id for c in w.clusters) for w in persisted.waves}
+    now_waves = {w.wave_index: tuple(c.cluster_id for c in w.clusters) for w in current.waves}
+    for index in sorted(set(ran_waves) | set(now_waves)):
+        before, after = ran_waves.get(index, ()), now_waves.get(index, ())
+        if before != after:
+            lines.append(
+                f"wave {index}: the run planned {', '.join(before) or 'nothing'}; "
+                f"the issues now plan {', '.join(after) or 'nothing'}"
+            )
+    for issue in sorted(set(persisted.issue_scopes) & set(current.issue_scopes)):
+        before_scope, after_scope = persisted.issue_scopes[issue], current.issue_scopes[issue]
+        if (before_scope.predicted_files, before_scope.scope_source) != (
+            after_scope.predicted_files,
+            after_scope.scope_source,
+        ):
+            lines.append(
+                f"issue #{issue}: the run's scope was {_scope_text(before_scope)}; "
+                f"it is now {_scope_text(after_scope)}"
+            )
+    return tuple(lines)
 
 
 def update_worker_state(

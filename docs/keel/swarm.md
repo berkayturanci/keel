@@ -31,8 +31,11 @@
 > `Scope:` line plans one wave per issue, and every wave after the first is then
 > `sequential_dependent`, which `swarm-land` refuses until the earlier wave lands and the
 > rest is re-planned — see
-> [Declaring an issue's scope](#declaring-an-issues-scope). `keel-visual swarm` rebuilds its scopes
-> without predicted files, so its DAG is always one flat wave
+> [Declaring an issue's scope](#declaring-an-issues-scope). `swarm-run` persists the plan it
+> executes and `swarm-land` lands exactly that plan
+> ([#1275](https://github.com/berkayturanci/keel/issues/1275), see
+> [Which plan lands](#which-plan-lands)); `keel-visual swarm` does not read it yet — it rebuilds
+> its scopes without predicted files, so its DAG is always one flat wave
 > ([#1275](https://github.com/berkayturanci/keel/issues/1275),
 > [#1280](https://github.com/berkayturanci/keel/issues/1280)).
 >
@@ -76,7 +79,9 @@ Keel Swarm is built on three core pillars:
    git**
    mutation is confined to thin fail-soft runtime wrappers (`src/keel/swarm_runtime.py`,
    `src/keel/swarm_landing.py`) — but the filesystem is not: `resolve_swarm_state_dir` and
-   `save_swarm_state` in `swarm.py` `mkdir` and write `.keel/state/swarm/<swarm_id>.json`
+   `save_swarm_state` in `swarm.py` `mkdir` and write `.keel/state/swarm/<swarm_id>.json`, and
+   `save_swarm_plan` writes the run's plan beside it as `<swarm_id>.plan.json`
+   ([#1275](https://github.com/berkayturanci/keel/issues/1275)), both
    (atomically
    since [#932](https://github.com/berkayturanci/keel/issues/932); the `#872` in the code comment
    beside it names an unrelated `gh api` fix). The separation the heading claims holds for the
@@ -507,6 +512,35 @@ Landing is coordinated by `src/keel/swarm_landing.py` under the atomic `merge_lo
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
 ```
 
+### Which plan lands
+
+Before any worker starts, `swarm-run` writes the plan it executes to
+`.keel/state/swarm/<swarm_id>.plan.json`, beside the run's state file, with the same atomic
+writer: `SwarmPlan.to_dict()` — waves, clusters, dependencies, difficulty, staffing, every
+issue's scope and where it came from — under `{"schema": "keel.swarm-plan", "version": 1}`.
+It is the plan as planned; a cluster dropped by a mid-run rebalance is still in it, has no pull
+request, and is held at landing.
+
+`swarm-land` lands **that plan's wave**
+([#1275](https://github.com/berkayturanci/keel/issues/1275)). It used to rebuild the plan from
+`--issues`, and a rebuild is not the plan that ran: re-scope an issue, give it an `area:` label
+or edit its `Scope:` line between the run and the landing, and the partition moves — a cluster
+id such as `cluster-2-102` becomes `cluster-1-102`, whose branch does not exist. Now:
+
+- **A persisted plan is landed as written**, and `--issues` is optional. Issues that are named
+  are read and re-planned only to compare; any difference — the issue set, a wave's clusters, an
+  issue's scope — is printed to stderr as a warning, one line each, and the persisted plan is
+  landed regardless. The run's branches were cut from it.
+- **No persisted plan** (a run from before #1275, or no run): the wave is re-planned from the
+  issues as before, and stderr says so.
+- **A persisted plan keel cannot use** — unreadable, not JSON, a field missing or of the wrong
+  type, another run's plan, or a schema version this keel does not read — is refused with exit
+  1 before any issue is read. Re-planning around it would be the silent switch this file exists
+  to prevent; remove it to re-plan deliberately.
+
+`--json` reports which happened as `plan_source` (`"persisted"` / `"re-planned"`) and the
+warning's lines as `plan_drift`.
+
 ### What landing actually does
 
 `evaluate_wave_landing_mode` decides from the plan's wave mode whether the wave lands at all:
@@ -645,6 +679,8 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | **Merge conflict during landing** | `git merge` non-zero exit code | Automatic `git merge --abort`; the base branch remains untouched; the cluster is reported `merge failed`. |
 | **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock. When another writer holds it, `swarm-land` merges nothing: every cleared cluster is reported `held` with the lock named in the reason, the hold is written to the run state, and the wave's result is returned rather than retried ([#1272](https://github.com/berkayturanci/keel/issues/1272)) — landing is single-writer by refusal. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |
-| **Missing or unreadable run state** | `load_swarm_state` JSON/Value/Key/Type/Overflow errors, and an `OSError` opening the file | Fails soft to no state rather than raising; `swarm-land` rebuilds the plan from `--issues`, so a lost state file costs the board, not the landing. |
+| **Missing or unreadable run state** | `load_swarm_state` JSON/Value/Key/Type/Overflow errors, and an `OSError` opening the file | Fails soft to no state rather than raising; the plan is a separate file, so a lost state file costs the board, not the landing. |
+| **The issues changed between the run and the landing** | `swarm_plan_drift` against the persisted plan | `swarm-land` lands the persisted plan — the one whose branches exist — and prints each difference as a warning ([#1275](https://github.com/berkayturanci/keel/issues/1275)). |
+| **Missing or unreadable persisted plan** | `load_swarm_plan`: absent → `None`; unreadable, not JSON, malformed, another run's, or an unknown schema version → `SwarmPlanError` | Absent: `swarm-land` re-plans from `--issues` and says so. Unusable: refused with exit 1, never re-planned around. |
 | **A cluster scored lighter than it turns out to be** | The lead's own progress against the plan | The lead reports through its worker record and the CTO re-plans; a lead never re-staffs itself, so the run's team stays the one the plan published. |
 | **`--team` names a bench that is not configured** | `assignment.warnings` at plan time | The run falls back to the configured policy and says so; the name is never silently ignored. |

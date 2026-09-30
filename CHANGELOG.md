@@ -34,6 +34,26 @@ All notable changes to keel are documented here. The format follows
   - **The guards.** `tests/test_site_seo.py` and `tests/test_website_csp.py` enumerate it with the other articles. `tests/test_revert_check_article.py` rebuilds the article's fixture from its configuration block, requires `git diff -U0` to print the diff it shows and `keel run-gates` to print its output line for line, runs the follow-up it describes, and holds the stated defaults to `revertcheck`, the off-by-default claim to `projects/keel.yaml` and `.keel/project.yaml`, and the audit's framing to the CHANGELOG.
 
 ### Fixed
+- **`swarm-land` lands the plan `swarm-run` executed, not a re-plan of the issues** (#1275, core;
+  `keel-visual` follows separately). The swarm plan was written nowhere, so `swarm-land` rebuilt
+  it from `--issues` — and once an issue was re-scoped, relabelled or edited between the run and
+  the landing, the rebuild partitioned differently: `cluster-2-102` became `cluster-1-102`, a
+  branch that does not exist, and nothing said the plan had changed. Now:
+  - `swarm-run` writes the plan it executes, before any worker starts, to
+    `.keel/state/swarm/<swarm_id>.plan.json` beside the state file (atomically, as the state is),
+    under a versioned envelope (`schema: keel.swarm-plan`, `version: 1`), and reports it on stderr
+    and as `plan_file` in `--json`.
+  - `swarm-land` lands exactly that plan's wave; `--issues` becomes optional. Named issues are
+    re-planned only to compare, and every difference — issue set, a wave's clusters, an issue's
+    scope — is a stderr warning, never a switch. With no persisted plan it re-plans from the
+    issues as before and says so. `--json` adds `plan_source` (`persisted` / `re-planned`) and
+    `plan_drift`.
+  - A persisted plan keel cannot use — unreadable, not JSON, malformed, another run's, or an
+    unknown schema version — is refused with exit 1 before any issue is read.
+  - `SwarmPlan`, `SwarmWave`, `SwarmCluster`, `Difficulty` and `IssueScope` gain a strict
+    `from_dict` that round-trips `to_dict` exactly.
+  - `swarm-status` and `swarm-land` pick "the newest run" from state files only; a
+    `<id>.plan.json` never counts as one.
 - **The articles' code blocks are readable in the light theme** (#1403). `silent-revert.html` and `long-runs.html` painted `<pre>` with `var(--bg-soft, #12141c)`; no stylesheet defines `--bg-soft`, so the light theme drew its dark text on that dark fallback and the blocks read as empty panels. All three articles now use `--surface-2`, which both themes define. `tests/test_site_seo.py` requires every custom property an article's style reads to be defined for both themes; it fails as an assertion with either old line restored.
 - **Each swarm issue is planned from its own scope, and an issue that declares none conflicts
   with everything** (#1274). `swarm-plan`, `swarm-run` and `swarm-land` handed the same
