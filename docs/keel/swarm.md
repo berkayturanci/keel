@@ -367,14 +367,18 @@ issue, so a live swarm depends on no agent host. `swarm-run --live` runs, per cl
    with the worktree as its working directory, under the delegate machinery's own limits: the
    prompt on stdin, never in argv; the plan's timeout (`keel delegate run`'s default, 1800 s);
    the vendor's own tool-enabled invocation for the `implement` role.
-4. **Commit** whatever the seat changed (`git add -A`, one commit naming the issues with `Refs`
-   and the seat that wrote it). A seat that committed its own work is kept as it is; a seat that
+4. **Check for tampering, then commit** whatever the seat changed (`git add -A`, one commit
+   naming the issues with `Refs` and the seat that wrote it). Before the seat ran, the worker read
+   the push URL of `origin` and the repository's git setup; if that setup changed while the seat
+   ran, the worker stops at `tamper` (see the trust notes). A seat that committed its own work is
+   kept as it is, as long as it descends from the commit the worktree was cut at; a seat that
    changed nothing stops the worker.
 5. **Gate.** `keel run-gates <project.yaml> --root <worktree> --phases guard,test --defer-jury` —
    the gates the s4 loop judges an implementation by, bounded by `--worker-timeout`. The jury is
    a review and is deferred with the rest of review.
-6. **Push** the commit to `refs/heads/swarm/<swarm_id>/<cluster_id>` on `origin`
-   (`keel.git.push_commit`, never forced).
+6. **Check for tampering again, then push** the commit to
+   `refs/heads/swarm/<swarm_id>/<cluster_id>` at the URL read before the seat ran — not to the
+   remote's name — with no hooks (never forced).
 7. **Open one pull request** for the cluster against `base_branch` (`keel.github.open_pr`). Its
    body says `Refs #N` for each issue — never `Closes`, since nothing has reviewed it — and records
    the implementer seat, the commit the gates passed at, and the consent delegation.
@@ -387,10 +391,11 @@ is attached; reviewing and landing it are the next slices
 the worker ends; the branch stays.
 
 **Failure.** A worker stops at the first stage that fails and reports it: `stage` in its
-`cluster_results` entry (`consent`, `worktree`, `implement`, `commit`, `gates`, `push`,
+`cluster_results` entry (`consent`, `worktree`, `implement`, `tamper`, `commit`, `gates`, `push`,
 `pull_request`) and the reason in `output` and the state file's `details`. Nothing after the
-failed stage runs: a failed implementer commits nothing; a red gate leaves the commit local and
-the branch unpushed; a refused push opens no pull request; a pull request `gh` could not open
+failed stage runs: a failed implementer commits nothing; a `tamper` after the implementer commits
+nothing, and one after the gates leaves the commit local and the branch unpushed; a red gate
+leaves the commit local and the branch unpushed; a refused push opens no pull request; a pull request `gh` could not open
 says the branch is already pushed. A failed cluster is dropped from the later waves as before.
 
 **Trust notes.** The implementer is an agent with tools, running in the cluster's worktree with
@@ -398,6 +403,60 @@ the delegate machinery's existing sandbox and limits — keel adds none of its o
 is guidance, not enforcement: nothing stops a seat from writing outside its scope, which is why
 the gates run on the commit before anything is pushed and why the pull request still has to be
 reviewed. The issue text is untrusted input to the seat, as it is in `/keel:ship` s4.
+
+**The implementer cannot reach the remote.** Only keel's own push and `gh pr create` — steps 6
+and 7, made in keel's process with the operator's environment, after the implementer has exited
+— are meant to reach the forge. The implementer seat runs under
+`keel.swarm_worker.implementer_env`:
+
+| What | Why |
+| --- | --- |
+| `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN` removed (`FORGE_TOKEN_ENV_VARS`) | the operator's forge tokens are not the implementer's to hold |
+| `GH_CONFIG_DIR` set to `.keel/state/swarm/<swarm_id>/<cluster_id>.no-gh-login`, a directory with no login | `gh` finds no stored account — not in its config, and, with no host listed there, not in the system keyring either — so `gh pr create` or `gh api` says it is not logged in |
+| `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS` empty | git has no one to ask for a password; the empty value also shadows `core.askPass`, `SSH_ASKPASS` and an editor's askpass bridge inherited from the operator's terminal |
+| `credential.helper` set empty, through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` | clears every stored-password helper — `osxkeychain`, `manager`, `store`, and the URL-scoped helper `gh auth setup-git` writes |
+| `protocol.allow=never`, and `never` for `http`, `https`, `ssh` and `git` by name | git opens no network transport at all — push and fetch, HTTPS and SSH — so a credential that still exists somewhere (an SSH key, an agent socket) is never used; naming each transport outranks a user's own `protocol.https.allow=always` |
+| `protocol.file.allow=user` | git's own default for a repository on disk, so a project whose tests clone or push to a local repository keeps working |
+| the parent's own `GIT_CONFIG_PARAMETERS` and `GIT_CONFIG_COUNT`/`KEY`/`VALUE` removed | the first is read after `GIT_CONFIG_COUNT` and would outrank the lockdown |
+
+Model providers' keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`CLAUDE_CODE_OAUTH_TOKEN` …) are not forge credentials and pass through: the seat needs them to
+reach its model. The environment-config channel needs git 2.31 or later; an older git ignores it
+and keeps only the token, `gh` and prompt measures.
+
+This takes the *ambient* credentials away, so a brief that talks the seat into `git push` or
+`gh pr create` fails. It is not a sandbox. The seat runs as the operator's OS user, and an agent
+set on it can read what that user can — a keychain, an SSH key, a token file — or unset the
+variables for its own children.
+
+**The implementer cannot tamper with keel's own git steps.** The worktree's `.git` points into
+the operator's repository, so the seat could write that repository's config and hooks — and
+keel's own `git status`, `add`, `commit` and push run after it, with the operator's credentials.
+A hook, a `core.fsmonitor` or `gpg.program` would then run the seat's code in keel's process; a
+`remote.origin.pushurl`, `url.<base>.pushInsteadOf` or a file an `include.path` pulls in would
+send keel's push elsewhere. The worker defends each step:
+
+| When | What |
+| --- | --- |
+| before the seat runs | reads the push URL (`git remote get-url --push origin`), the commit the worktree was cut at, and a snapshot of the git setup: the resolved `git config --list --show-origin --show-scope` of every scope (included files too), the git, common and hooks directories, and a digest of every file under the hooks directory |
+| after the seat, and again after the gates (which run the seat's code) | takes the snapshot again; any difference stops the worker at `tamper`, before its next git step, naming the scope and key or the hook that changed — never a value, and a URL in a key (`url.<url>.*`, `credential.<url>.*`, `http.<url>.*`, `includeIf.<condition>.*`) is left out too. `branch.<name>.*`, which git writes itself when a sibling worker cuts its worktree, is not compared: keel's push names its URL and refspec |
+| every git step of keel's own after the seat | `git -c core.hooksPath=<an empty directory made only after the seat exited> -c core.fsmonitor=false -c commit.gpgsign=false`, with `--no-verify` on the commit and the push. keel's commit is therefore **unsigned** |
+| the commit | must descend from the commit the worktree was cut at, or the worker stops at `tamper` |
+| the push | goes to the URL read before the seat ran, never to the remote's name |
+
+The gates and keel's own local git steps also run without the forge tokens
+(`keel.swarm_worker.worker_env`): `keel run-gates --phases guard,test --defer-jury` reads nothing
+from GitHub, and neither do `git status`/`add`/`commit`. Only keel's push and `gh pr create` hold
+them.
+
+Two limits remain, by design:
+
+- **The gates run the implementer's code.** That is what gates are for. They run it with the
+  operator's environment — less consent and the forge tokens — and the operator's own git, which
+  a project's tests may need. Code that runs there can still read what the operator's OS user
+  can: a keychain, an SSH key, a token file.
+- **Nothing here is a sandbox.** For an untrusted backlog, run `swarm-run --live` as a separate OS
+  user, or in a container that holds only a model provider's key.
 
 ### Consent delegation
 
@@ -422,7 +481,10 @@ record carries the `scopes` it was handed, and each pull request body names the 
 - **Explicit, never ambient.** The parent hands each worker the delegation as an argument. The
   worker's children — the implementer, git, the gates — run with `KEEL_APPROVE_SCOPE`,
   `KEEL_OPERATOR` and `KEEL_CONSENT_MODE` removed from their environment, so an implementer that
-  runs `keel` itself cannot approve its own mutations with the parent's consent.
+  runs `keel` itself cannot approve its own mutations with the parent's consent. The implementer
+  also runs without the forge credentials the `git`/`github` scopes are exercised with (see the
+  trust notes above): the scopes are delegated to the worker, whose push and pull request keel
+  makes itself, and not to the agent the worker dispatches.
 - **Never wider.** A worker is handed exactly the parent's effective scopes — an extra approved
   scope such as `secrets` is not passed down — and a cluster the delegation does not name gets
   none. Before its first mutation a worker checks that what it holds covers every mutation it
@@ -431,9 +493,13 @@ record carries the `scopes` it was handed, and each pull request body names the 
   permission system; `swarm-run` dispatches its workers itself, so a live swarm under `agent`
   mode is refused and asks for explicit scopes. A delegation also names its operator: approving
   scopes without `--operator` is refused.
-- The run ledger is not written: its only record type is a ship run, and a live worker does not
-  run `keel ship`. The delegation lives in the swarm state file until the landing slices record
-  the cluster's ship.
+- The run ledger is not written yet. Its only record type is a ship run, and every reader —
+  `keel ledger`, `status`, `merge`, `ship`, `consent-verify`, `evidence-verify`, the capture
+  commands — refuses the **whole** ledger on a record type it does not know. A new record type
+  written by this version would make an older `keel` on the same checkout refuse to ship or
+  merge, so recording the delegation there is a ledger-contract decision
+  ([#1400](https://github.com/berkayturanci/keel/issues/1400)). Until then the delegation lives
+  in the swarm state file and in each pull request body.
 
 ### Worktree Lifecycle & Isolation
 
