@@ -6,6 +6,29 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Each swarm issue is planned from its own scope, and an issue that declares none conflicts
+  with everything** (#1274). `swarm-plan`, `swarm-run` and `swarm-land` handed the same
+  `--issue-title`/`--issue-body`/`--issue-label`/`--declared-file` to every issue and read
+  nothing from GitHub, so a scope-less issue got a private `scope/issue-N/*` glob that by
+  construction conflicted with nothing: every multi-issue plan came out as one parallel wave
+  (or, with a shared path, fully serial) whatever the issues touched. Now:
+  - each named issue is read once with `gh issue view N --json title,body,labels`, and its
+    declared scope is, strongest first, `--issue-scope N=…`, a `Scope:` line or a
+    `## Scope` bullet list in its body, or its `area:<name>` labels mapped through
+    `policy_pack.scan.areas`;
+  - **an issue that declares none is planned as `*`, so it is serialised against every
+    other issue** — plans over issues without scope now come out sequential, one wave per
+    issue, where they used to come out as one parallel wave. Paths its text merely mentions
+    are kept beside the `*` (the tier and difficulty read them), never instead of it. Each
+    such issue is named on stderr, and so is an issue that could not be read (no `gh`, no
+    auth, no network), which gets the same `*`;
+  - the new repeatable `--issue-scope N=glob[,glob…]` on all three commands wins over what
+    the issue says; `N` must be a positive integer named by `--issues`/`--issue`, with at
+    least one glob;
+  - the four one-issue flags are refused beside several issues, since sharing them was the
+    bug; with one issue they still describe it. Each issue's `scope_source` is in `--json`.
+
 ## [1.25.0] - 2026-09-30
 
 - An opt-in `revert-check` gate asks what coverage cannot: it reverts each change on the branch alone and requires a test to fail as an assertion, naming every change no test notices.

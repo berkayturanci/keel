@@ -24,11 +24,15 @@ gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the wh
 times — one at a time, since a dry run has no worktrees and the runs share your checkout
 (#1288). Budget for that before you start one.
 
-Planning does not see real scope either: `--issue-title`, `--issue-body`, `--issue-label` and
-`--declared-file` are shared by every issue and nothing fetches an issue's own text. With no scope
-text and no directory-hinting label a multi-issue plan returns one wave of synthetic globs; name a
-path — in a file, in the shared body, or via a label like `docs` that maps to a directory — and it
-lands in *every* issue's scope, so they all serialise instead (#1274). Neither is per-issue scope. `keel-visual swarm` always renders a flat DAG (#1275, #1280).
+Planning reads each issue's scope from the issue (#1274): a `Scope: a/b.py, docs/*` line or a
+`## Scope` bullet list in its body, else its `area:<name>` labels mapped through
+`policy_pack.scan.areas`. An issue that declares none — or that `gh` cannot read — is planned as
+`*` and serialised against every other issue, and stderr names it; paths its text merely mentions
+do not make it disjoint. So a backlog without `Scope:` lines plans one wave per issue. To give an
+issue a scope for this run, pass `--issue-scope <n>=<glob>[,<glob>…]` (repeatable, on
+`swarm-plan`, `swarm-run` and `swarm-land` alike — pass the same ones to all three), and never
+pass `--issue-title`/`--issue-body`/`--issue-label`/`--declared-file` beside several issues:
+they describe one issue and are refused. `keel-visual swarm` always renders a flat DAG (#1275, #1280).
 
 So: **`--plan-only` is the one that stops**, and it already renders the ASCII tree — `--tree` is
 passed on the `swarm-plan` calls either way, so adding it changes nothing. `--visual` is a
@@ -123,6 +127,9 @@ Pass the operator's staffing flags straight through — `--delegate`, `--review-
 actually dispatch rather than the default one.
 
 - Inspect the generated waves, disjoint clusters, conflict edges, and direct landing eligibility.
+- Read stderr and each issue's `scope_source` in `issue_scopes`: `default` (scope `*`) means
+  the issue declared no scope — or could not be read — and so runs alone. Report those issues
+  to the operator instead of inventing a scope for them.
 - Each cluster carries a `difficulty` (`band`, `score`, `tier` and the `signals` that
   produced them) and an `assignment` (`lead`, `implementer`, `effort`, `reviewers`,
   `review_panel`, `gate`, `fix`). Both are resolved by core from `knobs.team` plus
@@ -213,4 +220,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.25.0 source_sha256=0f814b42f2a193f5d4f17d12843e010f8cd6b4f6be09b87e06eb723a87604711 generated_sha256=4d793fb9ed3538b1e86b9612a59cd2fb3f8ba36ef5f90564b0071709a8438cc5 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.25.0 source_sha256=5d73e37959a29b1dc210eef08b56ffb868ae1c3867dc01a0d8fba222f622c2a4 generated_sha256=d0016970a687861df86d081c3af1722280b636409f4fbeded7db6efc6c5aaa67 -->

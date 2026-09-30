@@ -7474,6 +7474,111 @@ def _swarm_overrides(args: argparse.Namespace) -> swarm.AssignmentOverrides:
     )
 
 
+def _swarm_issue_numbers(args: argparse.Namespace) -> list[int]:
+    """``--issues`` then ``--issue``, first occurrence kept; a non-number part is skipped."""
+    nums: list[int] = []
+    if args.issues:
+        for part in args.issues.split(","):
+            part = part.strip().lstrip("#")
+            if part.isdigit():
+                nums.append(int(part))
+    nums.extend(args.issue)
+    return list(dict.fromkeys(nums))
+
+
+def _read_swarm_issue(num: int, root: str) -> tuple[tuple[str, str, tuple[str, ...]] | None, str]:
+    """One issue's ``(title, body, labels)`` from the host, or ``None`` and the reason.
+
+    The one ``gh issue view`` a swarm command makes per issue. Fail-soft: a missing
+    ``gh``, no auth, no network or an unparseable reply all come back as ``None``, and
+    the caller plans that issue as :data:`keel.swarm.SCOPE_ANY` — never as disjoint.
+    """
+    result = github.issue_facts(num, cwd=root, fields="title,body,labels")
+    if not result.ok:
+        lines = (result.stderr or result.output or "").strip().splitlines()
+        return None, (lines[0] if lines else f"exit {result.code}")
+    facts = swarm.issue_facts_from_json(result.stdout)
+    return facts, ("" if facts is not None else "the reply was not a JSON object")
+
+
+def _swarm_issue_scopes(
+    args: argparse.Namespace, config: cfg.ProjectConfig
+) -> list[swarm.IssueScope] | None:
+    """Each named issue's own scope, read the same way by swarm-plan, -run and -land (#1274).
+
+    Every issue is read from the host once (:func:`_read_swarm_issue`), and its scope is
+    resolved from what *that* issue says, with ``--issue-scope N=…`` winning
+    (:func:`keel.swarm.extract_issue_scope`). The one-issue flags (``--issue-title``,
+    ``--issue-body``, ``--issue-label``, ``--declared-file``) describe a single issue:
+    they are refused beside several, because handing the same text to every issue is
+    exactly the bug that made every plan either all-parallel or all-serial.
+
+    Warnings go to stderr: an issue that could not be read, and every issue planned as
+    ``*`` because nothing described it. Returns ``None`` after printing a usage error.
+    """
+    issues = _swarm_issue_numbers(args)
+    labels = _issue_labels(args)
+    shared = bool(args.issue_title or args.issue_body or args.declared_file or labels)
+    overrides: dict[int, list[str]] = {}
+    for num, globs in args.issue_scope:
+        overrides.setdefault(num, []).extend(globs)
+    stray = sorted(set(overrides) - set(issues))
+    if stray:
+        print(
+            "--issue-scope names "
+            + ", ".join(f"#{n}" for n in stray)
+            + ", which --issues/--issue do not; name the issue there too",
+            file=sys.stderr,
+        )
+        return None
+    if not issues:
+        if not shared:
+            return []
+        return [
+            swarm.extract_issue_scope(
+                1,
+                title=args.issue_title or "",
+                body=args.issue_body or "",
+                labels=labels,
+                declared_files=args.declared_file,
+                config=config,
+            )
+        ]
+    if shared and len(issues) > 1:
+        print(
+            "--issue-title/--issue-body/--issue-label/--declared-file describe one issue, "
+            f"and {len(issues)} were named; give each its scope with --issue-scope N=glob "
+            "or a 'Scope:' line in the issue itself",
+            file=sys.stderr,
+        )
+        return None
+    scopes: list[swarm.IssueScope] = []
+    for num in issues:
+        facts, reason = _read_swarm_issue(num, args.root)
+        if facts is None:
+            print(f"swarm: could not read issue #{num} ({reason})", file=sys.stderr)
+            facts = ("", "", ())
+        title, body, issue_labels = facts
+        scope = swarm.extract_issue_scope(
+            num,
+            title=args.issue_title or title,
+            body=args.issue_body or body,
+            labels=(*issue_labels, *labels),
+            declared_files=args.declared_file,
+            config=config,
+            scope=overrides.get(num),
+        )
+        if scope.scope_source == "default":
+            print(
+                f"swarm: issue #{num} declares no scope, so it is planned as "
+                f"'{swarm.SCOPE_ANY}' and conflicts with every other issue — add a "
+                f"'Scope:' line to the issue or pass --issue-scope {num}=<glob>",
+                file=sys.stderr,
+            )
+        scopes.append(scope)
+    return scopes
+
+
 def _cmd_swarm_plan(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -7484,48 +7589,9 @@ def _cmd_swarm_plan(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    issue_nums: list[int] = []
-    if args.issues:
-        for part in args.issues.split(","):
-            part = part.strip().lstrip("#")
-            if part.isdigit():
-                issue_nums.append(int(part))
-    if args.issue:
-        issue_nums.extend(args.issue)
-
-    seen: set[int] = set()
-    unique_issues: list[int] = []
-    for num in issue_nums:
-        if num not in seen:
-            seen.add(num)
-            unique_issues.append(num)
-
-    labels = _issue_labels(args)
-    scopes: list[swarm.IssueScope] = []
-
-    if unique_issues:
-        for num in unique_issues:
-            scopes.append(
-                swarm.extract_issue_scope(
-                    num,
-                    title=args.issue_title or "",
-                    body=args.issue_body or "",
-                    labels=labels,
-                    declared_files=args.declared_file,
-                    config=config,
-                )
-            )
-    elif args.issue_title or args.issue_body or args.declared_file or labels:
-        scopes.append(
-            swarm.extract_issue_scope(
-                1,
-                title=args.issue_title or "",
-                body=args.issue_body or "",
-                labels=labels,
-                declared_files=args.declared_file,
-                config=config,
-            )
-        )
+    scopes = _swarm_issue_scopes(args, config)
+    if scopes is None:
+        return 1
 
     overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
@@ -7642,48 +7708,9 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
         )
         return 1
 
-    issue_nums: list[int] = []
-    if args.issues:
-        for part in args.issues.split(","):
-            part = part.strip().lstrip("#")
-            if part.isdigit():
-                issue_nums.append(int(part))
-    if args.issue:
-        issue_nums.extend(args.issue)
-
-    seen: set[int] = set()
-    unique_issues: list[int] = []
-    for num in issue_nums:
-        if num not in seen:
-            seen.add(num)
-            unique_issues.append(num)
-
-    labels = _issue_labels(args)
-    scopes: list[swarm.IssueScope] = []
-
-    if unique_issues:
-        for num in unique_issues:
-            scopes.append(
-                swarm.extract_issue_scope(
-                    num,
-                    title=args.issue_title or "",
-                    body=args.issue_body or "",
-                    labels=labels,
-                    declared_files=args.declared_file,
-                    config=config,
-                )
-            )
-    elif args.issue_title or args.issue_body or args.declared_file or labels:
-        scopes.append(
-            swarm.extract_issue_scope(
-                1,
-                title=args.issue_title or "",
-                body=args.issue_body or "",
-                labels=labels,
-                declared_files=args.declared_file,
-                config=config,
-            )
-        )
+    scopes = _swarm_issue_scopes(args, config)
+    if scopes is None:
+        return 1
 
     overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
@@ -7876,48 +7903,9 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
             if files:
                 swarm_id = files[0].stem
 
-    issue_nums: list[int] = []
-    if args.issues:
-        for part in args.issues.split(","):
-            part = part.strip().lstrip("#")
-            if part.isdigit():
-                issue_nums.append(int(part))
-    if args.issue:
-        issue_nums.extend(args.issue)
-
-    seen: set[int] = set()
-    unique_issues: list[int] = []
-    for num in issue_nums:
-        if num not in seen:
-            seen.add(num)
-            unique_issues.append(num)
-
-    labels = _issue_labels(args)
-    scopes: list[swarm.IssueScope] = []
-
-    if unique_issues:
-        for num in unique_issues:
-            scopes.append(
-                swarm.extract_issue_scope(
-                    num,
-                    title=args.issue_title or "",
-                    body=args.issue_body or "",
-                    labels=labels,
-                    declared_files=args.declared_file,
-                    config=config,
-                )
-            )
-    elif args.issue_title or args.issue_body or args.declared_file or labels:
-        scopes.append(
-            swarm.extract_issue_scope(
-                1,
-                title=args.issue_title or "",
-                body=args.issue_body or "",
-                labels=labels,
-                declared_files=args.declared_file,
-                config=config,
-            )
-        )
+    scopes = _swarm_issue_scopes(args, config)
+    if scopes is None:
+        return 1
     if not scopes:
         # With no scope there is no plan and so no wave; the command used to report
         # `status: failed` for that, the same words as every cluster failing (#1279).
@@ -10149,10 +10137,10 @@ def build_parser() -> argparse.ArgumentParser:
     # published Action builds one argv shape for all of them — `<config> --root .`
     # plus the command's own flags. `swarm-plan` was the only subcommand whose
     # parser refused it, so `command: swarm-plan` exited 2 with
-    # `unrecognized arguments: --root .` (#1153). The plan itself is pure: it reads
-    # the config it is given and renders waves, so nothing here resolves against a
-    # root. The flag is part of the interface, not an input to the planning.
-    p_sp.add_argument("--root", default=".", help="repo root, for interface parity")
+    # `unrecognized arguments: --root .` (#1153). Since #1274 it is also where the
+    # plan reads each issue from: `gh issue view` runs in this directory, so the repo
+    # it resolves is the one the plan is for.
+    p_sp.add_argument("--root", default=".", help="repo root; gh reads the issues from here")
     p_sp.add_argument(
         "--issues", default=None, help="comma-separated issue numbers (e.g. 101,102,103)"
     )
@@ -10167,8 +10155,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--declared-file",
         action="append",
         default=[],
-        help="declared file path; repeat for multiple",
+        help="declared file path for a single issue; repeat for multiple",
     )
+    _add_issue_scope_arg(p_sp)
     p_sp.add_argument("--issue-title", default=None, help="issue title")
     p_sp.add_argument("--issue-body", default=None, help="issue body markdown")
     p_sp.add_argument(
@@ -10222,8 +10211,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--declared-file",
         action="append",
         default=[],
-        help="declared file path; repeat for multiple",
+        help="declared file path for a single issue; repeat for multiple",
     )
+    _add_issue_scope_arg(p_sr)
     p_sr.add_argument("--issue-title", default=None, help="issue title")
     p_sr.add_argument("--issue-body", default=None, help="issue body markdown")
     p_sr.add_argument(
@@ -10282,8 +10272,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--declared-file",
         action="append",
         default=[],
-        help="declared file path; repeat for multiple",
+        help="declared file path for a single issue; repeat for multiple",
     )
+    _add_issue_scope_arg(p_sl)
     p_sl.add_argument("--issue-title", default=None, help="issue title")
     p_sl.add_argument("--issue-body", default=None, help="issue body markdown")
     p_sl.add_argument(
@@ -10673,6 +10664,29 @@ def _add_wizard_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="KEY=VALUE",
         help="pre-answer one wizard question without prompting (repeatable, or "
         "semicolon-separated); makes a wizard run reproducible and offline",
+    )
+
+
+def _issue_scope_override(value: str) -> tuple[int, tuple[str, ...]]:
+    """``--issue-scope N=glob[,glob…]`` (#1274), validated by the pure parser."""
+    try:
+        return swarm.parse_issue_scope_override(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _add_issue_scope_arg(parser: argparse.ArgumentParser) -> None:
+    """The per-issue scope override every swarm planning command takes."""
+    parser.add_argument(
+        "--issue-scope",
+        action="append",
+        type=_issue_scope_override,
+        default=[],
+        metavar="N=GLOB[,GLOB...]",
+        help=(
+            "issue N touches these path globs; wins over the issue's own Scope: line and "
+            "area: labels. Repeat per issue"
+        ),
     )
 
 

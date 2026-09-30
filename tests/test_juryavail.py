@@ -77,6 +77,23 @@ knobs:
 """
 
 
+#: swarm-plan/-run/-land read every named issue with `gh issue view` (#1274). The suite
+#: is offline (AGENTS.md), so every test gets an unreadable issue unless it patches its
+#: own; the scope then comes from the flags, or is `*`.
+_ISSUE_STUB = patch(
+    "keel.github.issue_facts",
+    return_value=cli.github.CommandResult(False, 1, "stubbed: the suite never runs gh"),
+)
+
+
+def setUpModule():
+    _ISSUE_STUB.start()
+
+
+def tearDownModule():
+    _ISSUE_STUB.stop()
+
+
 def _row(name, vendor, available, reason):
     return {"name": name, "vendor": vendor, "available": available, "reason": reason}
 
@@ -1601,12 +1618,12 @@ class TestTheWholeRunEndToEnd(unittest.TestCase):
                     config,
                     "--issue",
                     "1",
-                    "--declared-file",
-                    "docs/keel/configuration.md",
+                    "--issue-scope",
+                    "1=docs/keel/configuration.md",
                     "--issue",
                     "2",
-                    "--declared-file",
-                    "src/a.py",
+                    "--issue-scope",
+                    "2=src/a.py",
                     "--json",
                 ]
             )

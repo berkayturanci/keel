@@ -3166,19 +3166,28 @@ behavior, and issue/PR targeting, then delegates to the installed keel adapter. 
 files carry a `keel-generated` marker on the `legacy-*` surfaces so adapter updates and local
 compatibility shims remain distinguishable.
 
-## `keel swarm-plan <project.yaml> [--issues N,N,…] [--issue N] [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
+## `keel swarm-plan <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 Perform deterministic static dependency analysis, scope prediction, conflict matrix calculation,
 wave tier partitioning, **difficulty scoring and per-cluster staffing** across a list of backlog
 issues without mutating git or spawning workers.
 
 The issues are named by flag, not as positionals: `--issues` takes one comma-separated list and
-`--issue` is repeatable. Planning is pure — it reads no repository state — so `swarm-plan` accepts `--root` only for
-interface parity with the other swarm commands and does not use it.
+`--issue` is repeatable. Each named issue is read once with `gh issue view N --json
+title,body,labels`, run in `--root`, and planned from **its own** scope (#1274): a `Scope:` line
+or `## Scope` bullet list in its body, else its `area:<name>` labels mapped through
+`policy_pack.scan.areas`. An issue that declares no scope, or that cannot be read, is planned as
+`*` — it conflicts with every other issue and gets a wave to itself — and stderr names it. The
+repeatable `--issue-scope N=GLOB[,GLOB…]` wins over what issue `N` says; `N` must also be named by
+`--issues`/`--issue`, and at least one glob must follow the `=`. `--issue-title`,
+`--issue-body`, `--issue-label` and `--declared-file` describe a single issue (or, with no issue
+number, a synthetic issue `#1`) and are refused beside several. The syntax and the full order are in
+[swarm.md](swarm.md#declaring-an-issues-scope).
 
 ```bash
 keel swarm-plan .keel/project.yaml --issues 714,715,716,717 --tree
 keel swarm-plan .keel/project.yaml --issue 714 --issue 715 --json
+keel swarm-plan .keel/project.yaml --issues 714,715 --issue-scope 714=docs/keel/* --issue-scope 715=src/keel/swarm*.py --tree
 keel swarm-plan .keel/project.yaml --issues 714,715 --team night-shift --effort high --json
 ```
 
@@ -3225,7 +3234,7 @@ code makes it usable as a gate ([#1280](https://github.com/berkayturanci/keel/is
 `{}` therefore always means "no run", never "a run keel could not read"; the text board is not
 printed in either failure.
 
-## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--worker-timeout SECONDS] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
+## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--max-workers N] [--worker-timeout SECONDS] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 > **Experimental — `--live` is refused.** Its workers are handed `--live`
 > ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and `keel ship --live` stops at the
@@ -3265,11 +3274,13 @@ when the suite's gates add up to more than one gate plus one jury:
 keel swarm-run .keel/project.yaml --root . --issues 714,715 --worker-timeout 3600
 ```
 
-Issues are named by `--issues` / `--issue`, as for `swarm-plan`. Rebalancing across waves is
+Issues are named by `--issues` / `--issue`, and each one's scope is read and overridden
+(`--issue-scope`) exactly as for `swarm-plan` — pass the same flags to all three commands so they
+plan the same waves. Rebalancing across waves is
 decided by the plan, not by a flag: when a cluster's issue fails, `rebalance_swarm_plan` drops the
 clusters carrying that issue from the remaining waves (there is no runtime file-divergence audit).
 
-## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--swarm-id ID] [--live] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
+## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--live] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 Land passing cluster branches from completed execution waves into the **local** base branch
 (`base_branch` from the project config) under atomic `merge_lock`:
@@ -3278,6 +3289,9 @@ Land passing cluster branches from completed execution waves into the **local** 
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
 ```
+
+The wave is re-planned from the issues, read and scoped as for `swarm-plan`; pass the same
+`--issue-scope` flags the run was planned with, or the wave numbers will not line up.
 
 The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's
 predicted scopes for the wave and, for any planned wave, always resolves to direct batch — so there
