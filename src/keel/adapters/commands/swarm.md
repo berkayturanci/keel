@@ -35,7 +35,9 @@ re-plan the rest, land again. To give an
 issue a scope for this run, pass `--issue-scope <n>=<glob>[,<glob>…]` (repeatable, on
 `swarm-plan`, `swarm-run` and `swarm-land` alike — pass the same ones to all three), and never
 pass `--issue-title`/`--issue-body`/`--issue-label`/`--declared-file` beside several issues:
-they describe one issue and are refused. `keel-visual swarm` always renders a flat DAG (#1275, #1280).
+they describe one issue and are refused. `keel-visual swarm` draws the plan `swarm-run` persisted —
+its waves, predicted files and dependencies — and says so when a run has none; keel-visual 0.9.0
+still rebuilds a flat one-wave DAG (#1275, #1280).
 
 So: **`--plan-only` is the one that stops**, and it already renders the ASCII tree — `--tree` is
 passed on the `swarm-plan` calls either way, so adding it changes nothing. `--visual` is a

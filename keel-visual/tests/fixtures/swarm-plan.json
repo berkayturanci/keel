@@ -1,0 +1,359 @@
+{
+  "schema": "keel.swarm-plan",
+  "version": 1,
+  "plan": {
+    "swarm_id": "swarm-fixture",
+    "total_issues": 3,
+    "waves": [
+      {
+        "wave_index": 1,
+        "mode": "orthogonal_parallel",
+        "eligible_direct_landing": true,
+        "clusters": [
+          {
+            "cluster_id": "cluster-1-11",
+            "issues": [
+              11
+            ],
+            "role": "core",
+            "combined_scope": [
+              "src/pkg/parser.py",
+              "src/pkg/lexer.py"
+            ],
+            "depends_on_issues": [],
+            "difficulty": {
+              "score": 3,
+              "band": "standard",
+              "tier": 2,
+              "file_count": 2,
+              "dependency_depth": 0,
+              "signals": [
+                {
+                  "name": "tier-2",
+                  "points": 2
+                },
+                {
+                  "name": "files:2",
+                  "points": 1
+                }
+              ]
+            },
+            "assignment": {
+              "configured": false,
+              "role": "core",
+              "tier": 2,
+              "difficulty": "standard",
+              "team_profile": null,
+              "bench": [],
+              "lead": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "host"
+              },
+              "implementer": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "host"
+              },
+              "effort": null,
+              "gate": null,
+              "review_panel": "reviewers",
+              "reviewers": [
+                {
+                  "provider": "claude",
+                  "name": "claude",
+                  "kind": "provider",
+                  "model": null,
+                  "effort": null,
+                  "source": "risk-tier",
+                  "slot": "A"
+                },
+                {
+                  "provider": "claude",
+                  "name": "claude",
+                  "kind": "provider",
+                  "model": null,
+                  "effort": null,
+                  "source": "risk-tier",
+                  "slot": "C"
+                }
+              ],
+              "reviewer_count": 2,
+              "reviewer_source": "risk-tier",
+              "jury": {
+                "mode": null,
+                "min_vendors": 2,
+                "panel_is_review": false,
+                "panel_configured": false,
+                "on_unavailable": "fallback",
+                "availability": null
+              },
+              "fix": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "default",
+                "alias": "implementer"
+              },
+              "warnings": [
+                "2 reviewer slot(s) padded with the host agent 'claude', filling more than one slot; those reviewers cannot return distinct vendor provenance — name the extra seats in knobs.team.review, or lower --reviewers"
+              ]
+            }
+          },
+          {
+            "cluster_id": "cluster-1-12",
+            "issues": [
+              12
+            ],
+            "role": "docs",
+            "combined_scope": [
+              "docs/flags.md"
+            ],
+            "depends_on_issues": [],
+            "difficulty": {
+              "score": 2,
+              "band": "easy",
+              "tier": 2,
+              "file_count": 1,
+              "dependency_depth": 0,
+              "signals": [
+                {
+                  "name": "tier-2",
+                  "points": 2
+                }
+              ]
+            },
+            "assignment": {
+              "configured": false,
+              "role": "docs",
+              "tier": 2,
+              "difficulty": "easy",
+              "team_profile": null,
+              "bench": [],
+              "lead": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "host"
+              },
+              "implementer": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "host"
+              },
+              "effort": null,
+              "gate": null,
+              "review_panel": "reviewers",
+              "reviewers": [
+                {
+                  "provider": "claude",
+                  "name": "claude",
+                  "kind": "provider",
+                  "model": null,
+                  "effort": null,
+                  "source": "risk-tier",
+                  "slot": "A"
+                },
+                {
+                  "provider": "claude",
+                  "name": "claude",
+                  "kind": "provider",
+                  "model": null,
+                  "effort": null,
+                  "source": "risk-tier",
+                  "slot": "C"
+                }
+              ],
+              "reviewer_count": 2,
+              "reviewer_source": "risk-tier",
+              "jury": {
+                "mode": null,
+                "min_vendors": 2,
+                "panel_is_review": false,
+                "panel_configured": false,
+                "on_unavailable": "fallback",
+                "availability": null
+              },
+              "fix": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "default",
+                "alias": "implementer"
+              },
+              "warnings": [
+                "2 reviewer slot(s) padded with the host agent 'claude', filling more than one slot; those reviewers cannot return distinct vendor provenance — name the extra seats in knobs.team.review, or lower --reviewers"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "wave_index": 2,
+        "mode": "sequential_dependent",
+        "eligible_direct_landing": false,
+        "clusters": [
+          {
+            "cluster_id": "cluster-2-13",
+            "issues": [
+              13
+            ],
+            "role": "core",
+            "combined_scope": [
+              "src/pkg/parser.py"
+            ],
+            "depends_on_issues": [
+              11
+            ],
+            "difficulty": {
+              "score": 3,
+              "band": "standard",
+              "tier": 2,
+              "file_count": 1,
+              "dependency_depth": 1,
+              "signals": [
+                {
+                  "name": "tier-2",
+                  "points": 2
+                },
+                {
+                  "name": "depends-on:1",
+                  "points": 1
+                }
+              ]
+            },
+            "assignment": {
+              "configured": false,
+              "role": "core",
+              "tier": 2,
+              "difficulty": "standard",
+              "team_profile": null,
+              "bench": [],
+              "lead": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "host"
+              },
+              "implementer": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "host"
+              },
+              "effort": null,
+              "gate": null,
+              "review_panel": "reviewers",
+              "reviewers": [
+                {
+                  "provider": "claude",
+                  "name": "claude",
+                  "kind": "provider",
+                  "model": null,
+                  "effort": null,
+                  "source": "risk-tier",
+                  "slot": "A"
+                },
+                {
+                  "provider": "claude",
+                  "name": "claude",
+                  "kind": "provider",
+                  "model": null,
+                  "effort": null,
+                  "source": "risk-tier",
+                  "slot": "C"
+                }
+              ],
+              "reviewer_count": 2,
+              "reviewer_source": "risk-tier",
+              "jury": {
+                "mode": null,
+                "min_vendors": 2,
+                "panel_is_review": false,
+                "panel_configured": false,
+                "on_unavailable": "fallback",
+                "availability": null
+              },
+              "fix": {
+                "provider": "claude",
+                "name": "claude",
+                "kind": "provider",
+                "model": null,
+                "effort": null,
+                "source": "default",
+                "alias": "implementer"
+              },
+              "warnings": [
+                "2 reviewer slot(s) padded with the host agent 'claude', filling more than one slot; those reviewers cannot return distinct vendor provenance — name the extra seats in knobs.team.review, or lower --reviewers"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "conflict_map": {
+      "11": [
+        13
+      ],
+      "12": [],
+      "13": [
+        11
+      ]
+    },
+    "issue_scopes": {
+      "11": {
+        "issue": 11,
+        "title": "Parser rewrite",
+        "role": "core",
+        "labels": [],
+        "declared_files": [],
+        "predicted_files": [
+          "src/pkg/parser.py",
+          "src/pkg/lexer.py"
+        ],
+        "scope_source": "declared-file"
+      },
+      "12": {
+        "issue": 12,
+        "title": "Document the flags",
+        "role": "docs",
+        "labels": [],
+        "declared_files": [],
+        "predicted_files": [
+          "docs/flags.md"
+        ],
+        "scope_source": "issue-body"
+      },
+      "13": {
+        "issue": 13,
+        "title": "Parser error messages",
+        "role": "core",
+        "labels": [],
+        "declared_files": [],
+        "predicted_files": [
+          "src/pkg/parser.py"
+        ],
+        "scope_source": "declared-file"
+      }
+    }
+  }
+}

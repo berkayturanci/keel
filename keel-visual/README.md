@@ -302,8 +302,14 @@ keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
 
-It reads the newest run under `.keel/state/swarm/` (or `--swarm-id ID`); `--json`
-prints the resolved data instead of writing a page. The page is a snapshot of the
+It reads the newest run under `.keel/state/swarm/` (or `--swarm-id ID`) — the newest
+*state* file, never the `<id>.plan.json` beside it — and draws the plan that run
+persisted there (`keel swarm-run` writes it, keel #1275): its waves, each labelled
+`Orthogonal Parallel` or `Dependent — Refused`, and each cluster's issues, predicted
+files, dependencies, difficulty band and implementer. A run with no plan file, or one
+that cannot be read, says so in place of the DAG; the page never re-plans. `--json`
+prints the resolved data (`swarm_id`, `plan` or `null`, `plan_status`, `plan_detail`,
+`state`) instead of writing a page. The page is a snapshot of the
 run state at render time — re-run it to refresh. Details: keel's
 [`docs/keel/swarm.md`](https://github.com/berkayturanci/keel/blob/main/docs/keel/swarm.md) §5.
 

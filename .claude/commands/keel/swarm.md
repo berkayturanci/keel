@@ -35,7 +35,9 @@ re-plan the rest, land again. To give an
 issue a scope for this run, pass `--issue-scope <n>=<glob>[,<glob>…]` (repeatable, on
 `swarm-plan`, `swarm-run` and `swarm-land` alike — pass the same ones to all three), and never
 pass `--issue-title`/`--issue-body`/`--issue-label`/`--declared-file` beside several issues:
-they describe one issue and are refused. `keel-visual swarm` always renders a flat DAG (#1275, #1280).
+they describe one issue and are refused. `keel-visual swarm` draws the plan `swarm-run` persisted —
+its waves, predicted files and dependencies — and says so when a run has none; keel-visual 0.9.0
+still rebuilds a flat one-wave DAG (#1275, #1280).
 
 So: **`--plan-only` is the one that stops**, and it already renders the ASCII tree — `--tree` is
 passed on the `swarm-plan` calls either way, so adding it changes nothing. `--visual` is a
@@ -233,4 +235,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.25.0 source_sha256=77c94877e93fc6e72a5f2be9153899d1d74636bbf3d3bb461ed193f980cd92e1 generated_sha256=77c94877e93fc6e72a5f2be9153899d1d74636bbf3d3bb461ed193f980cd92e1 -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.25.0 source_sha256=8eddfda9f96a22395cb3e52e6e95dc41ecfc2efee81c4d3cff1ed581716bd26b generated_sha256=8eddfda9f96a22395cb3e52e6e95dc41ecfc2efee81c4d3cff1ed581716bd26b -->
