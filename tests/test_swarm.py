@@ -2569,9 +2569,11 @@ class AWorkerRecordCarriesItsWaveStageAndTime(unittest.TestCase):
     def test_the_board_groups_workers_by_wave_with_stage_and_elapsed(self):
         board = render_swarm_status_dashboard(self._state(), now="2026-09-30T11:02:10+00:00")
         lines = board.splitlines()
-        wave1 = next(i for i, line in enumerate(lines) if "Wave 1 — 2 workers" in line)
-        wave2 = next(i for i, line in enumerate(lines) if "Wave 2 — 1 worker:" in line)
-        self.assertLess(wave1, wave2)
+        headings = [i for i, line in enumerate(lines) if line.startswith("│ Wave ")]
+        self.assertEqual(len(headings), 2, board)
+        wave1, wave2 = headings
+        self.assertIn("Wave 1 — 2 workers", lines[wave1])
+        self.assertIn("Wave 2 — 1 worker:", lines[wave2])
         self.assertIn("1 running, 1 passed", lines[wave1])
         self.assertIn("1 queued", lines[wave2])
         rows = {line.split("│")[1].strip(): line for line in lines if "│ cluster-" in line}
@@ -2622,11 +2624,11 @@ class AWorkerRecordCarriesItsWaveStageAndTime(unittest.TestCase):
                 code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir, "--json"])
             self.assertEqual(code, 0)
             payload = json.loads(out.getvalue())
-            self.assertEqual([w["wave"] for w in payload["waves"]], [1, 2])
+            self.assertEqual([w["wave"] for w in payload.get("waves", [])], [1, 2])
             # Measured to the command's own now: a running worker has an elapsed time.
-            elapsed = {w["cluster_id"]: w["elapsed_s"] for w in payload["workers"]}
+            elapsed = {w["cluster_id"]: w.get("elapsed_s") for w in payload["workers"]}
             self.assertIsInstance(elapsed["cluster-1-1"], int)
-            self.assertTrue(payload["as_of"])
+            self.assertTrue(payload.get("as_of"))
             out = io.StringIO()
             with redirect_stdout(out):
                 code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
