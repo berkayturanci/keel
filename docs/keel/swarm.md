@@ -266,6 +266,10 @@ Parallel execution runs across isolated git worktrees created under
 keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
 ```
 
+Each worker's child `keel ship` may run for `--worker-timeout SECONDS`, by default
+`knobs.gate_timeout_s + knobs.jury_timeout_s`; one that runs longer is killed and its cluster
+fails with `timed_out: true` ([#1279](https://github.com/berkayturanci/keel/issues/1279)).
+
 ### Worktree Lifecycle & Isolation
 
 > While `swarm-run --live` is refused ([#1269](https://github.com/berkayturanci/keel/issues/1269)),

@@ -7,6 +7,15 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A swarm worker's timeout follows the project's gate budget** (#1279, item 1). Every
+  worker's child `keel ship` was killed after a hard-coded 300 s, and the child runs the gate
+  suite in a dry `swarm-run` too, so a suite the project allows ten minutes (`gate_timeout_s`
+  defaults to `600`) failed every cluster with `code=124` before anything was `--live`. The
+  budget now defaults to `knobs.gate_timeout_s + knobs.jury_timeout_s` and is set per run
+  with the new `swarm-run --worker-timeout SECONDS` (a positive integer). A worker that runs
+  out of it is reported `timed_out: true`, and its output ends with a line saying so, rather
+  than reading as a failing change. The short git commands the swarm, landing and canary
+  run through `default_runner` keep its own 300 s limit.
 - **The Ship watermark names ai-jury only when a jury sat.** The s11 closure comment's
   signature said "with ai-jury consensus" on every run, including ones whose `Jury` line read
   `off`. It now adds the clause only when the record's `run_context.jury_mode` is `gating` or
