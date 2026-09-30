@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-motion="balanced">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://img.shields.io; connect-src 'self' https://cloudflareinsights.com;">
+<script>
+  (function () { try { var r=document.documentElement, ls=localStorage, mq=matchMedia("(prefers-color-scheme: dark)");
+    r.setAttribute("data-theme", ls.getItem("theme") || (mq.matches ? "dark" : "light"));
+    r.setAttribute("data-motion", ls.getItem("motion") || "balanced"); } catch (e) {} })();
+</script>
+<title>100% coverage didn't prove our fixes were tested</title>
+<meta name="description" content="Coverage says every line ran, not that a test fails when a fix is undone. keel's opt-in revert-check gate reverts each change alone and asks exactly that.">
+<meta name="keywords" content="test coverage, 100 percent coverage, mutation testing, revert test, fix verification, code review, pull request, ci gate">
+<meta name="author" content="Berkay Turancı">
+<meta name="theme-color" content="#6366f1">
+<link rel="canonical" href="https://keel-ship.dev/revert-check.html">
+<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+<meta property="og:type" content="article">
+<meta property="og:title" content="100% coverage didn't prove our fixes were tested">
+<meta property="og:description" content="Three of fourteen closed fixes could be undone, wholly or in half, without a test failing. The gate that now asks for each change on a branch.">
+<meta property="og:url" content="https://keel-ship.dev/revert-check.html">
+<meta property="og:image" content="https://keel-ship.dev/assets/og-banner.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="100% coverage didn't prove our fixes were tested">
+<meta name="twitter:description" content="Three of fourteen closed fixes could be undone, wholly or in half, without a test failing. The gate that now asks for each change on a branch.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="ui.css">
+<link rel="stylesheet" href="docs.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "100% coverage didn't prove our fixes were tested",
+  "description": "Coverage says every line ran, not that a test fails when a fix is undone. keel's opt-in revert-check gate reverts each change alone and asks exactly that.",
+  "datePublished": "2026-09-30",
+  "author": { "@type": "Person", "name": "Berkay Turancı" },
+  "mainEntityOfPage": "https://keel-ship.dev/revert-check.html",
+  "about": ["test coverage", "continuous integration", "code review", "pull requests"]
+}
+</script>
+<style>
+  .art-wrap { max-width: 72ch; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+  .art-wrap h1 { font-size: clamp(1.7rem, 4vw, 2.4rem); line-height: 1.2; margin: 0 0 .75rem; }
+  .art-wrap h2 { font-size: clamp(1.2rem, 2.4vw, 1.5rem); margin: 2.5rem 0 .75rem; }
+  .art-wrap p, .art-wrap li { line-height: 1.7; }
+  .art-wrap pre { overflow-x: auto; padding: 1rem; border-radius: 8px;
+                  background: var(--surface-2); border: 1px solid var(--border-soft, #2a2f3d); }
+  .art-wrap code { font-family: var(--font-mono, ui-monospace, monospace); font-size: .92em; }
+  .art-meta { color: var(--muted); font-size: .9rem; margin-bottom: 2rem; }
+  .art-callout { border-left: 3px solid var(--accent); padding: .75rem 1rem; margin: 1.5rem 0;
+                 background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 0 8px 8px 0; }
+  .art-back { display: inline-block; margin-bottom: 2rem; color: var(--muted); text-decoration: none; }
+  .art-back:hover { color: var(--accent); }
+</style>
+<!-- Cloudflare Web Analytics (cookieless, no consent banner required) -->
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "6fd90b401c9a4ea0ab211a7f1d729795"}'></script>
+</head>
+<body>
+<main class="art-wrap">
+  <a class="art-back" href="./">← keel</a>
+
+  <h1>100% coverage didn't prove our fixes were tested</h1>
+  <p class="art-meta">30 September 2026 · Berkay Turancı · what coverage cannot tell you, and the gate that asks</p>
+
+  <p>keel's CI holds line and branch coverage at 100 % (<code>fail_under = 100</code>). It is a good bar, and it produced a bad habit. Pull requests that fixed a bug kept offering one sentence as evidence: "Maintained 100% line + branch test coverage across the repository." With the bar enforced, that sentence is true of every merged pull request before anyone writes it. It describes the repository, not the test.</p>
+
+  <p>Coverage says a line ran. It cannot say that any test would fail if the line were different. Those are different questions, and the gap between them is where a fix can go missing.</p>
+
+  <h2>What an audit found</h2>
+
+  <p>In September we reverted each of fourteen closed fixes and re-ran the tests that were supposed to guard them (<a href="https://github.com/berkayturanci/keel/issues/1289">#1289</a>). Today all fourteen fail without their fix. But at the time their issues were closed, three had survived:</p>
+
+  <ul>
+    <li><strong><a href="https://github.com/berkayturanci/keel/issues/877">#877</a></strong>: the fix was never written. A genuine refactor removed two redundant frozensets and closed a bug it never touched. The issue was reopened five days later.</li>
+    <li><strong>Half of <a href="https://github.com/berkayturanci/keel/issues/871">#871</a></strong>: its guarded and unguarded arms sat in one hunk. The closing pull request could have stated a true "the test fails with the whole fix reverted" result while the unguarded half sat untested behind it.</li>
+    <li><strong>Half of <a href="https://github.com/berkayturanci/keel/issues/879">#879</a></strong>: likewise, a true whole-fix result was available while half the fix was not pinned.</li>
+  </ul>
+
+  <p>All three closing pull requests offered the coverage sentence as evidence. The coverage was real. It just was not evidence of anything.</p>
+
+  <p>The first response, in keel 1.24.0, was a rule: a fix names, for each behaviour it changes, a test that fails <em>as an assertion</em> when that one change is reverted. A rule only written down is the weakest option a project has, so keel 1.25.0 adds a gate that asks the question mechanically.</p>
+
+  <h2>What the revert-check gate does</h2>
+
+  <p>When a project lists <code>revert-check</code> in <code>gates:</code>, keel diffs the branch against its base with no context lines, so every contiguous edit is its own change. It checks out the committed <code>HEAD</code> as a scratch worktree under the OS temp directory; your checkout is never touched. There it runs the test command once as a baseline, then once per production change with that change alone undone by <code>git apply -R</code>, resetting the tree before each run.</p>
+
+  <p>The unit is a hunk by default, or a whole file with <code>unit: file</code>. Added Python code is split further, one top-level definition at a time, so a test that calls one of three new functions does not vouch for the other two.</p>
+
+  <p>A change passes only when a test fails <strong>as an assertion</strong>. keel reads unittest's summary, where failures count and errors do not, and pytest's short summary, where a <code>FAILED</code> line counts when its reason is <code>assert …</code>, <code>AssertionError</code> or <code>Failed:</code>. The distinction matters. If reverting a fix makes a test raise <code>NameError</code> or fail to import, the test reached the code; nothing shows it checked what the code does. That blocks too. The one narrow exception is a change that only adds lines (or only changes one-line Python imports) and whose run reports nothing but missing names: no assertion can fail against code that is not there, so that result is a <code>nit</code>, not a pass.</p>
+
+  <p>A suite that stays green with a change reverted is a blocking finding that names the hunk. So is a run that only errors, times out, or prints no summary keel can read. A check that cannot judge at all, because there is no test command, no declared test paths, or a baseline that is already red, fails. It never passes.</p>
+
+  <h2>A real run</h2>
+
+  <p>A scratch repository with one function and one fix: cap the discount at 100 %, and round the result to cents. The branch adds a test for the cap. Coverage on <code>pkg/</code> is 100 % line and branch: the tests run every line. The configuration:</p>
+
+  <pre><code>gates: [build, revert-check]
+knobs:
+  build_gate_cmd: "python3 -m unittest discover -s tests -t ."
+  revert_check:
+    paths: ["pkg/**"]
+policy_pack:
+  name: shop
+  test_groups:
+    unit:
+      command: "python3 -m unittest discover -s tests -t ."
+      paths: ["pkg/**", "tests/**"]
+      test_paths: ["tests/**"]</code></pre>
+
+  <p>The fix, as the gate sees it:</p>
+
+  <pre><code>@@ -1,0 +2 @@ def discount(total, percent):
++    percent = min(max(percent, 0), 100)
+@@ -3 +4 @@ def discount(total, percent):
+-    return total - saving
++    return round(total - saving, 2)</code></pre>
+
+  <p>And keel 1.25.0's output, unedited:</p>
+
+  <pre><code>$ keel run-gates .keel/project.yaml --root .
+       ok  build
+     FAIL  revert-check
+    [major] revert-check: pkg/prices.py @@ -3 +4 @@: no test notices this change — the test command passed with the change reverted
+    [nit] revert-check: 1 of 2 production change(s) made a test fail as an assertion when reverted alone
+BLOCKED — merge is gated by the findings above</code></pre>
+
+  <p>The rounding ran under test, so coverage counted it. No test would notice it gone. After adding a test that asserts <code>discount(19.99, 15) == 16.99</code>, the same command prints <code>ok  revert-check</code> and <code>2 of 2 production change(s) made a test fail as an assertion when reverted alone</code>.</p>
+
+  <h2>Why it is off by default</h2>
+
+  <p>It costs one full test run per production change, plus the baseline. The bounds are <code>knobs.revert_check.max_changes</code> (default 10), <code>budget_s</code> for the whole check (default 1800 seconds), and <code>gate_timeout_s</code> for each run. A change the bounds leave out is reported <em>not checked</em> and blocks; the gate never certifies what it did not run. For a slow suite, point <code>revert_check.cmd</code> at a faster subset rather than raising the budget.</p>
+
+  <p>It is a <code>pre-merge</code> gate, so an implementation loop that runs only the guard and test phases reports it <code>NOT-RUN</code> instead of paying for it on every iteration. It is not a test gate: list <code>build</code> beside it, or the run blocks as unconfigured. And it stays off unless listed, including in keel's own configuration, which lists <code>build</code> and <code>lint</code>.</p>
+
+  <h2>What it does not check</h2>
+
+  <p>A passing check says a test failed with the change undone. It does not say the test is <em>about</em> that change. The <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md#revert_check">configuration reference</a> lists what stays a reviewer's question:</p>
+
+  <ul>
+    <li>The unit is a hunk, not a behaviour. Two arms of one conditional edited in one block are one change, and a test of either passes it. That is exactly #871's shape.</li>
+    <li>Added code in other languages is not split, nor are added Python lines that do not parse on their own.</li>
+    <li>A test can fail without the fix and still be blind to what the fix broke. <a href="https://github.com/berkayturanci/keel/issues/873">#873</a>'s fix passes a revert check and still shipped the regression filed as <a href="https://github.com/berkayturanci/keel/issues/1268">#1268</a>: its fixture made the fix and the bug agree.</li>
+    <li>A flaky test that fails on a revert run, an <code>assert</code> in the code under test, and a test that pins source text all count as an assertion failure.</li>
+    <li>Files outside the production scope, and anything under the test paths, are never reverted.</li>
+    <li>Only unittest and pytest output is read. Any other runner's failures are unreadable, and block.</li>
+  </ul>
+
+  <div class="art-callout">
+    <p><strong>The short version:</strong> coverage tells you what ran. A revert tells you what a test would miss. Neither tells you the test is right, so the reviewers still ask.</p>
+  </div>
+
+  <p>keel is open source; <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/install.md">install.md</a> covers setup, and the <a href="https://github.com/berkayturanci/keel/blob/main/docs/keel/configuration.md#revert_check">revert_check reference</a> covers every knob.</p>
+
+  <p><a class="art-back" href="./">← back to keel</a></p>
+</main>
+</body>
+</html>

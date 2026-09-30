@@ -107,7 +107,7 @@ class TestEachPagesPolicyAllowsWhatItLoads(unittest.TestCase):
     def test_a_page_that_loads_no_such_script_keeps_the_narrow_policy(self):
         # 404.html and the articles load no local script, so nothing there fetches; widening
         # their policy to match the others would allow what they have no use for.
-        for name in ("404.html", "silent-revert.html", "long-runs.html"):
+        for name in ("404.html", "silent-revert.html", "long-runs.html", "revert-check.html"):
             with self.subTest(page=name):
                 connect = _allowed(_policy(WEBSITE / name), "connect-src")
                 self.assertNotIn("https://api.github.com", connect)
