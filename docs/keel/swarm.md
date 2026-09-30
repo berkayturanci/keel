@@ -32,7 +32,12 @@
 > ([#1275](https://github.com/berkayturanci/keel/issues/1275),
 > [#1280](https://github.com/berkayturanci/keel/issues/1280)).
 >
-> Landing is guarded, which is the one part that works as written: with `knobs.swarm_review_evidence`
+> Landing is guarded, and it is **local**: `swarm-land` merges each cleared cluster branch into the
+> **local base branch** with `git merge --no-ff`. It does not push, and it does not open or merge a
+> pull request — pushing the base branch, and closing each cluster's pull request, is the
+> operator's step ([#1287](https://github.com/berkayturanci/keel/issues/1287)). On a protected base
+> branch that push is refused, so the merge commits stay local. The guard is what works as written:
+> with `knobs.swarm_review_evidence`
 > on — the default — `swarm-land` holds any cluster with no open PR, an unarmed gate, missing
 > evidence, or a local head that differs from the reviewed PR head. Setting it to `false` is a
 > documented opt-out, logged on every *live* landing (a dry preview with it off prints nothing and
@@ -48,7 +53,8 @@
 multiple AI developer agents working in parallel across complex backlogs. It transforms a list of
 GitHub issues into a topologically ordered execution graph, partitions issues into conflict-free
 clusters, executes them in isolated git worktrees, and lands them under a single-writer merge
-lock with sequential `git merge --no-ff`.
+lock with sequential `git merge --no-ff` into the local base branch — a local merge that pushes
+nothing.
 
 ---
 
@@ -130,7 +136,7 @@ an operator sees the chain at a glance.
                         │                                   │
                         ▼                                   ▼
               ┌───────────────────┐               ┌───────────────────┐
-              │    base branch    │ ◄─────────────┤  keel swarm-land  │
+              │ local base branch │ ◄─────────────┤  keel swarm-land  │
               │   (Wave 1 Done)   │               │   (Wave 2 Done)   │
               └───────────────────┘               └───────────────────┘
 ```
@@ -266,6 +272,10 @@ Parallel execution runs across isolated git worktrees created under
 keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
 ```
 
+Each worker's child `keel ship` may run for `--worker-timeout SECONDS`, by default
+`knobs.gate_timeout_s + knobs.jury_timeout_s`; one that runs longer is killed and its cluster
+fails with `timed_out: true` ([#1279](https://github.com/berkayturanci/keel/issues/1279)).
+
 ### Worktree Lifecycle & Isolation
 
 > While `swarm-run --live` is refused ([#1269](https://github.com/berkayturanci/keel/issues/1269)),
@@ -348,9 +358,18 @@ keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --
 
 ### What landing actually does
 
-Each cluster branch is merged into the configured base branch with `git merge --no-ff`, **one
-after another** inside the lock. A merge that conflicts is `git merge --abort`ed, the base is left
-untouched, and the cluster is reported `merge failed`.
+Each cluster branch is merged into the **local** copy of the configured base branch with
+`git merge --no-ff`, **one after another** inside the lock. A merge that conflicts is
+`git merge --abort`ed, the base is left untouched, and the cluster is reported `merge failed`.
+
+**The landing is a local merge only.** `merge_cluster_branch` runs `git checkout <base_branch>` and
+`git merge --no-ff <cluster branch>` in your checkout, and nothing after it pushes: `swarm-land`
+does not push the base branch, and it does not open or merge a pull request — each cluster's pull
+request stays open. A cluster reported `merged` is merged locally; `origin` is unchanged. Pushing
+is the operator's step, and on a protected base branch (the configuration keel recommends) a
+direct push is refused, so the merge commits cannot reach the remote that way. Use `keel merge`
+per pull request — through `/keel:ship` — for work that has to reach the repository
+([#1287](https://github.com/berkayturanci/keel/issues/1287)).
 
 All of this happens in the checkout `--root` points at, which is usually your own. So a live
 landing starts only from a clean tree: when `git status --porcelain` shows any change, tracked or
@@ -446,7 +465,7 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | **Declared Org Chart (CTO/lead/worker)** | **Yes (`knobs.team`, one resolver)** | Role prompts | Conversational | SOP roles | Single agent |
 | **Fixed Backbone Machine** | **Yes (`s0`–`s12` immutable)** | No | No | No | No |
 | **Isolated Git Worktrees** | **Yes (`.keel/worktrees/`)** | No (shared workspace) | No | No (file overwrite) | Docker container |
-| **Batch landing under one writer lock** | **Yes (sequential `merge --no-ff`)** | No | No | No | PR per run |
+| **Batch landing under one writer lock** | **Yes (sequential local `merge --no-ff`; pushes nothing)** | No | No | No | PR per run |
 | **Atomic Single-Host Lock** | **Yes (`merge_lock`)** | No | No | No | No |
 | **Fail-soft conflict handling** | **Yes (`merge --abort`, cluster reported failed)** | No | No | No | Manual |
 | **Per-Branch Review-Evidence Gate** | **Yes (cross-vendor panel per cluster, when configured)** | No | Conversational | No | Single Agent |

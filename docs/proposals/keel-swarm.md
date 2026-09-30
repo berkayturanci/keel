@@ -183,7 +183,7 @@ Conversely, naive "swarm" systems (CrewAI, AutoGen, OpenAI Swarm) attempt uncons
 | **Git Merge Collisions** | Broken base branch, conflicting patches | Static DAG clustering + Direct Batch Landing for disjoint trees + Atomic Funnel with `s9` self-healing for overlaps. |
 | **Token / Rate-Limit Exhaustion** | API 429 throttling across parallel workers | Strict `--max-workers N` cap with exponential backoff in `api_delegate.py`. |
 | **Scope Hallucination** | Worker touches unexpected global files | Real-time scope monitoring and dynamic cluster rebalancing. |
-| **Worker Hanging / Crash** | Pipeline stalls indefinitely | Per-worker timeouts (`knobs.timeout_s`) and fail-soft isolation. |
+| **Worker Hanging / Crash** | Pipeline stalls indefinitely | Per-worker timeouts (`swarm-run --worker-timeout`, defaulting to `knobs.gate_timeout_s + knobs.jury_timeout_s`) and fail-soft isolation. |
 | **Evidence / Compliance Loss** | Ambiguous multi-agent approvals | Immutable commit-SHA binding for every individual PR and integration commit. |
 
 ---

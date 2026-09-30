@@ -59,6 +59,7 @@ from keel import (
     model,
     providers,
     ship,
+    swarm_landing,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -1231,6 +1232,118 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         for claim in ("Workers never collide", "No branch lands until", "lands batches safely"):
             with self.subTest(claim=claim):
                 self.assertNotIn(claim, view)
+
+
+#: Every place that describes what `swarm-land` does to the base branch, as
+#: ``(path, start marker, end marker)``: the excerpt runs from the start marker to
+#: the first end marker after it.
+_SWARM_LANDING_SURFACES = (
+    ("README.md", "`keel swarm-land --live`", "`keel worktree-remove`"),
+    ("docs/keel/swarm.md", "> Landing is guarded", "> The rest is tracked"),
+    ("docs/keel/swarm.md", "### What landing actually does", "### Review Evidence Gate"),
+    ("docs/keel/cli.md", "## `keel swarm-land ", "## `keel-visual swarm"),
+    ("docs/keel/overview.md", "**High-concurrency Swarm orchestration**", "Audit epic"),
+    ("docs/keel/commands.md", "`swarm-land` checks", "**Design, not built:**"),
+    ("docs/keel/comparison.md", "**Single-Writer Batch Landing**", "\n"),
+    ("docs/keel/github-actions.md", "There is no `swarm` subcommand", "## Adopting"),
+    ("src/keel/adapters/commands/swarm.md", "## Step 3", "## Step 4"),
+    ("website/content.js", '["keel swarm-land', '"],'),
+    ("website/content.js", "Landing is guarded", "</p>"),
+    ("website/index.html", "<b>Single-Writer Batch Landing</b>", "</span>"),
+    ("website/index.html", "<code>keel swarm-land", "</div>"),
+)
+
+#: The local-only statement each surface has to make: the merge is local...
+_SAYS_LOCAL = re.compile(r"\blocal(?:ly)?\b")
+#: ...and nothing is pushed.
+_SAYS_NO_PUSH = re.compile(
+    r"\b(?:pushes nothing|does not push|never pushes|nothing is pushed|not pushed)\b"
+)
+#: A clause that says something is pushed, a pull request is merged, or the remote moves.
+_AFFIRMS_REMOTE_LANDING = re.compile(
+    r"\bpush(?:es|ed)?\b"
+    r"|\bmerg(?:e[sd]?|ing)\b(?:\W+\w+){0,3}?\W+(?:pull requests?|PRs?)\b"
+    r"|\b(?:origin|the remote)\b"
+)
+#: What makes such a clause a denial rather than a claim.
+_NEGATES = re.compile(r"\b(?:not|never|nothing|no|unchanged|refuses|refused|cannot)\b")
+#: A clause about `keel merge` or `/keel:ship` describes *that* command, which does merge PRs.
+_OTHER_COMMAND = re.compile(r"`?keel merge`?|/keel:ship")
+
+
+def _swarm_landing_excerpt(path: str, start: str, end: str) -> str:
+    text = (REPO_ROOT / path).read_text(encoding="utf-8")
+    begin = text.index(start)
+    return " ".join(text[begin : text.index(end, begin + len(start))].split())
+
+
+def _remote_landing_claims(text: str) -> list[str]:
+    """The clauses of ``text`` that claim a push, a pull-request merge or a remote landing."""
+    clauses = re.split(r"(?<=[.;:!?])\s+|\s+—\s+|\s+--\s+", re.sub(r"<[^>]+>", "", text))
+    return [
+        clause
+        for clause in clauses
+        if _AFFIRMS_REMOTE_LANDING.search(clause)
+        and not _NEGATES.search(clause)
+        and not _OTHER_COMMAND.search(clause)
+    ]
+
+
+class TestSwarmLandingIsDescribedAsLocal(unittest.TestCase):
+    """#1287 (first slice): `swarm-land`'s landing is a local merge only.
+
+    `merge_cluster_branch` runs `git checkout <base>` and `git merge --no-ff` in the
+    checkout, and neither it nor `_cmd_swarm_land` pushes or calls GitHub to merge.
+    The swarm guide still said landing was "the one part that works as written", and
+    the cli reference said it landed "into `main`" — both read as work reaching the
+    repository. Every surface that describes the landing must say it is local and
+    that nothing is pushed, and none may say that it pushes or merges a pull request.
+    """
+
+    def test_the_landing_code_neither_pushes_nor_merges_a_pull_request(self):
+        """The fact the docs rest on: when this fails, the docs below need rewriting."""
+        merge = inspect.getsource(swarm_landing.merge_cluster_branch)
+        self.assertIn('"merge", "--no-ff"', merge)
+        self.assertIn('"checkout", base_branch', merge)
+        for source in (inspect.getsource(swarm_landing), inspect.getsource(cli._cmd_swarm_land)):  # noqa: SLF001
+            self.assertNotIn('"push"', source)
+            self.assertNotIn("merge_pr", source)
+
+    def test_every_landing_surface_says_the_merge_is_local_and_unpushed(self):
+        for path, start, end in _SWARM_LANDING_SURFACES:
+            with self.subTest(path=path, start=start):
+                excerpt = _swarm_landing_excerpt(path, start, end)
+                self.assertRegex(excerpt, _SAYS_LOCAL)
+                self.assertRegex(excerpt, _SAYS_NO_PUSH)
+
+    def test_no_landing_surface_says_swarm_land_pushes_or_merges_a_pull_request(self):
+        for path, start, end in _SWARM_LANDING_SURFACES:
+            with self.subTest(path=path, start=start):
+                self.assertEqual(
+                    [], _remote_landing_claims(_swarm_landing_excerpt(path, start, end))
+                )
+
+    def test_the_guide_no_longer_calls_landing_the_part_that_works(self):
+        """The banner's "works as written" is true of the review guard, not of the merge."""
+        banner = _swarm_landing_excerpt("docs/keel/swarm.md", "> Landing is guarded", "> The rest")
+        self.assertNotIn("Landing is guarded, which is the one part that works as written", banner)
+        self.assertIn("The guard is what works as written", banner)
+
+    def test_the_claim_detector_catches_a_remote_landing_claim(self):
+        """The negative check is only worth something if it fires on the wording it bans."""
+        for claim in (
+            "swarm-land then pushes the base branch.",
+            "It merges each cluster's pull request under the lock.",
+            "The cluster lands on origin.",
+        ):
+            with self.subTest(claim=claim):
+                self.assertEqual([claim], _remote_landing_claims(claim))
+        for denial in (
+            "It does not push, and it does not open or merge a pull request.",
+            "Use `keel merge` per pull request.",
+        ):
+            with self.subTest(denial=denial):
+                self.assertEqual([], _remote_landing_claims(denial))
 
 
 class TestTheDogfoodTerminalIsTheDryAssessment(unittest.TestCase):

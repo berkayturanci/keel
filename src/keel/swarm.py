@@ -263,6 +263,19 @@ def tail_child_output(text: str) -> str:
     )
 
 
+def worker_timeout_s(config: ProjectConfig) -> int:
+    """Return the wall-clock seconds one swarm worker's child ``keel ship`` may run.
+
+    Derived from the two budgets the project already sets for what the child runs
+    (#1279): ``knobs.gate_timeout_s`` for its command gates and ``knobs.jury_timeout_s``
+    for the ``jury`` builtin. The child runs the gate suite in a dry run too, so a
+    fixed 300 s killed a suite the project itself allows ten minutes. The sum covers
+    one gate at its full budget plus a panel at its full budget; a suite whose gates
+    add up to more than that is raised per run with ``swarm-run --worker-timeout``.
+    """
+    return config.knobs.gate_timeout_s + config.knobs.jury_timeout_s
+
+
 @dataclass(frozen=True)
 class SwarmRunResult:
     """Outcome summary for a complete or partial swarm execution."""

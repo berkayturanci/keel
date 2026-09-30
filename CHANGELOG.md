@@ -7,6 +7,15 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A swarm worker's timeout follows the project's gate budget** (#1279, item 1). Every
+  worker's child `keel ship` was killed after a hard-coded 300 s, and the child runs the gate
+  suite in a dry `swarm-run` too, so a suite the project allows ten minutes (`gate_timeout_s`
+  defaults to `600`) failed every cluster with `code=124` before anything was `--live`. The
+  budget now defaults to `knobs.gate_timeout_s + knobs.jury_timeout_s` and is set per run
+  with the new `swarm-run --worker-timeout SECONDS` (a positive integer). A worker that runs
+  out of it is reported `timed_out: true`, and its output ends with a line saying so, rather
+  than reading as a failing change. The short git commands the swarm, landing and canary
+  run through `default_runner` keep its own 300 s limit.
 - **`swarm-land --live` refuses a dirty checkout and puts you back on your branch.** Landing
   checks out, rebases and merges in the `--root` checkout. It left HEAD on the base branch
   after a merge, or on a cluster branch after an aborted rebase, and a dirty tree stopped it
@@ -87,6 +96,17 @@ All notable changes to keel are documented here. The format follows
   gitignored `.keel/state/` state unless `policy_pack.reports.run_ledger` points it at a
   tracked file. `tests/test_docs_claims.py` and `tests/test_docs_reference_accuracy.py` hold
   each surface to it (docs audit 2026-09-29).
+- **`swarm-land`'s landing is described as the local merge it is** (first slice of #1287).
+  `merge_cluster_branch` runs `git checkout <base>` and `git merge --no-ff` in the checkout,
+  and nothing pushes or merges a pull request, yet the swarm guide called landing "the one
+  part that works as written" and `cli.md` said it landed "into `main`". The README, the swarm
+  guide, `cli.md`, `overview.md`, `comparison.md`, `github-actions.md`, the `/keel:swarm`
+  adapter and the site now say the merge goes into the local base branch, pushes nothing and
+  opens or merges no pull request — pushing is the operator's step. The README also stops
+  saying `swarm-land --live` rebases: no invocation reaches the rebase funnel.
+  `tests/test_docs_claims.py` pins the wording on every surface and fails on a claim that
+  `swarm-land` pushes or merges a pull request. The behaviour itself is unchanged; #1287
+  stays open for that decision.
 
 ### Added
 - **An opt-in `revert-check` gate names every change no test notices.** Listed in `gates:`, it diffs the branch against its base with no context lines, then — in a scratch worktree of the committed `HEAD`, never your checkout (git's repository variables such as an inherited `GIT_DIR` or `GIT_WORK_TREE` are dropped for every command there, the test command included) — runs the test command once unreverted and once per production hunk (or file) with that change alone undone by `git apply -R`. A change passes only when a test fails **as an assertion**: unittest's `failures` count, or a pytest short-summary `FAILED` line whose reason is an assertion. Every change in scope is tested — none is skipped as inert, since a comment can still change behaviour (compiler directives, encoding cookies, line numbers); an unnoticed change that looks comment-only says so in its finding. A suite that stays green, only errors, times out, prints no readable summary, or a change the gate did not reach is a blocking finding that names the hunk; an error is accepted (as a `nit`) only for a change that purely adds lines or whose every changed line is a one-line Python import, and only when every exception the run reports is a missing name and every failure it counts is described, since no assertion can fail against code that is not there. A production file with no textual hunk is not checked and blocks; non-UTF-8 sources and CRLF files revert byte for byte. A mode change is its own change, added Python code is reverted one top-level definition at a time (found by parsing it, so a blank line inside a string never splits it; other languages keep an added hunk whole), the baseline must report no failing test at all, and only an assertion failure the baseline did not have counts. It is bounded by `knobs.revert_check.max_changes` (default 10), `budget_s` (default 1800) and `gate_timeout_s` per run, and `cmd` can point it at a faster subset than `build_gate_cmd`. A check that cannot judge — no command, no declared `policy_pack.test_groups.*.test_paths`, an unreadable diff, a baseline that is red or unreadable — fails as unconfigured, never passes; a branch with no production change is `SKIPPED`. Your git diff and apply settings (and `GIT_DIFF_OPTS`) cannot merge edits into one change or move a revert: the commands pin them, and a diff that still carries context lines cannot be judged. It runs at the `pre-merge` phase, so the s4 loop defers it, and it is not a test gate: planned without `build` (or another guard or test gate) the run blocks as unconfigured and says so. Off by default, including for keel itself (#1289).

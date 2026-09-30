@@ -3225,7 +3225,7 @@ code makes it usable as a gate ([#1280](https://github.com/berkayturanci/keel/is
 `{}` therefore always means "no run", never "a run keel could not read"; the text board is not
 printed in either failure.
 
-## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
+## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--worker-timeout SECONDS] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 > **Experimental — `--live` is refused.** Its workers are handed `--live`
 > ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and `keel ship --live` stops at the
@@ -3252,13 +3252,27 @@ which is the layer that can spawn one. A role label outside `[A-Za-z0-9][A-Za-z0
 dropped rather than passed — it would be read as a flag by the child — and the reason is
 recorded in `assignment.warnings`.
 
+Each worker's child `keel ship` runs the project's gate suite, in a dry run too, so it is
+bounded by `--worker-timeout SECONDS` (a positive integer). Left out, the budget is
+`knobs.gate_timeout_s + knobs.jury_timeout_s` — `1200` with neither knob set — rather than
+the fixed 300 s that killed a suite the project itself allows ten minutes
+([#1279](https://github.com/berkayturanci/keel/issues/1279)). A worker killed by it fails its
+cluster with `code: 124` and `timed_out: true` in its `cluster_results` entry, and its output
+ends with a line saying it timed out, so the reason is not read as a failing test. Raise it
+when the suite's gates add up to more than one gate plus one jury:
+
+```bash
+keel swarm-run .keel/project.yaml --root . --issues 714,715 --worker-timeout 3600
+```
+
 Issues are named by `--issues` / `--issue`, as for `swarm-plan`. Rebalancing across waves is
 decided by the plan, not by a flag: when a cluster's issue fails, `rebalance_swarm_plan` drops the
 clusters carrying that issue from the remaining waves (there is no runtime file-divergence audit).
 
 ## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--swarm-id ID] [--live] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
-Land passing cluster branches from completed execution waves into `main` under atomic `merge_lock`:
+Land passing cluster branches from completed execution waves into the **local** base branch
+(`base_branch` from the project config) under atomic `merge_lock`:
 
 ```bash
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1
@@ -3270,8 +3284,16 @@ predicted scopes for the wave and, for any planned wave, always resolves to dire
 is no `--mode` flag to get wrong. `--wave` selects the
 wave (default `1`); without `--live` the command reports what it would land.
 
-- **Direct Batch Mode**: Orthogonal disjoint diff trees are merged one after another with
-  `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+**The landing is a local merge only.** `--live` runs `git checkout <base_branch>` and
+`git merge --no-ff <cluster branch>` in the checkout at `--root`; the command does not push, and it
+does not open or merge a pull request. A cluster reported `merged` is merged in the local base
+branch, each cluster's pull request stays open, and `origin` is unchanged — pushing is the
+operator's step, and a protected base branch refuses that push
+([#1287](https://github.com/berkayturanci/keel/issues/1287)). `keel merge` is the command that
+merges a pull request on GitHub.
+
+- **Direct Batch Mode**: Orthogonal disjoint diff trees are merged into the local base branch one
+  after another with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
 - **Your checkout (#1279)**: a live landing checks out and merges in the `--root` checkout, so it
   refuses to start when `git status --porcelain` shows any tracked or untracked change (keel's own
   untracked runtime files under `.keel/` excepted). It names the files in `refused`, touches no
