@@ -594,6 +594,19 @@ class SwarmStatusIsAGate(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             self.assertEqual(self._run(tmpdir, "--json")[:2], (0, "{}\n"))
 
+    def test_the_newest_run_is_never_a_plan_file(self):
+        # #1275: `<id>.plan.json` sits beside the state; written last, its stem
+        # (`<id>.plan`) would name a run with no state file.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_swarm_state(SwarmRunState(swarm_id="swarm-run", total_workers=0), tmpdir)
+            plan = build_swarm_plan([IssueScope(issue=1)], swarm_id="swarm-run")
+            plan_path = swarm_module.save_swarm_plan(plan, root=tmpdir)
+            future = plan_path.stat().st_mtime + 60
+            os.utime(plan_path, (future, future))
+            code, out, err = self._run(tmpdir, "--json")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["swarm_id"], "swarm-run")
+
     def test_an_unreadable_newest_state_fails_and_json_does_not_say_no_run(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._unreadable(tmpdir)
@@ -1621,9 +1634,21 @@ class SwarmCommandsReadEachIssue(unittest.TestCase):
                 dry_run=True,
             )
 
-        with patch("keel.swarm_runtime.run_swarm_orchestration", side_effect=fake_run):
+        # `--root` a scratch directory: swarm-run persists its plan under the root (#1275).
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("keel.swarm_runtime.run_swarm_orchestration", side_effect=fake_run),
+        ):
             rc, _out, err, calls = _cli(
-                ["swarm-run", ".keel/project.yaml", "--issues", "101,102,103", "--json"]
+                [
+                    "swarm-run",
+                    ".keel/project.yaml",
+                    "--root",
+                    tmpdir,
+                    "--issues",
+                    "101,102,103",
+                    "--json",
+                ]
             )
         self.assertEqual(rc, 0, err)
         self.assertEqual([n for n, _ in calls], [101, 102, 103])
@@ -1827,6 +1852,570 @@ class AWavesLandingModeFollowsItsDependencies(unittest.TestCase):
         self.assertTrue(
             refusal.startswith("wave 2 depends on issues landed by an earlier wave; "), refusal
         )
+
+
+def _representative_plans() -> list[swarm_module.SwarmPlan]:
+    """Plans of every shape a run persists (#1275): disjoint, a dependency chain (the
+    ``sequential_dependent`` waves of #1395), ``*`` scopes of undescribed issues (#1401),
+    staffed and scored clusters, a rebalanced plan, bare clusters, and no issues at all."""
+    from keel.config import load_config
+
+    config = load_config(".keel/project.yaml")
+    disjoint = [
+        IssueScope(issue=101, title="A", predicted_files=("src/a.py",), scope_source="override"),
+        IssueScope(
+            issue=102,
+            title="B",
+            labels=("area:docs", "size:l"),
+            declared_files=("docs/b.md",),
+            predicted_files=("docs/b.md",),
+            role="docs",
+            scope_source="declared-file",
+        ),
+    ]
+    chain = [
+        IssueScope(issue=n, predicted_files=("src/a.py",), scope_source="issue-body")
+        for n in (1, 2, 3)
+    ]
+    undescribed = [extract_issue_scope(n, title=f"T{n}", body="") for n in (7, 8)]
+    mixed = [*disjoint, *chain, *undescribed]
+    bare = swarm_module.SwarmPlan(
+        swarm_id="swarm-bare",
+        total_issues=1,
+        waves=(
+            swarm_module.SwarmWave(
+                wave_index=1,
+                mode="orthogonal_parallel",
+                eligible_direct_landing=True,
+                clusters=(
+                    SwarmCluster(
+                        cluster_id="cluster-1-5", issues=(5,), role="core", combined_scope=()
+                    ),
+                ),
+            ),
+        ),
+        conflict_map={5: ()},
+        issue_scopes={5: IssueScope(issue=5)},
+    )
+    return [
+        build_swarm_plan(disjoint, swarm_id="swarm-disjoint"),
+        build_swarm_plan(chain, swarm_id="swarm-chain"),
+        build_swarm_plan(undescribed, swarm_id="swarm-star"),
+        build_swarm_plan(mixed, swarm_id="swarm-staffed", config=config),
+        swarm_module.rebalance_swarm_plan(
+            build_swarm_plan(mixed, swarm_id="swarm-rebalanced", config=config), 1
+        ),
+        bare,
+        build_swarm_plan([], swarm_id="swarm-empty"),
+    ]
+
+
+def _random_plans(count: int) -> list[swarm_module.SwarmPlan]:
+    """Seeded, so the property is checked over the same plans on every run."""
+    import random
+
+    rng = random.Random(1275)
+    pool = ("src/a.py", "src/b.py", "docs/x.md", "src/", "tests/t.py", swarm_module.SCOPE_ANY)
+    plans = []
+    for n in range(count):
+        scopes = [
+            IssueScope(
+                issue=issue,
+                predicted_files=tuple(rng.sample(pool, rng.randint(1, 3))),
+                role=rng.choice(("core", "docs")),
+                scope_source=rng.choice(swarm_module.SCOPE_SOURCES),
+            )
+            for issue in rng.sample(range(1, 60), rng.randint(1, 8))
+        ]
+        plans.append(build_swarm_plan(scopes, swarm_id=f"swarm-random-{n}"))
+    return plans
+
+
+class APlanRoundTrips(unittest.TestCase):
+    """``to_dict`` → ``from_dict`` → ``to_dict`` is the identity (#1275)."""
+
+    def test_the_representative_plans_cover_what_they_claim(self):
+        plans = _representative_plans()
+        modes = {w.mode for p in plans for w in p.waves}
+        self.assertEqual(modes, set(swarm_module.WAVE_MODES))
+        self.assertIn(
+            (swarm_module.SCOPE_ANY,),
+            [s.predicted_files for p in plans for s in p.issue_scopes.values()],
+        )
+        self.assertTrue(
+            any(c.assignment for p in plans for w in p.waves for c in w.clusters),
+            "fixture: a staffed cluster",
+        )
+
+    def test_to_dict_from_dict_to_dict_is_identical(self):
+        for plan in [*_representative_plans(), *_random_plans(150)]:
+            with self.subTest(swarm_id=plan.swarm_id):
+                data = plan.to_dict()
+                self.assertEqual(swarm_module.SwarmPlan.from_dict(data).to_dict(), data)
+
+    def test_the_persisted_payload_round_trips_through_json(self):
+        for plan in [*_representative_plans(), *_random_plans(50)]:
+            with self.subTest(swarm_id=plan.swarm_id):
+                text = json.dumps(swarm_module.swarm_plan_payload(plan), indent=2)
+                back = swarm_module.swarm_plan_from_payload(json.loads(text))
+                self.assertEqual(back.to_dict(), plan.to_dict())
+
+    def test_the_payload_names_its_schema_and_version(self):
+        payload = swarm_module.swarm_plan_payload(_representative_plans()[0])
+        self.assertEqual(
+            (payload["schema"], payload["version"]),
+            (swarm_module.SWARM_PLAN_SCHEMA, swarm_module.SWARM_PLAN_VERSION),
+        )
+
+
+def _first_cluster(payload: dict) -> dict:
+    return payload["plan"]["waves"][0]["clusters"][0]
+
+
+def _first_scope(payload: dict) -> dict:
+    return next(iter(payload["plan"]["issue_scopes"].values()))
+
+
+#: ``(case, mutation, what the refusal says)`` — one per way a plan file can be wrong.
+_MALFORMED = (
+    ("schema", lambda p: p.pop("schema"), "not a keel swarm plan"),
+    ("schema-wrong", lambda p: p.update(schema="keel.state"), "not a keel swarm plan"),
+    ("version-2", lambda p: p.update(version=2), "schema version 2 is not one"),
+    ("version-true", lambda p: p.update(version=True), "schema version True"),
+    ("version-str", lambda p: p.update(version="1"), "schema version '1'"),
+    ("version-missing", lambda p: p.pop("version"), "schema version None"),
+    ("plan-missing", lambda p: p.pop("plan"), "the file: missing 'plan'"),
+    ("plan-list", lambda p: p.update(plan=[]), "plan: expected an object, found list"),
+    ("swarm_id", lambda p: p["plan"].pop("swarm_id"), "plan: missing 'swarm_id'"),
+    (
+        "swarm_id-int",
+        lambda p: p["plan"].update(swarm_id=3),
+        "plan.swarm_id: expected a string",
+    ),
+    (
+        "total-str",
+        lambda p: p["plan"].update(total_issues="3"),
+        "plan.total_issues: expected an integer",
+    ),
+    (
+        "total-bool",
+        lambda p: p["plan"].update(total_issues=True),
+        "plan.total_issues: expected an integer",
+    ),
+    ("waves-obj", lambda p: p["plan"].update(waves={}), "plan.waves: expected a list"),
+    (
+        "mode",
+        lambda p: p["plan"]["waves"][0].update(mode="funnel"),
+        "plan.waves[0].mode: 'funnel'",
+    ),
+    (
+        "eligible",
+        lambda p: p["plan"]["waves"][0].update(eligible_direct_landing="yes"),
+        "eligible_direct_landing: expected true or false",
+    ),
+    (
+        "cluster-list",
+        lambda p: p["plan"]["waves"][0].update(clusters=[[]]),
+        "clusters[0]: expected an object",
+    ),
+    (
+        "issues-str",
+        lambda p: _first_cluster(p).update(issues=["1"]),
+        "issues: expected a list of integers",
+    ),
+    (
+        "issues-bool",
+        lambda p: _first_cluster(p).update(issues=[True]),
+        "issues: expected a list of integers",
+    ),
+    (
+        "scope-int",
+        lambda p: _first_cluster(p).update(combined_scope=[1]),
+        "combined_scope: expected a list of strings",
+    ),
+    (
+        "assignment",
+        lambda p: _first_cluster(p).update(assignment="x"),
+        "assignment: expected an object or null",
+    ),
+    (
+        "difficulty",
+        lambda p: _first_cluster(p).update(difficulty=[]),
+        "difficulty: expected an object",
+    ),
+    (
+        "signal",
+        lambda p: _first_cluster(p)["difficulty"].update(signals=[{"name": 1, "points": 2}]),
+        "difficulty.signals[0].name: expected a string",
+    ),
+    (
+        "conflicts-list",
+        lambda p: p["plan"].update(conflict_map=[]),
+        "plan.conflict_map: expected an object",
+    ),
+    (
+        "conflict-key",
+        lambda p: p["plan"]["conflict_map"].update({"07": []}),
+        "key '07' is not an issue number",
+    ),
+    (
+        "conflict-word",
+        lambda p: p["plan"]["conflict_map"].update({"x": []}),
+        "key 'x' is not an issue number",
+    ),
+    (
+        "conflict-val",
+        lambda p: p["plan"]["conflict_map"].update({"9": "1"}),
+        "conflict_map.9: expected a list",
+    ),
+    (
+        "scopes-key",
+        lambda p: p["plan"]["issue_scopes"].update({"999": _first_scope(p)}),
+        "holds the scope of issue",
+    ),
+    (
+        "source",
+        lambda p: _first_scope(p).update(scope_source="guessed"),
+        "scope_source: 'guessed' is not one of",
+    ),
+    ("labels", lambda p: _first_scope(p).update(labels="a"), "labels: expected a list"),
+    (
+        "scope-missing",
+        lambda p: _first_scope(p).pop("predicted_files"),
+        "missing 'predicted_files'",
+    ),
+)
+
+
+class AMalformedPlanIsRefused(unittest.TestCase):
+    """A plan that is not exactly what ``to_dict`` writes raises, naming where (#1275)."""
+
+    def test_each_malformation_is_refused(self):
+        # The staffed plan: every nested type, difficulty and assignment included.
+        valid = json.dumps(swarm_module.swarm_plan_payload(_representative_plans()[3]))
+        for name, mutate, expected in _MALFORMED:
+            with self.subTest(case=name):
+                payload = json.loads(valid)
+                mutate(payload)
+                with self.assertRaises(swarm_module.SwarmPlanError) as caught:
+                    swarm_module.swarm_plan_from_payload(payload)
+                self.assertIn(expected, str(caught.exception))
+
+    def test_the_file_must_be_an_object(self):
+        with self.assertRaisesRegex(swarm_module.SwarmPlanError, "the file: expected an object"):
+            swarm_module.swarm_plan_from_payload([])
+
+    def test_an_in_memory_key_that_is_not_a_string_is_refused(self):
+        data = _representative_plans()[0].to_dict()
+        data["conflict_map"] = {101: []}
+        with self.assertRaisesRegex(swarm_module.SwarmPlanError, "key 101 is not an issue number"):
+            swarm_module.SwarmPlan.from_dict(data)
+
+
+class ThePlanFile(unittest.TestCase):
+    """``save_swarm_plan`` / ``load_swarm_plan`` / ``latest_swarm_id`` (#1275)."""
+
+    def test_absent_is_none(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertIsNone(swarm_module.load_swarm_plan("swarm-x", root=tmpdir))
+
+    def test_saved_beside_the_state_and_loaded_back(self):
+        plan = _representative_plans()[3]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = swarm_module.save_swarm_plan(plan, root=tmpdir)
+            self.assertEqual(
+                str(path),
+                str(Path(tmpdir) / ".keel" / "state" / "swarm" / "swarm-staffed.plan.json"),
+            )
+            self.assertEqual(str(path), str(swarm_module.swarm_plan_path("swarm-staffed", tmpdir)))
+            loaded = swarm_module.load_swarm_plan("swarm-staffed", root=tmpdir)
+        self.assertEqual(loaded.to_dict(), plan.to_dict())
+
+    def _refusal(self, write, swarm_id: str = "swarm-x") -> str:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = swarm_module.swarm_plan_path(swarm_id, tmpdir)
+            resolve_swarm_state_dir(tmpdir)
+            write(path)
+            with self.assertRaises(swarm_module.SwarmPlanError) as caught:
+                swarm_module.load_swarm_plan(swarm_id, root=tmpdir)
+            message = str(caught.exception)
+            self.assertTrue(message.startswith(str(path)), message)
+            return message
+
+    def test_not_json_is_refused(self):
+        message = self._refusal(lambda p: p.write_text("{not json", encoding="utf-8"))
+        self.assertIn("not JSON", message)
+
+    def test_an_unreadable_file_is_refused(self):
+        self.assertIn("cannot be read", self._refusal(lambda p: p.mkdir()))
+
+    def test_an_unknown_version_is_refused(self):
+        def write(p):
+            payload = swarm_module.swarm_plan_payload(_representative_plans()[0])
+            payload["version"] = 99
+            p.write_text(json.dumps(payload), encoding="utf-8")
+
+        self.assertIn("schema version 99", self._refusal(write, "swarm-disjoint"))
+
+    def test_another_runs_plan_is_refused(self):
+        def write(p):
+            payload = swarm_module.swarm_plan_payload(_representative_plans()[0])
+            p.write_text(json.dumps(payload), encoding="utf-8")
+
+        self.assertIn(
+            "holds the plan of swarm 'swarm-disjoint', not 'swarm-x'", self._refusal(write)
+        )
+
+    def test_the_newest_run_is_a_state_file_never_a_plan(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertIsNone(swarm_module.latest_swarm_id(tmpdir))
+            plan_path = swarm_module.save_swarm_plan(_representative_plans()[0], root=tmpdir)
+            self.assertIsNone(swarm_module.latest_swarm_id(tmpdir))
+            save_swarm_state(SwarmRunState(swarm_id="swarm-disjoint", total_workers=0), tmpdir)
+            # The plan written last: its stem, `swarm-disjoint.plan`, must still not win.
+            future = plan_path.stat().st_mtime + 60
+            os.utime(plan_path, (future, future))
+            self.assertEqual(swarm_module.latest_swarm_id(tmpdir), "swarm-disjoint")
+
+
+class PlanDrift(unittest.TestCase):
+    """What changed between the plan that ran and the plan the issues give now (#1275)."""
+
+    def _plan(self, *scopes: tuple[int, tuple[str, ...]]) -> swarm_module.SwarmPlan:
+        return build_swarm_plan(
+            [IssueScope(issue=n, predicted_files=f, scope_source="issue-body") for n, f in scopes],
+            swarm_id="s",
+        )
+
+    def test_the_same_plan_has_no_drift(self):
+        plan = self._plan((1, ("src/a.py",)), (2, ("src/b.py",)))
+        self.assertEqual(swarm_module.swarm_plan_drift(plan, plan), ())
+
+    def test_a_moved_scope_is_reported_even_when_the_waves_agree(self):
+        ran = self._plan((1, ("src/a.py",)), (2, ("src/b.py",)))
+        now = self._plan((1, ("src/a.py",)), (2, ("docs/c.md",)))
+        self.assertEqual(
+            swarm_module.swarm_plan_drift(ran, now),
+            (
+                "issue #2: the run's scope was src/b.py (issue-body); "
+                "it is now docs/c.md (issue-body)",
+            ),
+        )
+
+    def test_a_moved_partition_and_issue_set_are_reported(self):
+        ran = self._plan((1, ("src/a.py",)), (2, ("src/a.py",)))
+        now = self._plan((1, ("src/a.py",)), (2, ()), (3, ("src/z.py",)))
+        self.assertEqual(
+            swarm_module.swarm_plan_drift(ran, now),
+            (
+                "issues: the run planned #1, #2; the issues named now are #1, #2, #3",
+                (
+                    "wave 1: the run planned cluster-1-1; the issues now plan "
+                    "cluster-1-1, cluster-1-2, cluster-1-3"
+                ),
+                "wave 2: the run planned cluster-2-2; the issues now plan nothing",
+                (
+                    "issue #2: the run's scope was src/a.py (issue-body); "
+                    "it is now (none) (issue-body)"
+                ),
+            ),
+        )
+
+
+class SwarmRunPersistsItsPlan(unittest.TestCase):
+    """``swarm-run`` writes the plan it executes before any worker starts (#1275)."""
+
+    def test_the_plan_file_is_the_plan_handed_to_the_run(self):
+        seen = {}
+
+        def fake_run(plan, *, root, **_kwargs):
+            path = swarm_module.swarm_plan_path(plan.swarm_id, root)
+            seen["on_disk_at_start"] = (
+                json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+            )
+            seen["plan"] = plan
+            return swarm_module.SwarmRunResult(
+                swarm_id=plan.swarm_id,
+                status="success",
+                total_workers=0,
+                passed_count=0,
+                failed_count=0,
+                dry_run=True,
+            )
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("keel.swarm_runtime.run_swarm_orchestration", side_effect=fake_run),
+        ):
+            rc, out, err, _calls = _cli(
+                [
+                    "swarm-run",
+                    ".keel/project.yaml",
+                    "--root",
+                    tmpdir,
+                    "--issues",
+                    "101,102,103",
+                    "--swarm-id",
+                    "swarm-persist",
+                    "--json",
+                ]
+            )
+            path = swarm_module.swarm_plan_path("swarm-persist", tmpdir)
+            self.assertEqual(rc, 0, err)
+            self.assertEqual(json.loads(out)["plan_file"], str(path))
+            self.assertIn(f"swarm-run: plan persisted to {path}", err)
+            self.assertEqual(
+                seen["on_disk_at_start"], swarm_module.swarm_plan_payload(seen["plan"])
+            )
+            loaded = swarm_module.load_swarm_plan("swarm-persist", root=tmpdir)
+        self.assertEqual(loaded.to_dict(), seen["plan"].to_dict())
+
+
+class SwarmLandLandsThePersistedPlan(unittest.TestCase):
+    """``swarm-land`` lands the plan the run executed, not a re-plan of the issues (#1275).
+
+    The fixture is one where the two disagree: the run planned #101 and #102 on one file
+    — two waves, ``cluster-2-102`` — and #102 has since been re-scoped to a disjoint
+    file, so a re-plan puts both in wave 1 and ``cluster-2-102`` does not exist in it.
+    """
+
+    RAN = (
+        IssueScope(issue=101, predicted_files=("src/keel/swarm.py",), scope_source="issue-body"),
+        IssueScope(issue=102, predicted_files=("src/keel/swarm.py",), scope_source="issue-body"),
+    )
+    NOW = {
+        101: {"title": "Planner", "body": "Scope: src/keel/swarm.py", "labels": []},
+        102: {"title": "Docs", "body": "Scope: docs/keel/swarm.md", "labels": []},
+    }
+
+    def _land(self, tmpdir: str, *extra: str, land=None):
+        captured = {}
+
+        def fake_land(plan, **kwargs):
+            captured["plan"] = plan
+            return swarm_module.SwarmLandingResult(
+                swarm_id=plan.swarm_id,
+                wave_index=kwargs["wave_index"],
+                mode="direct_batch",
+                landed_clusters=(),
+                healed_clusters=(),
+                failed_clusters=(),
+                status="success",
+            )
+
+        with patch("keel.swarm_landing.land_wave_clusters", side_effect=land or fake_land):
+            rc, out, err, calls = _cli(
+                ["swarm-land", ".keel/project.yaml", "--root", tmpdir, "--json", *extra], self.NOW
+            )
+        return rc, out, err, calls, captured
+
+    def _persist(self, tmpdir: str) -> swarm_module.SwarmPlan:
+        plan = build_swarm_plan(list(self.RAN), swarm_id="swarm-ran")
+        self.assertEqual(
+            [[c.cluster_id for c in w.clusters] for w in plan.waves],
+            [["cluster-1-101"], ["cluster-2-102"]],
+            "fixture: the run planned two waves",
+        )
+        swarm_module.save_swarm_plan(plan, root=tmpdir)
+        return plan
+
+    def test_the_persisted_plan_is_landed_although_the_issues_now_plan_otherwise(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ran = self._persist(tmpdir)
+            rc, out, err, calls, captured = self._land(
+                tmpdir, "--swarm-id", "swarm-ran", "--issues", "101,102", "--wave", "2"
+            )
+            path = swarm_module.swarm_plan_path("swarm-ran", tmpdir)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([n for n, _ in calls], [101, 102], "the issues are still read")
+        self.assertEqual(captured["plan"].to_dict(), ran.to_dict())
+        self.assertEqual(
+            [c.cluster_id for c in captured["plan"].waves[1].clusters], ["cluster-2-102"]
+        )
+        payload = json.loads(out)
+        self.assertEqual(payload["plan_source"], "persisted")
+        self.assertEqual(
+            payload["plan_drift"],
+            [
+                (
+                    "wave 1: the run planned cluster-1-101; the issues now plan "
+                    "cluster-1-101, cluster-1-102"
+                ),
+                "wave 2: the run planned cluster-2-102; the issues now plan nothing",
+                (
+                    "issue #102: the run's scope was src/keel/swarm.py (issue-body); "
+                    "it is now docs/keel/swarm.md (issue-body)"
+                ),
+            ],
+        )
+        self.assertIn(f"swarm-land: landing the plan swarm-run persisted at {path}", err)
+        self.assertIn("warning: the issues now plan differently from the run", err)
+
+    def test_without_issues_the_persisted_plan_is_landed_and_nothing_is_read(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ran = self._persist(tmpdir)
+            save_swarm_state(SwarmRunState(swarm_id="swarm-ran", total_workers=2), tmpdir)
+            # No --swarm-id: the newest *state* file names the run, though the plan is newer.
+            plan_path = swarm_module.swarm_plan_path("swarm-ran", tmpdir)
+            future = plan_path.stat().st_mtime + 60
+            os.utime(plan_path, (future, future))
+            rc, out, err, calls, captured = self._land(tmpdir)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(calls, [])
+        self.assertEqual(captured["plan"].to_dict(), ran.to_dict())
+        payload = json.loads(out)
+        self.assertEqual((payload["plan_source"], payload["plan_drift"]), ("persisted", []))
+        self.assertNotIn("warning", err)
+
+    def test_with_no_persisted_plan_the_issues_are_re_planned_and_it_says_so(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rc, out, err, _calls, captured = self._land(
+                tmpdir, "--swarm-id", "swarm-ran", "--issues", "101,102"
+            )
+            path = swarm_module.swarm_plan_path("swarm-ran", tmpdir)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(_waves(captured["plan"]), [[101, 102]])
+        self.assertEqual(json.loads(out)["plan_source"], "re-planned")
+        self.assertIn(f"no plan persisted for swarm 'swarm-ran' ({path}); re-planned", err)
+
+    def test_with_no_run_at_all_the_issues_are_re_planned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rc, out, err, _calls, _captured = self._land(tmpdir, "--issues", "101,102")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)["plan_source"], "re-planned")
+        self.assertIn("no plan persisted for any swarm run under this root; re-planned", err)
+
+    def test_a_persisted_plan_keel_cannot_read_is_refused(self):
+        for name, content, expected in (
+            (
+                "malformed",
+                '{"schema": "keel.swarm-plan", "version": 1, "plan": []}',
+                "plan: expected an object",
+            ),
+            (
+                "unknown version",
+                '{"schema": "keel.swarm-plan", "version": 2, "plan": {}}',
+                "schema version 2",
+            ),
+            ("not json", "{", "not JSON"),
+        ):
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as tmpdir:
+                resolve_swarm_state_dir(tmpdir)
+                path = swarm_module.swarm_plan_path("swarm-ran", tmpdir)
+                path.write_text(content, encoding="utf-8")
+                rc, out, err, calls, _captured = self._land(
+                    tmpdir,
+                    "--swarm-id",
+                    "swarm-ran",
+                    "--issues",
+                    "101,102",
+                    land=AssertionError("nothing lands from a plan keel cannot read"),
+                )
+                self.assertEqual(rc, 1)
+                self.assertEqual(out, "")
+                self.assertEqual(calls, [], "refused before any issue is read")
+                self.assertIn(f"swarm-land: refusing the persisted plan: {path}", err)
+                self.assertIn(expected, err)
 
 
 if __name__ == "__main__":

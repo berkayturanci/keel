@@ -3306,10 +3306,17 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715 --worker-timeout 360
 ```
 
 Issues are named by `--issues` / `--issue`, and each one's scope is read and overridden
-(`--issue-scope`) exactly as for `swarm-plan` — pass the same flags to all three commands so they
-plan the same waves. Rebalancing across waves is
+(`--issue-scope`) exactly as for `swarm-plan`. Rebalancing across waves is
 decided by the plan, not by a flag: when a cluster's issue fails, `rebalance_swarm_plan` drops the
 clusters carrying that issue from the remaining waves (there is no runtime file-divergence audit).
+
+**The plan is persisted ([#1275](https://github.com/berkayturanci/keel/issues/1275)).** Before
+any worker starts, `swarm-run` writes the plan it executes to
+`.keel/state/swarm/<swarm_id>.plan.json`, beside the run's state file — its
+`SwarmPlan.to_dict()` under `{"schema": "keel.swarm-plan", "version": 1, "plan": …}` — and names
+the file on stderr and as `plan_file` in `--json`. It is the plan as planned, before any
+rebalance; `swarm-land` lands from it (below). A live run refused before its workers start writes
+none.
 
 ## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--live] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
@@ -3321,8 +3328,20 @@ keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
 ```
 
-The wave is re-planned from the issues, read and scoped as for `swarm-plan`; pass the same
-`--issue-scope` flags the run was planned with, or the wave numbers will not line up.
+**Which plan lands ([#1275](https://github.com/berkayturanci/keel/issues/1275)).** The run is
+`--swarm-id`, else the most recently written state file under `.keel/state/swarm/` (a
+`<id>.plan.json` never counts as a run). When `swarm-run` persisted a plan for that run,
+`swarm-land` lands **exactly that plan's wave** — the one whose branches exist — and stderr names
+the file; `--issues` is then optional. Named issues are still read and re-planned, but only to
+compare: if they now plan differently (an issue re-scoped, relabelled, added or dropped), stderr
+prints a warning listing each difference and the persisted plan is landed anyway, never a silent
+switch. Only when no plan was persisted is the wave re-planned from the issues, read and scoped
+as for `swarm-plan` — pass the `--issue-scope` flags the run was planned with, or the wave
+numbers will not line up — and stderr says it re-planned. A persisted plan keel cannot use —
+unreadable, not JSON, malformed, another run's, or a schema version this keel does not read — is
+refused: exit 1, the file and the reason on stderr, nothing read, nothing landed. `--json` adds
+`plan_source` (`"persisted"` or `"re-planned"`) and `plan_drift` (the warning's lines; `[]` when
+nothing differs or nothing was compared) to the landing result.
 
 The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's mode for
 the wave — wave 1, and a later wave none of whose clusters depends on an earlier wave's issue, land
