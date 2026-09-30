@@ -6,6 +6,26 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A swarm wave's landing mode follows its dependencies, and `swarm-land` refuses a dependent
+  wave** (#1276, part 1). The plan computed the mode as "the wave is not empty", so every wave
+  claimed `orthogonal_parallel` and direct batch landing — including a wave that exists only
+  because it overlaps an earlier one, whose branches were cut before that wave moved the base.
+  Wave 1, and a later wave none of whose clusters depends on an earlier wave's issue, stay
+  `orthogonal_parallel`; any other wave is now `sequential_dependent`, and a rebalance after a
+  failure re-derives it. **The JSON changes:** `swarm-plan --json` and `swarm-run --json`
+  (`wave_results`) report `"mode": "sequential_dependent"` and `"eligible_direct_landing":
+  false` for such a wave, and `swarm-land --wave N` **refuses** it, dry run or live: it runs no
+  git command and no review-evidence check, exits 1, and `--json` reports `"mode": "refused"`,
+  `"status": "failed"` and a `refused` message naming the issues the wave depends on. Land the
+  earlier wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the
+  landed ones) and land again. The rebase funnel is not reached from the CLI: its overlap check
+  is fed no real diffs until #1266. The `swarm-plan` text and `--tree` output, and the
+  keel-visual swarm view, label such a wave as refused ("dependent on an earlier wave —
+  swarm-land refuses it; land the earlier wave, then re-plan") instead of "sequential merge
+  funnel". Comparing each branch against how far the base has actually moved (part 2) is still
+  open.
+
 ## [1.25.0] - 2026-09-30
 
 - An opt-in `revert-check` gate asks what coverage cannot: it reverts each change on the branch alone and requires a test to fail as an assertion, naming every change no test notices.

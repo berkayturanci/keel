@@ -182,9 +182,9 @@ When an execution wave completes, land all passing clusters onto the project's
 keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
-- The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
-- **Orthogonal Batch Landing**: Disjoint diff trees are merged into the local `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- Every planned wave is internally disjoint, so landing always runs in direct-batch mode; the library's adaptive rebase funnel is not selected by this command.
+- The landing mode is **derived from the plan's wave mode**, not passed on the command line.
+- **Orthogonal Batch Landing** (wave 1, and any later wave none of whose clusters depends on an earlier wave's issue): disjoint diff trees are merged into the local `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **A dependent wave is refused.** A `sequential_dependent` wave — in a fresh plan, every wave after the first — had its branches cut before the earlier wave it depends on landed, so `swarm-land --wave N` refuses it, dry run or live: no checkout, no merge, exit 1, `"mode": "refused"` with the reason in `refused`. Land the earlier wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the landed ones) and land again. The library's adaptive rebase funnel is not reached from this command until #1266 feeds its overlap check real diffs.
 - **The landing is a local merge only.** `swarm-land` does not push, and it does not open or merge a pull request: a cluster reported `merged` is merged in the local base branch, its pull request stays open, and `origin` is unchanged (#1287). Pushing is the operator's step — leave it to them, and do not report the work as landed on the repository. A protected base branch refuses the push anyway; work that has to reach the repository goes through `/keel:ship` and `keel merge`, one pull request at a time.
 
 ## Step 4 — Visual tracking & terminal dashboard
@@ -213,4 +213,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.25.0 source_sha256=0f814b42f2a193f5d4f17d12843e010f8cd6b4f6be09b87e06eb723a87604711 generated_sha256=4d793fb9ed3538b1e86b9612a59cd2fb3f8ba36ef5f90564b0071709a8438cc5 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.25.0 source_sha256=8700d7fcafc017e29ecec9d3c92ded3083342e63ac55bbb0336ad45970aad569 generated_sha256=76ecb7d3d5ea2badb0d0df8ab6b502bcde581930dfa277b1acc42746a4e44d8f -->

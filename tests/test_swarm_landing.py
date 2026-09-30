@@ -222,10 +222,11 @@ class TestSwarmLandingPureLogic(unittest.TestCase):
         c2 = SwarmCluster(
             cluster_id="c2", issues=(102,), role="core", combined_scope=("src/common.py",)
         )
+        # A wave the plan found orthogonal whose actual diffs overlap: the diffs decide.
         w_overlap = SwarmWave(
             wave_index=1,
-            mode="sequential_dependent",
-            eligible_direct_landing=False,
+            mode="orthogonal_parallel",
+            eligible_direct_landing=True,
             clusters=(c1, c2),
         )
         dec_overlap = evaluate_wave_landing_mode(
@@ -1141,10 +1142,12 @@ class TestSwarmLandingThinIO(unittest.TestCase):
             c2 = SwarmCluster(
                 cluster_id="cluster-1-2", issues=(2,), role="core", combined_scope=("src/c.py",)
             )
+            # Plan-orthogonal with overlapping supplied diffs: the only way into the
+            # funnel, since a dependent wave is refused (#1276).
             w1 = SwarmWave(
                 wave_index=1,
-                mode="sequential_dependent",
-                eligible_direct_landing=False,
+                mode="orthogonal_parallel",
+                eligible_direct_landing=True,
                 clusters=(c1, c2),
             )
             plan = SwarmPlan(swarm_id="swarm-funnel", total_issues=2, waves=(w1,))
@@ -2230,10 +2233,11 @@ class LandingLeavesTheOperatorWhereTheyWere(unittest.TestCase):
             )
             for n in (1, 2)
         )
+        # Plan-orthogonal with overlapping supplied diffs: the funnel's only way in.
         wave = SwarmWave(
             wave_index=1,
-            mode="sequential_dependent",
-            eligible_direct_landing=False,
+            mode="orthogonal_parallel",
+            eligible_direct_landing=True,
             clusters=clusters,
         )
         plan = SwarmPlan(swarm_id="swarm-funnel", total_issues=2, waves=(wave,))
@@ -2373,6 +2377,185 @@ class TheDirtyTreeDecision(unittest.TestCase):
         self.assertIn("?? f19.txt, and 5 more.", refusal)
         self.assertNotIn("f20.txt", refusal)
         self.assertNotIn("more", render_dirty_tree_refusal(changes[:20]))
+
+
+class ADependentWaveIsRefused(unittest.TestCase):
+    """#1276, the owner's call: a ``sequential_dependent`` wave's branches were cut
+    before the wave it depends on landed. Rebasing them through the funnel would rely
+    on an overlap check the CLI never feeds real diffs (#1266), so ``swarm-land``
+    refuses the wave — no checkout, no merge, exit 1 — until the earlier wave lands
+    and the rest is re-planned."""
+
+    def _chain(self) -> SwarmPlan:
+        scopes = [IssueScope(issue=n, title=f"T{n}", predicted_files=("src/a.py",)) for n in (1, 2)]
+        plan = build_swarm_plan(scopes, swarm_id="swarm-dep")
+        self.assertEqual(
+            [(w.mode, w.clusters[0].depends_on_issues) for w in plan.waves],
+            [("orthogonal_parallel", ()), ("sequential_dependent", (1,))],
+            "fixture: wave 2 depends on wave 1",
+        )
+        return plan
+
+    @staticmethod
+    def _recorder() -> tuple[list[list[str]], object]:
+        commands: list[list[str]] = []
+
+        def run(cmd: list[str], cwd: Path) -> CommandResult:
+            commands.append(list(cmd))
+            # The branch tip the evidence checker below pins.
+            tip = "abc123" if cmd[:2] == ["git", "rev-parse"] else ""
+            return CommandResult(ok=True, code=0, output=tip)
+
+        return commands, _home(run)
+
+    def _land(self, plan: SwarmPlan, wave: int, *, dry_run: bool, tmpdir: str):
+        commands, runner = self._recorder()
+        asked: list[str] = []
+
+        def checker(branch: str) -> EvidenceCheck:
+            asked.append(branch)
+            return EvidenceCheck(True, "ok", "abc123")
+
+        result = land_wave_clusters(
+            plan,
+            wave_index=wave,
+            project_yaml=".keel/project.yaml",
+            root=tmpdir,
+            dry_run=dry_run,
+            runner=runner,
+            evidence_checker=checker,
+            base_branch="main",
+        )
+        return result, commands, asked
+
+    def test_a_live_landing_of_a_dependent_wave_touches_nothing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result, commands, asked = self._land(self._chain(), 2, dry_run=False, tmpdir=tmpdir)
+        self.assertEqual((result.mode, result.status), ("refused", "failed"))
+        self.assertIn("wave 2 depends on issues landed by an earlier wave (#1)", result.refused)
+        self.assertEqual(
+            (result.landed_clusters, result.healed_clusters, result.failed_clusters), ((), (), ())
+        )
+        self.assertEqual(commands, [], "a refused wave ran a command")
+        self.assertEqual(asked, [], "a refused wave checked review evidence")
+        self.assertIn("refused : wave 2 depends", render_swarm_landing_result(result))
+
+    def test_a_dry_run_reports_the_same_refusal(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result, commands, _ = self._land(self._chain(), 2, dry_run=True, tmpdir=tmpdir)
+        self.assertEqual((result.mode, result.status), ("refused", "failed"))
+        self.assertIn("Land the earlier wave, then re-plan", result.refused)
+        self.assertEqual(result.landed_clusters, ())
+        self.assertEqual(commands, [])
+
+    def test_wave_one_still_lands_as_a_direct_batch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result, commands, _ = self._land(self._chain(), 1, dry_run=False, tmpdir=tmpdir)
+        self.assertEqual(
+            (result.mode, result.status, result.refused), ("direct_batch", "success", "")
+        )
+        self.assertEqual(result.landed_clusters, ("cluster-1-1",))
+        self.assertIn(["git", "checkout", "main"], commands)
+        self.assertIn(
+            ["git", "merge", "--no-ff", "swarm/swarm-dep/cluster-1-1"], [c[:4] for c in commands]
+        )
+
+    def test_a_later_wave_without_a_dependency_still_lands_directly(self):
+        from keel.swarm import rebalance_swarm_plan
+
+        # Three issues on one file; #1 fails, so wave 2 loses its only dependency.
+        scopes = [
+            IssueScope(issue=n, title=f"T{n}", predicted_files=("src/a.py",)) for n in (1, 2, 3)
+        ]
+        plan = rebalance_swarm_plan(build_swarm_plan(scopes, swarm_id="swarm-dep"), failed_issue=1)
+        wave2 = next(w for w in plan.waves if w.wave_index == 2)
+        self.assertEqual(wave2.mode, "orthogonal_parallel", "fixture: wave 2 is free")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result, commands, _ = self._land(plan, 2, dry_run=False, tmpdir=tmpdir)
+        self.assertEqual((result.mode, result.status), ("direct_batch", "success"))
+        self.assertEqual(result.landed_clusters, ("cluster-2-2",))
+        self.assertTrue(any(c[:2] == ["git", "merge"] for c in commands), commands)
+
+
+class SwarmLandRefusesADependentWave(unittest.TestCase):
+    """The same refusal end to end through ``keel swarm-land``: exit 1, the reason in
+    ``--json``, and no git command issued (#1276)."""
+
+    def _main(self, tmpdir: str, *extra: str) -> tuple[int, str, list[list[str]]]:
+        import unittest.mock as mock
+
+        from keel import cli as cli_mod
+
+        commands: list[list[str]] = []
+
+        def recorder(cmd: list[str], cwd: Path) -> CommandResult:
+            commands.append(list(cmd))
+            if cmd[:2] == ["git", "symbolic-ref"]:
+                return CommandResult(ok=True, code=0, output="feature")
+            return CommandResult(ok=True, code=0, output="")
+
+        config = cli_mod.cfg.ProjectConfig(
+            extends="keel",
+            core_version="^0.7",
+            base_branch="main",
+            knobs=cli_mod.cfg.Knobs(build_gate_cmd="true", swarm_review_evidence=False),
+        )
+        out = io.StringIO()
+        with (
+            mock.patch.object(cli_mod.cfg, "load_config", return_value=config),
+            mock.patch("keel.swarm_landing.default_runner", side_effect=recorder),
+            redirect_stdout(out),
+            redirect_stderr(io.StringIO()),
+        ):
+            code = main(
+                [
+                    "swarm-land",
+                    ".keel/project.yaml",
+                    "--root",
+                    tmpdir,
+                    "--issues",
+                    "1,2",
+                    "--declared-file",
+                    "src/a.py",
+                    "--swarm-id",
+                    "swarm-cli-dep",
+                    "--json",
+                    *extra,
+                ]
+            )
+        return code, out.getvalue(), commands
+
+    def test_a_live_dependent_wave_exits_1_without_a_checkout_or_merge(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code, out, commands = self._main(tmpdir, "--wave", "2", "--live")
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertEqual((payload["mode"], payload["status"]), ("refused", "failed"))
+        self.assertIn("wave 2 depends on issues landed by an earlier wave (#1)", payload["refused"])
+        self.assertEqual(payload["landed_clusters"], [])
+        self.assertFalse(
+            [c for c in commands if c[:2] in (["git", "checkout"], ["git", "merge"])], commands
+        )
+        self.assertEqual(commands, [])
+
+    def test_a_dry_run_of_a_dependent_wave_reports_the_refusal(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code, out, commands = self._main(tmpdir, "--wave", "2")
+        self.assertEqual(code, 1)
+        payload = json.loads(out)
+        self.assertEqual(payload["mode"], "refused")
+        self.assertIn("re-plan", payload["refused"])
+        self.assertEqual(commands, [])
+
+    def test_wave_one_of_the_same_plan_still_lands_directly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            code, out, commands = self._main(tmpdir, "--wave", "1", "--live")
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual((payload["mode"], payload["status"]), ("direct_batch", "success"))
+        self.assertEqual(payload["landed_clusters"], ["cluster-1-1"])
+        self.assertIn(["git", "checkout", "main"], commands)
+        self.assertTrue(any(c[:2] == ["git", "merge"] for c in commands), commands)
 
 
 if __name__ == "__main__":

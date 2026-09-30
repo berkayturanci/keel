@@ -2142,10 +2142,14 @@ keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--iss
 | `--swarm-id ID` | string | derived | Reuse an existing swarm's state and branch names; the plan itself is always rebuilt from the issue flags. |
 | `--delegate` / `--review-delegate` / `--effort` / `--team` / `--reviewers` | shared staffing flags | `knobs.team` | Handed to every child ship; see [Staffing a batch](#staffing-a-batch---team---effort-and-the-difficulty-bench). |
 | `--live` | flag | off | Actually merge. Without it the command reports what it would land, including `would hold: <reason>` per cluster. A live run refuses a dirty `--root` checkout (tracked or untracked changes, keel's own `.keel/` runtime files excepted) and returns HEAD to where it started (#1279). |
-| `--json` | flag | off | Structured landing result, including `refused` (why a live run did not start, else `""`) and `warnings` (a checkout that could not be returned). |
+| `--json` | flag | off | Structured landing result, including `refused` (why the landing did not start — a dependent wave, dry run or live, or a dirty checkout on a live run — else `""`) and `warnings` (a checkout that could not be returned). |
 
-There is **no `--mode` flag**: `evaluate_wave_landing_mode` derives the mode from the plan's
-predicted scopes for the wave, and for any planned wave that is always direct batch.
+There is **no `--mode` flag**: `evaluate_wave_landing_mode` derives the mode from the plan's wave
+mode — direct batch for wave 1 and for a later wave with no dependency on an earlier wave's issue.
+A `sequential_dependent` wave is **refused**, dry run or live (#1276): no git command, `mode`
+`refused`, the issues it depends on named in `refused`, exit 1. Land the earlier wave, then
+re-plan the remaining issues and land again; the rebase funnel is not reached from the CLI until
+#1266 feeds its overlap check real diffs.
 
 ### Details — `knobs.swarm_review_evidence`
 

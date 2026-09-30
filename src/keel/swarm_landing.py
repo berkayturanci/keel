@@ -19,6 +19,7 @@ from .swarm import (
     evaluate_wave_landing_mode,
     landing_tree_changes,
     load_swarm_state,
+    render_dependent_wave_refusal,
     render_dirty_tree_refusal,
     save_swarm_state,
     update_worker_state,
@@ -359,6 +360,9 @@ def land_wave_clusters(
 ) -> SwarmLandingResult:
     """Execute orthogonal batch landing or adaptive sequential funneling for a wave.
 
+    A ``sequential_dependent`` wave is refused before anything runs (#1276); the
+    funnel is reached only for an orthogonal wave whose ``pr_diff_map`` overlaps.
+
     ``evidence_checker`` receives a cluster branch name and answers whether the
     ship review-evidence contract holds for that branch's PR (ok, reason). When
     supplied, a cluster whose evidence does not verify is **held** — reported,
@@ -400,6 +404,20 @@ def land_wave_clusters(
     # Evaluate actual diff files vs predicted
     diff_map = pr_diff_map or {}
     decision = evaluate_wave_landing_mode(target_wave, diff_map)
+    if decision.mode == "refused":
+        # A dependent wave's branches predate the landing it depends on. It is
+        # refused before any command or evidence check, dry run or live, so a
+        # preview reports exactly what the live run would do (#1276).
+        return SwarmLandingResult(
+            swarm_id=plan.swarm_id,
+            wave_index=wave_index,
+            mode=decision.mode,
+            landed_clusters=(),
+            healed_clusters=(),
+            failed_clusters=(),
+            status="failed",
+            refused=render_dependent_wave_refusal(target_wave),
+        )
 
     landed: list[str] = []
     healed: list[str] = []

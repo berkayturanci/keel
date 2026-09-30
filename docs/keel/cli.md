@@ -3279,10 +3279,11 @@ keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
 ```
 
-The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's
-predicted scopes for the wave and, for any planned wave, always resolves to direct batch — so there
-is no `--mode` flag to get wrong. `--wave` selects the
-wave (default `1`); without `--live` the command reports what it would land.
+The landing mode is **derived, not chosen**: `evaluate_wave_landing_mode` reads the plan's mode for
+the wave — wave 1, and a later wave none of whose clusters depends on an earlier wave's issue, land
+as a direct batch; a `sequential_dependent` wave is refused (#1276) — so there is no `--mode` flag
+to get wrong. `--wave` selects the wave (default `1`); without `--live` the command reports what it
+would land, or what it would refuse.
 
 **The landing is a local merge only.** `--live` runs `git checkout <base_branch>` and
 `git merge --no-ff <cluster branch>` in the checkout at `--root`; the command does not push, and it
@@ -3294,13 +3295,19 @@ merges a pull request on GitHub.
 
 - **Direct Batch Mode**: Orthogonal disjoint diff trees are merged into the local base branch one
   after another with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **A dependent wave is refused (#1276)**: a `sequential_dependent` wave — in a freshly built plan,
+  every wave after the first — had its branches cut before the earlier wave it depends on landed.
+  `swarm-land` refuses it, dry run or live: no git command, no review-evidence check, `mode` is
+  `refused`, `refused` names the issues it depends on, and the exit code is 1. Land the earlier
+  wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the landed ones)
+  and land again.
 - **Your checkout (#1279)**: a live landing checks out and merges in the `--root` checkout, so it
   refuses to start when `git status --porcelain` shows any tracked or untracked change (keel's own
   untracked runtime files under `.keel/` excepted). It names the files in `refused`, touches no
   branch, and exits 1. It then returns HEAD to the branch or commit it started on, whether the
   wave landed, conflicted or raised; a return that fails is reported in `warnings`. Dry runs are
   unchanged.
-- **Adaptive Funnel Mode**: implemented in `swarm_landing.py` (rebase onto the moved base, marker-resolver healing, hold-and-rewind) but selected only when a caller supplies a PR diff map — **no `keel swarm-land` invocation reaches it today**, because a planned wave's clusters are always disjoint.
+- **Adaptive Funnel Mode**: implemented in `swarm_landing.py` (rebase onto the moved base, marker-resolver healing, hold-and-rewind) but selected only for an `orthogonal_parallel` wave whose caller-supplied PR diff map overlaps — **no `keel swarm-land` invocation reaches it**: the CLI passes no diff map, and a dependent wave is refused rather than funneled until [#1266](https://github.com/berkayturanci/keel/issues/1266) feeds the overlap check real diffs.
 - **Review evidence (#828)**: before a live landing, every cluster branch's open PR must pass
   the same pre-merge review-evidence verification `keel merge` enforces — armed gate label,
   tier-derived verdict count, verdicts pinned to the PR head. A cluster that does not verify is

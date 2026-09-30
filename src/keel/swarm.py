@@ -2,8 +2,8 @@
 
 Pure, stdlib-first dependency graph analysis for multi-agent parallel execution.
 Partitions candidate issues into orthogonal (disjoint) Waves and independent Clusters,
-enabling Direct Batch Landing for non-overlapping diff trees and adaptive merge
-funneling with automated conflict recovery for dependent trees.
+enabling Direct Batch Landing for non-overlapping diff trees. A wave that depends on
+an earlier one is refused at landing until that wave lands and the rest is re-planned.
 
 All functions here are pure and deterministic — no subprocess, no network.
 """
@@ -304,7 +304,7 @@ class SwarmRunResult:
 class LandingDecision:
     """Evaluation of whether a wave can directly land or requires sequential funneling."""
 
-    mode: str  # "direct_batch" or "sequential_funnel"
+    mode: str  # "direct_batch", "sequential_funnel" or "refused"
     eligible: bool
     cluster_ids: tuple[str, ...]
     reason: str = "orthogonal_diffs"
@@ -333,8 +333,10 @@ class SwarmLandingResult:
     #: verify — (cluster_id, reason) pairs. Held is not failed: the code is
     #: intact, the independent-review contract is simply not yet satisfied.
     held_clusters: tuple[tuple[str, str], ...] = ()
-    #: Why a live landing did not start at all: a dirty working tree, or a
-    #: checkout whose status or HEAD could not be read. Empty when it started.
+    #: Why a landing did not start at all: a ``sequential_dependent`` wave (dry
+    #: run or live, ``mode`` is then ``"refused"``, #1276), or, live only, a dirty
+    #: working tree or a checkout whose status or HEAD could not be read. Empty
+    #: when it started.
     refused: str = ""
     #: What the operator must still do by hand after the wave; today only a
     #: checkout that could not be returned to the branch it started on.
@@ -924,13 +926,12 @@ def build_swarm_plan(
 
         assigned_prior_issues.update(current_wave_issues)
 
-        # Determine mode & direct landing eligibility
-        is_orthogonal = len(current_wave_issues) > 0
+        mode, eligible = wave_landing_mode(wave_idx, clusters)
         waves.append(
             SwarmWave(
                 wave_index=wave_idx,
-                mode="orthogonal_parallel" if is_orthogonal else "sequential_dependent",
-                eligible_direct_landing=is_orthogonal,
+                mode=mode,
+                eligible_direct_landing=eligible,
                 clusters=tuple(clusters),
             )
         )
@@ -944,6 +945,20 @@ def build_swarm_plan(
         conflict_map=frozen_conflicts,
         issue_scopes=scope_by_id,
     )
+
+
+def wave_landing_mode(wave_index: int, clusters: Sequence[SwarmCluster]) -> tuple[str, bool]:
+    """A wave's plan mode and whether it may land as a direct batch.
+
+    The first wave is ``orthogonal_parallel``: nothing lands before it. A later wave is
+    too only when none of its clusters depends on an issue from an earlier wave;
+    otherwise it is ``sequential_dependent`` and not eligible for the direct batch,
+    because the base it branched from moves when the wave it depends on lands. The
+    mode used to be computed as "the wave is not empty", which every wave is, so every
+    wave claimed direct landing (#1276).
+    """
+    orthogonal = wave_index == 1 or not any(c.depends_on_issues for c in clusters)
+    return ("orthogonal_parallel" if orthogonal else "sequential_dependent", orthogonal)
 
 
 def seat_label(seat: dict[str, Any] | None) -> str:
@@ -992,10 +1007,12 @@ def render_swarm_plan_text(plan: SwarmPlan) -> str:
         "",
     ]
     for w in plan.waves:
+        # What swarm-land does with the wave (#1276): a dependent wave is refused.
         landing = (
             "eligible for direct batch landing"
             if w.eligible_direct_landing
-            else "sequential merge funnel"
+            else "dependent on an earlier wave — swarm-land refuses it; "
+            "land the earlier wave, then re-plan"
         )
         lines.append(f"Wave {w.wave_index} [{w.mode}] — {landing}:")
         for c in w.clusters:
@@ -1037,7 +1054,11 @@ def render_swarm_plan_tree(plan: SwarmPlan) -> str:
 
     for w in plan.waves:
         mode_icon = "⚡" if w.eligible_direct_landing else "⏳"
-        landing_label = "Direct Batch Landing" if w.eligible_direct_landing else "Sequential Funnel"
+        landing_label = (
+            "Direct Batch Landing"
+            if w.eligible_direct_landing
+            else "Dependent — refused until re-planned"
+        )
         lines.append(f"{mode_icon} Wave {w.wave_index} [{w.mode}] — {landing_label}")
 
         num_clusters = len(w.clusters)
@@ -1246,11 +1267,14 @@ def rebalance_swarm_plan(plan: SwarmPlan, failed_issue: int) -> SwarmPlan:
                 )
             new_clusters.append(c)
         if new_clusters:
+            # Re-derived, not copied: dropping the failed issue can remove a wave's
+            # last dependency, and then nothing it waits on is going to land.
+            mode, eligible = wave_landing_mode(w.wave_index, new_clusters)
             new_waves.append(
                 SwarmWave(
                     wave_index=w.wave_index,
-                    mode=w.mode,
-                    eligible_direct_landing=w.eligible_direct_landing,
+                    mode=mode,
+                    eligible_direct_landing=eligible,
                     clusters=tuple(new_clusters),
                 )
             )
@@ -1289,8 +1313,24 @@ def evaluate_wave_landing_mode(
     wave: SwarmWave,
     pr_diff_map: dict[str, list[str] | tuple[str, ...]],
 ) -> LandingDecision:
-    """Evaluate whether a wave can directly land or requires sequential funneling."""
+    """Evaluate whether a wave can directly land, needs sequential funneling, or is refused.
+
+    A wave the plan marked ``sequential_dependent`` is **refused** whatever its size:
+    it exists because its clusters overlap work an earlier wave lands, so its
+    branches were cut from a base that has since moved (#1276). Rebasing them
+    through the funnel would lean on an overlap check nothing feeds real diffs yet
+    (#1266), so the operator lands the earlier wave and re-plans instead. Only a
+    wave the plan found orthogonal is then judged on its own clusters' diffs; the
+    funnel stays reachable for a caller that supplies ``pr_diff_map``.
+    """
     cluster_ids = tuple(c.cluster_id for c in wave.clusters)
+    if not wave.eligible_direct_landing:
+        return LandingDecision(
+            mode="refused",
+            eligible=False,
+            cluster_ids=cluster_ids,
+            reason="depends_on_earlier_wave",
+        )
     if len(cluster_ids) <= 1:
         return LandingDecision(
             mode="direct_batch",
@@ -1365,6 +1405,25 @@ def landing_tree_changes(porcelain: str) -> tuple[str, ...]:
             continue
         changes.append(line)
     return tuple(changes)
+
+
+def render_dependent_wave_refusal(wave: SwarmWave) -> str:
+    """The reason ``swarm-land`` gives for refusing a ``sequential_dependent`` wave.
+
+    Its branches were cut before the earlier wave it depends on landed, and the
+    rebase funnel that could carry them over stays off until its overlap check is
+    fed real diffs (#1266), so the way through is to land the earlier wave and
+    re-plan the rest (#1276).
+    """
+    deps = sorted({d for c in wave.clusters for d in c.depends_on_issues})
+    listed = f" ({', '.join(f'#{d}' for d in deps)})" if deps else ""
+    return (
+        f"wave {wave.wave_index} depends on issues landed by an earlier wave{listed}; "
+        "its branches were cut before that landing. Land the earlier wave, then re-plan "
+        "the remaining issues (keel swarm-plan / swarm-run without the landed ones) and "
+        "land again. The rebase funnel stays off until #1266 feeds it real diffs; "
+        "nothing was checked out or merged"
+    )
 
 
 def render_dirty_tree_refusal(changes: Sequence[str]) -> str:

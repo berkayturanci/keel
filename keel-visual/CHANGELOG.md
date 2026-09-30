@@ -7,6 +7,11 @@ All notable changes to keel-visual are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **The swarm view says a dependent wave is refused, not funneled** (keel #1276). A wave that
+  is not eligible for direct landing was labelled `Sequential Funnel`, and the landing-mode tile
+  read `Adaptive Funnel`, but `keel swarm-land` refuses such a wave until the earlier wave lands
+  and the rest is re-planned. The wave now reads `Dependent — Refused` and the tile
+  `Direct Batch · Dependent Refused`; tests fail if the template says "funnel" again.
 - **The PyPI page's links and screenshots work** (#1371). The README is the PyPI long
   description, and its eight relative targets (`../README.md`, `../docs/keel/swarm.md`,
   `RELEASING.md`, `screenshots/…`) resolved against pypi.org, so the links were dead and the
