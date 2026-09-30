@@ -6,6 +6,31 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **A live swarm worker implements its cluster, under consent the operator delegates** (#1400,
+  first slice). `swarm-run --live` was refused: its worker was `keel ship`, an assessment that
+  never writes code, commits or opens a pull request, and the operator's consent could not
+  reach it. A live worker is now the cluster's **implementer seat** — `--delegate`, a `--team` or
+  difficulty bench, or `knobs.team.implement` — dispatched by keel through the machinery
+  `keel delegate run` uses, in the cluster's own worktree. keel then commits the change on
+  `swarm/<swarm_id>/<cluster_id>`, runs `keel run-gates --phases guard,test --defer-jury` there,
+  pushes the branch and opens one pull request per cluster (`Refs #N`, never `Closes`). A worker
+  stops at the first stage that fails and reports it (`stage`: `consent`, `worktree`,
+  `implement`, `commit`, `gates`, `push`, `pull_request`): a failed implementer or a red gate
+  pushes nothing and opens nothing. Every cluster's seat is planned before any worker starts; a
+  `subagent:` seat or an `api`/`ollama`/profile transport refuses the run with the reason.
+  - **Consent** is obtained at the parent exactly as for every live command (new
+    `--approve-scope`, `--operator`, `--consent-mode` on `swarm-run`; `KEEL_APPROVE_SCOPE` +
+    `KEEL_OPERATOR` under `consent_mode: standing`) over the scopes `filesystem`, `git` and
+    `github`, before any issue is read. It is delegated to each worker explicitly — exactly the
+    parent's scopes, none for a cluster the delegation does not name — and recorded as `consent`
+    (who, which scopes, source, mode, when, which run and clusters) in the swarm state file and
+    `--json`, with each worker's `scopes` and the delegation in each pull request body. The
+    workers' children run without the `KEEL_*` consent variables. `agent` mode and a consent
+    without an operator are refused.
+  - Not in this slice: the pull requests carry no review evidence, so `swarm-land` still holds
+    them, and nothing lands them (#1287). The run ledger is not written.
+
 ### Fixed
 - **Each swarm issue is planned from its own scope, and an issue that declares none conflicts
   with everything** (#1274). `swarm-plan`, `swarm-run` and `swarm-land` handed the same

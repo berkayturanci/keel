@@ -97,8 +97,10 @@ once here in full; the per-command sections below only note deviations.
     `agent-delegated` and the approval prompt is delegated to the host agent's own
     permission system. The structured contract is still emitted.
 - **Accepted by:** `plan`, `merge`, `ship`, `implement`, `review`, `morning`, `wrap`,
-  `work-block`, `overnight`, `regression`, `review-all-day`, and `doctor` (where the
-  consent covers what `doctor --fix` writes).
+  `work-block`, `overnight`, `regression`, `review-all-day`, `doctor` (where the
+  consent covers what `doctor --fix` writes), and `swarm-run` (where `--live` delegates the
+  consent to each cluster's worker; `agent` mode approves nothing it can delegate, so a live
+  swarm needs explicit or standing scopes and an operator).
 - **Example:** `KEEL_CONSENT_MODE=agent keel plan .keel/project.yaml --command ship --live --json`
 
 ### `--approve-scope SCOPE`
