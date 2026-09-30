@@ -60,6 +60,17 @@ All notable changes to keel are documented here. The format follows
   - **The guards.** `tests/test_site_seo.py` and `tests/test_website_csp.py` enumerate it with the other articles. `tests/test_revert_check_article.py` rebuilds the article's fixture from its configuration block, requires `git diff -U0` to print the diff it shows and `keel run-gates` to print its output line for line, runs the follow-up it describes, and holds the stated defaults to `revertcheck`, the off-by-default claim to `projects/keel.yaml` and `.keel/project.yaml`, and the audit's framing to the CHANGELOG.
 
 ### Fixed
+- **A run-ledger reader skips a record kind it does not know instead of refusing the ledger**
+  (#1400, groundwork). Every reader parsed the ledger through one validator that refused the
+  **whole** file on the first record whose `record_type` was not `ship_run`, so any record kind
+  a newer keel appended would have locked an older keel on the same checkout out of its own
+  history — `ship`, `merge`, `evidence-verify`, `consent-verify`, `scope-verify`,
+  `dryrun-verify`, `close-reconcile`, `status`, `ledger` and the `capture-*` commands would all
+  have failed on it. Such a record is now skipped — never read as a ship run, never counted by
+  `status` — with one `warning:` line on stderr per kind, naming the kind and the line it was
+  first seen on. A record of a known kind is validated exactly as before, and a record with no
+  `record_type` is still refused. The ledger contract publishes the rule as
+  `unknown_record_types: skip-with-warning`. No new record kind is written yet.
 - **`swarm-land` lands the plan `swarm-run` executed, not a re-plan of the issues** (#1275, core;
   `keel-visual` follows separately). The swarm plan was written nowhere, so `swarm-land` rebuilt
   it from `--issues` — and once an issue was re-scoped, relabelled or edited between the run and

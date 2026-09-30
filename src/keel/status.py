@@ -169,7 +169,13 @@ def _next_item(record: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _history(records: list[dict[str, Any]]) -> dict[str, Any]:
-    items = [_history_item(record) for record in records]
+    # Ship runs only: every item is read as one (its merge action, its verdict), so a
+    # record of another kind would be counted as a shipped run (#1400).
+    items = [
+        _history_item(record)
+        for record in records
+        if record.get("record_type") == ledger.RECORD_TYPE_SHIP_RUN
+    ]
     counts = {"shipped": 0, "blocked": 0, "deferred": 0, "skipped": 0}
     for item in items:
         counts[item["state"]] += 1
