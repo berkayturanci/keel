@@ -33,15 +33,24 @@ _MARKUP = re.compile(r"</?[A-Za-z]")
 _SCRIPT = re.compile(r"<script(\s[^>]*)?>(.*?)</script[^>]*>", re.S | re.I)
 _SAFE_CALL = re.compile(r"(esc|statusClass)\(")
 # Expressions that are safe without esc(), each for a reason the test can state:
-# the two mode values are one of two string constants, and the two *Html values are
-# markup literals built just above, which this test checks in their own right. A
-# nested literal is shown as `...`; it is checked separately as its own literal.
+# the two mode values are one of two string constants, and the *Html/*Block values are
+# markup literals built just above, which this test checks in their own right
+# (``test_allow_listed_markup_is_built_from_literals`` holds that). A nested literal is
+# shown as `...`; it is checked separately as its own literal.
+SWARM_MARKUP_NAMES = (
+    "issuesHtml",
+    "issueRowsHtml",
+    "scopeHtml",
+    "depsHtml",
+    "depsBlock",
+    "bandHtml",
+    "implHtml",
+)
 ALLOWED = {
     "swarm.html": {
         "modeClass",
         "modeLabel",
-        "issuesHtml",
-        "scopeHtml",
+        *SWARM_MARKUP_NAMES,
         "w.details ? `...` : ''",
     },
 }
@@ -167,6 +176,40 @@ class TestTemplateEscaping(unittest.TestCase):
             "'Dependent — Refused';",
             src,
         )
+
+    def test_allow_listed_markup_is_built_from_literals(self) -> None:
+        # Each allow-listed name is assigned exactly once, and outside its template
+        # literals (whose interpolations the scan checks) and quoted strings its right-hand
+        # side names only local lists, array methods and other allow-listed names — never a
+        # plan value. A new plan field has to arrive through esc() to be shown (#1275).
+        src = load("swarm.html")
+        known = {
+            *SWARM_MARKUP_NAMES,
+            *("issues", "scope", "deps", "band", "implName", "scopes", "num", "s"),
+            *("map", "filter", "join", "slice", "length", "String", "typeof"),
+        }
+        for name in SWARM_MARKUP_NAMES:
+            with self.subTest(name=name):
+                self.assertEqual(len(re.findall(rf"\b{name}\s*\+?=(?!=)", src)), 1, name)
+                (rhs,) = re.findall(rf"\bconst {name} = ([^;]*);", src)
+                outside = re.sub(r"`[^`]*`|'[^']*'", "", rhs)
+                stray = set(re.findall(r"[A-Za-z_]\w*", outside)) - known
+                self.assertEqual(stray, set(), f"{name} = {rhs}")
+
+    def test_plan_values_the_dag_shows_are_escaped(self) -> None:
+        # The fields the DAG gained when it began drawing the persisted plan (#1275).
+        src = load("swarm.html")
+        for expr in (
+            "esc(scopes[String(num)].title || '')",
+            "esc(scopes[String(num)].scope_source || '')",
+            "esc(band)",
+            "esc(implName)",
+            "esc(num)",
+        ):
+            self.assertIn("${" + expr + "}", src)
+        # The no-plan sentence carries a path and a reason; it is text, never markup.
+        self.assertIn("noticeEl.textContent = notice;", src)
+        self.assertNotIn("noticeEl.innerHTML", src)
 
     def test_the_swarm_view_never_calls_a_dependent_wave_a_funnel(self) -> None:
         # keel swarm-land refuses a dependent wave (#1276); a "funnel" label

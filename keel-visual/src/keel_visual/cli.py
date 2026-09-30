@@ -966,8 +966,126 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: The plan ``keel swarm-run`` persists beside a run's state (keel #1275):
+#: ``<id>.json`` is the state, ``<id>.plan.json`` the plan that run executed, as
+#: ``{"schema": "keel.swarm-plan", "version": 1, "plan": SwarmPlan.to_dict()}``.
+#: These mirror ``keel.swarm.SWARM_PLAN_*``. They are spelled out here because the
+#: core floor keel-visual declares (``keel-workflow>=1.15.0``) predates them, and a
+#: keel-visual installed beside an older core must still find runs and read plans.
+SWARM_PLAN_SCHEMA = "keel.swarm-plan"
+SWARM_PLAN_VERSION = 1
+SWARM_PLAN_SUFFIX = ".plan.json"
+#: Where a run's files live, as the page shows it (``/`` on every OS).
+_SWARM_STATE_SHOWN = ".keel/state/swarm"
+
+
+class SwarmPlanUnreadable(ValueError):
+    """A persisted plan file the swarm view will not draw: it says why in the page."""
+
+
+def latest_swarm_state(state_dir: Path) -> Path | None:
+    """The most recently written run's state file under ``state_dir``, or ``None``.
+
+    ``keel.swarm.latest_swarm_id``'s rule (keel #1275), replicated because keel-visual's
+    core floor predates it: only a state file names a run. A ``<id>.plan.json`` beside it
+    is that run's plan, and its stem (``<id>.plan``) names no run — so a plan written
+    after its state must not become "the newest run".
+    """
+    files = sorted(
+        (p for p in state_dir.glob("*.json") if not p.name.endswith(SWARM_PLAN_SUFFIX)),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return files[0] if files else None
+
+
+def _check_plan_shape(plan: dict[str, Any]) -> None:
+    """The structure the page walks, for a core too old to parse the plan itself."""
+    waves = plan.get("waves")
+    if not isinstance(plan.get("swarm_id"), str) or not isinstance(waves, list):
+        raise SwarmPlanUnreadable("the plan has no 'swarm_id' string or no 'waves' list")
+    for n, wave in enumerate(waves):
+        clusters = wave.get("clusters") if isinstance(wave, dict) else None
+        if not isinstance(clusters, list) or not all(isinstance(c, dict) for c in clusters):
+            raise SwarmPlanUnreadable(f"waves[{n}] is not a wave with a list of clusters")
+    for key in ("issue_scopes", "conflict_map"):
+        if not isinstance(plan.get(key), dict):
+            raise SwarmPlanUnreadable(f"the plan's '{key}' is not an object")
+
+
+def swarm_plan_from_payload(data: Any, swarm_id: str) -> dict[str, Any]:
+    """The plan in a persisted plan file's JSON, or :class:`SwarmPlanUnreadable`.
+
+    The envelope is checked here, for any core. The plan itself is then parsed by
+    ``keel.swarm.swarm_plan_from_payload`` when the installed core has it — the same
+    strict reader ``keel swarm-land`` uses, so the page never draws a plan swarm-land
+    would refuse — and otherwise checked for the structure the page walks.
+    """
+    if not isinstance(data, dict):
+        raise SwarmPlanUnreadable(f"expected a JSON object, found {type(data).__name__}")
+    if data.get("schema") != SWARM_PLAN_SCHEMA:
+        raise SwarmPlanUnreadable(
+            f"not a keel swarm plan (its 'schema' is not {SWARM_PLAN_SCHEMA!r})"
+        )
+    version = data.get("version")
+    if isinstance(version, bool) or version != SWARM_PLAN_VERSION:
+        raise SwarmPlanUnreadable(
+            f"schema version {version!r} is not one keel-visual reads ({SWARM_PLAN_VERSION})"
+        )
+    plan = data.get("plan")
+    if not isinstance(plan, dict):
+        raise SwarmPlanUnreadable("its 'plan' is not an object")
+
+    from keel import swarm as core_swarm
+
+    core_parse = getattr(core_swarm, "swarm_plan_from_payload", None)
+    if core_parse is None:
+        _check_plan_shape(plan)
+    else:
+        try:
+            plan = core_parse(data).to_dict()
+        except ValueError as exc:  # keel.swarm.SwarmPlanError is a ValueError
+            raise SwarmPlanUnreadable(str(exc)) from exc
+    if plan["swarm_id"] != swarm_id:
+        raise SwarmPlanUnreadable(f"holds the plan of swarm {plan['swarm_id']!r}, not {swarm_id!r}")
+    return plan
+
+
+def load_swarm_plan(state_dir: Path, swarm_id: str) -> tuple[dict[str, Any] | None, str, str]:
+    """``(plan, status, detail)`` for run ``swarm_id``'s persisted plan.
+
+    ``status`` is ``"persisted"`` (``plan`` is the plan the run executed), ``"missing"``
+    (no plan file: a run from before keel #1275) or ``"unreadable"`` (a file that is not
+    JSON, not a plan, an unknown schema version, or another run's plan). ``detail`` is
+    the sentence the page shows. Nothing here raises: a bad file is reported, and the
+    view is never rebuilt from a guess.
+    """
+    name = f"{swarm_id}{SWARM_PLAN_SUFFIX}"
+    shown = f"{_SWARM_STATE_SHOWN}/{name}"
+    path = state_dir / name
+    if not path.exists():
+        return None, "missing", f"no persisted plan at {shown}"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return None, "unreadable", f"{shown}: cannot be read ({exc})"
+    except (ValueError, RecursionError) as exc:
+        return None, "unreadable", f"{shown}: not JSON ({exc})"
+    try:
+        plan = swarm_plan_from_payload(data, swarm_id)
+    except SwarmPlanUnreadable as exc:
+        return None, "unreadable", f"{shown}: {exc}"
+    return plan, "persisted", shown
+
+
 def _resolve_swarm_data(args: argparse.Namespace) -> dict[str, Any]:
-    """Resolve swarm plan and state dictionaries from state files or fixture."""
+    """The swarm view's payload: the run's state and the plan it persisted.
+
+    ``plan`` is the plan ``swarm-run`` persisted, never one rebuilt here: a rebuild from
+    the workers has no predicted files, so it always came out as one flat wave with no
+    dependencies (keel #1280). With no readable plan, ``plan`` is ``None`` and
+    ``plan_status``/``plan_detail`` say why, for the page to show.
+    """
     fixture = getattr(args, "swarm_json", None)
     if fixture is not None:
         return json.loads(Path(fixture).read_text(encoding="utf-8"))
@@ -984,49 +1102,33 @@ def _resolve_swarm_data(args: argparse.Namespace) -> dict[str, Any]:
             if candidate.exists():
                 selected_file = candidate
         else:
-            files = sorted(
-                state_dir.glob("*.json"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if files:
-                selected_file = files[0]
+            selected_file = latest_swarm_state(state_dir)
+            if selected_file is not None:
                 swarm_id = selected_file.stem
 
-    state_dict: dict[str, Any] = {}
+    state_dict: Any = {}
     if selected_file and selected_file.exists():
         try:
             state_dict = json.loads(selected_file.read_text(encoding="utf-8"))
         except Exception:
             state_dict = {}
 
-    from keel import swarm as core_swarm
-
     # A state file of the wrong shape — a hand edit, a torn write — draws what it can
-    # and skips the rest; it must not kill the view (#1273). A worker that is not an
-    # object, or whose issue is not a whole number, is left out.
+    # and skips the rest; it must not kill the view (#1273).
     if not isinstance(state_dict, dict):
         state_dict = {}
-    workers = state_dict.get("workers")
-    scopes: list[core_swarm.IssueScope] = []
-    for w in workers if isinstance(workers, list) else []:
-        if not isinstance(w, dict):
-            continue
-        try:
-            issue = int(w.get("issue", 1))
-        except (TypeError, ValueError, OverflowError):
-            continue
-        scopes.append(
-            core_swarm.IssueScope(
-                issue=issue, title=f"Worker {issue}", role=str(w.get("role", "core"))
-            )
-        )
 
-    plan = core_swarm.build_swarm_plan(scopes, swarm_id=swarm_id or "swarm-empty")
+    if swarm_id:
+        plan, plan_status, plan_detail = load_swarm_plan(state_dir, swarm_id)
+    else:
+        plan, plan_status = None, "missing"
+        plan_detail = f"no swarm run under {_SWARM_STATE_SHOWN}/"
 
     return {
         "swarm_id": swarm_id or "swarm-empty",
-        "plan": plan.to_dict(),
+        "plan": plan,
+        "plan_status": plan_status,
+        "plan_detail": plan_detail,
         "state": state_dict,
     }
 

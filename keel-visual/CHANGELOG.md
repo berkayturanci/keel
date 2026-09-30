@@ -7,6 +7,23 @@ All notable changes to keel-visual are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **The swarm view draws the plan the run executed, not a flat one it made up** (keel #1275,
+  #1280 item 1). `keel-visual swarm` rebuilt a plan from the run's workers, with no predicted
+  files, so no two issues conflicted and every run drew as one wave with no dependencies. It now
+  reads the plan `keel swarm-run` persists as `.keel/state/swarm/<id>.plan.json`
+  (`schema: keel.swarm-plan`, `version: 1`) and draws its real waves — `Dependent — Refused`
+  where the plan is `sequential_dependent` — with each cluster's issue titles, scope sources,
+  predicted files, dependencies (and the wave each waits on), difficulty band and implementer,
+  every value through `esc()`. A run with no plan file, or one that is not JSON, not a
+  `keel.swarm-plan`, of another schema version or another run's, shows a sentence saying so
+  instead of a DAG; the worker matrix still shows the run. With a core that has
+  `keel.swarm.swarm_plan_from_payload` the plan goes through the same strict reader
+  `swarm-land` uses; with an older core (the declared floor is `keel-workflow>=1.15.0`) a local
+  check of the documented format stands in. `--json` now carries `plan` (or `null`),
+  `plan_status` (`persisted`/`missing`/`unreadable`) and `plan_detail`.
+- **The newest swarm run is the newest state file, not the newest `*.json`** (keel #1275).
+  A `<id>.plan.json` written after its state became "the newest run", named `<id>.plan`, and
+  drew nothing; run discovery now skips plan files, as core's `latest_swarm_id` does.
 - **The swarm view says a dependent wave is refused, not funneled** (keel #1276). A wave that
   is not eligible for direct landing was labelled `Sequential Funnel`, and the landing-mode tile
   read `Adaptive Funnel`, but `keel swarm-land` refuses such a wave until the earlier wave lands

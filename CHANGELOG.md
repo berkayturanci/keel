@@ -113,6 +113,10 @@ All notable changes to keel are documented here. The format follows
     `from_dict` that round-trips `to_dict` exactly.
   - `swarm-status` and `swarm-land` pick "the newest run" from state files only; a
     `<id>.plan.json` never counts as one.
+  - `keel-visual swarm` now draws that persisted plan as well, and says so when a run has none,
+    instead of rebuilding a flat one-wave DAG (#1280 item 1; see `keel-visual/CHANGELOG.md`,
+    unreleased). The `/keel:swarm` command, `docs/keel/swarm.md`, `docs/keel/cli.md` and the site
+    say so, and that keel-visual 0.9.0 still draws the flat DAG.
 - **A live swarm worker's implementer cannot reach the remote, or tamper with keel's own git
   steps** (#1400, second slice). The
   implementer seat — an agent CLI with tools, steered by issue text nobody vetted — inherited the
