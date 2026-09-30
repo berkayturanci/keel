@@ -18,7 +18,7 @@ runs on itself, and the keel-visual companion.
 
 The keel is a ship's backbone — the fixed spine every project builds on. Work is driven
 by `keel:ship`; `keel:swarm` aims the same backbone at a whole backlog as parallel waves,
-but it is **experimental** and does not land work yet ([#1281](https://github.com/berkayturanci/keel/issues/1281)). keel is where
+but it is **experimental**: a live run opens one pull request per cluster and nothing in the swarm reviews them, and no real landing has been exercised yet ([#1281](https://github.com/berkayturanci/keel/issues/1281)). keel is where
 ships and fleets are built.
 
 Keel is based on the work pattern of a strong teammate in a real engineering team:

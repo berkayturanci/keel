@@ -1,6 +1,6 @@
 ---
 name: keel-swarm
-description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. Planning runs; a live run lands nothing yet (#1281). Use /keel:ship for work that must merge.
+description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. A live run implements each cluster and opens one PR per cluster; swarm-land merges each through keel merge once its review verdicts are posted — nothing in the swarm reviews them, and no real landing has been exercised yet (#1281). Use /keel:ship for an issue that must merge today.
 ---
 
 # keel-swarm
@@ -9,7 +9,7 @@ Use this skill when the user asks to run the keel command `swarm` (e.g. `keel sw
 
 # /keel:swarm
 
-## ⚠️ Experimental — do not use this to land work
+## ⚠️ Experimental — nothing in the swarm reviews the work it opens
 
 `keel swarm-plan`, `--plan-only` and `--tree` run and render a plan. A dry `swarm-run`'s worker is
 `keel ship` the CLI subcommand — a *dry ship assessment* that reports tier, window, gates and a
@@ -48,11 +48,14 @@ different matter twice over: it is read at Step 4, *after* Step 2, so on its own
 `/keel:swarm <issues> --visual` walks straight into `swarm-run` and `swarm-land`; and
 with `--plan-only` it never runs at all — and could not show anything if it did, because
 `keel-visual swarm` reads the state file only `swarm-run` writes and falls back to an empty
-board without it. That runs the N child gate suites above, one at a time in your checkout —
-for a run that lands nothing. Read the plan it renders as "what I passed", not
-"per-issue scope". For anything
-the user expects to be **merged**, say plainly that swarm cannot do it and run `/keel:ship` per
-issue instead.
+board without it. A dry run of that kind runs the N child gate suites above, one at a time in
+your checkout — for a run that implements and lands nothing. Read the plan it renders as "what I
+passed", not "per-issue scope". A live run implements each cluster and opens one pull request per
+cluster; `swarm-land` merges each through `keel merge` once its review verdicts are posted, and
+nothing in the swarm posts them. Swarm stays experimental — the first end-to-end run implemented,
+gated, pushed and opened its pull requests, and `swarm-land` held them with `keel merge`'s own
+reasons; no real landing has been exercised yet. For an issue the user needs **merged** today,
+say so and run `/keel:ship` per issue — it is still the proven path.
 
 Do not hand-drive the children to work around this. `swarm-land` lands a cluster only through
 `keel merge`, which holds any pull request without an armed gate, its review verdicts pinned to
@@ -252,4 +255,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.25.0 source_sha256=d698c19bc11e246a4d9b78071c2a5f27c5d180ce2f4ca44f01c86cb555b82790 generated_sha256=6341a4b06f4603419bfb4134c0bee6d266ccc319ea76b33c9255d79a0d60e118 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.25.0 source_sha256=7f491f651f6602e51b6b39a13c9e942d28fc091bdd1e4e32830abbb5021dfcea generated_sha256=7398c7296fbed3f565ea7f488622a541266d2a7bff2dc736f6e8a7a1ff069a24 -->

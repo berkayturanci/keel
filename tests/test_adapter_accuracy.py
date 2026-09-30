@@ -366,6 +366,20 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
         self.assertNotIn("merged into main", prose)
         self.assertIn("through `keel merge` against the project's `base_branch`", prose)
 
+    def test_the_live_run_is_described_as_it_now_is(self):
+        """#1402/#1409/#1414: a live run implements and opens one PR per cluster, and
+        `swarm-land` merges each through `keel merge`. The description and the body said
+        "a live run lands nothing yet" and "swarm cannot do it" after that landed."""
+        prose = _prose("swarm")
+        description = re.search(r"^description: (.*)$", _source("swarm"), re.M).group(1)
+        self.assertNotIn("lands nothing yet", prose)
+        self.assertIn("opens one PR per cluster", description)
+        self.assertIn("once its review verdicts are posted", description)
+        self.assertNotIn("swarm cannot do it", prose)
+        self.assertNotIn("do not use this to land work", prose)
+        self.assertIn("no real landing has been exercised yet", prose)
+        self.assertIn("it is still the proven path", prose)
+
 
 if __name__ == "__main__":
     unittest.main()

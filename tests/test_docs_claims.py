@@ -1234,6 +1234,58 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
             with self.subTest(claim=claim):
                 self.assertNotIn(claim, view)
 
+    def test_no_surface_says_a_live_swarm_lands_nothing(self):
+        """#1402/#1406/#1409/#1414 built the live path: a live `swarm-run` implements each
+        cluster and opens one pull request per cluster, and `swarm-land` merges each through
+        `keel merge`. Every surface below still said a live run "lands nothing", "does not
+        land work", "plans and dry-runs" or "has never worked end to end"."""
+        for rel in _SWARM_STATUS_SURFACES:
+            text = re.sub(r"\s+", " ", (REPO_ROOT / rel).read_text(encoding="utf-8"))
+            for stale in _STALE_SWARM_STATUS:
+                with self.subTest(surface=rel, stale=stale.pattern):
+                    self.assertIsNone(stale.search(text))
+
+    def test_the_security_page_says_the_august_audit_predates_the_live_path(self):
+        security = re.sub(r"\s+", " ", (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8"))
+        self.assertIn("That path was built after it, in the 1.26.0 line", security)
+        self.assertIn("this audit does not cover it", security)
+
+
+#: Every surface that states what a live swarm run does today.
+_SWARM_STATUS_SURFACES = (
+    "README.md",
+    "SECURITY.md",
+    "docs/keel/badges.md",
+    "docs/keel/editors.md",
+    "docs/keel/overview.md",
+    "editors/vscode/README.md",
+    "editors/vscode/extension.js",
+    "src/keel/adapters/commands/swarm.md",
+    "commands/swarm.md",
+    ".claude/commands/keel/swarm.md",
+    ".agents/skills/keel-swarm/SKILL.md",
+    "website/content.js",
+    "website/home.js",
+    "website/index.html",
+    "website/integrations.js",
+    "website/params.js",
+    "website/swarm-simulator.js",
+)
+
+#: What those surfaces said before the live path existed (#1281).
+_STALE_SWARM_STATUS = tuple(
+    re.compile(p, re.I)
+    for p in (
+        r"live (run|swarm) lands nothing",
+        r"lands nothing yet",
+        r"does not land work",
+        r"has never worked end to end|live path has never worked",
+        r"plans and dry-runs",
+        r"swarm cannot do it",
+        r"produces no commits",
+    )
+)
+
 
 #: Every place that describes what `swarm-land` does to the base branch, as
 #: ``(path, start marker, end marker)``: the excerpt runs from the start marker to

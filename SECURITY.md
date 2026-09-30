@@ -63,10 +63,12 @@ engineer, as the reports themselves state.
   symlink, inspection commands running checkout code).
 - [2026-08-15](docs/security/2026-08-15-security-audit.md) — v1.14.2 line; produced by
   Google Antigravity (Gemini 3.7 Flash). It is centred on the swarm subsystem, with a re-check of core invariants (redaction, the remote-endpoint gate, ReDoS, the merge lock), and reports no critical, high or
-  medium finding. Read it with that scope in mind: swarm is experimental
-  and its live path has never worked end to end
-  ([#1281](https://github.com/berkayturanci/keel/issues/1281)), so the report says nothing
-  about a swarm run that lands work. It reports no `bandit` or `pip-audit` run.
+  medium finding. Read it with that scope in mind: when it was written, swarm's live path
+  had never worked end to end ([#1281](https://github.com/berkayturanci/keel/issues/1281)).
+  That path was built after it, in the 1.26.0 line — a live worker implements its cluster
+  and opens one pull request per cluster, and `swarm-land` merges each through `keel merge`
+  ([#1400](https://github.com/berkayturanci/keel/issues/1400): #1402, #1406, #1409, #1414) —
+  and this audit does not cover it. It reports no `bandit` or `pip-audit` run.
 - [2026-06-15](docs/security/2026-06-15-security-audit.md) — v1.3.0 line; produced by
   Claude (Opus 4.8). Focus: the new `keel-visual` and `website/` surfaces; no critical,
   high or medium finding.
