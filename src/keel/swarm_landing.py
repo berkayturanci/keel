@@ -202,7 +202,6 @@ def land_wave_clusters(
     find_pull_request: FindPullRequest,
     merge_pull_request: MergePullRequest,
     root: str | Path = ".",
-    pr_diff_map: dict[str, list[str] | tuple[str, ...]] | None = None,
     runner: SubprocessRunner | None = None,
 ) -> SwarmLandingResult:
     """Land one wave: each cluster's pull request, in order, through ``keel merge``.
@@ -214,6 +213,16 @@ def land_wave_clusters(
     one merge. A cluster with no pull request, or one keel merge refuses, is held with
     the reason; the next cluster is tried all the same. A dry run asks keel merge for
     its own dry run, so it reports what the live landing would do and merges nothing.
+
+    ``runner`` is an injection seam for tests, like the ``_run`` seams elsewhere in keel:
+    ``swarm-land`` never passes it. It runs the git commands that read where the checkout
+    is and put it back (:func:`_read_head`, :func:`_return_to`); left out, they run through
+    :func:`keel.swarm_runtime.default_runner`.
+
+    The wave's ``mode`` is judged on its clusters' planned scopes. A ``pr_diff_map`` of
+    real diffs used to be accepted here and no caller passed one; it could only relabel
+    ``mode``, because every cluster lands through its own ``keel merge`` whatever the mode
+    says, so it is gone (#1280).
     """
     root_path = Path(root).resolve()
     target_wave = _target_wave(plan, wave_index)
@@ -227,7 +236,7 @@ def land_wave_clusters(
             status="failed",
         )
 
-    decision = evaluate_wave_landing_mode(target_wave, pr_diff_map or {})
+    decision = evaluate_wave_landing_mode(target_wave, {})
     if decision.mode == "refused":
         # A dependent wave's branches predate the landing it depends on. It is refused
         # before any lookup or merge, dry run or live, so a preview reports exactly

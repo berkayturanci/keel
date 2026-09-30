@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+import inspect
 import io
 import json
 import os
@@ -15,6 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from keel import swarm_runtime as swarm_runtime_module
 from keel import swarm_worker
 from keel.cli import build_parser, main
 from keel.delegate import RunPlan
@@ -31,6 +34,7 @@ from keel.swarm import (
     render_swarm_run_result,
     update_worker_state,
 )
+from keel.swarm_landing import land_wave_clusters
 from keel.swarm_runtime import (
     LiveRun,
     build_brief_path,
@@ -365,7 +369,6 @@ class TestSwarmOrchestration(unittest.TestCase):
                 dry_run=True,
                 max_workers=2,
                 runner=mock_runner,
-                create_worktrees=False,
                 base_branch="main",
             )
 
@@ -407,7 +410,6 @@ class TestSwarmOrchestration(unittest.TestCase):
                         live=_live(plan, tmpdir, _LiveIo(raise_for=302)),
                         max_workers=2,
                         runner=mock_runner,
-                        create_worktrees=True,
                         base_branch="main",
                     )
             except RuntimeError as exc:
@@ -445,7 +447,6 @@ class TestSwarmOrchestration(unittest.TestCase):
                 live=_live(plan, tmpdir, _LiveIo()),
                 max_workers=1,
                 runner=_Git(),
-                create_worktrees=True,
                 base_branch="main",
             )
 
@@ -472,7 +473,6 @@ class TestSwarmOrchestration(unittest.TestCase):
                 live=_live(plan, tmpdir, io_),
                 max_workers=1,
                 runner=mock_runner,
-                create_worktrees=True,
                 base_branch="main",
             )
 
@@ -571,7 +571,6 @@ class TheStoredChildOutputIsBounded(unittest.TestCase):
                 dry_run=True,
                 max_workers=2,
                 runner=mock_runner,
-                create_worktrees=False,
                 base_branch="main",
             )
             outputs = {
@@ -619,7 +618,6 @@ class AFailedWaveDoesNotSkipTheNext(unittest.TestCase):
                 root=tmpdir,
                 dry_run=True,
                 runner=runner,
-                create_worktrees=False,
                 base_branch="main",
             )
             state = load_swarm_state("swarm-skip", root=tmpdir)
@@ -719,7 +717,6 @@ class TheWorktreesBranchFromTheConfiguredBase(unittest.TestCase):
                 dry_run=False,
                 live=_live(plan, tmpdir, _LiveIo()),
                 runner=runner,
-                create_worktrees=True,
                 base_branch="develop",
             )
             self.assertEqual(len(adds), 1)
@@ -823,7 +820,6 @@ class ChildrenThatShareACheckoutRunOneAtATime(unittest.TestCase):
                 live=_live(plan, tmpdir, _LiveIo()),
                 max_workers=2,
                 runner=runner,
-                create_worktrees=True,
                 base_branch="main",
             )
         self.assertEqual(result.passed_count, 2)
@@ -1373,14 +1369,10 @@ class ALiveWorkerImplementsItsCluster(unittest.TestCase):
         self.assertEqual((res["stage"], res["scopes"]), ("consent", []))
         self.assertEqual((git.calls, io_.implemented), ([], []))
 
-    def test_there_is_no_live_run_without_a_delegation_or_a_worktree(self):
+    def test_there_is_no_live_run_without_a_delegation(self):
         plan = self._plan(721)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for kwargs in ({}, {"live": _live(plan, tmpdir, _LiveIo()), "create_worktrees": False}):
-                with self.subTest(kwargs=sorted(kwargs)), self.assertRaises(ValueError):
-                    run_swarm_orchestration(
-                        plan, "p.yaml", root=tmpdir, dry_run=False, base_branch="main", **kwargs
-                    )
+        with tempfile.TemporaryDirectory() as tmpdir, self.assertRaises(ValueError):
+            run_swarm_orchestration(plan, "p.yaml", root=tmpdir, dry_run=False, base_branch="main")
 
     def test_a_stored_scope_is_only_ever_what_was_written(self):
         """A record from before #1400 has no `scopes`; a malformed one grants nothing."""
@@ -2450,6 +2442,205 @@ class CleaningReportsWhatItCouldNotRemove(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("removed 0, failed 1", out.getvalue())
         self.assertIn("failed branch swarm/s/c: no", out.getvalue())
+
+
+def _parse(stamp: str) -> datetime.datetime:
+    return datetime.datetime.fromisoformat(stamp)
+
+
+class AWorkerReportsItsWaveStageAndTime(unittest.TestCase):
+    """#1280 item 2: a worker record had no wave, no stage and no times, so `step` jumped
+    `s0 → s4 → s10`, the board could not group by wave, and a run in flight showed nothing
+    of how far each worker had got."""
+
+    def _plan(self, *issues, overlap=False):
+        return build_swarm_plan(
+            [
+                IssueScope(
+                    issue=n,
+                    title=f"T{n}",
+                    predicted_files=("src/shared.py",) if overlap else (f"src/{n}.py",),
+                )
+                for n in issues
+            ],
+            swarm_id="swarm-progress",
+        )
+
+    def _live_run(self, plan, tmpdir, io_, git):
+        return run_swarm_orchestration(
+            plan,
+            "projects/x.yaml",
+            root=tmpdir,
+            dry_run=False,
+            live=_live(plan, tmpdir, io_),
+            max_workers=2,
+            runner=git,
+            base_branch="main",
+        )
+
+    def test_a_live_worker_records_each_stage_as_it_enters_it(self):
+        plan = self._plan(801)
+        (cluster,) = _clusters(plan)
+        seen: list[str] = []
+        real_save = swarm_runtime_module.save_swarm_state
+
+        def recording_save(state, root="."):
+            (worker,) = state.workers
+            if not seen or seen[-1] != worker.stage:
+                seen.append(worker.stage)
+            return real_save(state, root=root)
+
+        class _Watching(_LiveIo):
+            """Reads the state file while the implementer runs — what swarm-status reads."""
+
+            def implement(self, plan_, env):
+                self.during = load_swarm_state("swarm-progress", root=tmpdir)
+                return super().implement(plan_, env)
+
+        io_ = _Watching()
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.object(swarm_runtime_module, "save_swarm_state", recording_save),
+        ):
+            result = self._live_run(plan, tmpdir, io_, _Git())
+            state = load_swarm_state("swarm-progress", root=tmpdir)
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(
+            seen,
+            [
+                "",
+                "consent",
+                "worktree",
+                "implement",
+                "tamper",
+                "commit",
+                "gates",
+                "push",
+                "pull_request",
+                "done",
+            ],
+        )
+        # Every stage it entered is one the worker module names, in its order.
+        self.assertEqual([s for s in swarm_worker.STAGES if s in seen], seen[1:])
+        # In flight, the file on disk says where the worker is and since when.
+        (during,) = io_.during.workers
+        self.assertEqual(
+            (during.status, during.stage, during.finished_at), ("running", "implement", "")
+        )
+        self.assertTrue(during.started_at)
+        assert state is not None
+        (worker,) = state.workers
+        self.assertEqual(
+            (worker.cluster_id, worker.wave, worker.stage), (cluster.cluster_id, 1, "done")
+        )
+        self.assertLessEqual(_parse(worker.started_at), _parse(worker.finished_at))
+        self.assertIsNotNone(worker.elapsed_s())
+
+    def test_a_worker_that_stops_records_the_stage_that_stopped_it(self):
+        # An implementer that changed nothing is found at `commit` but stopped as
+        # `implement`: the record says what the result says, not the last stage entered.
+        for git, stopped in ((_Git(gates_ok=False), "gates"), (_Git(clean=True), "implement")):
+            plan = self._plan(802)
+            with self.subTest(stopped=stopped), tempfile.TemporaryDirectory() as tmpdir:
+                self._live_run(plan, tmpdir, _LiveIo(), git)
+                state = load_swarm_state("swarm-progress", root=tmpdir)
+                assert state is not None
+                (worker,) = state.workers
+                self.assertEqual((worker.status, worker.stage), ("failed", stopped))
+                self.assertTrue(worker.finished_at)
+
+    def test_a_worker_that_raises_keeps_the_last_stage_it_entered(self):
+        plan = self._plan(803)
+        with tempfile.TemporaryDirectory() as tmpdir, redirect_stderr(io.StringIO()):
+            self._live_run(plan, tmpdir, _LiveIo(raise_for=803), _Git())
+            state = load_swarm_state("swarm-progress", root=tmpdir)
+        assert state is not None
+        (worker,) = state.workers
+        self.assertEqual((worker.status, worker.stage), ("failed", "implement"))
+        self.assertTrue(worker.finished_at)
+
+    def test_the_record_says_both_where_the_worker_stopped_and_what_it_left(self):
+        """#1278 settles the worktree and #1280 records the stage; one record carries both.
+        A worker that failed after its seat ran — returned or raised — keeps its worktree
+        and names the stage; one that opened its pull request leaves none, and says done."""
+        cases = (
+            ("gates", _LiveIo(), _Git(gates_ok=False), "failed", True, False),
+            # Stopped as `implement` after entering `commit`: the stage is the result's.
+            ("implement", _LiveIo(), _Git(clean=True), "failed", True, False),
+            ("implement", _LiveIo(raise_for=804), _Git(), "failed", True, False),
+            ("done", _LiveIo(), _Git(), "passed", False, True),
+        )
+        for stage, io_, git, status, kept, pushed in cases:
+            plan = self._plan(804)
+            (cluster,) = _clusters(plan)
+            with (
+                self.subTest(stage=stage),
+                tempfile.TemporaryDirectory() as tmpdir,
+                redirect_stderr(io.StringIO()),
+            ):
+                self._live_run(plan, tmpdir, io_, git)
+                state = load_swarm_state("swarm-progress", root=tmpdir)
+                wt_path = build_worktree_path(
+                    plan.swarm_id, cluster.cluster_id, Path(tmpdir).resolve()
+                )
+                assert state is not None
+                (worker,) = state.workers
+                self.assertEqual((worker.status, worker.stage, worker.wave), (status, stage, 1))
+                self.assertTrue(worker.started_at and worker.finished_at)
+                self.assertEqual(worker.pushed, pushed)
+                self.assertEqual(worker.worktree, str(wt_path) if kept else "")
+                self.assertEqual(wt_path.exists(), kept)
+
+    def test_a_dry_worker_is_running_only_once_it_starts_and_each_records_its_wave(self):
+        """Each wave's workers were all marked `running` when the wave began. A dry run's
+        workers take turns, so the second read as running — with no start time — while it
+        was still waiting for the first."""
+        orthogonal = self._plan(811, 812)
+        stacked = self._plan(821, 822, overlap=True)
+        self.assertEqual(len(orthogonal.waves), 1)
+        self.assertEqual(len(stacked.waves), 2)
+        for plan, waves in ((orthogonal, [1, 1]), (stacked, [1, 2])):
+            others_when_first_ran: list[str] = []
+
+            def runner(cmd, cwd, plan=plan, others=others_when_first_ran):
+                if not others:
+                    state = load_swarm_state("swarm-progress", root=tmpdir)
+                    issue = int(cmd[cmd.index("--issue") + 1])
+                    others.extend(w.status for w in state.workers if w.issue != issue)
+                return CommandResult(True, 0, "ok")
+
+            with self.subTest(waves=waves), tempfile.TemporaryDirectory() as tmpdir:
+                run_swarm_orchestration(
+                    plan,
+                    ".keel/project.yaml",
+                    root=tmpdir,
+                    dry_run=True,
+                    max_workers=4,
+                    runner=runner,
+                    base_branch="main",
+                )
+                state = load_swarm_state("swarm-progress", root=tmpdir)
+                assert state is not None
+                self.assertEqual(others_when_first_ran, ["queued"])
+                self.assertEqual([w.wave for w in state.workers], waves)
+                for w in state.workers:
+                    # A dry run's child reports no stages, but it does start and end.
+                    self.assertEqual((w.status, w.stage), ("passed", ""))
+                    self.assertLessEqual(_parse(w.started_at), _parse(w.finished_at))
+
+
+class NoParameterIsReachableOnlyFromTestsWithoutSayingSo(unittest.TestCase):
+    """#1280 item 7: parameters no production caller passes. `create_worktrees` could only
+    ever agree with `dry_run`, and `pr_diff_map` could only relabel a landing's mode, so
+    both are gone; each `runner` is kept, and says it is a seam for tests."""
+
+    def test_the_dead_parameters_are_gone_and_the_seams_are_named(self):
+        self.assertNotIn("create_worktrees", inspect.signature(run_swarm_orchestration).parameters)
+        self.assertNotIn("pr_diff_map", inspect.signature(land_wave_clusters).parameters)
+        for fn in (run_swarm_orchestration, land_wave_clusters):
+            self.assertIn("runner", inspect.signature(fn).parameters)
+            self.assertIn("``runner`` is an injection seam for tests", fn.__doc__ or "")
 
 
 if __name__ == "__main__":

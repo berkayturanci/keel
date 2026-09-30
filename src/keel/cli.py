@@ -7691,10 +7691,12 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
             )
         return 1
 
+    # A running worker's elapsed time is measured to now, read here at the edge (#1280).
+    now = _now_iso()
     if args.json:
-        print(json.dumps(state.to_dict() if state else {}, indent=2))
+        print(json.dumps(swarm.swarm_status_payload(state, now=now) if state else {}, indent=2))
     else:
-        print(swarm.render_swarm_status_dashboard(state))
+        print(swarm.render_swarm_status_dashboard(state, now=now))
     return 0
 
 
@@ -7744,6 +7746,13 @@ def _swarm_status_leftovers(args: argparse.Namespace) -> int:
         elif any(x.action == "remove" for x in leftovers):
             print("  --clean removes the ones marked remove")
     return 1 if failed else 0
+
+
+def _now_iso() -> str:
+    """The current UTC time, ISO 8601 — read at the edge, like :func:`_today`."""
+    import datetime
+
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def _swarm_run_consent(
@@ -10410,7 +10419,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-workers",
         type=_positive_int,
         default=4,
-        help="parallel workers with their own worktree (default: 4); a dry run runs one at a time",
+        help=(
+            "parallel live workers, each in its own worktree and each an agent CLI that may "
+            "call its provider's API (default: 4); size it to your quota and machine. A dry "
+            "run runs one at a time"
+        ),
     )
     p_sr.add_argument(
         "--worker-timeout",

@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import agents, classify, ship, workspace
+from . import agents, classify, ship, swarm_worker, workspace
 from . import team as team_policy
 from .config import ProjectConfig
 
@@ -443,6 +443,29 @@ class SwarmWorkerStatus:
     #: Whether a live worker pushed its branch; ``keel swarm-status --clean`` keeps a
     #: pushed branch (#1278).
     pushed: bool = False
+    #: The wave the worker's cluster runs in, so the board can group by it (#1280). ``0``
+    #: in a record written before the field existed.
+    wave: int = 0
+    #: How far a live worker has got: one of :data:`keel.swarm_worker.STAGES`, recorded as
+    #: the worker enters it, and once it ends the stage it stopped at — ``done`` when it
+    #: opened its pull request (#1280). Empty until a live worker starts, and for a dry
+    #: run's worker, whose child ``keel ship`` reports no stages.
+    stage: str = ""
+    #: When the worker started and when it ended, ISO 8601 (#1280). Empty until it does.
+    started_at: str = ""
+    finished_at: str = ""
+
+    def elapsed_s(self, now: str = "") -> int | None:
+        """Whole seconds the worker has run: to ``finished_at``, else — still running —
+        to ``now``. ``None`` when it has not started, or a time does not parse (#1280).
+
+        ``now`` is the caller's: this module reads no clock for a derived value.
+        """
+        start = _parse_iso(self.started_at)
+        end = _parse_iso(self.finished_at or now)
+        if start is None or end is None:
+            return None
+        return max(0, int((end - start).total_seconds()))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -461,7 +484,20 @@ class SwarmWorkerStatus:
             "pull_request": self.pull_request,
             "worktree": self.worktree,
             "pushed": self.pushed,
+            "wave": self.wave,
+            "stage": self.stage,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
         }
+
+
+def _parse_iso(value: str) -> datetime.datetime | None:
+    """``value`` as an aware datetime (a naive one is read as UTC), or ``None``."""
+    try:
+        parsed = datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=datetime.UTC)
 
 
 @dataclass(frozen=True)
@@ -1186,13 +1222,14 @@ def ship_handoff_args(assignment: dict[str, Any] | None) -> tuple[str, ...]:
     return tuple(args)
 
 
-def worker_seed(cluster: SwarmCluster, *, updated_at: str = "") -> SwarmWorkerStatus:
+def worker_seed(cluster: SwarmCluster, *, wave: int = 0, updated_at: str = "") -> SwarmWorkerStatus:
     """The queued worker record for a cluster, staffed from the cluster's assignment.
 
     Pure, and separate from the runtime that persists it, because *which provider is
     running this cluster and which lead owns it* is a fact of the plan. The runtime used
     to seed every worker with the ``claude``/``default`` field defaults, so a swarm that
-    had resolved a real team still reported the placeholder one on the board.
+    had resolved a real team still reported the placeholder one on the board. ``wave`` is
+    the plan's too: the index of the wave the cluster sits in (#1280).
     """
     assignment = cluster.assignment
     implementer = None if assignment is None else assignment["implementer"]
@@ -1208,6 +1245,7 @@ def worker_seed(cluster: SwarmCluster, *, updated_at: str = "") -> SwarmWorkerSt
         step="s0",
         status="queued",
         updated_at=updated_at,
+        wave=wave,
     )
 
 
@@ -1507,8 +1545,63 @@ def render_swarm_plan_tree(plan: SwarmPlan) -> str:
     return "\n".join(lines).rstrip()
 
 
-def render_swarm_status_dashboard(state: SwarmRunState | None) -> str:
-    """Render a live terminal ASCII matrix status board of the swarm run."""
+def workers_by_wave(
+    workers: Sequence[SwarmWorkerStatus],
+) -> tuple[tuple[int, tuple[SwarmWorkerStatus, ...]], ...]:
+    """``workers`` grouped by wave, lowest wave first, in their recorded order within one
+    (#1280). Wave ``0`` — a record from before workers carried their wave — sorts first."""
+    waves: dict[int, list[SwarmWorkerStatus]] = {}
+    for w in workers:
+        waves.setdefault(w.wave, []).append(w)
+    return tuple((wave, tuple(waves[wave])) for wave in sorted(waves))
+
+
+def format_elapsed(seconds: int | None) -> str:
+    """``seconds`` the way the board prints it — ``45s``, ``12m05s``, ``1h02m`` — or ``-``."""
+    if seconds is None:
+        return "-"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m"
+
+
+def _status_counts(workers: Sequence[SwarmWorkerStatus]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for w in workers:
+        counts[w.status] = counts.get(w.status, 0) + 1
+    return counts
+
+
+def swarm_status_payload(state: SwarmRunState, *, now: str = "") -> dict[str, Any]:
+    """What ``keel swarm-status --json`` prints for a run it read (#1280).
+
+    The run's state, each worker with its derived ``elapsed_s`` (to ``now`` while it is
+    still running), and ``waves``: the workers grouped by wave — each wave's clusters and
+    how many are in each status. ``workers`` stays the flat list it always was.
+    """
+    return {
+        **state.to_dict(),
+        "as_of": now,
+        "workers": [{**w.to_dict(), "elapsed_s": w.elapsed_s(now)} for w in state.workers],
+        "waves": [
+            {
+                "wave": wave,
+                "clusters": [w.cluster_id for w in members],
+                "statuses": _status_counts(members),
+            }
+            for wave, members in workers_by_wave(state.workers)
+        ],
+    }
+
+
+def render_swarm_status_dashboard(state: SwarmRunState | None, *, now: str = "") -> str:
+    """Render a terminal ASCII matrix status board of the swarm run, grouped by wave.
+
+    ``now`` is when the board is drawn, for a running worker's elapsed time; without it a
+    running worker's elapsed time is ``-`` (#1280).
+    """
     if state is None:
         return "keel swarm status — no active or recent swarm run found."
 
@@ -1530,10 +1623,12 @@ def render_swarm_status_dashboard(state: SwarmRunState | None) -> str:
     )
     # The lead and the band it staffed from sit beside the worker, because the board is
     # where an operator asks "who is running this, and why that provider?" — the answer
-    # was in the plan JSON and nowhere a running swarm could be watched (#1017).
+    # was in the plan JSON and nowhere a running swarm could be watched (#1017). The
+    # stage and elapsed time answer "how far has it got?" while it runs (#1280).
     cols_hdr = (
-        f"│ {'Cluster':<16} │ {'Issue':<6} │ {'Role':<8} │ {'Step':<5} "
-        f"│ {'Lead':<12} │ {'Band':<8} │ {'Agent / Model':<16} │ {'Status':<10} │"
+        f"│ {'Cluster':<16} │ {'Issue':<6} │ {'Role':<8} │ {'Step':<5} │ {'Stage':<12} "
+        f"│ {'Elapsed':<7} │ {'Lead':<12} │ {'Band':<8} │ {'Agent / Model':<16} "
+        f"│ {'Status':<10} │"
     )
     width = len(cols_hdr) - 2
     lines = [
@@ -1542,17 +1637,23 @@ def render_swarm_status_dashboard(state: SwarmRunState | None) -> str:
         f"{hdr_info[:-1]}{' ' * (width - len(hdr_info) + 2)}│",
         "├" + "─" * width + "┤",
         cols_hdr,
-        "├" + "─" * width + "┤",
     ]
 
-    for w in state.workers:
-        badge = status_badges.get(w.status, f"[{w.status.upper()}]")
-        agent_str = f"{w.agent}:{w.model}"[:16]
-        row_str = (
-            f"│ {w.cluster_id:<16} │ #{w.issue:<5} │ {w.role:<8} │ {w.step:<5} "
-            f"│ {w.lead[:12]:<12} │ {w.difficulty[:8]:<8} │ {agent_str:<16} │ {badge:<10} │"
-        )
-        lines.append(row_str)
+    for wave, members in workers_by_wave(state.workers):
+        counts = ", ".join(f"{n} {status}" for status, n in _status_counts(members).items())
+        label = f"Wave {wave}" if wave else "Wave ? (not recorded)"
+        heading = f"{label} — {len(members)} worker{'s' if len(members) != 1 else ''}: {counts}"
+        lines.append("├" + "─" * width + "┤")
+        lines.append(f"│ {heading:<{width - 2}} │")
+        for w in members:
+            badge = status_badges.get(w.status, f"[{w.status.upper()}]")
+            agent_str = f"{w.agent}:{w.model}"[:16]
+            elapsed = format_elapsed(w.elapsed_s(now))
+            lines.append(
+                f"│ {w.cluster_id:<16} │ #{w.issue:<5} │ {w.role:<8} │ {w.step:<5} "
+                f"│ {w.stage or '-':<12} │ {elapsed:<7} │ {w.lead[:12]:<12} "
+                f"│ {w.difficulty[:8]:<8} │ {agent_str:<16} │ {badge:<10} │"
+            )
 
     lines.append("╰" + "─" * width + "╯")
     return "\n".join(lines)
@@ -1614,6 +1715,11 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
                 worktree=str(w.get("worktree") or ""),
                 # Only a `true` that was written is a push: `--clean` keeps what it says.
                 pushed=w.get("pushed") is True,
+                # A record from before #1280 has none of these, and still loads.
+                wave=_stored_wave(w.get("wave")),
+                stage=_stored_stage(w.get("stage")),
+                started_at=_stored_text(w.get("started_at")),
+                finished_at=_stored_text(w.get("finished_at")),
             )
             for w in raw_workers
         )
@@ -1648,6 +1754,23 @@ def _stored_pull_request(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         return None
     return value
+
+
+def _stored_wave(value: Any) -> int:
+    """A worker record's ``wave`` as written, or ``0`` — "not recorded" (#1280)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _stored_stage(value: Any) -> str:
+    """A worker record's ``stage`` when it is one a live worker has, else ``""`` (#1280)."""
+    return value if value in swarm_worker.STAGES else ""
+
+
+def _stored_text(value: Any) -> str:
+    """A worker record's text field as written, or ``""`` when it is not text (#1280)."""
+    return value if isinstance(value, str) else ""
 
 
 #: The number at the end of a pull request URL, as ``gh pr create`` prints it.
@@ -1806,12 +1929,15 @@ def update_worker_state(
     pull_request: int | None = None,
     worktree: str | None = None,
     pushed: bool | None = None,
+    stage: str | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
 ) -> SwarmRunState:
     """Return a new SwarmRunState with the specified worker's fields updated.
 
     ``pull_request`` is recorded when given and otherwise kept, so a later status update
     never forgets the pull request ``swarm-land`` has to merge (#1287). ``worktree`` and
-    ``pushed`` likewise (#1278).
+    ``pushed`` likewise (#1278), and ``stage``, ``started_at`` and ``finished_at`` (#1280).
     """
     # `replace` rather than a field-by-field rebuild: the rebuild had to name every
     # field, so each field added to the record (the lead and difficulty band a worker
@@ -1826,6 +1952,9 @@ def update_worker_state(
             pull_request=pull_request if pull_request is not None else w.pull_request,
             worktree=worktree if worktree is not None else w.worktree,
             pushed=pushed if pushed is not None else w.pushed,
+            stage=stage if stage is not None else w.stage,
+            started_at=started_at if started_at is not None else w.started_at,
+            finished_at=finished_at if finished_at is not None else w.finished_at,
         )
         if w.cluster_id == cluster_id
         else w

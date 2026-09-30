@@ -132,6 +132,22 @@ test('swarm: every run-derived value reaches the page as text, not markup', () =
   assert.ok(html.includes('<span class="worker-status queued">x&quot; onmouseover=&quot;alert(1)</span>'));
 });
 
+test('swarm: a worker card shows the wave and stage its record carries (keel #1280)', () => {
+  const payload = makeSwarm();
+  payload.state.workers = [
+    { issue: 11, cluster_id: 'c1', role: 'core', status: 'running', step: 's4', wave: 2, stage: 'gates' },
+    // A record from before the fields: the card reads as it always did.
+    { issue: 12, cluster_id: 'c9', role: 'core', status: 'queued', step: 's0' },
+    { issue: 13, cluster_id: 'c3', role: 'core', status: 'running', step: 's4', wave: HOSTILE, stage: HOSTILE },
+  ];
+  const h = bootSwarm(payload);
+  const matrix = allHtml(h.byId('workers-matrix-grid'));
+  assert.ok(matrix.includes('Cluster: c1 · Step: s4 · Wave 2 · Stage gates</div>'), matrix);
+  assert.ok(matrix.includes('Cluster: c9 · Step: s0</div>'), matrix);
+  assert.ok(!matrix.includes('<img'), 'a hostile wave or stage was written as markup:\n' + matrix);
+  assert.equal(matrix.split('&lt;img src=x onerror=alert(1)&gt;').length - 1, 2);
+});
+
 // ---- the persisted plan (keel #1275, #1280 item 1) ----
 //
 // tests/fixtures/swarm-plan.json is a plan keel core built and serialised

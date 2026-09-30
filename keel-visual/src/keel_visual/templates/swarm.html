@@ -317,7 +317,7 @@ function renderSwarmData(){
         <span class="role-badge">${esc(w.role || 'core')}</span>
         <span class="worker-status ${statusClass(w.status)}">${esc(w.status || 'queued')}</span>
       </div>
-      <div style="font-size:12px;color:var(--mut);font-family:ui-monospace,Menlo,monospace">Cluster: ${esc(w.cluster_id)} · Step: ${esc(w.step || 's4')}</div>
+      <div style="font-size:12px;color:var(--mut);font-family:ui-monospace,Menlo,monospace">Cluster: ${esc(w.cluster_id)} · Step: ${esc(w.step || 's4')}${w.wave ? ` · Wave ${esc(w.wave)}` : ''}${w.stage ? ` · Stage ${esc(w.stage)}` : ''}</div>
       ${w.details ? `<div style="font-size:11px;color:var(--dim);background:var(--panel2);padding:6px 10px;border-radius:6px">${esc(w.details)}</div>` : ''}
     `;
     matrixGrid.appendChild(card);

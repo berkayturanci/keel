@@ -352,6 +352,16 @@ run for `--worker-timeout SECONDS`, by default `knobs.gate_timeout_s + knobs.jur
 that runs longer is killed and its cluster fails with `timed_out: true`
 ([#1279](https://github.com/berkayturanci/keel/issues/1279)).
 
+**How many run at once — size it yourself.** A live run runs at most `--max-workers` workers at a
+time, **4 by default**, and never more than the wave has clusters; a dry run runs one at a time
+whatever the flag says. Each live worker is an implementer seat — an agent CLI such as `claude`,
+`codex` or `agy` — **that may call its provider's API** for as long as it runs, and then runs the
+project's gate suite in its worktree. So `--max-workers 8` can mean eight concurrent provider
+sessions and eight gate suites on one machine. keel has no budget of its own to hold that against
+— no config key, and no CPU, memory or API-rate limit
+([#1280](https://github.com/berkayturanci/keel/issues/1280)) — so choose the flag from your
+provider quota and the machine, not from the number of issues.
+
 ### How a live worker implements a cluster
 
 Decided in [#1400](https://github.com/berkayturanci/keel/issues/1400): keel dispatches each
@@ -580,14 +590,32 @@ record carries the `scopes` it was handed, and each pull request body names the 
    #1285 was audited — described a mechanism that does not exist.
 
 ### Status board (`keel swarm-status`)
-Print the swarm's clusters — each one's lead, difficulty band, role, step and status
-(`queued` / `running` / `passed` / `failed` / `merged` / `held` — the full vocabulary
-`SwarmWorkerStatus.status` carries) — from the persisted run state. It is a one-shot render of
-that state, not a live feed; re-run it to refresh:
+Print the swarm's clusters — each one's lead, difficulty band, role, step, stage, elapsed time
+and status (`queued` / `running` / `passed` / `failed` / `merged` / `held` — the full vocabulary
+`SwarmWorkerStatus.status` carries) — from the persisted run state, grouped by wave, each wave
+headed by how many of its workers are in each status. It is a one-shot render of that state, not
+a live feed; re-run it to refresh:
 
 ```bash
 keel swarm-status .keel/project.yaml --root .
 ```
+
+The run state is written while the run is in flight, so the board shows how far each worker has
+got ([#1280](https://github.com/berkayturanci/keel/issues/1280)). Each worker record carries:
+
+- `wave` — the wave its cluster runs in (`0` in a record written before the field existed, drawn
+  as "Wave ? (not recorded)");
+- `stage` — for a live worker, the stage it is in, written as it enters it: `consent`,
+  `worktree`, `implement`, `tamper`, `commit`, `gates`, `push`, `pull_request`, then `done`
+  (`keel.swarm_worker.STAGES`). A worker that stops keeps the stage that stopped it; one that
+  raised keeps the last stage it entered. A dry run's worker is a child `keel ship`, which reports
+  no stages, so its `stage` stays empty;
+- `started_at` / `finished_at` — when the worker started and ended (ISO 8601). A worker is
+  `running` from the moment it starts, not when its wave does — a dry run's workers take turns,
+  and the ones still waiting read `queued`. Elapsed time is derived: to `finished_at`, or to now
+  for a worker still running.
+
+A state file written before these fields still loads; the missing fields read as unset.
 
 It exits `0` when it read the run, or when no `--swarm-id` was given and there is no run at all;
 it exits `1` when the run's state file cannot be read or `--swarm-id` names a run that does not

@@ -2454,5 +2454,188 @@ class AWorkerRecordsThePullRequestItOpened(unittest.TestCase):
                 self.assertIsNone(loaded.workers[0].pull_request)
 
 
+_T0 = "2026-09-30T10:00:00+00:00"
+
+
+class AWorkerRecordCarriesItsWaveStageAndTime(unittest.TestCase):
+    """#1280 item 2: the record, its derived elapsed time, the board grouped by wave, the
+    `--json` payload, and state files written before any of it."""
+
+    def _worker(self, cluster_id, issue, **kw):
+        return SwarmWorkerStatus(cluster_id=cluster_id, issue=issue, role="core", **kw)
+
+    def test_elapsed_runs_to_the_end_else_to_now(self):
+        done = self._worker("a", 1, started_at=_T0, finished_at="2026-09-30T10:12:05+00:00")
+        self.assertEqual(done.elapsed_s(), 725)
+        # An ended worker ignores `now`: its time is its own.
+        self.assertEqual(done.elapsed_s("2026-09-30T23:00:00+00:00"), 725)
+        running = self._worker("b", 2, started_at=_T0)
+        self.assertIsNone(running.elapsed_s())
+        self.assertEqual(running.elapsed_s("2026-09-30T11:02:10+00:00"), 3730)
+        # A naive time is read as UTC; a clock that went backwards is not negative time.
+        self.assertEqual(self._worker("c", 3, started_at="2026-09-30T10:00:00").elapsed_s(_T0), 0)
+        self.assertEqual(
+            self._worker("d", 4, started_at=_T0).elapsed_s("2026-09-30T09:00:00+00:00"), 0
+        )
+        self.assertIsNone(self._worker("e", 5).elapsed_s(_T0))
+        self.assertIsNone(self._worker("f", 6, started_at="yesterday").elapsed_s(_T0))
+
+    def test_elapsed_is_printed_at_the_scale_it_is(self):
+        fmt = swarm_module.format_elapsed
+        self.assertEqual(
+            [fmt(None), fmt(0), fmt(59), fmt(60), fmt(725), fmt(3599), fmt(3730)],
+            ["-", "0s", "59s", "1m00s", "12m05s", "59m59s", "1h02m"],
+        )
+
+    def test_the_seed_carries_the_wave_and_updates_keep_what_they_do_not_name(self):
+        plan = build_swarm_plan(
+            [IssueScope(issue=1, title="t", predicted_files=("src/a.py",))], swarm_id="s"
+        )
+        seed = swarm_module.worker_seed(plan.waves[0].clusters[0], wave=3)
+        self.assertEqual(
+            (seed.wave, seed.stage, seed.started_at, seed.finished_at), (3, "", "", "")
+        )
+        state = SwarmRunState(swarm_id="s", total_workers=1, workers=(seed,))
+        cid = seed.cluster_id
+        state = update_worker_state(state, cid, stage="gates", started_at=_T0)
+        state = update_worker_state(
+            state, cid, status="failed", finished_at="2026-09-30T10:01:00+00:00"
+        )
+        (worker,) = state.workers
+        self.assertEqual(
+            (worker.wave, worker.stage, worker.started_at, worker.finished_at, worker.status),
+            (3, "gates", _T0, "2026-09-30T10:01:00+00:00", "failed"),
+        )
+
+    def test_the_fields_round_trip_through_the_state_file(self):
+        worker = self._worker(
+            "cluster-2-9", 9, wave=2, stage="push", started_at=_T0, status="running"
+        )
+        state = SwarmRunState(swarm_id="swarm-rt", total_workers=1, workers=(worker,))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_swarm_state(state, root=tmpdir)
+            loaded = load_swarm_state("swarm-rt", root=tmpdir)
+        assert loaded is not None
+        self.assertEqual(loaded.workers, (worker,))
+        d = worker.to_dict()
+        self.assertEqual(
+            (d["wave"], d["stage"], d["started_at"], d["finished_at"]), (2, "push", _T0, "")
+        )
+
+    def test_a_state_file_from_before_the_fields_still_loads(self):
+        """Older state files carry none of the four fields; malformed ones read as unset,
+        never as a stage the worker was in, and never make the whole run unreadable."""
+        workers = [
+            {"cluster_id": "old", "issue": 1, "status": "passed", "step": "s10"},
+            {"cluster_id": "w-str", "issue": 2, "wave": "2", "stage": "bogus"},
+            {"cluster_id": "w-bool", "issue": 3, "wave": True, "stage": 7, "started_at": 5},
+            {"cluster_id": "w-neg", "issue": 4, "wave": -1, "finished_at": ["x"]},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = resolve_swarm_state_dir(tmpdir)
+            (state_dir / "swarm-old.json").write_text(
+                json.dumps({"swarm_id": "swarm-old", "total_workers": 4, "workers": workers}),
+                encoding="utf-8",
+            )
+            loaded = load_swarm_state("swarm-old", root=tmpdir)
+        assert loaded is not None
+        self.assertEqual(loaded.workers[0].status, "passed")
+        for w in loaded.workers:
+            self.assertEqual((w.wave, w.stage, w.started_at, w.finished_at), (0, "", "", ""))
+
+    def _state(self):
+        return SwarmRunState(
+            swarm_id="swarm-waves",
+            total_workers=3,
+            started_at=_T0,
+            workers=(
+                # Recorded out of wave order: the board still draws wave 1 first.
+                self._worker("cluster-2-3", 3, wave=2),
+                self._worker(
+                    "cluster-1-1", 1, wave=1, stage="gates", status="running", started_at=_T0
+                ),
+                self._worker(
+                    "cluster-1-2",
+                    2,
+                    wave=1,
+                    stage="done",
+                    status="passed",
+                    started_at=_T0,
+                    finished_at="2026-09-30T10:12:05+00:00",
+                ),
+            ),
+        )
+
+    def test_the_board_groups_workers_by_wave_with_stage_and_elapsed(self):
+        board = render_swarm_status_dashboard(self._state(), now="2026-09-30T11:02:10+00:00")
+        lines = board.splitlines()
+        headings = [i for i, line in enumerate(lines) if line.startswith("│ Wave ")]
+        self.assertEqual(len(headings), 2, board)
+        wave1, wave2 = headings
+        self.assertIn("Wave 1 — 2 workers", lines[wave1])
+        self.assertIn("Wave 2 — 1 worker:", lines[wave2])
+        self.assertIn("1 running, 1 passed", lines[wave1])
+        self.assertIn("1 queued", lines[wave2])
+        rows = {line.split("│")[1].strip(): line for line in lines if "│ cluster-" in line}
+        self.assertLess(lines.index(rows["cluster-1-1"]), wave2)
+        self.assertGreater(lines.index(rows["cluster-2-3"]), wave2)
+        self.assertIn("│ gates        │ 1h02m   │", rows["cluster-1-1"])
+        self.assertIn("│ done         │ 12m05s  │", rows["cluster-1-2"])
+        self.assertIn("│ -            │ -       │", rows["cluster-2-3"])
+        # Every line of the frame is one width.
+        self.assertEqual(
+            len({len(line) for line in lines if "🐝" not in line and "[" not in line}), 1
+        )
+        # Without `now`, a running worker's time is unknown rather than zero.
+        self.assertIn("│ gates        │ -       │", render_swarm_status_dashboard(self._state()))
+
+    def test_a_worker_with_no_recorded_wave_is_grouped_as_such(self):
+        state = SwarmRunState(swarm_id="s", total_workers=1, workers=(self._worker("old", 1),))
+        self.assertIn(
+            "Wave ? (not recorded) — 1 worker: 1 queued", render_swarm_status_dashboard(state)
+        )
+
+    def test_the_json_groups_by_wave_and_derives_elapsed(self):
+        now = "2026-09-30T11:02:10+00:00"
+        payload = swarm_module.swarm_status_payload(self._state(), now=now)
+        self.assertEqual(payload["as_of"], now)
+        self.assertEqual(
+            payload["waves"],
+            [
+                {
+                    "wave": 1,
+                    "clusters": ["cluster-1-1", "cluster-1-2"],
+                    "statuses": {"running": 1, "passed": 1},
+                },
+                {"wave": 2, "clusters": ["cluster-2-3"], "statuses": {"queued": 1}},
+            ],
+        )
+        # `workers` stays the flat list it was, each with its elapsed time.
+        self.assertEqual(
+            [(w["cluster_id"], w["elapsed_s"]) for w in payload["workers"]],
+            [("cluster-2-3", None), ("cluster-1-1", 3730), ("cluster-1-2", 725)],
+        )
+
+    def test_swarm_status_prints_the_grouped_board_and_json(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_swarm_state(self._state(), root=tmpdir)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir, "--json"])
+            self.assertEqual(code, 0)
+            payload = json.loads(out.getvalue())
+            self.assertEqual([w["wave"] for w in payload.get("waves", [])], [1, 2])
+            # Measured to the command's own now: a running worker has an elapsed time.
+            elapsed = {w["cluster_id"]: w.get("elapsed_s") for w in payload["workers"]}
+            self.assertIsInstance(elapsed["cluster-1-1"], int)
+            self.assertTrue(payload.get("as_of"))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = main(["swarm-status", ".keel/project.yaml", "--root", tmpdir])
+            self.assertEqual(code, 0)
+            self.assertIn("Wave 2 — 1 worker", out.getvalue())
+            self.assertNotIn("│ gates        │ -       │", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3217,7 +3217,11 @@ wave it lands in.
 
 Inspect each cluster's status (`running` / `passed` / `failed`) across
 active or recent multi-agent swarm runs. Each row names the worker's **lead** and the difficulty
-**band** it was staffed from, so the board answers *who is running this, and why that provider*:
+**band** it was staffed from, so the board answers *who is running this, and why that provider*.
+The rows are grouped by **wave**, and each shows the live worker's **stage** (`consent` …
+`pull_request`, then `done`; empty for a dry run's worker) and its **elapsed** time — to when it
+ended, or to now while it runs — so a run in flight shows how far each worker has got
+([#1280](https://github.com/berkayturanci/keel/issues/1280)):
 
 ```bash
 keel swarm-status .keel/project.yaml --root .
@@ -3229,7 +3233,7 @@ code makes it usable as a gate ([#1280](https://github.com/berkayturanci/keel/is
 
 | Exit | When | `--json` prints |
 |---|---|---|
-| `0` | the run was read | the run's state |
+| `0` | the run was read | the run's state, plus `as_of`, each worker's `elapsed_s` and `waves` (below) |
 | `0` | no `--swarm-id` was given and no run exists — nothing is in flight | `{}` |
 | `1` | the run's state file exists but cannot be read — the wrong shape, or it cannot be opened (stderr names the file) | `{"swarm_id", "error_code": "unreadable-state", "error"}` |
 | `1` | `--swarm-id` names a run that has no state file (stderr names it) | `{"swarm_id", "error_code": "unknown-swarm", "error"}` |
@@ -3237,6 +3241,18 @@ code makes it usable as a gate ([#1280](https://github.com/berkayturanci/keel/is
 
 `{}` therefore always means "no run", never "a run keel could not read"; the text board is not
 printed in either failure.
+
+For a run it read, `--json` prints the state file's fields — `workers` stays the flat list it
+always was, each record now with `wave`, `stage`, `started_at` and `finished_at` — and adds:
+
+- `as_of` — the time the command read the run;
+- `elapsed_s` on each worker — whole seconds to `finished_at`, else to `as_of`; `null` before it
+  started;
+- `waves` — the workers grouped by wave, lowest first:
+  `[{"wave": 1, "clusters": ["cluster-1-714", …], "statuses": {"passed": 1, "running": 1}}, …]`.
+  Wave `0` holds records written before workers carried their wave.
+
+A state file written before these fields still loads.
 
 ### Leftovers: `--orphans` and `--clean`
 
@@ -3291,7 +3307,12 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
 ```
 
 With `--live`, each cluster's worker runs in its own git worktree under
-`.keel/worktrees/<swarm_id>/<cluster_id>/`, up to `--max-workers` at a time:
+`.keel/worktrees/<swarm_id>/<cluster_id>/`, up to `--max-workers` at a time (**default 4**, and
+never more than the wave has clusters). Each of those workers is an agent CLI that **may call its
+provider's API** for as long as it runs, then runs the gate suite in its worktree; keel has no
+config key and no CPU, memory or API budget behind the flag
+([#1280](https://github.com/berkayturanci/keel/issues/1280)), so size it to your provider quota
+and machine:
 
 ```bash
 keel swarm-run .keel/project.yaml --root . --issues 714,715 --live \
@@ -3307,8 +3328,10 @@ a `--team` or difficulty bench, else `knobs.team.implement`. Every cluster's sea
 any worker starts; a `subagent:` seat or a transport that cannot edit a worktree (`api`,
 `ollama`, a generic profile) refuses the run with the cluster and the reason. A worker stops at
 the first stage that fails and reports it as `stage` in its `cluster_results` entry (`consent`,
-`worktree`, `implement`, `commit`, `gates`, `push`, `pull_request`); a failed implementer or a red
-gate pushes nothing and opens nothing. A successful one reports `pr_url`. Each live cluster
+`worktree`, `implement`, `tamper`, `commit`, `gates`, `push`, `pull_request`); a failed implementer
+or a red gate pushes nothing and opens nothing. A successful one reports `pr_url` and `stage:
+done`. The same stage is written to the worker's record in the run state as the worker enters
+it, which is what `keel swarm-status` shows while the run is in flight. Each live cluster
 result also says what became of its worktree — `worktree_state` (`removed`, `kept`,
 `remove-failed`, `none`), `worktree` (its path while it is still on disk) and `branch_deleted`:
 a worker that failed after its seat ran keeps its worktree for inspection

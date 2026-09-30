@@ -6,6 +6,12 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **A swarm worker card shows its wave and stage** (keel #1280 item 2). When the worker record
+  carries them — keel now writes `wave` and, for a live worker, the `stage` it is in — the card
+  reads `Cluster: … · Step: … · Wave 2 · Stage gates`; both go through `esc()`. A record from
+  before the fields renders as it did.
+
 ### Fixed
 - **The swarm view draws the plan the run executed, not a flat one it made up** (keel #1275,
   #1280 item 1). `keel-visual swarm` rebuilt a plan from the run's workers, with no predicted

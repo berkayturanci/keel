@@ -21,6 +21,7 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
+import threading
 import traceback
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -118,6 +119,19 @@ def default_runner(
             stdout="",
             stderr=str(exc),
         )
+
+
+#: Called with each :data:`keel.swarm_worker.STAGES` entry as a live worker enters it.
+StageReporter = Callable[[str], None]
+
+
+def _no_stage(_stage: str) -> None:
+    """The stage reporter of a worker nobody watches."""
+
+
+def _now() -> str:
+    """The current UTC time, ISO 8601 — the timestamps a worker record carries."""
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def build_worktree_path(swarm_id: str, cluster_id: str, root: str | Path = ".") -> Path:
@@ -367,12 +381,17 @@ def execute_live_cluster_worker(
     runner: SubprocessRunner | None = None,
     timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S,
     progress: dict[str, bool] | None = None,
+    on_stage: StageReporter = _no_stage,
 ) -> dict[str, Any]:
     """Implement one cluster live: its implementer seat, a commit, the gates, a push, a PR.
 
     ``progress``, when given, is filled in as the worker goes — ``worktree_created`` once
     its worktree exists, ``implementer_ran`` once the seat is started — so a caller can
     settle the worktree correctly even when the worker raises part-way (#1278).
+
+    ``on_stage`` is called with each stage of :data:`keel.swarm_worker.STAGES` as the
+    worker enters it, so ``keel swarm-status`` can show how far a worker has got while it
+    runs (#1280); the stage it ends at is the result's ``stage``.
 
     Before its first mutation the worker checks that the scopes the parent delegated to
     *this* cluster cover every mutation it will make
@@ -420,11 +439,13 @@ def execute_live_cluster_worker(
     def stop(stage: str, reason: str, code: int = 1) -> dict[str, Any]:
         return {**record, "ok": False, "code": code, "stage": stage, "output": reason}
 
+    on_stage("consent")
     if why := swarm_worker.consent_refusal(scopes):
         return stop("consent", why)
     # A registration whose directory is gone — a crashed run's, after its directory was
     # deleted — makes `git worktree add -B` of the same branch fail, so it is dropped
     # first (#1278). A sibling's worktree still being added is locked, and prune skips it.
+    on_stage("worktree")
     pruned = prune_worktrees(root, runner=run)
     created = create_swarm_worktree(root, worktree_dir, branch, base_branch=base_branch, runner=run)
     if not created or not worktree_dir.exists():
@@ -448,6 +469,7 @@ def execute_live_cluster_worker(
     if before is None or not start:
         return stop("worktree", f"the git setup of {worktree_dir} could not be read")
 
+    on_stage("implement")
     brief = Path(plan.prompt_path)
     brief.parent.mkdir(parents=True, exist_ok=True)
     brief.write_text(
@@ -468,6 +490,7 @@ def execute_live_cluster_worker(
             f"the implementer {system} failed ({result.get('error_code')}): {result.get('error')}",
         )
 
+    on_stage("tamper")
     if findings := _tampered(run, worktree_dir, before):
         return stop("tamper", swarm_worker.tamper_reason(findings, during="the implementer ran"))
     # Every git step from here is keel's own, and runs with no hooks (an empty directory
@@ -489,6 +512,7 @@ def execute_live_cluster_worker(
             branch=branch,
             plan=plan,
             live=live,
+            on_stage=on_stage,
         )
 
 
@@ -551,9 +575,11 @@ def _commit_gate_push_open(
     branch: str,
     plan: RunPlan,
     live: LiveRun,
+    on_stage: StageReporter,
 ) -> dict[str, Any]:
     """The worker's steps after the implementer: commit, gates, push, pull request."""
     system = plan.attribution.get("system") or plan.provider
+    on_stage("commit")
     status = run(git(["status", "--porcelain"]), worktree_dir)
     if not status.ok:
         return stop("commit", f"git status failed in {worktree_dir}: {status.output.strip()}")
@@ -580,6 +606,7 @@ def _commit_gate_push_open(
             "branch's history was replaced, so nothing is pushed",
         )
 
+    on_stage("gates")
     gates = run(
         [
             sys.executable,
@@ -608,6 +635,7 @@ def _commit_gate_push_open(
         return stop("tamper", swarm_worker.tamper_reason(findings, during="the gates ran"))
 
     # To the URL read before the implementer ran, never to the remote's name.
+    on_stage("push")
     pushed = live.push(
         git(["push", "--no-verify", push_url, f"{head}:refs/heads/{branch}"]), worktree_dir
     )
@@ -615,6 +643,7 @@ def _commit_gate_push_open(
         return stop("push", f"git push {live.remote} {branch} failed: {pushed.output.strip()}")
     record["pushed"] = True
 
+    on_stage("pull_request")
     opened = live.open_pr(
         swarm_worker.pull_request_title(cluster, live.issue_scopes, swarm_id=swarm_id),
         swarm_worker.pull_request_body(
@@ -823,7 +852,6 @@ def run_swarm_orchestration(
     dry_run: bool = True,
     max_workers: int = 4,
     runner: SubprocessRunner | None = None,
-    create_worktrees: bool = True,
     base_branch: str,
     timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S,
     live: LiveRun | None = None,
@@ -840,14 +868,23 @@ def run_swarm_orchestration(
 
     A live run (``dry_run=False``) needs ``live``: the operator's consent as the parent
     delegated it, and each cluster's planned implementer seat (#1400). Without it nothing
-    starts — there is no live worker that runs without delegated consent — and a live
-    worker always gets its own worktree, so ``create_worktrees`` must be on.
+    starts — there is no live worker that runs without delegated consent. A live worker
+    always gets its own worktree, and a dry run's never does (#1288); the
+    ``create_worktrees`` switch that used to sit beside ``dry_run`` could only ever agree
+    with it, and is gone (#1280).
+
+    ``runner`` is an injection seam for tests, like the ``_run`` seams elsewhere in keel:
+    ``swarm-run`` never passes it. It replaces the subprocess runner of every git command,
+    gate run and dry-run child ``keel ship`` a worker makes; left out, each runs through
+    :func:`default_runner` under ``timeout_s``.
+
+    Each worker's record carries its wave, when it started and ended, and — a live worker
+    — the stage it is in, written as it enters it, so ``keel swarm-status`` shows how far a
+    run has got while it is in flight (#1280). A worker is ``running`` from the moment it
+    starts, not from the moment its wave does: a dry run's workers take turns.
     """
-    if not dry_run and (live is None or not create_worktrees):
-        raise ValueError(
-            "a live swarm run needs the operator's delegated consent and a worktree per "
-            "cluster (#1400)"
-        )
+    if not dry_run and live is None:
+        raise ValueError("a live swarm run needs the operator's delegated consent (#1400)")
     root_path = Path(root).resolve()
     workers_list: list[SwarmWorkerStatus] = []
 
@@ -856,7 +893,7 @@ def run_swarm_orchestration(
     # worker's record also says which consent scopes it was handed (#1400).
     for w in plan.waves:
         for c in w.clusters:
-            seed = worker_seed(c, updated_at=datetime.datetime.now(datetime.UTC).isoformat())
+            seed = worker_seed(c, wave=w.wave_index, updated_at=_now())
             if live is not None:
                 seed = replace(seed, scopes=swarm_worker.worker_scopes(live.consent, c.cluster_id))
             workers_list.append(seed)
@@ -866,10 +903,23 @@ def run_swarm_orchestration(
         total_workers=len(workers_list),
         active_wave=1,
         workers=tuple(workers_list),
-        started_at=datetime.datetime.now(datetime.UTC).isoformat(),
+        started_at=_now(),
         consent=None if live is None else live.consent.to_dict(),
     )
     save_swarm_state(state, root=root_path)
+
+    # Live workers report from their own threads while the loop below records the ones that
+    # finished, so every update of the run's state — and its save — is made under one lock.
+    state_lock = threading.Lock()
+
+    def report(cluster_id: str, **fields: Any) -> None:
+        nonlocal state
+        with state_lock:
+            state = update_worker_state(state, cluster_id, **fields)
+            save_swarm_state(state, root=root_path)
+
+    def _enter_stage(cluster_id: str, stage: str) -> None:
+        report(cluster_id, stage=stage)
 
     passed_count = 0
     failed_count = 0
@@ -881,17 +931,20 @@ def run_swarm_orchestration(
     # rebalance_swarm_plan drop a wave, and a position counter over the shrunken
     # plan then stepped past the next, unrelated wave without running it (#1268).
     last_wave: int | None = None
+    running = "implementing the cluster" if live is not None else "executing ship pipeline"
     while True:
         remaining = [w for w in current_plan.waves if last_wave is None or w.wave_index > last_wave]
         if not remaining:
             break
         wave = remaining[0]
         last_wave = wave.wave_index
+        # No worker thread runs between waves, so this update needs no lock.
         state = replace(state, active_wave=wave.wave_index)
 
         cluster_tasks = list(wave.clusters)
         if not cluster_tasks:
             continue
+        save_swarm_state(state, root=root_path)
 
         wave_record: dict[str, Any] = {
             "wave_index": wave.wave_index,
@@ -900,22 +953,17 @@ def run_swarm_orchestration(
             "cluster_results": {},
         }
 
-        # Mark clusters in this wave as running
-        running = "implementing the cluster" if live is not None else "executing ship pipeline"
-        for c in cluster_tasks:
-            state = update_worker_state(
-                state, c.cluster_id, step="s4", status="running", details=running
-            )
-        save_swarm_state(state, root=root_path)
-
         def _worker_fn(cluster: Any) -> tuple[str, dict[str, Any]]:
             c_id = cluster.cluster_id
             wt_path = build_worktree_path(plan.swarm_id, c_id, root=root_path)
+            # Running from when this worker starts, not when its wave did: a dry run's
+            # workers run one at a time, and the rest are still queued (#1280).
+            report(c_id, step="s4", status="running", details=running, started_at=_now())
 
             # A live worker implements its cluster in a worktree of its own, cut here and
             # settled here, whichever way the worker ends — a returned failure or a raise
             # (#1400, #1278): see `swarm_worker.worktree_disposal` for what stays.
-            if create_worktrees and not dry_run:
+            if not dry_run:
                 branch = cluster_branch(plan.swarm_id, c_id)
                 progress: dict[str, bool] = {}
                 try:
@@ -930,6 +978,7 @@ def run_swarm_orchestration(
                         runner=runner,
                         timeout_s=timeout_s,
                         progress=progress,
+                        on_stage=functools.partial(_enter_stage, c_id),
                     )
                 except BaseException:
                     # What the seat touched is kept for inspection; nothing is lost to
@@ -969,8 +1018,7 @@ def run_swarm_orchestration(
         # creates none), and its gate suite is not written to share a tree with a
         # sibling's: `.coverage`, `.pytest_cache`, build output. Such children run one
         # at a time; only isolated workers run in parallel (#1288).
-        isolated = create_worktrees and not dry_run
-        pool_workers = min(max_workers, len(cluster_tasks)) if isolated and cluster_tasks else 1
+        pool_workers = min(max_workers, len(cluster_tasks)) if not dry_run else 1
         with concurrent.futures.ThreadPoolExecutor(max_workers=pool_workers) as executor:
             future_to_cluster = {
                 executor.submit(_worker_fn, cluster): cluster for cluster in cluster_tasks
@@ -999,7 +1047,7 @@ def run_swarm_orchestration(
                     }
                     # A raising live worker keeps what its seat touched (#1278).
                     kept = build_worktree_path(plan.swarm_id, c_id, root=root_path)
-                    if isolated and kept.exists():
+                    if not dry_run and kept.exists():
                         worker_res["worktree"] = str(kept)
                         worker_res["output"] += (
                             f"\nthe worktree is kept for inspection at {kept}; "
@@ -1020,12 +1068,15 @@ def run_swarm_orchestration(
                     "pushed": bool(worker_res.get("pushed")),
                 }
 
+                # The stage a live worker ended at: `done`, or the one that stopped it. A
+                # dry run's worker, or one that raised, reports none, and keeps the last
+                # stage it entered (#1280).
+                ended = {"stage": worker_res.get("stage") or None, "finished_at": _now()}
                 if worker_res.get("ok", False):
                     passed_count += 1
                     # A live worker stops at an open pull request, which CI (s6) and review
                     # take from there; a dry assessment ran the whole backbone.
-                    state = update_worker_state(
-                        state,
+                    report(
                         c_id,
                         step="s10" if live is None else "s6",
                         status="passed",
@@ -1033,25 +1084,24 @@ def run_swarm_orchestration(
                         # The pull request `swarm-land` merges (#1287); a dry run opens none.
                         pull_request=pull_request_number(str(worker_res.get("pr_url") or "")),
                         **left,
+                        **ended,
                     )
                 else:
                     failed_count += 1
-                    state = update_worker_state(
-                        state,
+                    report(
                         c_id,
                         step="s4",
                         status="failed",
                         details=worker_res.get("output", ""),
                         **left,
+                        **ended,
                     )
                     # Dynamically rebalance subsequent waves if needed
                     current_plan = rebalance_swarm_plan(current_plan, issue_val)
 
-                save_swarm_state(state, root=root_path)
-
         # Once the wave's workers are done, the run's directory goes when nothing is left
         # in it — it used to accumulate, one per run (#1278).
-        if isolated:
+        if not dry_run:
             remove_empty_swarm_dirs(root_path, plan.swarm_id)
         wave_results.append(wave_record)
 
@@ -1064,7 +1114,7 @@ def run_swarm_orchestration(
     if passed_count == 0 and failed_count == 0:
         overall_status = "success"
 
-    state = replace(state, completed_at=datetime.datetime.now(datetime.UTC).isoformat())
+    state = replace(state, completed_at=_now())
     save_swarm_state(state, root=root_path)
 
     return SwarmRunResult(
