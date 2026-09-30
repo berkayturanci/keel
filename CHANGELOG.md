@@ -54,6 +54,40 @@ All notable changes to keel are documented here. The format follows
     `from_dict` that round-trips `to_dict` exactly.
   - `swarm-status` and `swarm-land` pick "the newest run" from state files only; a
     `<id>.plan.json` never counts as one.
+- **A live swarm worker's implementer cannot reach the remote, or tamper with keel's own git
+  steps** (#1400, second slice). The
+  implementer seat — an agent CLI with tools, steered by issue text nobody vetted — inherited the
+  operator's `GH_TOKEN`/`GITHUB_TOKEN`/`GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN`, `gh`'s
+  stored login and git's credential helpers, so it could push or call `gh` itself. It now runs
+  under `keel.swarm_worker.implementer_env`: the four tokens removed; `GH_CONFIG_DIR` pointed at
+  a directory holding no login, so `gh` finds no account in its config or the keyring;
+  `GIT_TERMINAL_PROMPT=0` and an empty `GIT_ASKPASS`; and, through git's environment config,
+  `credential.helper` cleared and every network transport refused (`protocol.allow=never`, and
+  `never` for `http`/`https`/`ssh`/`git` by name), with `protocol.file.allow=user` so a
+  repository on disk still works. Only keel's own push and `gh pr create`, made after the
+  implementer exits, reach the forge: the gates (which run the implementer's code) and keel's
+  local git steps run without the forge tokens too, and a model provider's key passes through to
+  the seat. The brief says so. Measured against a real git in the suite: no credential helper is
+  asked (a URL-scoped one included), no HTTPS or SSH transport opens, a local push still succeeds.
+  - **The shared `.git`.** The worktree points into the operator's repository, so the seat could
+    plant a hook, a `core.fsmonitor` or `gpg.program` for keel's credentialed commit and push to
+    run, or redirect the push (`remote.origin.pushurl`, `url.<base>.pushInsteadOf`, a file an
+    `include.path` pulls in). The worker now reads the push URL, the base commit and a snapshot
+    of the git setup (every config scope with its origin, the git/common/hooks directories, a
+    digest of each hook) before the seat runs; compares it after the seat and again after the
+    gates, stopping at a new `tamper` stage — named by scope and key or hook, never by value — with
+    nothing pushed; runs its own git steps with `core.hooksPath` set to an empty directory made
+    after the seat exits, `core.fsmonitor=false`, `commit.gpgsign=false` (keel's commit is
+    unsigned) and `--no-verify`; refuses a head that does not descend from the base commit; and
+    pushes to the URL it read, not to the remote's name. Measured against a real git: the
+    operator's own hooks, fsmonitor and signing program do not run in keel's steps, and a planted
+    or changed hook, a `pushurl`, a `pushInsteadOf`, a `core.hooksPath` or an edit to an included
+    file each stop the worker with nothing pushed to either remote.
+  - It is not a sandbox — the seat runs as the operator's OS user — and `docs/keel/swarm.md`
+    says so, and that the gates still run the implementer's code. Recording the consent delegation
+    in the run ledger is left for a decision:
+  every ledger reader refuses the whole file on an unknown record type, so a new one would stop
+  an older `keel` from shipping or merging on the same checkout.
 - **The articles' code blocks are readable in the light theme** (#1403). `silent-revert.html` and `long-runs.html` painted `<pre>` with `var(--bg-soft, #12141c)`; no stylesheet defines `--bg-soft`, so the light theme drew its dark text on that dark fallback and the blocks read as empty panels. All three articles now use `--surface-2`, which both themes define. `tests/test_site_seo.py` requires every custom property an article's style reads to be defined for both themes; it fails as an assertion with either old line restored.
 - **Each swarm issue is planned from its own scope, and an issue that declares none conflicts
   with everything** (#1274). `swarm-plan`, `swarm-run` and `swarm-land` handed the same
