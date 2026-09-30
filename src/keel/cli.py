@@ -7709,6 +7709,13 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
         dry_run=not args.live,
         max_workers=args.max_workers,
         base_branch=config.base_branch,
+        # The child runs the gate suite even dry, so its budget is the project's own
+        # gate + jury budgets unless the operator names one (#1279).
+        timeout_s=(
+            args.worker_timeout
+            if args.worker_timeout is not None
+            else swarm.worker_timeout_s(config)
+        ),
     )
 
     if args.json:
@@ -10227,6 +10234,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=4,
         help="parallel workers with their own worktree (default: 4); a dry run runs one at a time",
+    )
+    p_sr.add_argument(
+        "--worker-timeout",
+        type=_positive_int,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "wall-clock seconds each worker's keel ship may run before it is killed and "
+            "reported timed out (default: knobs.gate_timeout_s + knobs.jury_timeout_s)"
+        ),
     )
     p_sr.add_argument(
         "--live",

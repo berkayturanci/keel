@@ -3225,7 +3225,7 @@ code makes it usable as a gate ([#1280](https://github.com/berkayturanci/keel/is
 `{}` therefore always means "no run", never "a run keel could not read"; the text board is not
 printed in either failure.
 
-## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
+## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--swarm-id ID] [--max-workers N] [--worker-timeout SECONDS] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 > **Experimental — `--live` is refused.** Its workers are handed `--live`
 > ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and `keel ship --live` stops at the
@@ -3251,6 +3251,19 @@ bench chose. A seat that is a host `subagent:` rather than a provider is left to
 which is the layer that can spawn one. A role label outside `[A-Za-z0-9][A-Za-z0-9._-]*` is
 dropped rather than passed — it would be read as a flag by the child — and the reason is
 recorded in `assignment.warnings`.
+
+Each worker's child `keel ship` runs the project's gate suite, in a dry run too, so it is
+bounded by `--worker-timeout SECONDS` (a positive integer). Left out, the budget is
+`knobs.gate_timeout_s + knobs.jury_timeout_s` — `1200` with neither knob set — rather than
+the fixed 300 s that killed a suite the project itself allows ten minutes
+([#1279](https://github.com/berkayturanci/keel/issues/1279)). A worker killed by it fails its
+cluster with `code: 124` and `timed_out: true` in its `cluster_results` entry, and its output
+ends with a line saying it timed out, so the reason is not read as a failing test. Raise it
+when the suite's gates add up to more than one gate plus one jury:
+
+```bash
+keel swarm-run .keel/project.yaml --root . --issues 714,715 --worker-timeout 3600
+```
 
 Issues are named by `--issues` / `--issue`, as for `swarm-plan`. Rebalancing across waves is
 decided by the plan, not by a flag: when a cluster's issue fails, `rebalance_swarm_plan` drops the
