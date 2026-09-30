@@ -50,6 +50,7 @@ INDEXED_PAGES = (
     "coverage.html",
     "silent-revert.html",
     "long-runs.html",
+    "revert-check.html",
 )
 
 #: Terms a person would actually type. The site is free to lead with its own
@@ -200,7 +201,7 @@ class TestArticleIsReachable(unittest.TestCase):
 
     def test_the_articles_are_found(self):
         # Vacuity: the loops below would pass over an empty list.
-        self.assertEqual(_articles(), ["long-runs.html", "silent-revert.html"])
+        self.assertEqual(_articles(), ["long-runs.html", "revert-check.html", "silent-revert.html"])
 
     def test_every_article_is_an_indexed_page(self):
         # INDEXED_PAGES is a list on purpose (404.html must stay out); an article
@@ -235,6 +236,24 @@ class TestArticleIsReachable(unittest.TestCase):
                 url = BASE + page
                 self.assertIn(f'<meta property="og:url" content="{url}">', head)
                 self.assertIn(f'"mainEntityOfPage": "{url}"', head)
+
+    def test_every_colour_an_article_reads_is_defined_in_both_themes(self):
+        """#1403: the code blocks read `--bg-soft`, which no stylesheet defines, so they
+        fell back to a dark literal behind the light theme's dark text and were unreadable."""
+        css = (SITE / "styles.css").read_text(encoding="utf-8")
+        light = css[css.index(':root[data-theme="light"] {') :]
+        light = light[: light.index("}")]
+        dark = css[: css.index(':root[data-theme="light"] {')]
+        for page in _articles():
+            head = _head(page)
+            style = head[head.index("<style>") : head.index("</style>")]
+            used = set(re.findall(r"var\((--[a-z0-9-]+)", style))
+            self.assertIn("--surface-2", used, page)
+            for name in sorted(used):
+                with self.subTest(page=page, var=name):
+                    self.assertIn(f"{name}:", dark)
+                    if not name.startswith("--font"):
+                        self.assertIn(f"{name}:", light)
 
     def test_llms_txt_lists_every_article(self):
         """#1338: llms.txt listed neither article."""

@@ -30,6 +30,8 @@ All notable changes to keel are documented here. The format follows
     without an operator are refused.
   - Not in this slice: the pull requests carry no review evidence, so `swarm-land` still holds
     them, and nothing lands them (#1287). The run ledger is not written.
+- **A write-up on what 100 % coverage cannot tell you, and the `revert-check` gate** (#1403). `website/revert-check.html`, "100% coverage didn't prove our fixes were tested", tells #1289's audit in its own tense — today all fourteen closed fixes fail without their fix; three survived at the time their issue was closed — then explains the opt-in gate from 1.25.0: what counts as an assertion failure, its bounds and defaults, why it is off by default (including for keel itself), and the configuration reference's "What it does not check" list, paraphrased and linked. Its configuration, diff and `keel run-gates` output come from a real run on a scratch repository. It is in `sitemap.xml`, `llms.txt`, the homepage sidebar and `website/README.md`.
+  - **The guards.** `tests/test_site_seo.py` and `tests/test_website_csp.py` enumerate it with the other articles. `tests/test_revert_check_article.py` rebuilds the article's fixture from its configuration block, requires `git diff -U0` to print the diff it shows and `keel run-gates` to print its output line for line, runs the follow-up it describes, and holds the stated defaults to `revertcheck`, the off-by-default claim to `projects/keel.yaml` and `.keel/project.yaml`, and the audit's framing to the CHANGELOG.
 
 ### Fixed
 - **A run-ledger reader skips a record kind it does not know instead of refusing the ledger**
@@ -97,6 +99,7 @@ All notable changes to keel are documented here. The format follows
     in the run ledger is left for a decision:
   every ledger reader refuses the whole file on an unknown record type, so a new one would stop
   an older `keel` from shipping or merging on the same checkout.
+- **The articles' code blocks are readable in the light theme** (#1403). `silent-revert.html` and `long-runs.html` painted `<pre>` with `var(--bg-soft, #12141c)`; no stylesheet defines `--bg-soft`, so the light theme drew its dark text on that dark fallback and the blocks read as empty panels. All three articles now use `--surface-2`, which both themes define. `tests/test_site_seo.py` requires every custom property an article's style reads to be defined for both themes; it fails as an assertion with either old line restored.
 - **Each swarm issue is planned from its own scope, and an issue that declares none conflicts
   with everything** (#1274). `swarm-plan`, `swarm-run` and `swarm-land` handed the same
   `--issue-title`/`--issue-body`/`--issue-label`/`--declared-file` to every issue and read
