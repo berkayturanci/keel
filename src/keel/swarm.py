@@ -433,6 +433,9 @@ class SwarmWorkerStatus:
     #: The consent scopes a live worker was handed by its parent (#1400) — exactly the
     #: parent's delegated scopes, or none. Empty for a dry run, which mutates nothing.
     scopes: tuple[str, ...] = ()
+    #: The pull request a live worker opened for its cluster (#1287): the one
+    #: ``swarm-land`` merges. ``None`` until a worker opens one, and for a dry run.
+    pull_request: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -448,6 +451,7 @@ class SwarmWorkerStatus:
             "lead": self.lead,
             "difficulty": self.difficulty,
             "scopes": list(self.scopes),
+            "pull_request": self.pull_request,
         }
 
 
@@ -563,27 +567,32 @@ class LandingDecision:
 
 @dataclass(frozen=True)
 class SwarmLandingResult:
-    """Outcome report for landing a swarm wave."""
+    """Outcome report for landing a swarm wave.
+
+    Landing merges each cluster's pull request through ``keel merge`` (#1287), so every
+    cluster ends in one of three lists: landed (merged; in a dry run, would merge),
+    held (``keel merge`` or the pull-request lookup refused it, with the reason) or
+    failed (the merge call itself failed).
+    """
 
     swarm_id: str
     wave_index: int
     mode: str
     landed_clusters: tuple[str, ...]
-    healed_clusters: tuple[str, ...]
     failed_clusters: tuple[str, ...]
     status: str  # "success", "partial_failure", "failed"
-    #: Clusters refused for landing because their review evidence did not
-    #: verify — (cluster_id, reason) pairs. Held is not failed: the code is
-    #: intact, the independent-review contract is simply not yet satisfied.
+    #: Clusters that did not land and why — (cluster_id, reason) pairs: no open pull
+    #: request, or one ``keel merge`` refused (window, merge state, CI, evidence,
+    #: gates-pass, lock). Held is not failed: nothing was attempted that could fail.
     held_clusters: tuple[tuple[str, str], ...] = ()
-    #: Why a landing did not start at all: a ``sequential_dependent`` wave (dry
-    #: run or live, ``mode`` is then ``"refused"``, #1276), or, live only, a dirty
-    #: working tree or a checkout whose status or HEAD could not be read. Empty
-    #: when it started.
+    #: Why a landing did not start at all: a ``sequential_dependent`` wave (dry run or
+    #: live, ``mode`` is then ``"refused"``, #1276). Empty when it started.
     refused: str = ""
-    #: What the operator must still do by hand after the wave; today only a
-    #: checkout that could not be returned to the branch it started on.
+    #: What the operator must still look at by hand: a merge ``keel merge`` reported as
+    #: drifted, or a checkout that could not be returned to where it started.
     warnings: tuple[str, ...] = ()
+    #: The pull request each cluster was landed through — (cluster_id, number) pairs.
+    pull_requests: tuple[tuple[str, int], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -591,9 +600,9 @@ class SwarmLandingResult:
             "wave_index": self.wave_index,
             "mode": self.mode,
             "landed_clusters": list(self.landed_clusters),
-            "healed_clusters": list(self.healed_clusters),
             "failed_clusters": list(self.failed_clusters),
             "held_clusters": [list(pair) for pair in self.held_clusters],
+            "pull_requests": {cluster: number for cluster, number in self.pull_requests},
             "status": self.status,
             "refused": self.refused,
             "warnings": list(self.warnings),
@@ -1588,6 +1597,7 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
                 lead=str(w.get("lead", "")),
                 difficulty=str(w.get("difficulty", "")),
                 scopes=_stored_scopes(w.get("scopes")),
+                pull_request=_stored_pull_request(w.get("pull_request")),
             )
             for w in raw_workers
         )
@@ -1614,6 +1624,24 @@ def _stored_scopes(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
     return tuple(scope for scope in value if isinstance(scope, str))
+
+
+def _stored_pull_request(value: Any) -> int | None:
+    """A worker record's ``pull_request`` as written, or none — a record from before
+    #1287 has no such field, and anything but a positive number is not a pull request."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
+#: The number at the end of a pull request URL, as ``gh pr create`` prints it.
+_PULL_REQUEST_URL = re.compile(r"/pull/([1-9][0-9]*)/?$")
+
+
+def pull_request_number(url: str) -> int | None:
+    """The pull request number in a ``gh pr create`` URL, or ``None`` when it names none."""
+    match = _PULL_REQUEST_URL.search(url.strip())
+    return int(match.group(1)) if match else None
 
 
 #: What a persisted plan file says it is (#1275), and the one layout this keel reads.
@@ -1759,8 +1787,13 @@ def update_worker_state(
     step: str | None = None,
     status: str | None = None,
     details: str | None = None,
+    pull_request: int | None = None,
 ) -> SwarmRunState:
-    """Return a new SwarmRunState with the specified worker's fields updated."""
+    """Return a new SwarmRunState with the specified worker's fields updated.
+
+    ``pull_request`` is recorded when given and otherwise kept, so a later status update
+    never forgets the pull request ``swarm-land`` has to merge (#1287).
+    """
     # `replace` rather than a field-by-field rebuild: the rebuild had to name every
     # field, so each field added to the record (the lead and difficulty band a worker
     # reports, #1017) was silently reset to its default by the first status update.
@@ -1771,6 +1804,7 @@ def update_worker_state(
             status=status if status is not None else w.status,
             updated_at=datetime.datetime.now(datetime.UTC).isoformat(),
             details=details if details is not None else w.details,
+            pull_request=pull_request if pull_request is not None else w.pull_request,
         )
         if w.cluster_id == cluster_id
         else w
@@ -1920,47 +1954,12 @@ def evaluate_wave_landing_mode(
     )
 
 
-#: keel's own runtime subtrees of a ``.keel`` directory (see
-#: ``workspace.RUNTIME_IGNORE_ENTRIES``), and the ``.keel/.gitignore`` keel
-#: scaffolds to ignore them. keel writes all of these itself (the swarm run state
-#: and the merge lock scaffold the gitignore on first write), so a project that
-#: has not committed that gitignore yet sees them as untracked. They are not the
-#: operator's work, so they do not make a tree dirty.
-_KEEL_RUNTIME_PATH = re.compile(
-    r'^"?(?:.*/)?\.keel/(?:(?:state|activity|scratch|worktrees)/|\.gitignore$)'
-)
-
-#: How many status entries a dirty-tree refusal names before it summarises.
-_DIRTY_TREE_LISTED = 20
-
-
-def landing_tree_changes(porcelain: str) -> tuple[str, ...]:
-    """The ``status --porcelain`` entries that make a checkout unsafe to land in.
-
-    Landing checks out, rebases and merges branches in the operator's own
-    checkout, so any change there (staged, unstaged or untracked) is either
-    carried onto another branch or blocks a checkout halfway through a wave
-    (#1279). Every entry counts except untracked files under keel's own runtime
-    subtrees. Each entry is returned as printed, status code included, so the
-    refusal says which files are tracked and which are new.
-    """
-    changes: list[str] = []
-    for line in porcelain.splitlines():
-        if not line.strip():
-            continue
-        if line.startswith("?? ") and _KEEL_RUNTIME_PATH.match(line[3:]):
-            continue
-        changes.append(line)
-    return tuple(changes)
-
-
 def render_dependent_wave_refusal(wave: SwarmWave) -> str:
     """The reason ``swarm-land`` gives for refusing a ``sequential_dependent`` wave.
 
-    Its branches were cut before the earlier wave it depends on landed, and the
-    rebase funnel that could carry them over stays off until its overlap check is
-    fed real diffs (#1266), so the way through is to land the earlier wave and
-    re-plan the rest (#1276).
+    Its branches were cut, and its pull requests reviewed, before the earlier wave it
+    depends on landed, so the way through is to land the earlier wave and re-plan the
+    rest (#1276).
     """
     deps = sorted({d for c in wave.clusters for d in c.depends_on_issues})
     listed = f" ({', '.join(f'#{d}' for d in deps)})" if deps else ""
@@ -1968,21 +1967,7 @@ def render_dependent_wave_refusal(wave: SwarmWave) -> str:
         f"wave {wave.wave_index} depends on issues landed by an earlier wave{listed}; "
         "its branches were cut before that landing. Land the earlier wave, then re-plan "
         "the remaining issues (keel swarm-plan / swarm-run without the landed ones) and "
-        "land again. The rebase funnel stays off until #1266 feeds it real diffs; "
-        "nothing was checked out or merged"
-    )
-
-
-def render_dirty_tree_refusal(changes: Sequence[str]) -> str:
-    """The reason a live landing gives for refusing a dirty working tree."""
-    listed = ", ".join(changes[:_DIRTY_TREE_LISTED])
-    more = len(changes) - _DIRTY_TREE_LISTED
-    if more > 0:
-        listed += f", and {more} more"
-    return (
-        "the working tree has uncommitted changes, and landing checks out and merges "
-        f"branches in it: {listed}. Commit or remove them (or land from a clean clone), "
-        "then run swarm-land again; nothing was checked out or merged"
+        "land again; no pull request was merged"
     )
 
 
@@ -1996,11 +1981,13 @@ def render_swarm_landing_result(result: SwarmLandingResult) -> str:
         f"  status  : {result.status} {status_icon}",
         f"  mode    : {result.mode}",
         f"  landed  : {', '.join(result.landed_clusters) if result.landed_clusters else 'none'}",
-        f"  healed  : {', '.join(result.healed_clusters) if result.healed_clusters else 'none'}",
         f"  failed  : {', '.join(result.failed_clusters) if result.failed_clusters else 'none'}",
     ]
+    if result.pull_requests:
+        prs = ", ".join(f"{cluster_id} #{number}" for cluster_id, number in result.pull_requests)
+        lines.append(f"  PRs     : {prs}")
     if result.held_clusters:
-        lines.append("  held    : review evidence missing — not landed")
+        lines.append("  held    : not landed")
         for cluster_id, reason in result.held_clusters:
             lines.append(f"    {cluster_id}: {reason}")
     if result.refused:

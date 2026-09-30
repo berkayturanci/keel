@@ -3238,8 +3238,8 @@ printed in either failure.
 ## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--max-workers N] [--worker-timeout SECONDS] [--live] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 > **Experimental.** A live run implements each cluster and opens its pull request, but that pull
-> request carries no review evidence and nothing lands it yet
-> ([#1400](https://github.com/berkayturanci/keel/issues/1400),
+> request carries no review evidence; `swarm-land` merges it through `keel merge` once its review
+> is recorded ([#1400](https://github.com/berkayturanci/keel/issues/1400),
 > [#1287](https://github.com/berkayturanci/keel/issues/1287)). Audit epic:
 > [#1281](https://github.com/berkayturanci/keel/issues/1281).
 
@@ -3318,14 +3318,16 @@ the file on stderr and as `plan_file` in `--json`. It is the plan as planned, be
 rebalance; `swarm-land` lands from it (below). A live run refused before its workers start writes
 none.
 
-## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--live] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
+## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--live] [--transport auto|graphql|rest] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
-Land passing cluster branches from completed execution waves into the **local** base branch
-(`base_branch` from the project config) under atomic `merge_lock`:
+Land a wave by merging each cluster's pull request through `keel merge` — the same code, one
+cluster at a time ([#1287](https://github.com/berkayturanci/keel/issues/1287)):
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1
-keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
+keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 \
+  --approve-scope filesystem,git,github --operator "$USER"
+keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live \
+  --approve-scope filesystem,git,github --operator "$USER"
 ```
 
 **Which plan lands ([#1275](https://github.com/berkayturanci/keel/issues/1275)).** The run is
@@ -3351,56 +3353,43 @@ would land, or what it would refuse. An issue that declares no scope is planned 
 conflicts with every other issue, so any wave after the first that holds one depends on the
 waves before it and is refused: land wave 1, re-plan the rest, and land again.
 
-**The landing is a local merge only.** `--live` runs `git checkout <base_branch>` and
-`git merge --no-ff <cluster branch>` in the checkout at `--root`; the command does not push, and it
-does not open or merge a pull request. A cluster reported `merged` is merged in the local base
-branch, each cluster's pull request stays open, and `origin` is unchanged — pushing is the
-operator's step, and a protected base branch refuses that push
-([#1287](https://github.com/berkayturanci/keel/issues/1287)). `keel merge` is the command that
-merges a pull request on GitHub.
+**Each cluster lands through `keel merge`.** For every cluster of the wave, in plan order:
 
-- **Direct Batch Mode**: Orthogonal disjoint diff trees are merged into the local base branch one
-  after another with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+1. **Its pull request** is the number the live worker recorded in the run state, confirmed with
+   `gh pr view` to be open, headed by `swarm/<swarm_id>/<cluster_id>` and aimed at `base_branch`;
+   with no record, the one open pull request `gh pr list --head swarm/<swarm_id>/<cluster_id>`
+   names. None, several, a merged or closed one, or one for another branch or base holds the
+   cluster with that reason.
+2. **`keel merge` runs it** — its own parser, its own function: the merge window, the merge lock
+   (claimed for this one merge and released), operator consent, the merge state (`DIRTY`,
+   `BLOCKED`, … refuse), the CI rollup, the review-evidence gate, the gates-pass for the head, the
+   checkpoint gate, the squash pinned to the verified head, and the drift check after it.
+   `--transport`, `--approve-scope`, `--operator` and `--consent-mode` are passed through; every
+   other `keel merge` setting is its default.
+3. **The outcome**: merged → `landed`; refused → `held` with `keel merge`'s reason
+   (`PR #12: keel merge: merge window is closed`); the merge call failed → `failed`; drift after
+   the merge → `landed` with a `warning`. The run state records each cluster's `merged` / `held` /
+   `failed` at `s10` with its pull request.
+
+One cluster's outcome never stops the next, and the command exits `0` only when every cluster
+landed. `--json` adds `pull_requests` (cluster → number). Without `--live` each cluster goes
+through `keel merge --dry-run`: every check, no merge, no state written — and, like
+`keel merge --dry-run`, it needs the operator's consent.
+
 - **A dependent wave is refused (#1276)**: a `sequential_dependent` wave — in a freshly built plan,
   every wave after the first — had its branches cut before the earlier wave it depends on landed.
-  `swarm-land` refuses it, dry run or live: no git command, no review-evidence check, `mode` is
+  `swarm-land` refuses it, dry run or live: no pull request looked up, no `keel merge`, `mode` is
   `refused`, `refused` names the issues it depends on, and the exit code is 1. Land the earlier
   wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the landed ones)
   and land again.
-- **Your checkout (#1279)**: a live landing checks out and merges in the `--root` checkout, so it
-  refuses to start when `git status --porcelain` shows any tracked or untracked change (keel's own
-  untracked runtime files under `.keel/` excepted). It names the files in `refused`, touches no
-  branch, and exits 1. It then returns HEAD to the branch or commit it started on, whether the
-  wave landed, conflicted or raised; a return that fails is reported in `warnings`. Dry runs are
-  unchanged.
-- **Adaptive Funnel Mode**: implemented in `swarm_landing.py` (rebase onto the moved base, marker-resolver healing, hold-and-rewind) but selected only for an `orthogonal_parallel` wave whose caller-supplied PR diff map overlaps — **no `keel swarm-land` invocation reaches it**: the CLI passes no diff map, and a dependent wave is refused rather than funneled until [#1266](https://github.com/berkayturanci/keel/issues/1266) feeds the overlap check real diffs.
-- **Review evidence (#828)**: before a live landing, every cluster branch's open PR must pass
-  the same pre-merge review-evidence verification `keel merge` enforces — armed gate label,
-  tier-derived verdict count, verdicts pinned to the PR head. A cluster that does not verify is
-  **held** (reported with its reason, never merged); held clusters degrade the wave status like
-  failures without being counted as one. Fail-closed at every step: no open PR, a transport
-  error, an unarmed gate, an ambiguous branch (more than one open PR), and a
-  local branch tip that does not match the reviewed PR head all hold; a
-  cluster whose PR is already merged holds with an "already landed in an
-  earlier run" reason instead of a misleading one. In funnel mode a rebase always
-  rewrites SHAs, so re-pinning to the old head would make the mode a permanent
-  no-op; what matters is whether a *content* decision was made. A clean replay
-  of the reviewed commits lands; a rebase whose conflicts the resolver
-  auto-resolved holds, because those bytes were never reviewed. The merge
-  re-reads the branch tip locally inside the lock — on both paths, and on the
-  funnel path *before* the rebase, since the rebase itself voids the pin — and
-  holds if it moved since the (network-bound) check, which runs before the
-  lock is taken. A funnel hold rewinds the branch to the reviewed commit so a
-  rejected cluster is not left rewritten and un-landable. Everything
-  targets `base_branch` from the project config — the PR lookup, the merge and
-  the rebase — so the diff verified is the diff that lands. A *live* wave with any
-  held cluster exits non-zero, so automation cannot read "refused to land
-  unreviewed code" as success. The gate also runs in **dry runs** — the checks
-  are read-only — so a preview reports `would hold: <reason>` per cluster
-  instead of promising a landing that a live run would refuse. A dry run that
-  would hold any cluster exits non-zero, so a preview cannot be read as all-clear. The explicit opt-out is `knobs.swarm_review_evidence:
-  false`, which `swarm-land` announces loudly — the exception lives in config, never in a
-  driver's judgement call.
+- **Your checkout (#1279)**: landing checks out, rebases and merges nothing in the `--root`
+  checkout — the base advances on GitHub — so a dirty working tree no longer matters. HEAD is read
+  before the wave and returned to if anything moved it; a return that fails is reported in
+  `warnings`.
+- **Review evidence (#828)** is `keel merge`'s gate: armed gate label, tier-derived verdict count,
+  verdicts pinned to the pull request's head. A cluster whose pull request does not verify is
+  **held** with the missing items, in a dry run too. `knobs.swarm_review_evidence: false` no longer
+  skips it — `keel merge`'s gate has no opt-out — and `swarm-land` says so on stderr.
 
 ## `keel-visual swarm <project.yaml> [--root DIR] [--swarm-id ID] [--out FILE] [--serve] [--port PORT] [--json]`
 

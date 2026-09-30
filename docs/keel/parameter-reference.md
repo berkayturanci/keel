@@ -100,7 +100,8 @@ once here in full; the per-command sections below only note deviations.
   `work-block`, `overnight`, `regression`, `review-all-day`, `doctor` (where the
   consent covers what `doctor --fix` writes), and `swarm-run` (where `--live` delegates the
   consent to each cluster's worker; `agent` mode approves nothing it can delegate, so a live
-  swarm needs explicit or standing scopes and an operator).
+  swarm needs explicit or standing scopes and an operator), and `swarm-land` (which passes it to
+  the `keel merge` it runs for each cluster).
 - **Example:** `KEEL_CONSENT_MODE=agent keel plan .keel/project.yaml --command ship --live --json`
 
 ### `--approve-scope SCOPE`
@@ -2120,13 +2121,14 @@ keel install-legacy-wrappers all --force
 
 ## `keel swarm-land`
 
-> **Experimental subsystem** — the evidence contract below is real and enforced, but nothing
-> reaches it from a live swarm run yet. See [#1281](https://github.com/berkayturanci/keel/issues/1281).
+> **Experimental subsystem** — nothing in a swarm reviews the pull requests it opens, so a
+> cluster lands only once its review is recorded by hand. See
+> [#1281](https://github.com/berkayturanci/keel/issues/1281).
 
-Land the passing cluster branches of a completed execution wave into the project's base
-branch under the atomic `merge_lock`. Documented here — ahead of the other `swarm-*`
-commands — because it is the surface that carries the `knobs.swarm_review_evidence`
-contract described below.
+Land a completed execution wave by merging each cluster's pull request through
+[`keel merge`](#keel-merge) — the same code, one cluster at a time (#1287). Documented here —
+ahead of the other `swarm-*` commands — because it is the surface that carried the
+`knobs.swarm_review_evidence` contract described below.
 
 ```
 keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N]
@@ -2134,53 +2136,61 @@ keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--iss
                 [--issue-title TITLE] [--issue-body BODY]
                 [--issue-label LABEL] [--swarm-id ID] [--delegate PROVIDER]
                 [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE]
-                [--reviewers 1|2|3] [--live] [--json]
+                [--reviewers 1|2|3] [--live] [--transport auto|graphql|rest]
+                [--approve-scope SCOPE] [--operator ID]
+                [--consent-mode explicit|standing|agent] [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
 | --- | --- | --- | --- |
-| `path` | file path | required | Project config. |
-| `--root DIR` | path | `.` | Repo root for git, the swarm state and the merge lock. |
+| `path` | file path | required | Project config; also the config each `keel merge` loads. |
+| `--root DIR` | path | `.` | Repo root for the swarm state, `gh` and the merge lock. |
 | `--wave N` | int | `1` | Which execution wave to land. |
 | `--issues N,N` / `--issue N` | comma list / repeatable int | none | With a plan `swarm-run` persisted for the run (`.keel/state/swarm/<swarm_id>.plan.json`, #1275), optional: that plan is landed, and named issues are only re-planned to compare, any difference printed as a warning. Without one, the issue set the wave is re-planned from, and omitting both leaves nothing to land. Each issue is read with `gh issue view` and planned from its own `Scope:`, or as `*` when it declares none ([swarm.md](swarm.md#declaring-an-issues-scope)). |
 | `--issue-scope N=GLOB[,GLOB…]` | repeatable | none | Issue `N`'s scope for this run, winning over what the issue says. `N` must be a positive integer also named by `--issues`/`--issue`; at least one glob is required. Without a persisted plan, pass the same ones the run was planned with. |
 | `--declared-file` / `--issue-title` / `--issue-body` / `--issue-label` | one-issue flags | none | Describe a single issue; refused beside several (#1274). |
 | `--swarm-id ID` | string | the newest run's state file | The run to land: its persisted plan when `swarm-run` wrote one (#1275), else a plan rebuilt from the issue flags under that id. A persisted plan keel cannot read — malformed, not JSON, another run's, or an unknown schema version — exits 1 before anything is read or landed. |
-| `--delegate` / `--review-delegate` / `--effort` / `--team` / `--reviewers` | shared staffing flags | `knobs.team` | Handed to every child ship; see [Staffing a batch](#staffing-a-batch---team---effort-and-the-difficulty-bench). |
-| `--live` | flag | off | Actually merge. Without it the command reports what it would land, including `would hold: <reason>` per cluster. A live run refuses a dirty `--root` checkout (tracked or untracked changes, keel's own `.keel/` runtime files excepted) and returns HEAD to where it started (#1279). |
-| `--json` | flag | off | Structured landing result, including `refused` (why the landing did not start — a dependent wave, dry run or live, or a dirty checkout on a live run — else `""`), `warnings` (a checkout that could not be returned), `plan_source` (`"persisted"` or `"re-planned"`) and `plan_drift` (how the issues now plan differently from the persisted plan; `[]` when they agree or were not compared) (#1275). |
+| `--delegate` / `--review-delegate` / `--effort` / `--team` / `--reviewers` | shared staffing flags | `knobs.team` | Resolve the plan's staffing when the wave is re-planned; see [Staffing a batch](#staffing-a-batch---team---effort-and-the-difficulty-bench). |
+| `--live` | flag | off | Merge. Without it each cluster goes through `keel merge --dry-run` — every check, no merge, no run state written. Nothing is checked out or merged in the `--root` checkout either way; HEAD is returned to where it started if anything moved it (#1279). |
+| `--transport` | `auto` \| `graphql` \| `rest` | `auto` | `keel merge`'s `--transport` for every cluster's merge. |
+| `--approve-scope` / `--operator` / `--consent-mode` | consent flags | none | Passed to each `keel merge`, which requires consent dry run or live; without it every cluster is held. |
+| `--json` | flag | off | Structured landing result: `landed_clusters`, `held_clusters` (`[cluster, reason]`), `failed_clusters`, `pull_requests` (cluster → number), `refused` (a dependent wave, else `""`), `warnings` (a drifted merge, a checkout that could not be returned), `plan_source` (`"persisted"` or `"re-planned"`) and `plan_drift` (#1275). |
+
+Each cluster's pull request is the number its live worker recorded in the run state, confirmed
+open for `swarm/<swarm_id>/<cluster_id>` against `base_branch` with `gh pr view`; with no record,
+the one open pull request `gh pr list --head` names. Then `keel merge` runs it unchanged — merge
+window, merge lock, merge state, CI, review evidence, gates-pass, checkpoint gate, head-pinned
+squash, drift check. A cluster with no usable pull request, or one `keel merge` refuses, is
+**held** with the reason; a failed merge call **fails** it; the next cluster is tried either way,
+and the exit code is `0` only when every cluster landed.
 
 There is **no `--mode` flag**: `evaluate_wave_landing_mode` derives the mode from the plan's wave
 mode — direct batch for wave 1 and for a later wave with no dependency on an earlier wave's issue.
-A `sequential_dependent` wave is **refused**, dry run or live (#1276): no git command, `mode`
-`refused`, the issues it depends on named in `refused`, exit 1. Land the earlier wave, then
-re-plan the remaining issues and land again; the rebase funnel is not reached from the CLI until
-#1266 feeds its overlap check real diffs.
+A `sequential_dependent` wave is **refused**, dry run or live (#1276): no pull request looked up,
+no `keel merge`, `mode` `refused`, the issues it depends on named in `refused`, exit 1. Land the
+earlier wave, then re-plan the remaining issues and land again.
 
 ### Details — `knobs.swarm_review_evidence`
 
-Default `true`. Before a live landing, every cluster branch's open PR must pass the same
-pre-merge review-evidence verification `keel merge` enforces at ship s10 (#828): an armed
-gate, the tier-derived verdict count, and verdicts pinned to the PR head. A cluster that
-does not verify is **held** — reported with its reason, never merged. Held clusters
-degrade the wave status like failures without being counted as one, and a *live* wave with
-any held cluster exits non-zero, so automation cannot read "refused to land unreviewed
-code" as success.
+Default `true`. The knob decided whether `swarm-land` checked each cluster's review evidence
+before its local merge. Landing is `keel merge` now (#1287), and `keel merge`'s pre-merge
+review-evidence verification (#828) — an armed gate, the tier-derived verdict count, verdicts
+pinned to the pull request's head — has no opt-out. So the gate always applies: a cluster whose
+pull request does not verify is **held** with the missing items, in a dry run too, and the wave
+exits non-zero.
 
-The gate also runs in dry runs, because the checks are read-only: a preview that could not
-see the gate would promise a landing a live run refuses.
-
-`knobs.swarm_review_evidence: false` is the explicit opt-out and it is announced on stderr
-(`swarm review evidence: OFF by config`) before anything lands. `swarm-land` runs no CI of
-its own, so with the gate off clusters land unverified — which is why the exception lives
-in committed config rather than in a driver's judgement call. Full field documentation:
+`knobs.swarm_review_evidence: false` therefore skips nothing, and `swarm-land` says so on stderr
+(`swarm-land: knobs.swarm_review_evidence: false has no effect — …`) so the configured `false` is
+not read as still in effect. Full field documentation:
 [configuration.md](configuration.md#swarm_review_evidence).
 
 ### Examples
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --issues 714,715 --wave 1
-keel swarm-land .keel/project.yaml --root . --issues 714,715 --wave 1 --live --json
+keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 \
+  --approve-scope filesystem,git,github --operator "$USER"
+keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live --json \
+  --approve-scope filesystem,git,github --operator "$USER"
 ```
 
 ## `/keel:ship` adapter arguments

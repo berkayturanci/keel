@@ -1664,7 +1664,6 @@ class SwarmCommandsReadEachIssue(unittest.TestCase):
                 wave_index=1,
                 mode="direct_batch",
                 landed_clusters=(),
-                healed_clusters=(),
                 failed_clusters=(),
                 status="success",
             )
@@ -1840,8 +1839,9 @@ class AWavesLandingModeFollowsItsDependencies(unittest.TestCase):
         self.assertIn("its branches were cut before that landing", refusal)
         self.assertIn("Land the earlier wave, then re-plan", refusal)
         self.assertIn("keel swarm-plan / swarm-run", refusal)
-        self.assertIn("until #1266 feeds it real diffs", refusal)
-        self.assertIn("nothing was checked out or merged", refusal)
+        self.assertIn("no pull request was merged", refusal)
+        # The local rebase funnel went with the local merge (#1287); nothing promises it.
+        self.assertNotIn("funnel", refusal)
 
     def test_a_hand_built_dependent_wave_without_dependencies_still_reads(self):
         c = SwarmCluster(cluster_id="c", issues=(9,), role="core", combined_scope=("b.py",))
@@ -2298,7 +2298,6 @@ class SwarmLandLandsThePersistedPlan(unittest.TestCase):
                 wave_index=kwargs["wave_index"],
                 mode="direct_batch",
                 landed_clusters=(),
-                healed_clusters=(),
                 failed_clusters=(),
                 status="success",
             )
@@ -2416,6 +2415,43 @@ class SwarmLandLandsThePersistedPlan(unittest.TestCase):
                 self.assertEqual(calls, [], "refused before any issue is read")
                 self.assertIn(f"swarm-land: refusing the persisted plan: {path}", err)
                 self.assertIn(expected, err)
+
+
+class AWorkerRecordsThePullRequestItOpened(unittest.TestCase):
+    """#1287: the run state names each cluster's pull request, so swarm-land merges that one."""
+
+    def test_the_number_is_read_from_the_url_gh_prints(self):
+        for url, number in (
+            ("https://github.com/o/r/pull/12", 12),
+            ("https://github.com/o/r/pull/12/\n", 12),
+            ("https://github.com/o/r/pull/0", None),
+            ("https://github.com/o/r/issues/12", None),
+            ("", None),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(swarm_module.pull_request_number(url), number)
+
+    def test_the_number_round_trips_and_an_update_keeps_it(self):
+        worker = SwarmWorkerStatus(cluster_id="c", issue=1, role="core", pull_request=12)
+        state = SwarmRunState(swarm_id="s", total_workers=1, workers=(worker,))
+        with tempfile.TemporaryDirectory() as tmp:
+            swarm_module.save_swarm_state(state, root=tmp)
+            loaded = swarm_module.load_swarm_state("s", root=tmp)
+        self.assertEqual(loaded.workers[0].pull_request, 12)
+        kept = swarm_module.update_worker_state(loaded, "c", status="held", details="x")
+        self.assertEqual(kept.workers[0].pull_request, 12)
+        moved = swarm_module.update_worker_state(kept, "c", pull_request=13)
+        self.assertEqual(moved.workers[0].pull_request, 13)
+
+    def test_a_record_without_a_usable_number_has_none(self):
+        for value in (None, True, "12", 0, -3, 1.5):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / ".keel" / "state" / "swarm" / "s.json"
+                path.parent.mkdir(parents=True)
+                record = {"cluster_id": "c", "issue": 1, "pull_request": value}
+                path.write_text(json.dumps({"swarm_id": "s", "workers": [record]}), "utf-8")
+                loaded = swarm_module.load_swarm_state("s", root=tmp)
+                self.assertIsNone(loaded.workers[0].pull_request)
 
 
 if __name__ == "__main__":

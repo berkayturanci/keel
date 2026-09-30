@@ -12,11 +12,9 @@ CI ran it, so a squash-merge with markers still inside would have gone green
 human caught it by eye). This test makes that failure visible in the same
 offline suite every PR already runs.
 
-`tests/test_swarm_landing.py` intentionally embeds real, unindented marker
-lines inside a triple-quoted fixture string (`resolve_conflict_content` only
-recognises markers at column 0, the way git writes them) — it is excluded by
-name below rather than by trying to distinguish "real" markers from fixture
-ones, which is exactly the distinction a merge tool cannot make either.
+Nothing is skipped. `tests/test_swarm_landing.py` used to embed marker lines as a
+fixture for the swarm conflict healer; the healer went with the local landing it served
+(#1287), and so did the skip list.
 """
 
 from __future__ import annotations
@@ -34,17 +32,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #: (git's branch-label suffix) or end of line (the bare `=======` separator).
 CONFLICT_MARKER = re.compile(r"^(<{7}|={7}|>{7})( |$)")
 
-#: Files that deliberately contain marker-shaped lines as test data, not as
-#: an unresolved conflict. Keep this list short and each entry commented —
-#: it is a statement that a human looked at the lines and confirmed they are
-#: fixture content, not a real merge left half-done.
-SKIP = {
-    # `TestConflictHealing.test_resolve_conflict_content_on_markers_as_git_writes_them`
-    # builds its sample from an unindented triple-quoted string, so
-    # `<<<<<<< HEAD` / `=======` / `>>>>>>> feat/new-feature` sit at column 0
-    # on their own physical lines.
-    "tests/test_swarm_landing.py",
-}
+#: Files that deliberately contain marker-shaped lines as test data, not as an
+#: unresolved conflict. Empty; an entry needs a comment naming the fixture, as a
+#: statement that a human looked at the lines and confirmed they are not a real merge.
+SKIP: set[str] = set()
 
 
 def _is_binary(path: Path) -> bool:
@@ -107,20 +98,4 @@ class NoConflictMarkersInTree(unittest.TestCase):
             offenders,
             [],
             f"unresolved merge-conflict markers in the tree (path, line, content): {offenders}",
-        )
-
-    def test_the_swarm_landing_fixture_is_the_reason_the_skip_list_exists(self):
-        """Pins that SKIP is doing real work, not silently covering nothing.
-
-        If `tests/test_swarm_landing.py` ever loses its unindented marker
-        fixture, this fails and says so — a stale SKIP entry is exactly the
-        kind of thing nobody notices once it stops mattering.
-        """
-        path = REPO_ROOT / "tests" / "test_swarm_landing.py"
-        text = path.read_text(encoding="utf-8")
-        matches = [line for line in text.splitlines() if CONFLICT_MARKER.match(line)]
-        self.assertTrue(
-            matches,
-            "tests/test_swarm_landing.py no longer contains marker-shaped lines — "
-            "remove it from SKIP in tests/test_no_conflict_markers.py",
         )

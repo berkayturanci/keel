@@ -16,8 +16,9 @@ agent CLI such as `claude`, `codex` or `agy` — a `subagent:` seat refuses the 
 own worktree, commits the result, runs the gates, pushes `swarm/<swarm_id>/<cluster_id>` and opens
 one pull request per cluster. It needs the **operator's** consent — `--approve-scope
 filesystem,git,github --operator <name>` — which you ask the user for and never supply on your own,
-and its pull requests carry **no review evidence**: nothing reviews or lands them yet, so
-`swarm-land` holds them (#1287).
+and its pull requests carry **no review evidence**: nothing in the swarm reviews them, and
+`swarm-land` merges each one through `keel merge` (#1287), so it holds every cluster until that
+pull request's review verdicts and a gates-pass for its head are recorded.
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
@@ -48,12 +49,11 @@ for a run that lands nothing. Read the plan it renders as "what I passed", not
 the user expects to be **merged**, say plainly that swarm cannot do it and run `/keel:ship` per
 issue instead.
 
-Do not hand-drive the children to work around this. With `knobs.swarm_review_evidence` on — the
-default — `swarm-land` would hold the clusters anyway: no open PR, an unarmed gate, missing
-evidence, or a head that does not match the reviewed one. (With it off, a documented and logged
-opt-out, they would merge unverified.) Either way you would be skipping the per-issue ledger and
-the backbone that `/keel:ship` gives you. The rest
-is tracked under the audit epic #1281.
+Do not hand-drive the children to work around this. `swarm-land` lands a cluster only through
+`keel merge`, which holds any pull request without an armed gate, its review verdicts pinned to
+its head, or a gates-pass for that head — and `knobs.swarm_review_evidence: false` no longer turns
+that off (#1287). Driving the children by hand would skip the per-issue ledger and the backbone
+that `/keel:ship` gives you. The rest is tracked under the audit epic #1281.
 
 ## Live progress — stamp this run (required)
 
@@ -185,17 +185,27 @@ implementation is the leads' work, below.
 
 ## Step 3 — Batch landing under the merge lock
 
-When an execution wave completes, land all passing clusters onto the project's
-`base_branch` (config — `keel swarm-land` reads it; never assume a branch name):
+When an execution wave completes, land it: `keel swarm-land` merges each cluster's pull request
+through `keel merge` against the project's `base_branch` (config — never assume a branch name).
+Preview first, then land; both need the operator's consent, which you ask the user for:
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
+keel swarm-land .keel/project.yaml --root . --swarm-id <swarm_id> --wave <n> \
+  --approve-scope filesystem,git,github --operator <name>
+keel swarm-land .keel/project.yaml --root . --swarm-id <swarm_id> --wave <n> --live \
+  --approve-scope filesystem,git,github --operator <name>
 ```
 
 - The landing mode is **derived from the plan's wave mode**, not passed on the command line.
-- **Orthogonal Batch Landing** (wave 1, and any later wave none of whose clusters depends on an earlier wave's issue): disjoint diff trees are merged into the local `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- **A dependent wave is refused.** A `sequential_dependent` wave — in a fresh plan, every wave after the first — had its branches cut before the earlier wave it depends on landed, so `swarm-land --wave N` refuses it, dry run or live: no checkout, no merge, exit 1, `"mode": "refused"` with the reason in `refused`. Land the earlier wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the landed ones) and land again. The library's adaptive rebase funnel is not reached from this command until #1266 feeds its overlap check real diffs.
-- **The landing is a local merge only.** `swarm-land` does not push, and it does not open or merge a pull request: a cluster reported `merged` is merged in the local base branch, its pull request stays open, and `origin` is unchanged (#1287). Pushing is the operator's step — leave it to them, and do not report the work as landed on the repository. A protected base branch refuses the push anyway; work that has to reach the repository goes through `/keel:ship` and `keel merge`, one pull request at a time.
+- **Each cluster's pull request goes through `keel merge`** (#1287) — the one the live worker
+  recorded, else the one open pull request for `swarm/<swarm_id>/<cluster_id>` — one at a time:
+  merge window, merge lock, merge state, CI, review evidence, gates-pass, head-pinned squash,
+  drift check. Report each cluster as the command does: `landed` (merged on GitHub, its pull
+  request closed as merged), `held` with `keel merge`'s reason (no open PR, a closed or `DIRTY`
+  one, the window, missing evidence, no gates-pass for the head, the lock), or `failed` (the
+  merge call itself). A held or failed cluster does not stop the next; the exit code is 0 only
+  when every cluster landed. Nothing is checked out or merged in the local checkout.
+- **A dependent wave is refused.** A `sequential_dependent` wave — in a fresh plan, every wave after the first — had its branches cut before the earlier wave it depends on landed, so `swarm-land --wave N` refuses it, dry run or live: no pull request looked up, no `keel merge`, exit 1, `"mode": "refused"` with the reason in `refused`. Land the earlier wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the landed ones) and land again.
 
 ## Step 4 — Visual tracking & terminal dashboard
 
@@ -223,4 +233,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=plugin command=swarm keel_version=1.25.0 source_sha256=9110ba5e915b47592120b674b12a63a437551dc6a2806b3da814e22031768b87 generated_sha256=9110ba5e915b47592120b674b12a63a437551dc6a2806b3da814e22031768b87 -->
+<!-- keel-generated: surface=plugin command=swarm keel_version=1.25.0 source_sha256=77c94877e93fc6e72a5f2be9153899d1d74636bbf3d3bb461ed193f980cd92e1 generated_sha256=77c94877e93fc6e72a5f2be9153899d1d74636bbf3d3bb461ed193f980cd92e1 -->

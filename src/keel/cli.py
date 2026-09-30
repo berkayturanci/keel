@@ -5218,6 +5218,12 @@ def _finish_merge(
 ) -> int:
     payload["reason"] = reason
     payload["status"] = "pass" if code == 0 else "fail"
+    sink = getattr(args, "merge_sink", None)
+    if isinstance(sink, list):
+        # `swarm-land` runs this very merge once per cluster and reports each in its own
+        # output (#1287). `keel merge`'s parser sets no sink, so its output is unchanged.
+        sink.append(payload)
+        return code
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
@@ -7840,126 +7846,99 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
     return 0 if result.status == "success" else 1
 
 
-def _swarm_land_evidence_checker(
+def _swarm_land_find_pull_request(
     args: argparse.Namespace, config: cfg.ProjectConfig
-) -> Callable[[str], tuple[bool, str, str | None]]:
-    """The per-branch review-evidence check swarm-land applies before landing.
+) -> Callable[[str, int | None], Any]:
+    """How ``swarm-land`` finds a cluster's pull request (#1287).
 
-    Resolves the cluster branch's open PR against the project's own base
-    branch, then runs the same pre-merge evidence verification ``keel merge``
-    enforces — tier-derived reviewer count, verdicts pinned to the PR head,
-    armed gate label. Fail closed at every step: no PR, an ambiguous branch, a
-    transport error, an unarmed gate, a failed verification and a local tip
-    that is not the reviewed head all *hold* the cluster rather than land it
-    (#828). The reviewed sha travels back with the answer so the merge can
-    re-confirm it locally inside the lock.
+    The number ``swarm-run`` recorded for the cluster, confirmed open against the
+    cluster's branch and the configured base with ``gh pr view``; with no record, the one
+    open pull request ``gh pr list --head <branch>`` names. Every failure to read the host
+    holds the cluster with the reason — never lands it on a guess.
     """
     from . import swarm_landing
 
-    def check(branch_name: str) -> swarm_landing.EvidenceCheck:
-        hold = lambda why: swarm_landing.EvidenceCheck(False, why)  # noqa: E731
-        lookup = run_argv(
-            [
+    def find(branch: str, recorded: int | None) -> swarm_landing.PullRequestLookup:
+        if recorded is not None:
+            argv = [
+                "gh",
+                "pr",
+                "view",
+                str(recorded),
+                "--json",
+                "number,state,headRefName,baseRefName",
+            ]
+        else:
+            argv = [
                 "gh",
                 "pr",
                 "list",
                 "--head",
-                branch_name,
+                branch,
                 "--base",
                 config.base_branch,
                 "--state",
                 "all",
                 "--json",
                 "number,state",
-            ],
-            cwd=args.root,
-        )
-        if not lookup.ok:
-            return hold(f"PR lookup failed: {lookup.output.strip()[:120]}")
-        try:
-            prs = json.loads(lookup.stdout or lookup.output or "[]")
-        except json.JSONDecodeError:
-            return hold("PR lookup returned invalid JSON")
-        if not isinstance(prs, list):
-            prs = []
-        open_prs = [
-            p
-            for p in prs
-            if isinstance(p, dict) and p.get("state") == "OPEN" and isinstance(p.get("number"), int)
-        ]
-        if len(open_prs) > 1:
-            numbers = ", ".join(f"#{p['number']}" for p in open_prs)
-            return hold(
-                f"ambiguous: {len(open_prs)} open PRs for the cluster branch "
-                f"({numbers}) — close the strays before landing"
-            )
-        if not open_prs:
-            merged = [
-                p
-                for p in prs
-                if isinstance(p, dict)
-                and p.get("state") == "MERGED"
-                and isinstance(p.get("number"), int)
             ]
-            if merged:
-                return hold(
-                    f"PR #{merged[0]['number']} is already merged — this "
-                    "cluster likely landed in an earlier run"
-                )
-            return hold(
-                "no open PR for the cluster branch — open one, arm the gate "
-                "label and post review verdicts before landing"
+        res = run_argv(argv, cwd=args.root)
+        if not res.ok:
+            return swarm_landing.PullRequestLookup(
+                None, f"PR lookup failed: {res.output.strip()[:120] or f'exit {res.code}'}"
             )
-        number = open_prs[0]["number"]
-        # Field-for-field parity with `keel merge`'s own argparse defaults;
-        # review_comments in particular is validated against the posting modes
-        # and must never be None.
-        evidence_ns = argparse.Namespace(
-            pr=number,
-            issue=None,
-            reviewers=None,
-            review_comments="inline",
-            jury=False,
-            no_jury=False,
-            jury_advisory=False,
-            gate_label=None,
-            root=args.root,
-        )
         try:
-            payload = _verify_merge_evidence(evidence_ns, config, phase=evidence.PHASE_PRE_MERGE)
-        # SystemExit too: the namespace is hand-built, and argparse-style
-        # validation raises it — that would abort the whole wave mid-flight
-        # instead of holding one cluster.
-        except (Exception, SystemExit) as exc:  # noqa: BLE001 - one cluster holds, wave survives
-            return hold(f"evidence verification errored: {type(exc).__name__}: {exc}"[:160])
-        if not payload.get("enforced"):
-            return hold(f"PR #{number}: evidence gate is not armed")
-        verification = payload.get("verification") or {}
-        if verification.get("status") != "pass":
-            missing = ", ".join(verification.get("missing") or ()) or "unknown"
-            return hold(f"PR #{number}: missing evidence: {missing}")
-        # The verdicts are pinned to the remote PR head; the landing merges the
-        # local ref. Unless they are the same commit, "verified" would bless
-        # bytes nobody reviewed.
-        reviewed_sha = payload.get("head_sha")
-        local = run_argv(["git", "rev-parse", branch_name], cwd=args.root)
-        local_sha = (local.stdout or local.output or "").strip()
-        if not local.ok or not local_sha:
-            return hold(
-                f"PR #{number}: cannot resolve the local branch tip to pin "
-                "against the reviewed head"
+            reply = json.loads(res.stdout or "null")
+        except json.JSONDecodeError:
+            return swarm_landing.PullRequestLookup(None, "PR lookup returned invalid JSON")
+        if recorded is not None:
+            return swarm_landing.pull_request_from_view(
+                recorded, reply, branch=branch, base_branch=config.base_branch
             )
-        if not isinstance(reviewed_sha, str) or local_sha != reviewed_sha:
-            return hold(
-                f"PR #{number}: local branch tip {local_sha[:12]} is not the "
-                f"reviewed PR head {str(reviewed_sha)[:12]} — push or re-review "
-                "before landing"
-            )
-        return swarm_landing.EvidenceCheck(
-            True, f"PR #{number}: evidence verified at {local_sha[:12]}", local_sha
-        )
+        return swarm_landing.pull_request_from_list(reply, branch=branch)
 
-    return check
+    return find
+
+
+def _swarm_land_merge(args: argparse.Namespace, swarm_id: str) -> Callable[[int, str, bool], Any]:
+    """Hand one cluster's pull request to ``keel merge`` — the same function, not a copy.
+
+    The argv is parsed by ``keel merge``'s own parser, so every default the command has
+    (squash, the transport, the evidence flags) is the one a cluster gets, and
+    :func:`_cmd_merge` runs it: window, lock, CI, evidence, gates-pass, head pin, drift.
+    Only the report differs — the payload goes to a sink instead of stdout, so
+    ``swarm-land`` can report every cluster in one output (#1287).
+    """
+    from . import swarm_landing
+
+    def merge(pr: int, cluster_id: str, dry_run: bool) -> swarm_landing.ClusterMerge:
+        argv = [
+            "merge",
+            args.path,
+            "--root",
+            args.root,
+            "--pr",
+            str(pr),
+            "--owner",
+            f"swarm-land-{swarm_id}-{cluster_id}",
+            "--transport",
+            args.transport,
+        ]
+        for approved in args.approve_scope:
+            argv.extend(("--approve-scope", approved))
+        if args.operator:
+            argv.extend(("--operator", args.operator))
+        if args.consent_mode:
+            argv.extend(("--consent-mode", args.consent_mode))
+        if dry_run:
+            argv.append("--dry-run")
+        merge_args = build_parser().parse_args(argv)
+        sink: list[dict[str, object]] = []
+        merge_args.merge_sink = sink
+        code = _cmd_merge(merge_args)
+        return swarm_landing.merge_outcome(code, sink[-1] if sink else None)
+
+    return merge
 
 
 def _swarm_land_plan(
@@ -8060,31 +8039,23 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
 
     from . import swarm_landing
 
-    evidence_checker = None
-    if config.knobs.swarm_review_evidence:
-        # Built for dry runs too: the checks are read-only, and a preview that
-        # cannot see the gate tells the operator a wave will land when it
-        # would be held entirely.
-        evidence_checker = _swarm_land_evidence_checker(args, config)
-    elif args.live:
-        # The opt-out must be impossible to miss in the transcript: the
-        # whole point of #828 is that skipping review is a visible,
-        # configured exception, never a silent default.
+    if not config.knobs.swarm_review_evidence:
+        # Landing is `keel merge` now (#1287), and its evidence gate has no opt-out, so
+        # the knob that used to skip review at landing skips nothing. Said out loud, so
+        # nobody reads the configured `false` as still being in effect.
         print(
-            "swarm review evidence: OFF by config "
-            "(knobs.swarm_review_evidence: false) — clusters land "
-            "unverified (swarm-land checks no CI of its own)",
+            "swarm-land: knobs.swarm_review_evidence: false has no effect — each cluster "
+            "lands through keel merge, whose evidence gate always applies",
             file=sys.stderr,
         )
 
     result = swarm_landing.land_wave_clusters(
         plan,
         wave_index=args.wave,
-        project_yaml=args.path,
         root=args.root,
         dry_run=not args.live,
-        evidence_checker=evidence_checker,
-        base_branch=config.base_branch,
+        find_pull_request=_swarm_land_find_pull_request(args, config),
+        merge_pull_request=_swarm_land_merge(args, plan.swarm_id),
     )
 
     if args.json:
@@ -8095,9 +8066,8 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
 
     # One exit contract for both modes: 0 only when the wave would land clean.
     #
-    # The dry run used to exit 0 whenever anything was held, so
-    # `partial_failure` — the only status a preview can reach, since the dry-run
-    # arm hardcodes `failed_clusters=()` — always returned success. The CHANGELOG
+    # The dry run used to exit 0 whenever anything was held, so a preview's
+    # `partial_failure` always returned success. The CHANGELOG
     # claimed non-zero for `swarm-land` as well as `swarm-run`; measured, it was
     # true of `--live` only (#931).
     #
@@ -10395,8 +10365,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_sl = sub.add_parser(
         "swarm-land",
         help=(
-            "EXPERIMENTAL: merge a wave's cluster branches into the local base with git merge "
-            "--no-ff under the merge lock, holding any cluster without review evidence"
+            "EXPERIMENTAL: merge each cluster's pull request in a wave through keel merge "
+            "(window, lock, evidence, head pin), holding any cluster it refuses"
         ),
     )
     p_sl.add_argument("path", help="path to project.yaml")
@@ -10428,7 +10398,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_sl.add_argument("--swarm-id", default=None, help="custom swarm ID")
     _add_staffing_args(p_sl, reviewers=True)
-    p_sl.add_argument("--live", action="store_true", help="run live mutating git landing")
+    p_sl.add_argument(
+        "--live",
+        action="store_true",
+        help="merge the pull requests; without it, each goes through keel merge --dry-run",
+    )
+    p_sl.add_argument(
+        "--transport",
+        choices=_TRANSPORT_CHOICES,
+        default="auto",
+        help="keel merge's --transport for every cluster's merge",
+    )
+    p_sl.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for keel merge (it asks for consent, dry run or live)",
+    )
+    p_sl.add_argument("--operator", default=None, help="operator identifier for consent evidence")
+    p_sl.add_argument(
+        "--consent-mode", choices=consent.CONSENT_MODES, default=None, help="operator consent mode"
+    )
     p_sl.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sl.set_defaults(func=_cmd_swarm_land)
 

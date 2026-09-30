@@ -7,6 +7,32 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **`swarm-land` merges each cluster's pull request through `keel merge`** (#1287). Landing was a
+  local `git merge --no-ff` into the checkout's base branch: nothing was pushed, every cluster's
+  pull request stayed open, and on a protected base the merge commits could never leave the
+  machine. Now, for each cluster of the wave in plan order, `swarm-land` finds the cluster's pull
+  request — the number the live worker recorded in the run state (new `pull_request` on each
+  worker record), confirmed open for `swarm/<swarm_id>/<cluster_id>` against `base_branch` with
+  `gh pr view`; with no record, the one open pull request `gh pr list --head` names — and runs
+  `keel merge` on it: `keel merge`'s own parser and function, so the merge window, the merge lock,
+  operator consent, the merge state, the CI rollup, the review-evidence gate, the gates-pass for
+  the head, the checkpoint gate, the squash pinned to the verified head and the drift check apply
+  unchanged. `keel merge`'s output is byte-identical; only when `swarm-land` calls it does the
+  payload go to a sink instead of stdout.
+  - A cluster with no usable pull request (none, several, merged, closed, another branch or
+    base), or one `keel merge` refuses (`DIRTY`, the window, missing evidence, no gates-pass, the
+    lock held), is **held** with the reason; a failed merge call **fails** it; a drifted merge
+    lands with a warning. One cluster never stops the next, and the exit code is 0 only when
+    every cluster landed. `--json` adds `pull_requests`; `healed_clusters` is gone.
+  - A dry run is `keel merge --dry-run` per cluster — every check, no merge, no state written —
+    and so needs the operator's consent, like `keel merge --dry-run`. New `--transport`,
+    `--approve-scope`, `--operator` and `--consent-mode` on `swarm-land` are passed through.
+  - Nothing is checked out, rebased or merged in the operator's checkout, so a dirty working
+    tree is no longer refused; HEAD is still returned to where it started if anything moved it.
+    The local rebase funnel and its conflict resolver went with the local merge.
+  - `knobs.swarm_review_evidence: false` no longer skips anything — `keel merge`'s evidence gate
+    has no opt-out — and `swarm-land` says so on stderr. A dependent wave is still refused
+    (#1276), and the persisted plan is still the one landed (#1275).
 - **A live swarm worker implements its cluster, under consent the operator delegates** (#1400,
   first slice). `swarm-run --live` was refused: its worker was `keel ship`, an assessment that
   never writes code, commits or opens a pull request, and the operator's consent could not

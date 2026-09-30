@@ -1,44 +1,49 @@
-"""Unit tests for Keel Swarm orthogonal batch landing & drift self-healing engine."""
+"""Unit tests for swarm landing: each cluster's pull request lands through keel merge (#1287)."""
 
 from __future__ import annotations
 
-import contextlib
 import io
 import json
-import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+from keel import cli as cli_mod
+from keel import runtime
 from keel.cli import main
 from keel.runner import CommandResult
 from keel.swarm import (
     IssueScope,
     SwarmCluster,
+    SwarmLandingResult,
     SwarmPlan,
     SwarmRunState,
     SwarmWave,
     SwarmWorkerStatus,
     build_swarm_plan,
     evaluate_wave_landing_mode,
-    landing_tree_changes,
     load_swarm_state,
-    render_dirty_tree_refusal,
     render_swarm_landing_result,
+    save_swarm_plan,
     save_swarm_state,
 )
 from keel.swarm_landing import (
-    EvidenceCheck,
-    _restore_pin,
-    is_safe_declarative_chunk,
+    FAILED,
+    HELD,
+    LANDED,
+    ClusterMerge,
+    PullRequestLookup,
     land_wave_clusters,
-    merge_cluster_branch,
-    rebase_and_heal_cluster_branch,
-    resolve_adjacent_conflict,
-    resolve_conflict_content,
+    merge_outcome,
+    pull_request_from_list,
+    pull_request_from_view,
 )
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+KEEL_YAML = str(REPO_ROOT / "projects" / "keel.yaml")
 
 #: swarm-plan/-run/-land read every named issue with `gh issue view` (#1274). The suite
 #: is offline (AGENTS.md), so every test gets an unreadable issue unless it patches its
@@ -57,166 +62,97 @@ def tearDownModule():
     _ISSUE_STUB.stop()
 
 
-def _home(runner, branch: str = "feature"):
-    """Answer a live landing's clean-tree and HEAD reads as a clean checkout on ``branch``.
+def _two_cluster_plan(swarm_id: str = "swarm-t") -> SwarmPlan:
+    scopes = [
+        IssueScope(issue=101, predicted_files=("src/a.py",), scope_source="issue-body"),
+        IssueScope(issue=102, predicted_files=("docs/b.md",), scope_source="issue-body"),
+    ]
+    plan = build_swarm_plan(scopes, swarm_id=swarm_id)
+    assert [[c.cluster_id for c in w.clusters] for w in plan.waves] == [
+        ["cluster-1-101", "cluster-1-102"]
+    ], "fixture: one wave of two disjoint clusters"
+    return plan
 
-    Every live landing starts by reading ``git status`` and HEAD (#1279). The tests
-    about what happens after that get a checkout that passes the check and never
-    moves, so their runners keep answering only the commands they are about.
-    """
 
-    def wrapped(cmd: list[str], cwd: Path) -> CommandResult:
-        if cmd[:3] == ["git", "status", "--porcelain"] and "--untracked-files=all" in cmd:
-            return CommandResult(ok=True, code=0, output="")
+def _state(swarm_id: str, prs: dict[str, int | None]) -> SwarmRunState:
+    workers = tuple(
+        SwarmWorkerStatus(
+            cluster_id=cid,
+            issue=int(cid.rsplit("-", 1)[1]),
+            role="core",
+            step="s6",
+            status="passed",
+            pull_request=number,
+        )
+        for cid, number in prs.items()
+    )
+    return SwarmRunState(swarm_id=swarm_id, total_workers=len(workers), workers=workers)
+
+
+class _Checkout:
+    """A recording runner for the checkout postcondition: HEAD on ``branch`` throughout,
+    unless ``moves_to`` says where the next read after the first finds it."""
+
+    def __init__(self, branch: str = "feature", *, moves_to: str | None = None, back_ok=True):
+        self.branch = branch
+        self.moves_to = moves_to
+        self.back_ok = back_ok
+        self.commands: list[list[str]] = []
+        self._reads = 0
+
+    def __call__(self, cmd: list[str], cwd: Path) -> CommandResult:
+        self.commands.append(list(cmd))
         if cmd[:2] == ["git", "symbolic-ref"]:
-            return CommandResult(ok=True, code=0, output=branch)
-        return runner(cmd, cwd)
+            self._reads += 1
+            where = self.moves_to if self.moves_to and self._reads > 1 else self.branch
+            return CommandResult(ok=True, code=0, output=where)
+        if cmd[:2] == ["git", "checkout"]:
+            return CommandResult(ok=self.back_ok, code=0 if self.back_ok else 1, output="nope")
+        return CommandResult(ok=False, code=1, output="")
 
-    return wrapped
+
+class _Recorder:
+    """Recorded answers for the two seams: the lookup and keel merge."""
+
+    def __init__(self, found=None, merged=None):
+        self.found = found or {}
+        self.merged = merged or {}
+        self.lookups: list[tuple[str, int | None]] = []
+        self.merges: list[tuple[int, str, bool]] = []
+
+    def find(self, branch: str, recorded: int | None) -> PullRequestLookup:
+        self.lookups.append((branch, recorded))
+        return self.found.get(branch, PullRequestLookup(recorded))
+
+    def merge(self, pr: int, cluster_id: str, dry_run: bool) -> ClusterMerge:
+        self.merges.append((pr, cluster_id, dry_run))
+        answer = self.merged.get(pr, ClusterMerge(LANDED, "merged"))
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
 
-class TestConflictHealing(unittest.TestCase):
-    def test_is_safe_declarative_chunk(self):
-        self.assertTrue(is_safe_declarative_chunk(["   ", "import os", "from sys import path"]))
-        self.assertFalse(is_safe_declarative_chunk(["x = 1"]))
-
-    def test_resolve_conflict_content_on_markers_as_git_writes_them(self):
-        """Git writes its markers at column 0 on their own lines, and the parser only
-        recognises them there (`line.startswith`), so this fixture keeps them unindented
-        rather than escaped into one string. `tests/test_no_conflict_markers.py` skips
-        this file by name for exactly these lines."""
-        sample = """
-header line
-<<<<<<< HEAD
-import os
-import sys
-=======
-import json
-import math
->>>>>>> feat/new-feature
-footer line
-"""
-        self.assertEqual(
-            resolve_conflict_content(sample),
-            "\nheader line\nimport os\nimport sys\nimport json\nimport math\nfooter line\n",
-        )
-
-    def test_resolve_adjacent_conflict_empty_keeps_a_declarative_side(self):
-        # One branch added an import, the other added nothing there. Safe, and
-        # the case the empty-side path exists for.
-        self.assertEqual(resolve_adjacent_conflict("", "import sys\n"), "import sys\n")
-        self.assertEqual(resolve_adjacent_conflict("import os\n", ""), "import os\n")
-
-    def test_an_empty_side_does_not_wave_arbitrary_code_through(self):
-        """A delete-versus-modify conflict prints an empty side (#798).
-
-        This used to return the non-empty side untouched, so `swarm-land` would
-        write a deleted function back and stage it — the caller acts on the
-        result without review, so refusing is the only way a human sees it.
-
-        The previous test passed `"theirs\\n"` and `"ours\\n"`: single bare words
-        that happen to be safe declarative content, so the assertion held while
-        the branch waved anything through.
-        """
-        body = "def critical_auth_check(user):\n    return user.is_admin\n"
-        self.assertIsNone(resolve_adjacent_conflict("", body))
-        self.assertIsNone(resolve_adjacent_conflict(body, ""))
-
-    def test_resolve_adjacent_conflict_disjoint_and_overlap(self):
-        ours = "import os\n"
-        theirs = "import sys\n"
-        res = resolve_adjacent_conflict(ours, theirs)
-        self.assertEqual(res, "import os\nimport sys\n")
-
-        # Overlapping conflict cannot resolve safely
-        ours_dup = "x = 1\n"
-        theirs_dup = "x = 2\n"
-        self.assertIsNone(resolve_adjacent_conflict(ours_dup, theirs_dup))
-
-    def test_declarative_chunks_bullets_quotes_and_comments(self):
-        ours = "- feature A\n* feature B\n// comment\n/* block */\n\n\"entry1\",\n'entry2',\n"
-        theirs = '- feature C\n"entry3",\n'
-        res = resolve_adjacent_conflict(ours, theirs)
-        self.assertIsNotNone(res)
-        self.assertIn("feature A", res)
-        self.assertIn("feature C", res)
-
-    def test_resolve_adjacent_conflict_duplicate_import(self):
-        ours = "import os\n"
-        theirs = "import os\n"
-        self.assertIsNone(resolve_adjacent_conflict(ours, theirs))
-
-    def test_a_conflict_path_is_staged_as_a_path_not_an_option(self):
-        """A file named like a flag is still a file (#1097).
-
-        The path comes out of `git status` for a tree the cluster's agents
-        wrote, so its name is not the operator's to vouch for. Without git's
-        pathspec separator `git add -i` starts interactive mode and
-        `git add -A` stages the whole tree — neither is what healing one
-        conflict means.
-        """
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            hostile = root / "-i"
-            hostile.write_text(
-                "import os\n<<<<<<< HEAD\nimport sys\n=======\nimport json\n>>>>>>> feat/b\n",
-                encoding="utf-8",
-            )
-            seen: list[list[str]] = []
-
-            def runner(cmd: list[str], cwd: Path) -> CommandResult:
-                seen.append(cmd)
-                if "status" in cmd:
-                    return CommandResult(ok=True, code=0, output="UU -i")
-                if "--continue" in cmd:
-                    return CommandResult(ok=True, code=0, output="rebased")
-                if "rebase" in cmd and "--abort" not in cmd:
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            ok, reason = rebase_and_heal_cluster_branch(root, "branch-hostile", runner=runner)
-
-        self.assertTrue(ok)
-        self.assertEqual(reason, "self_healed_rebase")
-        add = next(cmd for cmd in seen if cmd[:2] == ["git", "add"])
-        self.assertEqual(add, ["git", "add", "--", "-i"])
-        # The separator has to come before the path, or git reads the name first.
-        self.assertLess(add.index("--"), add.index("-i"))
-
-    def test_resolve_conflict_content(self):
-        clean = "def foo():\n    return 42\n"
-        self.assertEqual(resolve_conflict_content(clean), clean)
-
-        conflict_resolvable = (
-            "header\n<<<<<<< HEAD\nimport os\n=======\nimport sys\n>>>>>>> branch\nfooter\n"
-        )
-        resolved = resolve_conflict_content(conflict_resolvable)
-        self.assertIsNotNone(resolved)
-        self.assertIn("import os", resolved)
-        self.assertIn("import sys", resolved)
-        self.assertNotIn("<<<<<<<", resolved)
-
-        conflict_unresolvable = "header\n<<<<<<< HEAD\nval = 1\n=======\nval = 2\n>>>>>>> branch\n"
-        self.assertIsNone(resolve_conflict_content(conflict_unresolvable))
+def _land(plan, rec, *, root, dry_run=False, wave=1, runner=None):
+    return land_wave_clusters(
+        plan,
+        wave_index=wave,
+        root=root,
+        dry_run=dry_run,
+        find_pull_request=rec.find,
+        merge_pull_request=rec.merge,
+        runner=runner or _Checkout(),
+    )
 
 
 class TestSwarmLandingPureLogic(unittest.TestCase):
     def test_evaluate_wave_landing_mode_single_and_disjoint(self):
         c1 = SwarmCluster(cluster_id="c1", issues=(101,), role="core", combined_scope=("src/a.py",))
         w_single = SwarmWave(
-            wave_index=1,
-            mode="orthogonal_parallel",
-            eligible_direct_landing=True,
-            clusters=(c1,),
+            wave_index=1, mode="orthogonal_parallel", eligible_direct_landing=True, clusters=(c1,)
         )
         dec_single = evaluate_wave_landing_mode(w_single, {})
-        self.assertTrue(dec_single.eligible)
-        self.assertEqual(dec_single.mode, "direct_batch")
-        self.assertEqual(dec_single.reason, "single_cluster")
-        d_dict = dec_single.to_dict()
-        self.assertEqual(d_dict["mode"], "direct_batch")
-
-        # Disjoint multi-cluster
+        self.assertEqual((dec_single.mode, dec_single.reason), ("direct_batch", "single_cluster"))
+        self.assertEqual(dec_single.to_dict()["mode"], "direct_batch")
         c2 = SwarmCluster(
             cluster_id="c2", issues=(102,), role="docs", combined_scope=("docs/a.md",)
         )
@@ -227,2181 +163,316 @@ class TestSwarmLandingPureLogic(unittest.TestCase):
             clusters=(c1, c2),
         )
         dec_multi = evaluate_wave_landing_mode(w_multi, {"c1": ["src/a.py"], "c2": ["docs/a.md"]})
-        self.assertTrue(dec_multi.eligible)
-        self.assertEqual(dec_multi.mode, "direct_batch")
-        self.assertEqual(dec_multi.reason, "orthogonal_diff_trees")
+        self.assertEqual(
+            (dec_multi.mode, dec_multi.reason), ("direct_batch", "orthogonal_diff_trees")
+        )
 
     def test_evaluate_wave_landing_mode_overlapping_diffs(self):
-        c1 = SwarmCluster(
-            cluster_id="c1", issues=(101,), role="core", combined_scope=("src/common.py",)
-        )
-        c2 = SwarmCluster(
-            cluster_id="c2", issues=(102,), role="core", combined_scope=("src/common.py",)
-        )
-        # A wave the plan found orthogonal whose actual diffs overlap: the diffs decide.
-        w_overlap = SwarmWave(
+        c1 = SwarmCluster(cluster_id="c1", issues=(101,), role="core", combined_scope=("x.py",))
+        c2 = SwarmCluster(cluster_id="c2", issues=(102,), role="core", combined_scope=("x.py",))
+        wave = SwarmWave(
             wave_index=1,
             mode="orthogonal_parallel",
             eligible_direct_landing=True,
             clusters=(c1, c2),
         )
-        dec_overlap = evaluate_wave_landing_mode(
-            w_overlap, {"c1": ["src/common.py"], "c2": ["src/common.py"]}
-        )
-        self.assertFalse(dec_overlap.eligible)
-        self.assertEqual(dec_overlap.mode, "sequential_funnel")
-        self.assertEqual(dec_overlap.reason, "overlapping_diff_trees")
+        dec = evaluate_wave_landing_mode(wave, {"c1": ["x.py"], "c2": ["x.py"]})
+        self.assertEqual((dec.mode, dec.reason), ("sequential_funnel", "overlapping_diff_trees"))
 
     def test_render_swarm_landing_result(self):
-        from keel.swarm import SwarmLandingResult
-
-        res_ok = SwarmLandingResult(
-            swarm_id="swarm-ok",
-            wave_index=1,
-            mode="direct_batch",
-            landed_clusters=("c1", "c2"),
-            healed_clusters=(),
-            failed_clusters=(),
-            status="success",
+        out_ok = render_swarm_landing_result(
+            SwarmLandingResult(
+                swarm_id="swarm-ok",
+                wave_index=1,
+                mode="direct_batch",
+                landed_clusters=("c1", "c2"),
+                failed_clusters=(),
+                status="success",
+                pull_requests=(("c1", 10), ("c2", 11)),
+            )
         )
-        out_ok = render_swarm_landing_result(res_ok)
         self.assertIn("keel swarm land — swarm-ok (wave 1)", out_ok)
         self.assertIn("status  : success ✓", out_ok)
         self.assertIn("landed  : c1, c2", out_ok)
-        self.assertIn("healed  : none", out_ok)
+        self.assertIn("PRs     : c1 #10, c2 #11", out_ok)
         self.assertNotIn("held", out_ok)
+        self.assertNotIn("healed", out_ok)
 
-        res_held = SwarmLandingResult(
-            swarm_id="swarm-held",
+        out_held = render_swarm_landing_result(
+            SwarmLandingResult(
+                swarm_id="swarm-held",
+                wave_index=2,
+                mode="direct_batch",
+                landed_clusters=(),
+                failed_clusters=("c3",),
+                status="failed",
+                held_clusters=(("c2", "PR #10: keel merge: merge window is closed"),),
+                warnings=("c1: drift",),
+            )
+        )
+        self.assertIn("status  : failed ✗", out_held)
+        self.assertIn("failed  : c3", out_held)
+        self.assertIn("held    : not landed", out_held)
+        self.assertIn("c2: PR #10: keel merge: merge window is closed", out_held)
+        self.assertIn("warning : c1: drift", out_held)
+        self.assertNotIn("PRs", out_held)
+
+    def test_the_landing_result_reports_its_pull_requests_as_json(self):
+        result = SwarmLandingResult(
+            swarm_id="s",
             wave_index=1,
             mode="direct_batch",
             landed_clusters=("c1",),
-            healed_clusters=(),
             failed_clusters=(),
-            status="partial_failure",
-            held_clusters=(("c2", "PR #10: missing evidence: review-verdict-1"),),
+            status="success",
+            pull_requests=(("c1", 10),),
         )
-        out_held = render_swarm_landing_result(res_held)
-        self.assertIn("held    : review evidence missing — not landed", out_held)
-        self.assertIn("c2: PR #10: missing evidence: review-verdict-1", out_held)
+        self.assertEqual(result.to_dict()["pull_requests"], {"c1": 10})
+        self.assertNotIn("healed_clusters", result.to_dict())
 
-        res_partial = SwarmLandingResult(
-            swarm_id="swarm-partial",
-            wave_index=2,
-            mode="sequential_funnel",
-            landed_clusters=("c1",),
-            healed_clusters=("c1",),
-            failed_clusters=("c2",),
-            status="partial_failure",
-        )
-        out_partial = render_swarm_landing_result(res_partial)
-        self.assertIn("status  : partial_failure ⚠️", out_partial)
-        self.assertIn("healed  : c1", out_partial)
-        self.assertIn("failed  : c2", out_partial)
 
+class TheClustersPullRequestIsFound(unittest.TestCase):
+    """The recorded pull request is confirmed open for the branch; the list is the fallback."""
 
-class TestSwarmLandingThinIO(unittest.TestCase):
-    def test_rebase_and_heal_cluster_branch(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            p_root = Path(tmpdir)
-            calls: list[list[str]] = []
+    BRANCH = "swarm/s/cluster-1-101"
 
-            # Clean rebase
-            def mock_clean_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                calls.append(cmd)
-                return CommandResult(ok=True, code=0, output="rebased")
-
-            ok, reason = rebase_and_heal_cluster_branch(
-                p_root, "branch-1", runner=mock_clean_runner, base_branch="develop"
-            )
-            self.assertTrue(ok)
-            self.assertEqual(reason, "clean_rebase")
-            self.assertIn(["git", "rebase", "develop"], calls)
-            self.assertNotIn(["git", "rebase", "origin/develop"], calls)
-
-            # Conflicting rebase without resolvable files
-            def mock_conflict_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "status" in cmd:
-                    return CommandResult(ok=True, code=0, output="")
-                if "rebase" in cmd and "--abort" not in cmd:
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="aborted")
-
-            ok_c, reason_c = rebase_and_heal_cluster_branch(
-                p_root, "branch-2", runner=mock_conflict_runner
-            )
-            self.assertFalse(ok_c)
-            self.assertEqual(reason_c, "conflict_detected")
-
-            # Self-healing rebase on resolvable conflict file
-            conflict_file = p_root / "src" / "feature.py"
-            conflict_file.parent.mkdir(parents=True, exist_ok=True)
-            conflict_file.write_text(
-                "import os\n<<<<<<< HEAD\nimport sys\n=======\nimport json\n>>>>>>> feat/b\n",
-                encoding="utf-8",
-            )
-
-            def mock_heal_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "status" in cmd:
-                    return CommandResult(ok=True, code=0, output="UU src/feature.py")
-                if "--continue" in cmd:
-                    return CommandResult(ok=True, code=0, output="rebased")
-                if "rebase" in cmd and "--abort" not in cmd:
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            ok_h, reason_h = rebase_and_heal_cluster_branch(
-                p_root, "branch-heal", runner=mock_heal_runner
-            )
-            self.assertTrue(ok_h)
-            self.assertEqual(reason_h, "self_healed_rebase")
-            self.assertNotIn("<<<<<<<", conflict_file.read_text(encoding="utf-8"))
-
-            # Self-healing rebase where rebase --continue fails
-            conflict_file.write_text(
-                "import os\n<<<<<<< HEAD\nimport sys\n=======\nimport json\n>>>>>>> feat/b\n",
-                encoding="utf-8",
-            )
-
-            def mock_continue_fail_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "status" in cmd:
-                    return CommandResult(ok=True, code=0, output="UU src/feature.py")
-                if "--continue" in cmd:
-                    return CommandResult(ok=False, code=1, output="continue failed")
-                if "rebase" in cmd and "--abort" not in cmd:
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            ok_cf, reason_cf = rebase_and_heal_cluster_branch(
-                p_root, "branch-fail-cont", runner=mock_continue_fail_runner
-            )
-            self.assertFalse(ok_cf)
-            self.assertEqual(reason_cf, "conflict_detected")
-
-            # Self-healing rebase where file does not exist on disk
-            def mock_missing_file_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "status" in cmd:
-                    return CommandResult(ok=True, code=0, output="UU src/nonexistent.py")
-                if "rebase" in cmd and "--abort" not in cmd:
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            ok_mf, reason_mf = rebase_and_heal_cluster_branch(
-                p_root, "branch-missing", runner=mock_missing_file_runner
-            )
-            self.assertFalse(ok_mf)
-            self.assertEqual(reason_mf, "conflict_detected")
-
-            # Self-healing rebase where conflict cannot be resolved
-            unresolvable_file = p_root / "src" / "unresolvable.py"
-            unresolvable_file.write_text(
-                "val = 1\n<<<<<<< HEAD\nval = 2\n=======\nval = 3\n>>>>>>> feat/c\n",
-                encoding="utf-8",
-            )
-
-            def mock_unresolvable_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "status" in cmd:
-                    return CommandResult(ok=True, code=0, output="UU src/unresolvable.py")
-                if "rebase" in cmd and "--abort" not in cmd:
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            ok_un, reason_un = rebase_and_heal_cluster_branch(
-                p_root, "branch-unres", runner=mock_unresolvable_runner
-            )
-            self.assertFalse(ok_un)
-            self.assertEqual(reason_un, "conflict_detected")
-
-            # Self-healing rebase where reading file triggers OSError / is dir
-            dir_conflict = p_root / "src" / "dir_conflict"
-            dir_conflict.mkdir(parents=True, exist_ok=True)
-
-            def mock_oserror_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "status" in cmd:
-                    return CommandResult(ok=True, code=0, output="UU src/dir_conflict")
-                if "rebase" in cmd and "--abort" not in cmd:
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            ok_oe, reason_oe = rebase_and_heal_cluster_branch(
-                p_root, "branch-oserror", runner=mock_oserror_runner
-            )
-            self.assertFalse(ok_oe)
-            self.assertEqual(reason_oe, "conflict_detected")
-
-    def test_merge_cluster_branch(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            p_root = Path(tmpdir)
-
-            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                return CommandResult(ok=True, code=0, output="merged")
-
-            ok = merge_cluster_branch(p_root, "branch-1", runner=mock_runner)
-            self.assertTrue(ok)
-
-            # Failure triggers git merge --abort
-            calls: list[list[str]] = []
-
-            def mock_fail_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                calls.append(cmd)
-                if cmd[:2] == ["git", "merge"]:
-                    if cmd[2] == "--abort":
-                        return CommandResult(ok=True, code=0, output="aborted")
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="")
-
-            ok_fail = merge_cluster_branch(p_root, "branch-conflict", runner=mock_fail_runner)
-            self.assertFalse(ok_fail)
-            self.assertIn(["git", "merge", "--abort"], calls)
-
-    def test_land_wave_clusters_dry_run_and_nonexistent_wave(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-land-test")
-
-            # Nonexistent wave
-            res_none = land_wave_clusters(
-                plan,
-                wave_index=99,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(res_none.status, "failed")
-
-            # Dry run wave 1
-            res_dry = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=True,
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(res_dry.status, "success")
-            self.assertEqual(len(res_dry.landed_clusters), 1)
-
-    def test_land_wave_clusters_live_direct_batch(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
-            plan = build_swarm_plan([s1, s2], swarm_id="swarm-live-batch")
-
-            w1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-101", issue=101, role="core", status="passed"
-            )
-            w2 = SwarmWorkerStatus(
-                cluster_id="cluster-1-102", issue=102, role="core", status="passed"
-            )
-            st = SwarmRunState(swarm_id="swarm-live-batch", total_workers=2, workers=(w1, w2))
-            save_swarm_state(st, root=tmpdir)
-
-            # Runner where 101 succeeds and 102 fails
-            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "cluster-1-101" in " ".join(cmd):
-                    return CommandResult(ok=True, code=0, output="merged")
-                if "cluster-1-102" in " ".join(cmd):
-                    return CommandResult(ok=False, code=1, output="merge rejected")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(mock_runner),
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(res.status, "partial_failure")
-            self.assertIn("cluster-1-101", res.landed_clusters)
-            self.assertIn("cluster-1-102", res.failed_clusters)
-
-    def test_land_wave_clusters_holds_clusters_without_review_evidence(self):
-        """#828: a cluster whose evidence does not verify is held, never merged.
-
-        Held is not failed — the code is intact, the independent-review
-        contract is simply unsatisfied — but it degrades the wave status the
-        same way, because "success" must mean "everything landed"."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
-            plan = build_swarm_plan([s1, s2], swarm_id="swarm-evid")
-
-            w1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-101", issue=101, role="core", status="passed"
-            )
-            w2 = SwarmWorkerStatus(
-                cluster_id="cluster-1-102", issue=102, role="core", status="passed"
-            )
-            st = SwarmRunState(swarm_id="swarm-evid", total_workers=2, workers=(w1, w2))
-            save_swarm_state(st, root=tmpdir)
-
-            merged_branches: list[str] = []
-
-            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return CommandResult(ok=True, code=0, output="a" * 40)
-                if "merge" in cmd:
-                    merged_branches.append(cmd[-2])
-                return CommandResult(ok=True, code=0, output="ok")
-
-            def checker(branch: str) -> tuple[bool, str]:
-                if "cluster-1-101" in branch:
-                    return EvidenceCheck(True, "PR #9: evidence verified", "a" * 40)
-                return EvidenceCheck(False, "PR #10: missing evidence: review-verdict-1")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(mock_runner),
-                evidence_checker=checker,
-                base_branch="main",
-            )
-            self.assertIn("cluster-1-101", res.landed_clusters)
-            self.assertEqual(
-                res.held_clusters,
-                (("cluster-1-102", "PR #10: missing evidence: review-verdict-1"),),
-            )
-            self.assertNotIn("cluster-1-102", res.failed_clusters)
-            # the held cluster's branch must never have reached git merge
-            self.assertFalse(any("cluster-1-102" in b for b in merged_branches))
-            self.assertEqual(res.status, "partial_failure")
-            # the worker state records the hold with its reason
-            reloaded = load_swarm_state("swarm-evid", root=tmpdir)
-            held_worker = next(w for w in reloaded.workers if w.cluster_id == "cluster-1-102")
-            self.assertEqual(held_worker.status, "held")
-            self.assertIn("review evidence", held_worker.details)
-            # serialization carries the held pair
-            self.assertEqual(
-                res.to_dict()["held_clusters"],
-                [["cluster-1-102", "PR #10: missing evidence: review-verdict-1"]],
-            )
-
-    def test_funnel_holds_when_the_heal_authored_unreviewed_content(self):
-        """The jury's major: a rebase that *resolved conflicts* writes bytes
-        nobody reviewed, so it must hold. A clean replay of the reviewed
-        commits does not — otherwise funnel mode, which exists precisely
-        because the base moved, could never land anything."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
-            plan = build_swarm_plan([s1, s2], swarm_id="swarm-funnel-heal")
-            w1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-101", issue=101, role="core", status="passed"
-            )
-            save_swarm_state(
-                SwarmRunState(swarm_id="swarm-funnel-heal", total_workers=1, workers=(w1,)),
-                root=tmpdir,
-            )
-            merged: list[str] = []
-
-            def healing_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                joined = " ".join(cmd)
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return CommandResult(ok=True, code=0, output="a" * 40)
-                if cmd[:2] == ["git", "rebase"] and "--continue" not in joined:
-                    return CommandResult(ok=False, code=1, output="CONFLICT")
-                if "status" in joined:
-                    return CommandResult(ok=True, code=0, output="UU src/shared.py")
-                if "merge" in cmd:
-                    merged.append(cmd[-2])
-                return CommandResult(ok=True, code=0, output="ok")
-
-            conflicted = Path(tmpdir) / "src"
-            conflicted.mkdir(parents=True, exist_ok=True)
-            (conflicted / "shared.py").write_text(
-                "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n", encoding="utf-8"
-            )
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                pr_diff_map={
-                    "cluster-1-101": ["src/shared.py"],
-                    "cluster-1-102": ["src/shared.py"],
-                },
-                runner=_home(healing_runner),
-                resolver=lambda _text: "resolved\n",
-                evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
-                base_branch="main",
-            )
-            self.assertTrue(res.held_clusters, res)
-            reason = res.held_clusters[0][1]
-            self.assertIn("resolved conflicts", reason)
-            self.assertIn("rebase and re-review the PR", reason)
-            self.assertIn("restored to the reviewed commit", reason)
-            self.assertEqual(merged, [])
-            reloaded = load_swarm_state("swarm-funnel-heal", root=tmpdir)
-            self.assertTrue(any(w.status == "held" for w in reloaded.workers))
-
-    def test_funnel_reconfirms_the_pin_before_the_rebase_touches_the_branch(self):
-        """The jury's second major: the pre-lock check is network-bound, and on
-        the funnel path the rebase itself voids the pin — so the re-read must
-        happen before the rebase, on this arm too, not only on direct-batch."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
-            plan = build_swarm_plan([s1, s2], swarm_id="swarm-funnel-drift")
-            touched: list[str] = []
-
-            def drifted_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if cmd[:2] == ["git", "rev-parse"]:
-                    # a commit landed on the branch after the evidence check
-                    return CommandResult(ok=True, code=0, output="9" * 40)
-                if cmd[:2] == ["git", "rebase"] or "merge" in cmd:
-                    touched.append(" ".join(cmd))
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                pr_diff_map={
-                    "cluster-1-101": ["src/shared.py"],
-                    "cluster-1-102": ["src/shared.py"],
-                },
-                runner=_home(drifted_runner),
-                evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
-                base_branch="main",
-            )
-            self.assertEqual(res.mode, "sequential_funnel")
-            self.assertTrue(res.held_clusters)
-            self.assertIn("branch tip moved", res.held_clusters[0][1])
-            self.assertEqual(touched, [], "the rebase must not run on a drifted branch")
-
-    def test_restore_pin_reports_every_outcome_honestly(self):
-        """The operator must learn the branch was touched, whatever happened."""
-        calls: list[list[str]] = []
-
-        def ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
-            calls.append(cmd)
-            return CommandResult(ok=True, code=0, output="")
-
-        def failing_runner(cmd: list[str], cwd: Path) -> CommandResult:
-            return CommandResult(ok=False, code=1, output="denied")
-
-        sha = "f" * 40
-        self.assertIn(
-            "restored to the reviewed commit",
-            _restore_pin(Path("/tmp"), "swarm/x/c1", sha, ok_runner),
-        )
-        self.assertEqual(calls[0][:2], ["git", "update-ref"])
-        self.assertIn("refs/heads/swarm/x/c1", calls[0])
-        self.assertIn(
-            "could not be reset",
-            _restore_pin(Path("/tmp"), "swarm/x/c1", sha, failing_runner),
-        )
-        self.assertIn(
-            "no pinned commit to restore",
-            _restore_pin(Path("/tmp"), "swarm/x/c1", None, ok_runner),
-        )
-
-    def test_funnel_clean_rebase_lands_with_the_gate_on(self):
-        """The design's load-bearing positive case: a clean replay of the
-        reviewed commits must land. If `clean_rebase` is ever renamed, funnel
-        mode silently becomes a permanent no-op — this is what catches that."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
-            plan = build_swarm_plan([s1, s2], swarm_id="swarm-clean-rebase")
-            sha = "d" * 40
-            merged: list[str] = []
-
-            def clean_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return CommandResult(ok=True, code=0, output=sha)
-                if "merge" in cmd:
-                    merged.append(cmd[-2])
-                # `git rebase` succeeds -> rebase_and_heal returns "clean_rebase"
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                pr_diff_map={
-                    "cluster-1-101": ["src/shared.py"],
-                    "cluster-1-102": ["src/shared.py"],
-                },
-                runner=_home(clean_runner),
-                evidence_checker=lambda b: EvidenceCheck(True, "verified", sha),
-                base_branch="main",
-            )
-            self.assertEqual(res.mode, "sequential_funnel")
-            self.assertEqual(res.held_clusters, ())
-            self.assertTrue(res.landed_clusters, "a clean rebase must land")
-            self.assertTrue(merged)
-
-    def test_dry_run_predicts_holds_instead_of_promising_a_landing(self):
-        """A preview that ignores the gate over-promises: it is what a driver
-        reads to decide whether to attempt the wave."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
-            plan = build_swarm_plan([s1, s2], swarm_id="swarm-dry-predict")
-
-            def checker(branch: str):
-                if "101" in branch:
-                    return EvidenceCheck(True, "verified", "a" * 40)
-                return EvidenceCheck(False, "missing evidence: review-verdict-1")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=True,
-                evidence_checker=checker,
-                base_branch="main",
-            )
-            self.assertIn("cluster-1-101", res.landed_clusters)
-            self.assertEqual(len(res.held_clusters), 1)
-            self.assertIn("would hold:", res.held_clusters[0][1])
-            self.assertIn("review-verdict-1", res.held_clusters[0][1])
-            self.assertEqual(res.status, "partial_failure")
-
-            # an unusable answer is predicted as a hold too, never as landable
-            res_bad = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=True,
-                evidence_checker=lambda _b: None,
-                base_branch="main",
-            )
-            self.assertEqual(res_bad.landed_clusters, ())
-            self.assertIn("unusable answer", res_bad.held_clusters[0][1])
-
-    def test_an_answer_without_a_pinned_commit_is_refused(self):
-        """A pass the merge cannot re-confirm is not a usable answer.
-
-        The previous version of this test was named for a guarantee and then
-        asserted its absence: a bare pair yielded head_sha=None, _pin_drifted
-        returned early, and the drift window silently reopened while the suite
-        stayed green. Fail closed instead."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-bare-pair")
-            merged: list[str] = []
-
-            def runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "merge" in cmd:
-                    merged.append(cmd[-2])
-                return CommandResult(ok=True, code=0, output="ok")
-
-            for answer, expected in (
-                ((True, "verified"), "unusable answer"),
-                (True, "unusable answer"),
-                (None, "unusable answer"),
-                ((True, "verified", "a" * 40, "extra"), "unusable answer"),
-                # a plain 3-tuple is accepted and coerced, but a pass with no
-                # pinned commit is still refused
-                (EvidenceCheck(True, "verified", None), "without a pinned commit"),
-                ((True, "verified", ""), "without a pinned commit"),
-            ):
-                with self.subTest(answer=type(answer).__name__):
-                    res = land_wave_clusters(
-                        plan,
-                        wave_index=1,
-                        project_yaml=".keel/project.yaml",
-                        root=tmpdir,
-                        dry_run=False,
-                        runner=_home(runner),
-                        evidence_checker=lambda _b, a=answer: a,
-                        base_branch="main",
-                    )
-                    self.assertTrue(res.held_clusters, res)
-                    self.assertIn(expected, res.held_clusters[0][1])
-            self.assertEqual(merged, [], "nothing may land on an unusable answer")
-
-    def test_base_branch_must_be_stated(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-nobase")
-            with self.assertRaises(TypeError) as ctx:
-                land_wave_clusters(
-                    plan,
-                    wave_index=1,
-                    project_yaml=".keel/project.yaml",
-                    root=tmpdir,
-                    dry_run=True,
-                    evidence_checker=None,
-                )
-            self.assertIn("explicit base_branch", str(ctx.exception))
-
-    def test_direct_batch_reconfirms_the_pin_inside_the_lock(self):
-        """The pre-lock check is network-bound; the tip can move before the
-        merge. A cheap local re-read closes that window."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-pin-window")
-            merged: list[str] = []
-
-            def moving_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return CommandResult(ok=True, code=0, output="b" * 40)
-                if "merge" in cmd:
-                    merged.append(cmd[-2])
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(moving_runner),
-                evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
-                base_branch="main",
-            )
-            self.assertTrue(res.held_clusters)
-            self.assertIn("branch tip moved", res.held_clusters[0][1])
-            self.assertEqual(merged, [])
-
-    def test_pin_reconfirm_covers_unreadable_tip_and_stateful_hold(self):
-        """The lock-time re-read must fail closed when git cannot answer, and
-        record the hold in worker state when there is state to record."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-pin-unreadable")
-            w1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-101", issue=101, role="core", status="passed"
-            )
-            save_swarm_state(
-                SwarmRunState(swarm_id="swarm-pin-unreadable", total_workers=1, workers=(w1,)),
-                root=tmpdir,
-            )
-
-            def blind_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return CommandResult(ok=False, code=1, output="")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(blind_runner),
-                evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
-                base_branch="main",
-            )
-            self.assertIn("cannot re-read the branch tip", res.held_clusters[0][1])
-            reloaded = load_swarm_state("swarm-pin-unreadable", root=tmpdir)
-            self.assertTrue(any(w.status == "held" for w in reloaded.workers))
-
-    def test_pin_reconfirm_passes_when_the_tip_is_unchanged(self):
-        """The happy path: pinned sha still current -> the merge proceeds."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-pin-ok")
-            sha = "c" * 40
-
-            def steady_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return CommandResult(ok=True, code=0, output=sha + "\n")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(steady_runner),
-                evidence_checker=lambda b: EvidenceCheck(True, "verified", sha),
-                base_branch="main",
-            )
-            self.assertEqual(res.held_clusters, ())
-            self.assertIn("cluster-1-101", res.landed_clusters)
-
-    def test_funnel_heal_hold_without_state_is_still_reported(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            s2 = IssueScope(issue=102, title="B", predicted_files=("src/b.py",))
-            plan = build_swarm_plan([s1, s2], swarm_id="swarm-heal-nostate")
-
-            def healing_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                joined = " ".join(cmd)
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return CommandResult(ok=True, code=0, output="a" * 40)
-                if cmd[:2] == ["git", "rebase"] and "--continue" not in joined:
-                    return CommandResult(ok=False, code=1, output="CONFLICT")
-                if "status" in joined:
-                    return CommandResult(ok=True, code=0, output="UU src/shared.py")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            d = Path(tmpdir) / "src"
-            d.mkdir(parents=True, exist_ok=True)
-            (d / "shared.py").write_text(
-                "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n", encoding="utf-8"
-            )
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                pr_diff_map={
-                    "cluster-1-101": ["src/shared.py"],
-                    "cluster-1-102": ["src/shared.py"],
-                },
-                runner=_home(healing_runner),
-                resolver=lambda _t: "resolved\n",
-                evidence_checker=lambda b: EvidenceCheck(True, "verified", "a" * 40),
-                base_branch="main",
-            )
-            self.assertTrue(res.held_clusters)
-            self.assertIn("resolved conflicts", res.held_clusters[0][1])
-
-    def test_base_branch_flows_into_both_merge_and_rebase(self):
-        """The jury's blocking major: verifying a PR against config.base_branch
-        while merging into a hardcoded main blesses a diff that lands
-        elsewhere."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-base")
-            seen: list[str] = []
-
-            def recording_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                seen.append(" ".join(cmd))
-                return CommandResult(ok=True, code=0, output="ok")
-
-            land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(recording_runner),
-                evidence_checker=None,
-                base_branch="develop",
-            )
-            self.assertTrue(
-                any("checkout develop" in c for c in seen),
-                f"merge must target the configured base: {seen}",
-            )
-            self.assertFalse(any("checkout main" in c for c in seen), seen)
-
-    def test_land_wave_clusters_requires_an_explicit_evidence_choice(self):
-        """Omitting the argument must raise; None is the typed opt-out."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-explicit")
-            with self.assertRaises(TypeError) as ctx:
-                land_wave_clusters(
-                    plan,
-                    wave_index=1,
-                    project_yaml=".keel/project.yaml",
-                    root=tmpdir,
-                    dry_run=True,
-                    base_branch="main",
-                )
-            self.assertIn("explicit evidence_checker", str(ctx.exception))
-
-    def test_evidence_checks_run_before_the_merge_lock_is_taken(self):
-        """Network-bound checks must not hold the global merge lock."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-lock-order")
-            order: list[str] = []
-
-            def checker(branch: str) -> tuple[bool, str]:
-                order.append("check")
-                return False, "no open PR for the cluster branch"
-
-            def mock_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                order.append("git")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(mock_runner),
-                evidence_checker=checker,
-                base_branch="main",
-            )
-            # held before any git work happened at all
-            self.assertEqual(order, ["check"])
-
-    def test_land_wave_clusters_all_held_is_failed_and_none_checker_skips(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-evid2")
-
-            def mock_ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                return CommandResult(ok=True, code=0, output="ok")
-
-            # every cluster held -> the wave cannot claim any success
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(mock_ok_runner),
-                evidence_checker=lambda _b: (False, "no open PR for the cluster branch"),
-                base_branch="main",
-            )
-            self.assertEqual(res.status, "failed")
-            self.assertEqual(res.landed_clusters, ())
-
-            # checker=None preserves the legacy behavior byte for byte
-            res2 = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(mock_ok_runner),
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertIn("cluster-1-101", res2.landed_clusters)
-            self.assertEqual(res2.held_clusters, ())
-
-    def test_land_wave_clusters_live_without_state(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-no-state")
-
-            def mock_ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(mock_ok_runner),
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(res.status, "success")
-
-            def mock_fail_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                return CommandResult(ok=False, code=1, output="fail")
-
-            res_fail = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(mock_fail_runner),
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(res_fail.status, "failed")
-
-    def test_land_wave_clusters_uses_unified_merge_lock_path(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            from keel import lock
-
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-lock-test")
-            expected_lock_path = lock.resource_path(
-                Path(tmpdir).resolve() / ".keel" / "state" / "locks", "merge"
-            )
-
-            lock_paths_seen = []
-            orig_merge_lock = lock.merge_lock
-
-            @contextlib.contextmanager
-            def recording_merge_lock(path):
-                lock_paths_seen.append(path)
-                with orig_merge_lock(path) as p:
-                    yield p
-
-            def mock_ok_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                return CommandResult(ok=True, code=0, output="ok")
-
-            with patch("keel.swarm_landing.merge_lock", side_effect=recording_merge_lock):
-                land_wave_clusters(
-                    plan,
-                    wave_index=1,
-                    project_yaml=".keel/project.yaml",
-                    root=tmpdir,
-                    dry_run=False,
-                    runner=_home(mock_ok_runner),
-                    evidence_checker=None,
-                    base_branch="main",
-                )
-            self.assertEqual(lock_paths_seen, [expected_lock_path])
-
-    def test_land_wave_clusters_live_sequential_funnel_healing_and_failure(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            c1 = SwarmCluster(
-                cluster_id="cluster-1-1", issues=(1,), role="core", combined_scope=("src/c.py",)
-            )
-            c2 = SwarmCluster(
-                cluster_id="cluster-1-2", issues=(2,), role="core", combined_scope=("src/c.py",)
-            )
-            # Plan-orthogonal with overlapping supplied diffs: the only way into the
-            # funnel, since a dependent wave is refused (#1276).
-            w1 = SwarmWave(
-                wave_index=1,
-                mode="orthogonal_parallel",
-                eligible_direct_landing=True,
-                clusters=(c1, c2),
-            )
-            plan = SwarmPlan(swarm_id="swarm-funnel", total_issues=2, waves=(w1,))
-
-            w_st1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-1", issue=1, role="core", status="passed"
-            )
-            w_st2 = SwarmWorkerStatus(
-                cluster_id="cluster-1-2", issue=2, role="core", status="passed"
-            )
-            st = SwarmRunState(swarm_id="swarm-funnel", total_workers=2, workers=(w_st1, w_st2))
-            save_swarm_state(st, root=tmpdir)
-
-            # Mock diff map forcing sequential funnel
-            diff_map = {"cluster-1-1": ["src/c.py"], "cluster-1-2": ["src/c.py"]}
-
-            # Case 1: Rebase ok and merge ok
-            def mock_heal_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                return CommandResult(ok=True, code=0, output="rebased/merged")
-
-            res_heal = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                pr_diff_map=diff_map,
-                runner=_home(mock_heal_runner),
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(res_heal.status, "success")
-            self.assertEqual(len(res_heal.healed_clusters), 2)
-
-            # Case 2: Rebase fails with conflict
-            def mock_conflict_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "rebase" in cmd and "--abort" not in cmd:
-                    return CommandResult(ok=False, code=1, output="conflict")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res_conf = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                pr_diff_map=diff_map,
-                runner=_home(mock_conflict_runner),
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(res_conf.status, "failed")
-
-            # Case 3: Rebase ok but merge fails
-            def mock_merge_fail_runner(cmd: list[str], cwd: Path) -> CommandResult:
-                if "merge" in cmd:
-                    return CommandResult(ok=False, code=1, output="merge failed")
-                return CommandResult(ok=True, code=0, output="ok")
-
-            res_mf = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                pr_diff_map=diff_map,
-                runner=_home(mock_merge_fail_runner),
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(res_mf.status, "failed")
-
-            # Case 4: Sequential funnel without state
-            with tempfile.TemporaryDirectory() as tmp_nostate:
-                res_nostate_ok = land_wave_clusters(
-                    plan,
-                    wave_index=1,
-                    project_yaml=".keel/project.yaml",
-                    root=tmp_nostate,
-                    dry_run=False,
-                    pr_diff_map=diff_map,
-                    runner=_home(mock_heal_runner),
-                    evidence_checker=None,
-                    base_branch="main",
-                )
-                self.assertEqual(res_nostate_ok.status, "success")
-
-                res_nostate_fail = land_wave_clusters(
-                    plan,
-                    wave_index=1,
-                    project_yaml=".keel/project.yaml",
-                    root=tmp_nostate,
-                    dry_run=False,
-                    pr_diff_map=diff_map,
-                    runner=_home(mock_conflict_runner),
-                    evidence_checker=None,
-                    base_branch="main",
-                )
-                self.assertEqual(res_nostate_fail.status, "failed")
-
-                res_nostate_mf = land_wave_clusters(
-                    plan,
-                    wave_index=1,
-                    project_yaml=".keel/project.yaml",
-                    root=tmp_nostate,
-                    dry_run=False,
-                    pr_diff_map=diff_map,
-                    runner=_home(mock_merge_fail_runner),
-                    evidence_checker=None,
-                    base_branch="main",
-                )
-                self.assertEqual(res_nostate_mf.status, "failed")
-
-
-class TestSwarmLandCLI(unittest.TestCase):
-    def test_swarm_land_cli_missing_and_invalid_config(self):
-        buf = io.StringIO()
-        with redirect_stderr(buf):
-            code = main(["swarm-land", "nonexistent.yaml"])
-        self.assertEqual(code, 1)
-        self.assertIn("no such config", buf.getvalue())
-
-        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tf:
-            tf.write("invalid_root_key: true\n")
-            path = tf.name
-
-        buf = io.StringIO()
-        try:
-            with redirect_stderr(buf):
-                code = main(["swarm-land", path])
-            self.assertEqual(code, 1)
-        finally:
-            if os.path.exists(path):
-                os.unlink(path)
-
-    def test_swarm_land_cli_review_knob_off_logs_and_skips(self):
-        """#828: skipping review must be a visible, configured exception."""
-        import unittest.mock as mock
-
-        from keel import cli as cli_mod
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            w1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-714", issue=714, role="docs", status="passed"
-            )
-            st = SwarmRunState(swarm_id="swarm-knob", total_workers=1, workers=(w1,))
-            save_swarm_state(st, root=tmpdir)
-
-            captured: dict[str, object] = {}
-
-            def fake_land(plan, **kwargs):
-                captured.update(kwargs)
-                from keel.swarm import SwarmLandingResult
-
-                return SwarmLandingResult(
-                    swarm_id=plan.swarm_id,
-                    wave_index=1,
-                    mode="direct_batch",
-                    landed_clusters=(),
-                    healed_clusters=(),
-                    failed_clusters=(),
-                    status="failed",
-                )
-
-            with (
-                mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
-                mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
-            ):
-                config = cli_mod.cfg.ProjectConfig(
-                    extends="keel",
-                    core_version="^0.7",
-                    base_branch="main",
-                    knobs=cli_mod.cfg.Knobs(build_gate_cmd="true", swarm_review_evidence=False),
-                )
-                load_cfg.return_value = config
-                buf_out, buf_err = io.StringIO(), io.StringIO()
-                with redirect_stdout(buf_out), redirect_stderr(buf_err):
-                    main(
-                        [
-                            "swarm-land",
-                            ".keel/project.yaml",
-                            "--root",
-                            tmpdir,
-                            "--issue",
-                            "714",
-                            "--swarm-id",
-                            "swarm-knob",
-                            "--live",
-                            "--json",
-                        ]
-                    )
-            self.assertIsNone(captured["evidence_checker"])
-            # the opt-out is loud on stderr and must never corrupt --json stdout
-            self.assertIn("swarm review evidence: OFF by config", buf_err.getvalue())
-            json.loads(buf_out.getvalue())
-
-            # knob on (default) -> a callable checker is passed
-            with (
-                mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
-                mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
-            ):
-                config_on = cli_mod.cfg.ProjectConfig(
-                    extends="keel",
-                    core_version="^0.7",
-                    base_branch="main",
-                    knobs=cli_mod.cfg.Knobs(build_gate_cmd="true"),
-                )
-                load_cfg.return_value = config_on
-                with redirect_stdout(io.StringIO()):
-                    main(
-                        [
-                            "swarm-land",
-                            ".keel/project.yaml",
-                            "--root",
-                            tmpdir,
-                            "--issue",
-                            "714",
-                            "--swarm-id",
-                            "swarm-knob",
-                            "--live",
-                        ]
-                    )
-            self.assertTrue(callable(captured["evidence_checker"]))
-
-            # knob off + dry run -> no checker, and no banner either (the
-            # opt-out is announced when it actually applies to a landing)
-            with (
-                mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
-                mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
-            ):
-                load_cfg.return_value = config
-                buf_err_dry = io.StringIO()
-                with redirect_stdout(io.StringIO()), redirect_stderr(buf_err_dry):
-                    main(
-                        [
-                            "swarm-land",
-                            ".keel/project.yaml",
-                            "--root",
-                            tmpdir,
-                            "--issue",
-                            "714",
-                            "--swarm-id",
-                            "swarm-knob",
-                        ]
-                    )
-            self.assertIsNone(captured["evidence_checker"])
-            # stderr still carries the issue-read warnings (#1274), never the banner
-            self.assertNotIn("swarm review evidence", buf_err_dry.getvalue())
-
-            # dry run with the knob on -> the checker IS built, so the
-            # preview can report what a live run would hold (read-only)
-            with (
-                mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land),
-                mock.patch.object(cli_mod.cfg, "load_config") as load_cfg,
-            ):
-                load_cfg.return_value = config_on
-                with redirect_stdout(io.StringIO()):
-                    main(
-                        [
-                            "swarm-land",
-                            ".keel/project.yaml",
-                            "--root",
-                            tmpdir,
-                            "--issue",
-                            "714",
-                            "--swarm-id",
-                            "swarm-knob",
-                        ]
-                    )
-            self.assertTrue(callable(captured["evidence_checker"]))
-
-    def test_swarm_land_cli_exits_nonzero_when_clusters_are_held(self):
-        """Automation keys on the exit code: refusing to land unreviewed code
-        must not read as success."""
-        import unittest.mock as mock
-
-        from keel.swarm import SwarmLandingResult
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            w1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-714", issue=714, role="docs", status="passed"
-            )
-            save_swarm_state(
-                SwarmRunState(swarm_id="swarm-exit", total_workers=1, workers=(w1,)),
-                root=tmpdir,
-            )
-
-            def fake_land(plan, **kwargs):
-                return SwarmLandingResult(
-                    swarm_id=plan.swarm_id,
-                    wave_index=1,
-                    mode="direct_batch",
-                    landed_clusters=("cluster-1-714",),
-                    healed_clusters=(),
-                    failed_clusters=(),
-                    status="partial_failure",
-                    held_clusters=(("cluster-1-999", "missing evidence"),),
-                )
-
-            with mock.patch("keel.swarm_landing.land_wave_clusters", side_effect=fake_land):
-                with redirect_stdout(io.StringIO()):
-                    code = main(
-                        [
-                            "swarm-land",
-                            ".keel/project.yaml",
-                            "--root",
-                            tmpdir,
-                            "--issue",
-                            "714",
-                            "--swarm-id",
-                            "swarm-exit",
-                            "--live",
-                        ]
-                    )
-            # one cluster landed, so status is partial_failure (exit 0 before);
-            # a held cluster must still fail the command
-            self.assertEqual(code, 1)
-
-    def test_swarm_land_evidence_checker_paths(self):
-        """Every fail-closed arm of the default checker, plus the pass."""
-        import argparse
-        import unittest.mock as mock
-
-        from keel import cli as cli_mod
-        from keel.runner import CommandResult as RunResult
-
-        args = argparse.Namespace(root=".", path=".keel/project.yaml")
-        config = cli_mod.cfg.ProjectConfig(
-            extends="keel",
-            core_version="^0.7",
-            base_branch="main",
-            knobs=cli_mod.cfg.Knobs(build_gate_cmd="true"),
-        )
-        check = cli_mod._swarm_land_evidence_checker(args, config)
-
-        captured_cmd: list[list[str]] = []
-
-        def lookup(stdout: str, ok: bool = True):
-            def _run(cmd, **kwargs):
-                captured_cmd.append(list(cmd))
-                return RunResult(ok=ok, code=0 if ok else 1, output=stdout, stdout=stdout)
-
-            return mock.patch.object(cli_mod, "run_argv", side_effect=_run)
-
-        # The jury's major: a CommandResult that carries the payload in
-        # `output` with `stdout` empty must not degrade to "no open PR" — that
-        # would hold every cluster forever behind a misleading reason, and the
-        # fail-closed design makes the breakage look like correct behaviour.
-        def output_only(cmd, **kwargs):
-            payload = '[{"number": 7, "state": "OPEN"}]'
-            return RunResult(ok=True, code=0, output=payload, stdout="")
-
-        with (
-            mock.patch.object(cli_mod, "run_argv", side_effect=output_only),
-            mock.patch.object(
-                cli_mod,
-                "_verify_merge_evidence",
-                return_value={"enforced": False, "verification": {"status": "pass"}},
-            ),
-        ):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn(
-            "gate is not armed",
-            reason,
-            "the lookup must read `output` when `stdout` is empty, not fall "
-            f"through to 'no open PR' (got: {reason})",
-        )
-
-        # transport failure
-        with lookup("boom", ok=False):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("PR lookup failed", reason)
-        # the lookup is base-filtered so a retargeted PR can never verify a
-        # diff the wave will not land
-        self.assertIn("--base", captured_cmd[0])
-        self.assertIn("main", captured_cmd[0])
-
-        # invalid JSON
-        with lookup("not json"):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("invalid JSON", reason)
-
-        # JSON but not a list -> treated as no PR, held
-        with lookup('{"number": 7}'):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("no open PR", reason)
-
-        # no PR at all
-        with lookup("[]"):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("no open PR", reason)
-
-        # already merged -> honest retry reason, still held
-        with lookup('[{"number": 7, "state": "MERGED"}]'):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("already merged", reason)
-
-        # ambiguous: two open PRs for one branch
-        with lookup('[{"number": 7, "state": "OPEN"}, {"number": 8, "state": "OPEN"}]'):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("ambiguous: 2 open PRs", reason)
-
-        # verification raises -> held with the exception type, never a crash
-        with (
-            lookup('[{"number": 7, "state": "OPEN"}]'),
-            mock.patch.object(cli_mod, "_verify_merge_evidence", side_effect=KeyError("boom")),
-        ):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("errored: KeyError", reason)
-
-        # gate not armed
-        with (
-            lookup('[{"number": 7, "state": "OPEN"}]'),
-            mock.patch.object(
-                cli_mod,
-                "_verify_merge_evidence",
-                return_value={"enforced": False, "verification": {"status": "pass"}},
-            ),
-        ):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("not armed", reason)
-
-        # verdicts missing
-        with (
-            lookup('[{"number": 7, "state": "OPEN"}]'),
-            mock.patch.object(
-                cli_mod,
-                "_verify_merge_evidence",
-                return_value={
-                    "enforced": True,
-                    "verification": {"status": "fail", "missing": ["review-verdict-1"]},
-                },
-            ),
-        ):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("missing evidence: review-verdict-1", reason)
-
-        SHA = "a" * 40
-
-        def lookup_and_rev(pr_json: str, rev_stdout: str, rev_ok: bool = True):
-            def _run(cmd, **kwargs):
-                if cmd[:2] == ["git", "rev-parse"]:
-                    return RunResult(
-                        ok=rev_ok, code=0 if rev_ok else 1, output=rev_stdout, stdout=rev_stdout
-                    )
-                return RunResult(ok=True, code=0, output=pr_json, stdout=pr_json)
-
-            return mock.patch.object(cli_mod, "run_argv", side_effect=_run)
-
-        verified = {
-            "enforced": True,
-            "verification": {"status": "pass"},
-            "head_sha": SHA,
+    def _view(self, **fields):
+        reply = {
+            "number": 10,
+            "state": "OPEN",
+            "headRefName": self.BRANCH,
+            "baseRefName": "main",
+            **fields,
         }
+        return pull_request_from_view(10, reply, branch=self.BRANCH, base_branch="main")
 
-        # local tip drifted from the reviewed head -> held
-        with (
-            lookup_and_rev('[{"number": 7, "state": "OPEN"}]', "b" * 40),
-            mock.patch.object(cli_mod, "_verify_merge_evidence", return_value=verified),
-        ):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("is not the reviewed PR head", reason)
+    def test_an_open_recorded_pull_request_is_landed(self):
+        self.assertEqual(self._view(), PullRequestLookup(10))
 
-        # local tip unresolvable -> held
-        with (
-            lookup_and_rev('[{"number": 7, "state": "OPEN"}]', "", rev_ok=False),
-            mock.patch.object(cli_mod, "_verify_merge_evidence", return_value=verified),
-        ):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)
-        self.assertIn("cannot resolve the local branch tip", reason)
+    def test_a_recorded_pull_request_that_is_not_open_holds(self):
+        self.assertIn("already merged", self._view(state="MERGED").reason)
+        closed = self._view(state="CLOSED")
+        self.assertIsNone(closed.number)
+        self.assertIn("PR #10 is closed; reopen it", closed.reason)
+        self.assertIn("is not open", self._view(state="").reason)
 
-        # pass: verification green AND local tip == reviewed head
-        with (
-            lookup_and_rev('[{"number": 7, "state": "OPEN"}]', SHA + "\n"),
-            mock.patch.object(
-                cli_mod, "_verify_merge_evidence", return_value=verified
-            ) as verify_mock,
-        ):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertTrue(ok)
-        self.assertEqual(reason, f"PR #7: evidence verified at {'a' * 12}")
-        self.assertEqual(verify_mock.call_args.kwargs["phase"], cli_mod.evidence.PHASE_PRE_MERGE)
+    def test_a_recorded_pull_request_for_another_branch_or_base_holds(self):
+        other = self._view(headRefName="feat/x")
+        self.assertEqual(other.number, None)
+        self.assertIn("is for branch feat/x", other.reason)
+        base = self._view(baseRefName="develop")
+        self.assertIn("targets develop, not the configured base branch main", base.reason)
 
-    def test_swarm_land_evidence_checker_real_verification_contract(self):
-        """PYLON-9's blocker: mocking _verify_merge_evidence in every arm hid a
-        namespace that made it raise on every real call, holding every cluster
-        forever. This arm runs the REAL verification with only the gh transport
-        mocked: the outcome must be an evidence verdict, never an "errored"
-        hold — that is the seam contract."""
-        import argparse
-        import unittest.mock as mock
+    def test_an_unreadable_view_holds(self):
+        for reply in (None, [], {"number": 11, "state": "OPEN"}):
+            with self.subTest(reply=reply):
+                found = pull_request_from_view(10, reply, branch=self.BRANCH, base_branch="main")
+                self.assertEqual(found.number, None)
+                self.assertIn("could not be read", found.reason)
 
-        from keel import cli as cli_mod
-        from keel.runner import CommandResult as RunResult
+    def test_the_list_fallback_takes_the_one_open_pull_request(self):
+        reply = [{"number": 9, "state": "CLOSED"}, {"number": 10, "state": "OPEN"}]
+        self.assertEqual(pull_request_from_list(reply, branch=self.BRANCH), PullRequestLookup(10))
 
-        args = argparse.Namespace(root=".", path=".keel/project.yaml")
-        config = cli_mod.cfg.ProjectConfig(
-            extends="keel",
-            core_version="^0.7",
-            base_branch="main",
-            owner="acme",
-            repo="widgets",
-            knobs=cli_mod.cfg.Knobs(build_gate_cmd="true"),
-        )
-        check = cli_mod._swarm_land_evidence_checker(args, config)
-
-        def fake_run(cmd, **kwargs):
-            joined = " ".join(cmd)
-            if "pr list" in joined:
-                out = '[{"number": 7, "state": "OPEN"}]'
-            else:
-                # every downstream gh fetch sees an empty-but-valid answer
-                out = "[]" if "--paginate" in joined or "list" in joined else "{}"
-            return RunResult(ok=True, code=0, output=out, stdout=out)
-
-        with mock.patch.object(cli_mod, "run_argv", side_effect=fake_run):
-            ok, reason = check("swarm/x/c1")[:2]
-        self.assertFalse(ok)  # empty artifacts can never satisfy the contract
-        self.assertNotIn(
-            "errored",
-            reason,
-            "the real verification path raised instead of returning a verdict "
-            "— the constructed namespace has drifted from keel merge's own "
-            f"defaults (reason: {reason})",
-        )
-
-    def test_swarm_land_cli_dry_run_and_json(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            w1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-714", issue=714, role="docs", status="passed"
-            )
-            st = SwarmRunState(swarm_id="swarm-land-cli", total_workers=1, workers=(w1,))
-            save_swarm_state(st, root=tmpdir)
-
-            # Auto-discovery & text output
-            buf_text = io.StringIO()
-            with redirect_stdout(buf_text):
-                code = main(
-                    [
-                        "swarm-land",
-                        ".keel/project.yaml",
-                        "--root",
-                        tmpdir,
-                        "--issues",
-                        "#714,bad,714",
-                        "--issue",
-                        "714",
-                    ]
-                )
-            # 1, not 0: the gate is on and the fixture is not a git repo, so the
-            # wave is predicted held — and since #931 a preview that says a wave
-            # would be held is not a pass. Under the old contract this asserted 0
-            # while the wave was held, so it could not tell the two apart.
-            self.assertEqual(code, 1)
-            self.assertIn("keel swarm land — swarm-land-cli", buf_text.getvalue())
-
-            # JSON mode with explicit swarm-id and flags
-            buf_json = io.StringIO()
-            with redirect_stdout(buf_json):
-                code_json = main(
-                    [
-                        "swarm-land",
-                        ".keel/project.yaml",
-                        "--root",
-                        tmpdir,
-                        "--swarm-id",
-                        "swarm-land-cli",
-                        "--issue-title",
-                        "Docs update",
-                        "--json",
-                    ]
-                )
-            data = json.loads(buf_json.getvalue())
-            # The preview doing its job — and the exit code now says so, matching
-            # what `--live` would report for the same wave (#931).
-            self.assertIn(data["status"], ("success", "partial_failure"))
-            self.assertEqual(code_json, 0 if data["status"] == "success" else 1)
-
-            # Empty issues branch & state dir without json files
-            state_dir = Path(tmpdir) / ".keel" / "state" / "swarm"
-            for f in state_dir.glob("*.json"):
-                f.unlink()
-
-            buf_empty, err_empty = io.StringIO(), io.StringIO()
-            with redirect_stdout(buf_empty), redirect_stderr(err_empty):
-                code_empty = main(
-                    [
-                        "swarm-land",
-                        ".keel/project.yaml",
-                        "--root",
-                        tmpdir,
-                    ]
-                )
-            self.assertEqual(code_empty, 1)
-            # #1279: said `status: failed` like a wave whose clusters all failed.
-            self.assertIn("swarm-land needs the wave's issues", err_empty.getvalue())
-            self.assertNotIn("status", buf_empty.getvalue())
-
-            with tempfile.TemporaryDirectory() as tmp_fresh:
-                # No state dir and no issues: the no-scope refusal, not a lookup. (With
-                # issues it would reach the evidence checker's real `gh pr list`.)
-                buf_no_state, err_no_state = io.StringIO(), io.StringIO()
-                with redirect_stdout(buf_no_state), redirect_stderr(err_no_state):
-                    code_no_state = main(
-                        [
-                            "swarm-land",
-                            ".keel/project.yaml",
-                            "--root",
-                            tmp_fresh,
-                        ]
-                    )
-                self.assertEqual(code_no_state, 1)
-                self.assertIn("swarm-land needs the wave's issues", err_no_state.getvalue())
-
-    def test_swarm_land_cli_partial_failure_returns_exit_code_1(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            from keel.swarm import SwarmLandingResult
-
-            partial_res = SwarmLandingResult(
-                swarm_id="swarm-part",
-                wave_index=1,
-                mode="direct",
-                landed_clusters=("cluster-1",),
-                healed_clusters=(),
-                failed_clusters=("cluster-2",),
-                status="partial_failure",
-            )
-            w1 = SwarmWorkerStatus(
-                cluster_id="cluster-1-714", issue=714, role="docs", status="passed"
-            )
-            st = SwarmRunState(swarm_id="swarm-part", total_workers=1, workers=(w1,))
-            save_swarm_state(st, root=tmpdir)
-
-            with patch("keel.swarm_landing.land_wave_clusters", return_value=partial_res):
-                buf = io.StringIO()
-                with redirect_stdout(buf):
-                    code = main(
-                        [
-                            "swarm-land",
-                            ".keel/project.yaml",
-                            "--root",
-                            tmpdir,
-                            "--swarm-id",
-                            "swarm-part",
-                            "--issues",
-                            "714",
-                            "--live",
-                        ]
-                    )
-                self.assertEqual(code, 1)
-                self.assertIn("partial_failure", buf.getvalue())
+    def test_the_list_fallback_holds_when_it_cannot_choose(self):
+        two = [{"number": 10, "state": "OPEN"}, {"number": 11, "state": "OPEN"}]
+        self.assertIn("ambiguous: 2 open PRs", pull_request_from_list(two, branch="b").reason)
+        merged = [{"number": 7, "state": "MERGED"}]
+        self.assertIn("PR #7 is already merged", pull_request_from_list(merged, branch="b").reason)
+        for reply in ([], None, ["junk"], [{"number": "1", "state": "OPEN"}]):
+            with self.subTest(reply=reply):
+                none = pull_request_from_list(reply, branch="b")
+                self.assertEqual(none.number, None)
+                self.assertIn("no open pull request for b", none.reason)
 
 
-class AContendedMergeLockHoldsTheWave(unittest.TestCase):
-    """#1272: `merge_lock` raises when it is not granted, and the raise escaped
-    `land_wave_clusters` as a traceback — no result, no `--json`, no exit contract —
-    in exactly the case the lock exists to make orderly."""
+class KeelMergesAnswerIsTheClustersOutcome(unittest.TestCase):
+    def test_a_refusal_before_the_pull_request_holds(self):
+        self.assertEqual(merge_outcome(1, None).outcome, HELD)
+        self.assertIn("reason is on stderr", merge_outcome(1, None).reason)
 
-    def _land(self, tmpdir: str, calls: list[list[str]]):
-        from keel.lock import LockError, merge_lock, resource_path
+    def test_a_merge_or_a_passing_dry_run_lands(self):
+        self.assertEqual(merge_outcome(0, {"reason": "merged"}), ClusterMerge(LANDED, "merged", ""))
+        dry = merge_outcome(0, {"reason": "dry-run: merge not performed"})
+        self.assertEqual((dry.outcome, dry.reason), (LANDED, "dry-run: merge not performed"))
 
-        s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-        s2 = IssueScope(issue=102, title="B", predicted_files=("docs/b.md",))
-        plan = build_swarm_plan([s1, s2], swarm_id="swarm-contended")
+    def test_a_drifted_merge_lands_with_a_warning(self):
+        drift = merge_outcome(3, {"reason": "merged, but drift detected", "pull_request": 10})
+        self.assertEqual(drift.outcome, LANDED)
+        self.assertIn("PR #10 merged, but keel merge detected drift", drift.warning)
 
-        def runner(cmd: list[str], cwd: Path) -> CommandResult:
-            calls.append(cmd)
-            return CommandResult(ok=True, code=0, output="")
-
-        lock_dir = resource_path(Path(tmpdir).resolve() / ".keel" / "state" / "locks", "merge")
-        with merge_lock(lock_dir):
-            try:
-                result = land_wave_clusters(
-                    plan,
-                    wave_index=1,
-                    project_yaml=".keel/project.yaml",
-                    root=tmpdir,
-                    dry_run=False,
-                    runner=_home(runner),
-                    evidence_checker=None,
-                    base_branch="main",
-                )
-            except LockError as exc:
-                self.fail(f"LockError escaped land_wave_clusters: {exc}")
-        return plan, result
-
-    def test_every_cluster_is_held_and_nothing_is_merged(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            calls: list[list[str]] = []
-            plan, result = self._land(tmpdir, calls)
-
-            wave = [c.cluster_id for c in plan.waves[0].clusters]
-            self.assertEqual(sorted(c for c, _ in result.held_clusters), sorted(wave))
-            self.assertTrue(all("merge lock" in why for _, why in result.held_clusters))
-            self.assertEqual(result.landed_clusters, ())
-            self.assertEqual(result.status, "failed")
-            self.assertFalse(any(c[:2] in (["git", "merge"], ["git", "checkout"]) for c in calls))
-            json.dumps(result.to_dict())
-
-    def test_the_held_reason_is_written_to_the_run_state(self):
-        """swarm-status reads the state file; the hold must be there, not only in the
-        return value."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            s2 = IssueScope(issue=102, title="B", predicted_files=("docs/b.md",))
-            ids = [
-                c.cluster_id
-                for c in build_swarm_plan([s1, s2], swarm_id="swarm-contended").waves[0].clusters
-            ]
-            workers = tuple(
-                SwarmWorkerStatus(
-                    cluster_id=i,
-                    issue=0,
-                    role="core",
-                    agent="a",
-                    model="m",
-                    step="s8",
-                    status="passed",
-                    updated_at="",
-                    details="",
-                )
-                for i in ids
-            )
-            save_swarm_state(
-                SwarmRunState(
-                    swarm_id="swarm-contended",
-                    total_workers=len(ids),
-                    active_wave=1,
-                    workers=workers,
-                ),
-                root=tmpdir,
-            )
-            self._land(tmpdir, [])
-            state = load_swarm_state("swarm-contended", root=tmpdir)
-            assert state is not None
-            self.assertEqual({w.status for w in state.workers}, {"held"})
-            self.assertEqual({w.details for w in state.workers}, {"merge lock held"})
-
-    def test_the_lock_is_free_again_for_the_next_run(self):
-        """The counterweight: a granted lock lands as before."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            s1 = IssueScope(issue=101, title="A", predicted_files=("src/a.py",))
-            plan = build_swarm_plan([s1], swarm_id="swarm-free")
-            result = land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=_home(lambda cmd, cwd: CommandResult(ok=True, code=0, output="")),
-                evidence_checker=None,
-                base_branch="main",
-            )
-            self.assertEqual(result.held_clusters, ())
-            self.assertEqual(len(result.landed_clusters), 1)
-            # The contract, not the mechanism: once the call returns the lock is free.
-            # (CPython finalises an unclosed generator on return, so a leak there
-            # would not show; this pins what callers rely on.)
-            from keel.lock import merge_lock, resource_path
-
-            lock_dir = resource_path(Path(tmpdir).resolve() / ".keel" / "state" / "locks", "merge")
-            with merge_lock(lock_dir):
-                pass
+    def test_a_failed_merge_call_fails_and_any_other_refusal_holds(self):
+        failed = merge_outcome(1, {"reason": "gh merge failed", "merge_output": "409 conflict"})
+        self.assertEqual(failed.outcome, FAILED)
+        self.assertIn("gh merge failed: 409 conflict", failed.reason)
+        held = merge_outcome(1, {"reason": "PR merge state is DIRTY"})
+        self.assertEqual(held, ClusterMerge(HELD, "keel merge: PR merge state is DIRTY"))
+        self.assertEqual(merge_outcome(1, {}).reason, "keel merge: no reason given")
 
 
-class AFailedCheckoutStopsTheLanding(unittest.TestCase):
-    """#1270: both primitives ran `git checkout` and discarded the result, so a
-    checkout that failed left HEAD on the operator's branch and the merge — or the
-    rebase — rewrote *that* branch while reporting the cluster landed. Measured in a
-    real repository: a dirty tree on `feature` makes `git checkout main` fail."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
-        self.git("init", "-q", "-b", "main")
-        self.git("config", "user.name", "t")
-        self.git("config", "user.email", "t@example.invalid")
-        self.git("config", "commit.gpgsign", "false")
-        self.commit("a.txt", "1\n", "base")
-        self.git("checkout", "-q", "-b", "cluster")
-        self.commit("b.txt", "cluster\n", "cluster work")
-        self.git("checkout", "-q", "main")
-        self.git("checkout", "-q", "-b", "feature")
-        self.commit("a.txt", "2\n", "feature work")
-
-    def git(self, *args: str) -> str:
-        import subprocess
-
-        done = subprocess.run(
-            ["git", *args], cwd=self.root, capture_output=True, text=True, check=True
-        )
-        return done.stdout.strip()
-
-    def commit(self, name: str, text: str, message: str) -> None:
-        (self.root / name).write_text(text, encoding="utf-8")
-        self.git("add", name)
-        self.git("commit", "-q", "-m", message)
-
-    def heads(self) -> tuple[str, str, str]:
-        return (
-            self.git("rev-parse", "main"),
-            self.git("rev-parse", "feature"),
-            self.git("symbolic-ref", "--short", "HEAD"),
-        )
-
-    def dirty(self) -> None:
-        # An uncommitted edit to a file that differs on `main`, so checkout refuses.
-        (self.root / "a.txt").write_text("3\n", encoding="utf-8")
-
-    def test_the_merge_does_not_land_on_the_operators_branch(self):
-        self.dirty()
-        before = self.heads()
-
-        self.assertFalse(merge_cluster_branch(self.root, "cluster", base_branch="main"))
-        self.assertEqual(self.heads(), before, "a branch moved though the checkout failed")
-
-    def test_the_rebase_does_not_rewrite_the_operators_branch(self):
-        """An untracked file that the cluster branch tracks blocks `git checkout
-        cluster`. With `main` ahead of `feature`, the old code then rebased `feature`
-        itself and reported `clean_rebase` (measured in review). A dirty *tracked*
-        file does not show it: `git rebase` refuses a dirty tree on its own."""
-        self.git("checkout", "-q", "main")
-        self.commit("c.txt", "main moved\n", "main moves on")
-        self.git("checkout", "-q", "feature")
-        (self.root / "b.txt").write_text("untracked\n", encoding="utf-8")
-        before = self.heads()
-
-        ok, reason = rebase_and_heal_cluster_branch(self.root, "cluster", base_branch="main")
-        self.assertEqual(self.heads(), before, "feature was rewritten though its checkout failed")
-        self.assertEqual((ok, reason), (False, "checkout_failed"))
-
-    def test_a_clean_tree_still_lands(self):
-        """The counterweight: the check refuses a failed checkout, not a merge."""
-        self.assertTrue(merge_cluster_branch(self.root, "cluster", base_branch="main"))
-        self.assertEqual(self.git("symbolic-ref", "--short", "HEAD"), "main")
-        self.assertIn("cluster work", self.git("log", "--format=%s", "main"))
-        self.assertNotIn("cluster work", self.git("log", "--format=%s", "feature"))
-
-    def test_the_wave_names_the_failed_checkout(self):
-        """The reason reaches the run state that swarm-status reads."""
-        plan = build_swarm_plan(
-            [IssueScope(issue=101, title="A", predicted_files=("src/a.py",))], swarm_id="swarm-co"
-        )
-        cid = plan.waves[0].clusters[0].cluster_id
-        worker = SwarmWorkerStatus(
-            cluster_id=cid,
-            issue=101,
-            role="core",
-            agent="a",
-            model="m",
-            step="s8",
-            status="passed",
-            updated_at="",
-            details="",
-        )
-        save_swarm_state(
-            SwarmRunState(swarm_id="swarm-co", total_workers=1, active_wave=1, workers=(worker,)),
-            root=self.root,
-        )
-
-        def runner(cmd: list[str], cwd: Path) -> CommandResult:
-            ok = cmd[:2] != ["git", "checkout"]
-            return CommandResult(ok=ok, code=0 if ok else 1, output="")
-
-        result = land_wave_clusters(
-            plan,
-            wave_index=1,
-            project_yaml=".keel/project.yaml",
-            root=self.root,
-            dry_run=False,
-            runner=_home(runner),
-            evidence_checker=None,
-            base_branch="main",
-        )
-        self.assertEqual(result.failed_clusters, (cid,))
-        state = load_swarm_state("swarm-co", root=self.root)
-        assert state is not None
+class TheWaveLandsEachPullRequestInOrder(unittest.TestCase):
+    def test_each_cluster_goes_to_keel_merge_with_its_recorded_pull_request(self):
+        plan = _two_cluster_plan()
+        rec = _Recorder()
+        with tempfile.TemporaryDirectory() as tmp:
+            save_swarm_state(_state(plan.swarm_id, {"cluster-1-101": 10, "cluster-1-102": 11}), tmp)
+            result = _land(plan, rec, root=tmp)
+            state = load_swarm_state(plan.swarm_id, root=tmp)
         self.assertEqual(
-            state.workers[0].details, "merge into main failed (or could not check it out)"
+            rec.lookups,
+            [("swarm/swarm-t/cluster-1-101", 10), ("swarm/swarm-t/cluster-1-102", 11)],
+        )
+        self.assertEqual(rec.merges, [(10, "cluster-1-101", False), (11, "cluster-1-102", False)])
+        self.assertEqual(
+            (result.status, result.landed_clusters),
+            ("success", tuple(["cluster-1-101", "cluster-1-102"])),
+        )
+        self.assertEqual(result.pull_requests, (("cluster-1-101", 10), ("cluster-1-102", 11)))
+        self.assertEqual(
+            [(w.status, w.step, w.pull_request, w.details) for w in state.workers],
+            [
+                ("merged", "s10", 10, "PR #10: merged"),
+                ("merged", "s10", 11, "PR #11: merged"),
+            ],
         )
 
-    def test_nothing_runs_after_a_failed_checkout(self):
-        calls: list[list[str]] = []
+    def test_a_cluster_without_a_record_is_looked_up_without_one(self):
+        rec = _Recorder()
+        with tempfile.TemporaryDirectory() as tmp:
+            _land(_two_cluster_plan(), rec, root=tmp)
+        self.assertEqual([recorded for _, recorded in rec.lookups], [None, None])
 
-        def runner(cmd: list[str], cwd: Path) -> CommandResult:
-            calls.append(cmd)
-            ok = cmd[:2] != ["git", "checkout"]
-            return CommandResult(ok=ok, code=0 if ok else 1, output="")
-
-        ok, reason = rebase_and_heal_cluster_branch(self.root, "c", runner=runner)
-        self.assertEqual((ok, reason), (False, "checkout_failed"))
-        self.assertFalse(any(c[:2] == ["git", "rebase"] for c in calls), calls)
-        self.assertFalse(merge_cluster_branch(self.root, "c", runner=runner))
-        self.assertFalse(any(c[:2] == ["git", "merge"] for c in calls), calls)
-
-
-class LandingLeavesTheOperatorWhereTheyWere(unittest.TestCase):
-    """#1279 item 3: a live landing checks out, rebases and merges in the operator's
-    own checkout. It left HEAD on the base branch after a merge and on the cluster
-    branch after an aborted rebase, and a dirty tree stopped it only when a checkout
-    happened to collide with the change. Measured in a real repository: the
-    operator starts on `feature`, a cluster branch waits to land on `main`."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name)
-        self.git("init", "-q", "-b", "main")
-        self.git("config", "user.name", "t")
-        self.git("config", "user.email", "t@example.invalid")
-        self.git("config", "commit.gpgsign", "false")
-        self.git("config", "core.autocrlf", "false")
-        self.commit("a.txt", "value = 1\n", "base")
-        self.git("checkout", "-q", "-b", "feature")
-        self.commit("f.txt", "feature\n", "feature work")
-        self.git("checkout", "-q", "main")
-
-    def git(self, *args: str, check: bool = True) -> str:
-        import subprocess
-
-        done = subprocess.run(
-            ["git", *args], cwd=self.root, capture_output=True, text=True, check=check
+    def test_a_held_cluster_does_not_stop_the_next_one(self):
+        plan = _two_cluster_plan()
+        rec = _Recorder(
+            found={"swarm/swarm-t/cluster-1-101": PullRequestLookup(None, "no open pull request")},
+            merged={11: ClusterMerge(HELD, "keel merge: missing evidence: review-verdict-1")},
         )
-        return done.stdout.strip()
-
-    def write(self, name: str, text: str) -> None:
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8", newline="") as fh:
-            fh.write(text)
-
-    def commit(self, name: str, text: str, message: str) -> None:
-        self.write(name, text)
-        self.git("add", name)
-        self.git("commit", "-q", "-m", message)
-
-    def cluster_branch(self, branch: str, name: str, text: str) -> None:
-        """A cluster branch cut from `main` with one commit; HEAD returns to `main`."""
-        self.git("checkout", "-q", "-b", branch, "main")
-        self.commit(name, text, f"{branch} work")
-        self.git("checkout", "-q", "main")
-
-    def one_cluster_plan(self, swarm_id: str) -> tuple[SwarmPlan, str]:
-        plan = build_swarm_plan(
-            [IssueScope(issue=101, title="A", predicted_files=("b.txt",))], swarm_id=swarm_id
-        )
-        return plan, f"swarm/{swarm_id}/{plan.waves[0].clusters[0].cluster_id}"
-
-    def land(self, plan: SwarmPlan, **kwargs):
-        kwargs.setdefault("dry_run", False)
-        return land_wave_clusters(
-            plan,
-            wave_index=1,
-            project_yaml=".keel/project.yaml",
-            root=self.root,
-            evidence_checker=None,
-            base_branch="main",
-            **kwargs,
-        )
-
-    def head(self) -> str:
-        return self.git("symbolic-ref", "--short", "HEAD")
-
-    def recording(self, calls: list[list[str]]):
-        from keel.swarm_runtime import default_runner
-
-        def runner(cmd: list[str], cwd: Path) -> CommandResult:
-            calls.append(cmd)
-            return default_runner(cmd, cwd)
-
-        return runner
-
-    def test_a_dirty_tracked_file_is_refused_before_any_checkout(self):
-        """`a.txt` is the same on every branch, so no checkout collides with the edit:
-        the old landing carried it onto `main` and merged there."""
-        plan, branch = self.one_cluster_plan("swarm-dirty")
-        self.cluster_branch(branch, "b.txt", "cluster\n")
-        self.git("checkout", "-q", "feature")
-        self.write("a.txt", "value = uncommitted\n")
-        main_before = self.git("rev-parse", "main")
-        calls: list[list[str]] = []
-
-        result = self.land(plan, runner=self.recording(calls))
-
-        self.assertIn("uncommitted changes", result.refused)
-        self.assertIn(" M a.txt", result.refused)
-        self.assertEqual(result.status, "failed")
-        self.assertEqual(result.landed_clusters, ())
-        self.assertFalse(
-            any(c[:2] in (["git", "checkout"], ["git", "merge"]) for c in calls), calls
-        )
-        self.assertEqual(self.head(), "feature")
-        self.assertEqual(self.git("rev-parse", "main"), main_before)
-        self.assertEqual((self.root / "a.txt").read_text(encoding="utf-8"), "value = uncommitted\n")
-        self.assertIn("refused : the working tree", render_swarm_landing_result(result))
-
-    def test_an_untracked_file_is_refused_too(self):
-        plan, branch = self.one_cluster_plan("swarm-untracked")
-        self.cluster_branch(branch, "b.txt", "cluster\n")
-        self.git("checkout", "-q", "feature")
-        self.write("notes/new.txt", "scratch\n")
-        main_before = self.git("rev-parse", "main")
-
-        result = self.land(plan)
-
-        self.assertIn("?? notes/new.txt", result.refused)
-        self.assertEqual(self.head(), "feature")
-        self.assertEqual(self.git("rev-parse", "main"), main_before)
-
-    def test_a_dry_run_on_a_dirty_tree_still_previews(self):
-        """A dry run touches no branch, so it keeps answering as before."""
-        plan, branch = self.one_cluster_plan("swarm-preview")
-        self.cluster_branch(branch, "b.txt", "cluster\n")
-        self.git("checkout", "-q", "feature")
-        self.write("a.txt", "value = uncommitted\n")
-
-        result = self.land(plan, dry_run=True)
-
-        self.assertEqual(result.refused, "")
-        self.assertEqual(result.status, "success")
-        self.assertEqual(len(result.landed_clusters), 1)
-
-    def test_after_a_landing_the_operator_is_back_on_their_branch(self):
-        """The run state keel wrote into `.keel/state/` is untracked here (no
-        `.keel/.gitignore`), and it is keel's own, so it does not count as dirty."""
-        plan, branch = self.one_cluster_plan("swarm-lands")
-        self.cluster_branch(branch, "b.txt", "cluster\n")
-        self.git("checkout", "-q", "feature")
-        feature_before = self.git("rev-parse", "feature")
-        cid = plan.waves[0].clusters[0].cluster_id
-        save_swarm_state(
-            SwarmRunState(
-                swarm_id="swarm-lands",
-                total_workers=1,
-                workers=(
-                    SwarmWorkerStatus(cluster_id=cid, issue=101, role="core", status="passed"),
-                ),
+        with tempfile.TemporaryDirectory() as tmp:
+            save_swarm_state(
+                _state(plan.swarm_id, {"cluster-1-101": None, "cluster-1-102": 11}), tmp
+            )
+            result = _land(plan, rec, root=tmp)
+            state = load_swarm_state(plan.swarm_id, root=tmp)
+        self.assertEqual(rec.merges, [(11, "cluster-1-102", False)])
+        self.assertEqual(
+            result.held_clusters,
+            (
+                ("cluster-1-101", "no open pull request"),
+                ("cluster-1-102", "PR #11: keel merge: missing evidence: review-verdict-1"),
             ),
-            root=self.root,
         )
+        self.assertEqual(result.status, "failed")
+        self.assertEqual([w.status for w in state.workers], ["held", "held"])
+        self.assertEqual([w.pull_request for w in state.workers], [None, 11])
 
-        result = self.land(plan)
+    def test_a_failed_or_raising_merge_fails_that_cluster_only(self):
+        plan = _two_cluster_plan()
+        rec = _Recorder(merged={10: RuntimeError("boom"), 11: ClusterMerge(LANDED, "merged")})
+        with tempfile.TemporaryDirectory() as tmp:
+            save_swarm_state(_state(plan.swarm_id, {"cluster-1-101": 10, "cluster-1-102": 11}), tmp)
+            try:
+                result = _land(plan, rec, root=tmp)
+            except RuntimeError as exc:
+                self.fail(f"one cluster's keel merge raising stopped the wave: {exc}")
+            state = load_swarm_state(plan.swarm_id, root=tmp)
+        self.assertEqual(result.failed_clusters, ("cluster-1-101",))
+        self.assertEqual(result.landed_clusters, ("cluster-1-102",))
+        self.assertEqual(result.status, "partial_failure")
+        self.assertEqual(state.workers[0].status, "failed")
+        self.assertIn("keel merge raised RuntimeError: boom", state.workers[0].details)
 
-        self.assertEqual(result.refused, "")
-        self.assertEqual(result.landed_clusters, (cid,))
+    def test_a_drift_warning_is_carried_to_the_result(self):
+        rec = _Recorder(merged={10: ClusterMerge(LANDED, "merged, but drift", "look at it")})
+        plan = _two_cluster_plan()
+        with tempfile.TemporaryDirectory() as tmp:
+            save_swarm_state(_state(plan.swarm_id, {"cluster-1-101": 10, "cluster-1-102": 11}), tmp)
+            result = _land(plan, rec, root=tmp)
+        self.assertEqual(result.warnings, ("cluster-1-101: look at it",))
+
+    def test_a_dry_run_asks_for_keel_merges_dry_run_and_writes_no_state(self):
+        plan = _two_cluster_plan()
+        rec = _Recorder()
+        with tempfile.TemporaryDirectory() as tmp:
+            save_swarm_state(_state(plan.swarm_id, {"cluster-1-101": 10, "cluster-1-102": 11}), tmp)
+            before = (Path(tmp) / ".keel/state/swarm/swarm-t.json").read_text(encoding="utf-8")
+            result = _land(plan, rec, root=tmp, dry_run=True)
+            after = (Path(tmp) / ".keel/state/swarm/swarm-t.json").read_text(encoding="utf-8")
+        self.assertEqual([dry for _, _, dry in rec.merges], [True, True])
+        self.assertEqual(result.landed_clusters, ("cluster-1-101", "cluster-1-102"))
+        self.assertEqual(before, after)
+
+    def test_an_unknown_wave_lands_nothing(self):
+        rec = _Recorder()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _land(_two_cluster_plan(), rec, root=tmp, wave=9)
+        self.assertEqual((result.mode, result.status), ("none", "failed"))
+        self.assertEqual((rec.lookups, rec.merges), ([], []))
+
+
+class TheCheckoutIsLeftWhereItStarted(unittest.TestCase):
+    """#1279's promise holds without a guard doing anything: landing merges on the host
+    and checks nothing out. The postcondition is still checked after every wave."""
+
+    def test_landing_runs_no_local_checkout_merge_or_rebase(self):
+        runner = _Checkout()
+        with tempfile.TemporaryDirectory() as tmp:
+            _land(_two_cluster_plan(), _Recorder(), root=tmp, runner=runner)
+        self.assertTrue(runner.commands, "the postcondition read HEAD")
+        self.assertEqual({tuple(c[:2]) for c in runner.commands}, {("git", "symbolic-ref")})
+
+    def test_a_checkout_that_moved_is_put_back(self):
+        runner = _Checkout(moves_to="main")
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _land(_two_cluster_plan(), _Recorder(), root=tmp, runner=runner)
+        self.assertIn(["git", "checkout", "feature", "--"], runner.commands)
         self.assertEqual(result.warnings, ())
-        self.assertEqual(self.head(), "feature")
-        self.assertEqual(self.git("rev-parse", "feature"), feature_before)
-        self.assertIn(f"{branch} work", self.git("log", "--format=%s", "main"))
-        state = load_swarm_state("swarm-lands", root=self.root)
-        assert state is not None
-        self.assertEqual(state.workers[0].status, "merged")
-
-    def test_after_a_conflicting_merge_the_operator_is_back_on_their_branch(self):
-        plan, branch = self.one_cluster_plan("swarm-conflict")
-        self.cluster_branch(branch, "a.txt", "value = cluster\n")
-        self.commit("a.txt", "value = main\n", "main moves on")
-        self.git("checkout", "-q", "feature")
-
-        result = self.land(plan)
-
-        self.assertEqual(result.failed_clusters, (plan.waves[0].clusters[0].cluster_id,))
-        self.assertEqual(self.head(), "feature")
-        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=no"), "")
-
-    def test_after_an_aborted_funnel_rebase_the_operator_is_back_on_their_branch(self):
-        """The funnel's failed rebase aborted onto the cluster branch and stayed there."""
-        clusters = tuple(
-            SwarmCluster(
-                cluster_id=f"cluster-1-{n}", issues=(n,), role="core", combined_scope=("a.txt",)
-            )
-            for n in (1, 2)
-        )
-        # Plan-orthogonal with overlapping supplied diffs: the funnel's only way in.
-        wave = SwarmWave(
-            wave_index=1,
-            mode="orthogonal_parallel",
-            eligible_direct_landing=True,
-            clusters=clusters,
-        )
-        plan = SwarmPlan(swarm_id="swarm-funnel", total_issues=2, waves=(wave,))
-        for c in clusters:
-            self.cluster_branch(
-                f"swarm/swarm-funnel/{c.cluster_id}", "a.txt", f"value = {c.cluster_id}\n"
-            )
-        self.commit("a.txt", "value = main\n", "main moves on")
-        self.git("checkout", "-q", "feature")
-
-        result = self.land(plan, pr_diff_map={"cluster-1-1": ["a.txt"], "cluster-1-2": ["a.txt"]})
-
-        self.assertEqual(result.mode, "sequential_funnel")
-        self.assertEqual(len(result.failed_clusters), 2)
-        self.assertEqual(self.head(), "feature")
-        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=no"), "")
-
-    def test_an_exception_mid_wave_still_returns_the_checkout(self):
-        from keel.swarm_runtime import default_runner
-
-        plan, branch = self.one_cluster_plan("swarm-raises")
-        self.cluster_branch(branch, "b.txt", "cluster\n")
-        self.git("checkout", "-q", "feature")
-
-        def runner(cmd: list[str], cwd: Path) -> CommandResult:
-            if cmd[:2] == ["git", "merge"]:
-                raise RuntimeError("interrupted mid-wave")
-            return default_runner(cmd, cwd)
-
-        with self.assertRaises(RuntimeError):
-            self.land(plan, runner=runner)
-        self.assertEqual(self.head(), "feature")
-
-    def test_a_detached_head_is_restored_detached(self):
-        plan, branch = self.one_cluster_plan("swarm-detached")
-        self.cluster_branch(branch, "b.txt", "cluster\n")
-        sha = self.git("rev-parse", "feature")
-        self.git("checkout", "-q", "--detach", sha)
-
-        result = self.land(plan)
-
-        self.assertEqual(len(result.landed_clusters), 1)
-        self.assertEqual(self.git("rev-parse", "HEAD"), sha)
-        self.assertEqual(self.git("symbolic-ref", "-q", "HEAD", check=False), "")
-
-
-class TheLandingStartCheckFailsClosed(unittest.TestCase):
-    """The reads the clean-tree check and the return depend on, when they fail."""
-
-    def _land(self, runner):
-        plan = build_swarm_plan(
-            [IssueScope(issue=101, title="A", predicted_files=("src/a.py",))], swarm_id="swarm-x"
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            return land_wave_clusters(
-                plan,
-                wave_index=1,
-                project_yaml=".keel/project.yaml",
-                root=tmpdir,
-                dry_run=False,
-                runner=runner,
-                evidence_checker=None,
-                base_branch="main",
-            )
-
-    def test_an_unreadable_status_refuses(self):
-        def runner(cmd: list[str], cwd: Path) -> CommandResult:
-            if cmd[:2] == ["git", "status"]:
-                return CommandResult(ok=False, code=128, output="fatal: not a git repository")
-            return CommandResult(ok=True, code=0, output="")
-
-        result = self._land(runner)
-        self.assertIn("could not read the working tree's status", result.refused)
-        self.assertIn("not a git repository", result.refused)
-        self.assertEqual(result.landed_clusters, ())
-
-    def test_an_unreadable_head_refuses(self):
-        def runner(cmd: list[str], cwd: Path) -> CommandResult:
-            if cmd[:2] in (["git", "symbolic-ref"], ["git", "rev-parse"]):
-                return CommandResult(ok=False, code=1, output="")
-            return CommandResult(ok=True, code=0, output="")
-
-        result = self._land(runner)
-        self.assertIn("could not read HEAD", result.refused)
-        self.assertEqual(result.landed_clusters, ())
 
     def test_a_return_that_fails_is_reported(self):
-        heads = iter(["feature"])
-
-        def runner(cmd: list[str], cwd: Path) -> CommandResult:
-            if cmd[:2] == ["git", "symbolic-ref"]:
-                # `feature` when the landing starts, `main` once it has merged.
-                return CommandResult(ok=True, code=0, output=next(heads, "main"))
-            if cmd == ["git", "checkout", "feature", "--"]:
-                return CommandResult(ok=False, code=1, output="error: your local changes")
-            return CommandResult(ok=True, code=0, output="")
-
-        result = self._land(runner)
-        self.assertEqual(len(result.landed_clusters), 1)
+        runner = _Checkout(moves_to="main", back_ok=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _land(_two_cluster_plan(), _Recorder(), root=tmp, runner=runner)
         self.assertEqual(len(result.warnings), 1)
-        self.assertIn("could not return the checkout to feature", result.warnings[0])
-        self.assertIn("git checkout feature", result.warnings[0])
-        self.assertIn("warning : could not return", render_swarm_landing_result(result))
-        self.assertEqual(result.to_dict()["warnings"], list(result.warnings))
+        self.assertIn("could not return the checkout to feature (nope)", result.warnings[0])
 
+    def test_a_detached_head_is_returned_detached_and_an_unreadable_one_is_left(self):
+        def detached(cmd, cwd):
+            if cmd[:2] == ["git", "rev-parse"]:
+                return CommandResult(ok=True, code=0, output="abc123")
+            return CommandResult(ok=False, code=1, output="")
 
-class TheDirtyTreeDecision(unittest.TestCase):
-    def test_keel_runtime_files_are_not_the_operators_changes(self):
-        porcelain = "\n".join(
-            [
-                "?? .keel/state/swarm/s.json",
-                "?? sub/.keel/worktrees/w1/",
-                '?? ".keel/scratch/odd name.txt"',
-                "?? .keel/.gitignore",
-                "?? .keel/project.yaml",
-                "?? .keel/extensions/.gitignore",
-                " M .keel/state/tracked.json",
-                "",
-                "?? .keelx/state/x",
-                "A  src/new.py",
-            ]
-        )
-        self.assertEqual(
-            landing_tree_changes(porcelain),
-            (
-                "?? .keel/project.yaml",
-                "?? .keel/extensions/.gitignore",
-                " M .keel/state/tracked.json",
-                "?? .keelx/state/x",
-                "A  src/new.py",
-            ),
-        )
+        calls: list[list[str]] = []
 
-    def test_a_long_list_is_summarised(self):
-        changes = [f"?? f{n}.txt" for n in range(25)]
-        refusal = render_dirty_tree_refusal(changes)
-        self.assertIn("?? f19.txt, and 5 more.", refusal)
-        self.assertNotIn("f20.txt", refusal)
-        self.assertNotIn("more", render_dirty_tree_refusal(changes[:20]))
+        def unreadable(cmd, cwd):
+            calls.append(cmd)
+            return CommandResult(ok=False, code=1, output="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _land(_two_cluster_plan(), _Recorder(), root=tmp, runner=detached)
+            self.assertEqual(result.warnings, ())
+            _land(_two_cluster_plan(), _Recorder(), root=tmp, runner=unreadable)
+        self.assertFalse([c for c in calls if c[:2] == ["git", "checkout"]])
+
+    def test_the_default_runner_is_used_when_none_is_given(self):
+        with (
+            patch("keel.swarm_landing.default_runner", side_effect=_Checkout()) as runner,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            land_wave_clusters(
+                _two_cluster_plan(),
+                wave_index=1,
+                root=tmp,
+                dry_run=True,
+                find_pull_request=_Recorder().find,
+                merge_pull_request=_Recorder().merge,
+            )
+        self.assertTrue(runner.called)
 
 
 class ADependentWaveIsRefused(unittest.TestCase):
-    """#1276, the owner's call: a ``sequential_dependent`` wave's branches were cut
-    before the wave it depends on landed. Rebasing them through the funnel would rely
-    on an overlap check the CLI never feeds real diffs (#1266), so ``swarm-land``
-    refuses the wave — no checkout, no merge, exit 1 — until the earlier wave lands
-    and the rest is re-planned."""
+    """#1276, kept: a ``sequential_dependent`` wave's branches were cut before the wave it
+    depends on landed, so ``swarm-land`` refuses it — no lookup, no merge — until the
+    earlier wave lands and the rest is re-planned."""
 
     def _chain(self) -> SwarmPlan:
         scopes = [IssueScope(issue=n, title=f"T{n}", predicted_files=("src/a.py",)) for n in (1, 2)]
@@ -2413,127 +484,368 @@ class ADependentWaveIsRefused(unittest.TestCase):
         )
         return plan
 
-    @staticmethod
-    def _recorder() -> tuple[list[list[str]], object]:
-        commands: list[list[str]] = []
+    def test_a_dependent_wave_touches_nothing_live_or_dry(self):
+        for dry_run in (False, True):
+            rec, runner = _Recorder(), _Checkout()
+            with self.subTest(dry_run=dry_run), tempfile.TemporaryDirectory() as tmp:
+                result = _land(self._chain(), rec, root=tmp, wave=2, dry_run=dry_run, runner=runner)
+                self.assertEqual((result.mode, result.status), ("refused", "failed"))
+                self.assertIn(
+                    "wave 2 depends on issues landed by an earlier wave (#1)", result.refused
+                )
+                self.assertIn("no pull request was merged", result.refused)
+                self.assertEqual((rec.lookups, rec.merges, runner.commands), ([], [], []))
+                self.assertIn("refused : wave 2 depends", render_swarm_landing_result(result))
 
-        def run(cmd: list[str], cwd: Path) -> CommandResult:
-            commands.append(list(cmd))
-            # The branch tip the evidence checker below pins.
-            tip = "abc123" if cmd[:2] == ["git", "rev-parse"] else ""
-            return CommandResult(ok=True, code=0, output=tip)
-
-        return commands, _home(run)
-
-    def _land(self, plan: SwarmPlan, wave: int, *, dry_run: bool, tmpdir: str):
-        commands, runner = self._recorder()
-        asked: list[str] = []
-
-        def checker(branch: str) -> EvidenceCheck:
-            asked.append(branch)
-            return EvidenceCheck(True, "ok", "abc123")
-
-        result = land_wave_clusters(
-            plan,
-            wave_index=wave,
-            project_yaml=".keel/project.yaml",
-            root=tmpdir,
-            dry_run=dry_run,
-            runner=runner,
-            evidence_checker=checker,
-            base_branch="main",
-        )
-        return result, commands, asked
-
-    def test_a_live_landing_of_a_dependent_wave_touches_nothing(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result, commands, asked = self._land(self._chain(), 2, dry_run=False, tmpdir=tmpdir)
-        self.assertEqual((result.mode, result.status), ("refused", "failed"))
-        self.assertIn("wave 2 depends on issues landed by an earlier wave (#1)", result.refused)
-        self.assertEqual(
-            (result.landed_clusters, result.healed_clusters, result.failed_clusters), ((), (), ())
-        )
-        self.assertEqual(commands, [], "a refused wave ran a command")
-        self.assertEqual(asked, [], "a refused wave checked review evidence")
-        self.assertIn("refused : wave 2 depends", render_swarm_landing_result(result))
-
-    def test_a_dry_run_reports_the_same_refusal(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result, commands, _ = self._land(self._chain(), 2, dry_run=True, tmpdir=tmpdir)
-        self.assertEqual((result.mode, result.status), ("refused", "failed"))
-        self.assertIn("Land the earlier wave, then re-plan", result.refused)
-        self.assertEqual(result.landed_clusters, ())
-        self.assertEqual(commands, [])
-
-    def test_wave_one_still_lands_as_a_direct_batch(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result, commands, _ = self._land(self._chain(), 1, dry_run=False, tmpdir=tmpdir)
-        self.assertEqual(
-            (result.mode, result.status, result.refused), ("direct_batch", "success", "")
-        )
-        self.assertEqual(result.landed_clusters, ("cluster-1-1",))
-        self.assertIn(["git", "checkout", "main"], commands)
-        self.assertIn(
-            ["git", "merge", "--no-ff", "swarm/swarm-dep/cluster-1-1"], [c[:4] for c in commands]
-        )
-
-    def test_a_later_wave_without_a_dependency_still_lands_directly(self):
-        from keel.swarm import rebalance_swarm_plan
-
-        # Three issues on one file; #1 fails, so wave 2 loses its only dependency.
-        scopes = [
-            IssueScope(issue=n, title=f"T{n}", predicted_files=("src/a.py",)) for n in (1, 2, 3)
-        ]
-        plan = rebalance_swarm_plan(build_swarm_plan(scopes, swarm_id="swarm-dep"), failed_issue=1)
-        wave2 = next(w for w in plan.waves if w.wave_index == 2)
-        self.assertEqual(wave2.mode, "orthogonal_parallel", "fixture: wave 2 is free")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result, commands, _ = self._land(plan, 2, dry_run=False, tmpdir=tmpdir)
+    def test_wave_one_still_lands(self):
+        rec = _Recorder(found={"swarm/swarm-dep/cluster-1-1": PullRequestLookup(5)})
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _land(self._chain(), rec, root=tmp, wave=1)
         self.assertEqual((result.mode, result.status), ("direct_batch", "success"))
-        self.assertEqual(result.landed_clusters, ("cluster-2-2",))
-        self.assertTrue(any(c[:2] == ["git", "merge"] for c in commands), commands)
+        self.assertEqual(result.landed_clusters, ("cluster-1-1",))
+
+
+# --------------------------------------------------------------------------------------
+# End to end: `keel swarm-land` runs keel merge's own code for every cluster.
+# --------------------------------------------------------------------------------------
+
+
+def _capabilities():
+    return runtime.CapabilityReport(
+        tuple(
+            runtime.Capability(name, True, "ok", "test")
+            for name in ("shell", "git", "worktree", "gh", "gh-auth")
+        )
+    )
+
+
+def _json(payload) -> CommandResult:
+    text = json.dumps(payload)
+    return CommandResult(True, 0, text, stdout=text)
+
+
+class _Host:
+    """GitHub as keel merge and the lookup see it, per pull request."""
+
+    def __init__(
+        self, *, heads=None, merge_state=None, evidence_missing=(), merge_ok=True, lookup=None
+    ):
+        self.lookup = lookup
+        self.heads = heads or {10: "sha-10", 11: "sha-11"}
+        self.merge_state = merge_state or {}
+        self.evidence_missing = set(evidence_missing)
+        self.merge_ok = merge_ok
+        self.cli_calls: list[list[str]] = []
+        self.merges: list[tuple[int, str | None, str]] = []
+
+    def run_argv(self, argv, cwd=None, **_kw):
+        self.cli_calls.append(list(argv))
+        if self.lookup is not None:
+            return self.lookup
+        if argv[:3] == ["gh", "pr", "view"]:
+            number = int(argv[3])
+            return _json(
+                {
+                    "number": number,
+                    "state": "OPEN",
+                    "headRefName": f"swarm/swarm-e2e/cluster-1-{number + 91}",
+                    "baseRefName": "main",
+                }
+            )
+        if argv[:3] == ["gh", "pr", "list"]:
+            number = int(argv[4].rsplit("-", 1)[1]) - 91
+            return _json([{"number": number, "state": "OPEN"}])
+        return CommandResult(False, 1, "unexpected command")
+
+    def snapshot(self, pr, *, cwd=None, _run=None):
+        return _json(
+            {
+                "headRefOid": self.heads[int(pr)],
+                "mergeStateStatus": self.merge_state.get(int(pr), "CLEAN"),
+                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+            }
+        )
+
+    def evidence(self, args, config, *, phase):
+        missing = ["review-verdict-1"] if args.pr in self.evidence_missing else []
+        return {
+            "head_sha": self.heads[args.pr],
+            "enforced": True,
+            "verification": {"status": "fail" if missing else "pass", "missing": missing},
+        }
+
+    def merge_pr(self, pr, *, method, head_sha, cwd=None):
+        self.merges.append((int(pr), head_sha, method))
+        return CommandResult(
+            self.merge_ok, 0 if self.merge_ok else 1, "merged" if self.merge_ok else "409"
+        )
+
+
+class SwarmLandMergesThroughKeelMerge(unittest.TestCase):
+    """#1287, the owner's decision: every cluster's pull request goes through `keel merge`'s
+    own code — window, lock, CI, evidence, gates-pass, head pin — with nothing else faked
+    but GitHub, the clock and the ledger."""
+
+    SWARM = "swarm-e2e"
+    CONSENT = ("--approve-scope", "filesystem,git,github", "--operator", "tester")
+
+    def _run(self, host: _Host, *extra, window_open=True, record=True, gates=True):
+        plan = _two_cluster_plan(self.SWARM)
+        with tempfile.TemporaryDirectory() as tmp:
+            save_swarm_plan(plan, root=tmp)
+            prs = {"cluster-1-101": 10, "cluster-1-102": 11} if record else {}
+            save_swarm_state(
+                _state(self.SWARM, prs or {"cluster-1-101": None, "cluster-1-102": None}), tmp
+            )
+            out, err = io.StringIO(), io.StringIO()
+            with (
+                patch("keel.cli.runtime.detect", return_value=_capabilities()),
+                patch("keel.cli.window.is_merge_open", return_value=window_open),
+                patch("keel.cli.run_argv", side_effect=host.run_argv),
+                patch("keel.cli.github.pr_merge_snapshot", side_effect=host.snapshot),
+                patch("keel.cli._verify_merge_evidence", side_effect=host.evidence),
+                patch("keel.cli.ledger.read_records", return_value=[]),
+                patch(
+                    "keel.cli.ledger.gates_pass_for_head",
+                    return_value=(gates, {"run_id": "RUN-1"} if gates else None),
+                ),
+                patch("keel.cli._merge_drift_report", return_value={"status": "clean"}),
+                patch("keel.cli.github.merge_pr", side_effect=host.merge_pr),
+                patch("keel.cli.github.rest_merge_pr", side_effect=AssertionError("REST")),
+                redirect_stdout(out),
+                redirect_stderr(err),
+            ):
+                code = main(
+                    [
+                        "swarm-land",
+                        KEEL_YAML,
+                        "--root",
+                        tmp,
+                        "--swarm-id",
+                        self.SWARM,
+                        "--json",
+                        *extra,
+                    ]
+                )
+            state = load_swarm_state(self.SWARM, root=tmp)
+        for own in ("keel.merge.v1", "keel merge — "):
+            self.assertNotIn(own, out.getvalue(), "keel merge printed its own report")
+        return code, json.loads(out.getvalue()), err.getvalue(), state
+
+    def test_each_pull_request_is_merged_by_keel_merge_pinned_to_its_head(self):
+        host = _Host()
+        code, payload, err, state = self._run(host, "--live", *self.CONSENT)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(host.merges, [(10, "sha-10", "squash"), (11, "sha-11", "squash")])
+        self.assertEqual(payload["landed_clusters"], ["cluster-1-101", "cluster-1-102"])
+        self.assertEqual(payload["pull_requests"], {"cluster-1-101": 10, "cluster-1-102": 11})
+        self.assertEqual([w.status for w in state.workers], ["merged", "merged"])
+        self.assertEqual(state.workers[0].details, "PR #10: merged")
+
+    def test_the_recorded_pull_request_is_used_and_the_list_is_the_fallback(self):
+        host = _Host()
+        self._run(host, "--live", *self.CONSENT)
+        self.assertEqual(
+            [c[:4] for c in host.cli_calls],
+            [["gh", "pr", "view", "10"], ["gh", "pr", "view", "11"]],
+        )
+        fallback = _Host()
+        code, _, err, _ = self._run(fallback, "--live", *self.CONSENT, record=False)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            [c[:5] for c in fallback.cli_calls],
+            [
+                ["gh", "pr", "list", "--head", "swarm/swarm-e2e/cluster-1-101"],
+                ["gh", "pr", "list", "--head", "swarm/swarm-e2e/cluster-1-102"],
+            ],
+        )
+        self.assertEqual([pr for pr, _, _ in fallback.merges], [10, 11])
+
+    def test_a_pull_request_without_evidence_is_held_and_the_other_lands(self):
+        host = _Host(evidence_missing={10})
+        code, payload, _, state = self._run(host, "--live", *self.CONSENT)
+        self.assertEqual(code, 1)
+        self.assertEqual([pr for pr, _, _ in host.merges], [11])
+        self.assertEqual(
+            payload["held_clusters"],
+            [["cluster-1-101", "PR #10: keel merge: missing evidence: review-verdict-1"]],
+        )
+        self.assertEqual(payload["landed_clusters"], ["cluster-1-102"])
+        self.assertEqual([w.status for w in state.workers], ["held", "merged"])
+
+    def test_outside_the_merge_window_every_cluster_is_held(self):
+        host = _Host()
+        code, payload, _, _ = self._run(host, "--live", *self.CONSENT, window_open=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(host.merges, [])
+        self.assertEqual(
+            [reason for _, reason in payload["held_clusters"]],
+            [
+                "PR #10: keel merge: merge window is closed",
+                "PR #11: keel merge: merge window is closed",
+            ],
+        )
+
+    def test_a_dirty_pull_request_is_reported_and_the_wave_goes_on(self):
+        host = _Host(merge_state={10: "DIRTY"})
+        code, payload, _, _ = self._run(host, "--live", *self.CONSENT)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            payload["held_clusters"],
+            [["cluster-1-101", "PR #10: keel merge: PR merge state is DIRTY"]],
+        )
+        self.assertEqual([pr for pr, _, _ in host.merges], [11])
+
+    def test_no_gates_pass_for_the_head_holds(self):
+        host = _Host()
+        code, payload, _, _ = self._run(host, "--live", *self.CONSENT, gates=False)
+        self.assertEqual(code, 1)
+        self.assertEqual(host.merges, [])
+        self.assertIn(
+            "no gates-pass recorded for the current head sha-10", payload["held_clusters"][0][1]
+        )
+
+    def test_a_failed_merge_call_is_a_failed_cluster(self):
+        host = _Host(merge_ok=False)
+        code, payload, _, state = self._run(host, "--live", *self.CONSENT)
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["failed_clusters"], ["cluster-1-101", "cluster-1-102"])
+        self.assertEqual(state.workers[0].status, "failed")
+        self.assertIn("gh merge failed: 409", state.workers[0].details)
+
+    def test_a_dry_run_merges_nothing_and_reports_what_would_land(self):
+        host = _Host(evidence_missing={11})
+        code, payload, _, state = self._run(host, *self.CONSENT)
+        self.assertEqual(code, 1, "a preview with a held cluster is not a pass")
+        self.assertEqual(host.merges, [])
+        self.assertEqual(payload["landed_clusters"], ["cluster-1-101"])
+        self.assertEqual(
+            payload["held_clusters"],
+            [["cluster-1-102", "PR #11: keel merge: missing evidence: review-verdict-1"]],
+        )
+        self.assertEqual([w.status for w in state.workers], ["passed", "passed"])
+
+    def test_without_consent_keel_merge_refuses_every_cluster(self):
+        host = _Host()
+        with patch.dict("os.environ", {}, clear=False) as env:
+            for name in ("KEEL_APPROVE_SCOPE", "KEEL_OPERATOR", "KEEL_CONSENT_MODE"):
+                env.pop(name, None)
+            code, payload, err, _ = self._run(host, "--live")
+        self.assertEqual(code, 1)
+        self.assertEqual(host.merges, [])
+        self.assertEqual(len(payload["held_clusters"]), 2)
+        self.assertIn("refused before reaching the pull request", payload["held_clusters"][0][1])
+
+    def test_a_held_merge_lock_holds_the_cluster(self):
+        host = _Host()
+        real_claim = cli_mod.lock.claim_resource
+        owners: list[str] = []
+
+        def contended(root, resource, *, owner):
+            if resource != "merge":
+                return real_claim(root, resource, owner=owner)
+            owners.append(owner)
+            if len(owners) > 1:
+                return real_claim(root, resource, owner=owner)
+            # Another merge holds the lock for exactly the first cluster's attempt.
+            real_claim(root, resource, owner="someone-else")
+            denied = real_claim(root, resource, owner=owner)
+            cli_mod.lock.release_resource(root, resource, owner="someone-else")
+            return denied
+
+        with patch("keel.cli.lock.claim_resource", side_effect=contended):
+            code, payload, _, _ = self._run(host, "--live", *self.CONSENT)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            owners,
+            [f"swarm-land-{self.SWARM}-cluster-1-101", f"swarm-land-{self.SWARM}-cluster-1-102"],
+        )
+        self.assertEqual(
+            payload["held_clusters"],
+            [["cluster-1-101", "PR #10: keel merge: resource lock is already held"]],
+        )
+        self.assertEqual([pr for pr, _, _ in host.merges], [11])
+
+    def test_the_review_evidence_knob_no_longer_skips_anything(self):
+        host = _Host(evidence_missing={10, 11})
+        config = cli_mod.cfg.load_config(KEEL_YAML)
+        off = replace(config, knobs=replace(config.knobs, swarm_review_evidence=False))
+        with patch.object(cli_mod.cfg, "load_config", return_value=off):
+            code, payload, err, _ = self._run(host, "--live", *self.CONSENT)
+        self.assertEqual(code, 1)
+        self.assertEqual(host.merges, [])
+        self.assertIn("knobs.swarm_review_evidence: false has no effect", err)
+        self.assertEqual(len(payload["held_clusters"]), 2)
+
+    def test_a_lookup_that_fails_or_answers_junk_holds_every_cluster(self):
+        for answer, reason in (
+            (CommandResult(False, 1, "HTTP 502"), "PR lookup failed: HTTP 502"),
+            (CommandResult(False, 4, ""), "PR lookup failed: exit 4"),
+            (CommandResult(True, 0, "{", stdout="{"), "PR lookup returned invalid JSON"),
+        ):
+            host = _Host(lookup=answer)
+            with self.subTest(reason=reason):
+                code, payload, _, _ = self._run(host, "--live", *self.CONSENT)
+                self.assertEqual(code, 1)
+                self.assertEqual(host.merges, [])
+                self.assertEqual([r for _, r in payload["held_clusters"]], [reason, reason])
+
+    def test_the_consent_and_transport_flags_reach_keel_merge_as_its_own_argv(self):
+        seen = []
+
+        def fake_merge(merge_args):
+            seen.append(merge_args)
+            merge_args.merge_sink.append({"reason": "dry-run: merge not performed"})
+            return 0
+
+        with patch("keel.cli._cmd_merge", side_effect=fake_merge):
+            code, _, err, _ = self._run(
+                _Host(), *self.CONSENT, "--consent-mode", "explicit", "--transport", "rest"
+            )
+        self.assertEqual(code, 0, err)
+        first = seen[0]
+        self.assertEqual(
+            (first.pr, first.transport, first.consent_mode, first.operator, first.dry_run),
+            (10, "rest", "explicit", "tester", True),
+        )
+        self.assertEqual(first.approve_scope, [self.CONSENT[1]])
+        self.assertEqual(
+            (first.method, first.owner), ("squash", "swarm-land-swarm-e2e-cluster-1-101")
+        )
+
+    def test_without_a_persisted_plan_or_issues_there_is_nothing_to_land(self):
+        err = io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            redirect_stderr(err),
+            redirect_stdout(io.StringIO()),
+        ):
+            code = main(["swarm-land", KEEL_YAML, "--root", tmp, "--swarm-id", "nothing"])
+        self.assertEqual(code, 1)
+        self.assertIn("swarm-land needs the wave's issues", err.getvalue())
 
 
 class SwarmLandRefusesADependentWave(unittest.TestCase):
-    """The same refusal end to end through ``keel swarm-land``: exit 1, the reason in
-    ``--json``, and no git command issued (#1276)."""
+    """The #1276 refusal end to end: exit 1, the reason in ``--json``, and neither a
+    lookup nor a merge."""
 
-    def _main(self, tmpdir: str, *extra: str) -> tuple[int, str, list[list[str]]]:
-        import unittest.mock as mock
-
-        from keel import cli as cli_mod
-
-        commands: list[list[str]] = []
-
-        def recorder(cmd: list[str], cwd: Path) -> CommandResult:
-            commands.append(list(cmd))
-            if cmd[:2] == ["git", "symbolic-ref"]:
-                return CommandResult(ok=True, code=0, output="feature")
-            return CommandResult(ok=True, code=0, output="")
-
-        config = cli_mod.cfg.ProjectConfig(
-            extends="keel",
-            core_version="^0.7",
-            base_branch="main",
-            knobs=cli_mod.cfg.Knobs(build_gate_cmd="true", swarm_review_evidence=False),
-        )
+    def _main(self, tmpdir: str, *extra: str):
         out = io.StringIO()
         with (
-            mock.patch.object(cli_mod.cfg, "load_config", return_value=config),
-            mock.patch("keel.swarm_landing.default_runner", side_effect=recorder),
+            patch("keel.cli.run_argv", side_effect=AssertionError("looked up a PR")),
+            patch("keel.cli._cmd_merge", side_effect=AssertionError("merged")),
+            patch("keel.swarm_landing.default_runner", side_effect=_Checkout()),
             redirect_stdout(out),
             redirect_stderr(io.StringIO()),
         ):
             code = main(
                 [
                     "swarm-land",
-                    ".keel/project.yaml",
+                    KEEL_YAML,
                     "--root",
                     tmpdir,
                     "--issues",
                     "1,2",
-                    # Both issues on one file, each declaring it (#1274): a shared
-                    # --declared-file is refused beside several issues.
                     "--issue-scope",
                     "1=src/a.py",
                     "--issue-scope",
@@ -2544,39 +856,51 @@ class SwarmLandRefusesADependentWave(unittest.TestCase):
                     *extra,
                 ]
             )
-        return code, out.getvalue(), commands
+        return code, json.loads(out.getvalue())
 
-    def test_a_live_dependent_wave_exits_1_without_a_checkout_or_merge(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            code, out, commands = self._main(tmpdir, "--wave", "2", "--live")
-        self.assertEqual(code, 1)
-        payload = json.loads(out)
-        self.assertEqual((payload["mode"], payload["status"]), ("refused", "failed"))
-        self.assertIn("wave 2 depends on issues landed by an earlier wave (#1)", payload["refused"])
-        self.assertEqual(payload["landed_clusters"], [])
-        self.assertFalse(
-            [c for c in commands if c[:2] in (["git", "checkout"], ["git", "merge"])], commands
+    def test_a_dependent_wave_exits_1_live_and_dry(self):
+        for extra in (("--live",), ()):
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as tmp:
+                code, payload = self._main(tmp, "--wave", "2", *extra)
+                self.assertEqual(code, 1)
+                self.assertEqual((payload["mode"], payload["status"]), ("refused", "failed"))
+                self.assertIn(
+                    "wave 2 depends on issues landed by an earlier wave (#1)", payload["refused"]
+                )
+
+
+class SwarmLandCLI(unittest.TestCase):
+    def test_a_missing_or_invalid_config_is_refused(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(main(["swarm-land", "nonexistent.yaml"]), 1)
+        self.assertIn("no such config", err.getvalue())
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "p.yaml"
+            bad.write_text("invalid_root_key: true\n", encoding="utf-8")
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(main(["swarm-land", str(bad)]), 1)
+
+    def test_the_text_report_is_rendered_without_json(self):
+        result = SwarmLandingResult(
+            swarm_id="s",
+            wave_index=1,
+            mode="direct_batch",
+            landed_clusters=("c",),
+            failed_clusters=(),
+            status="success",
         )
-        self.assertEqual(commands, [])
-
-    def test_a_dry_run_of_a_dependent_wave_reports_the_refusal(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            code, out, commands = self._main(tmpdir, "--wave", "2")
-        self.assertEqual(code, 1)
-        payload = json.loads(out)
-        self.assertEqual(payload["mode"], "refused")
-        self.assertIn("re-plan", payload["refused"])
-        self.assertEqual(commands, [])
-
-    def test_wave_one_of_the_same_plan_still_lands_directly(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            code, out, commands = self._main(tmpdir, "--wave", "1", "--live")
+        out = io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("keel.swarm_landing.land_wave_clusters", return_value=result),
+            redirect_stdout(out),
+            redirect_stderr(io.StringIO()),
+        ):
+            save_swarm_plan(_two_cluster_plan("s"), root=tmp)
+            code = main(["swarm-land", KEEL_YAML, "--root", tmp, "--swarm-id", "s"])
         self.assertEqual(code, 0)
-        payload = json.loads(out)
-        self.assertEqual((payload["mode"], payload["status"]), ("direct_batch", "success"))
-        self.assertEqual(payload["landed_clusters"], ["cluster-1-1"])
-        self.assertIn(["git", "checkout", "main"], commands)
-        self.assertTrue(any(c[:2] == ["git", "merge"] for c in commands), commands)
+        self.assertIn("keel swarm land — s (wave 1)", out.getvalue())
 
 
 if __name__ == "__main__":

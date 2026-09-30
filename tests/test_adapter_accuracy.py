@@ -358,7 +358,7 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
         prose = _prose("swarm")
         self.assertNotIn("onto `main`", prose)
         self.assertNotIn("merged into main", prose)
-        self.assertIn("land all passing clusters onto the project's `base_branch`", prose)
+        self.assertIn("through `keel merge` against the project's `base_branch`", prose)
 
 
 if __name__ == "__main__":
