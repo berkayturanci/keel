@@ -28,8 +28,8 @@
    these. On GitHub: the merge `keel merge` makes, the lesson commit `keel capture-land` pushes
    onto the pull request's branch (the base branch without `--onto`), the verdict and closure
    comments `keel post-comment` and `keel review --live` post or update, and the missing labels
-   `keel doctor --fix` creates. In the local checkout: `keel swarm-land --live` rebases existing
-   cluster branches and merges them into the base branch with `--no-ff`, `keel worktree-remove`
+   `keel doctor --fix` creates. In the local checkout: `keel swarm-land --live` merges cluster
+   branches into the local base branch with `--no-ff` and pushes nothing, `keel worktree-remove`
    removes a worktree, and `keel rollback` (or `keel canary --auto-revert`) commits a revert; the
    opt-in `revert-check` gate has `keel run-gates` and `keel ship` add and remove a temp
    worktree. (`swarm-run --live` is refused before it starts, so it writes nothing.)
@@ -515,7 +515,7 @@ keel run from the ledger/checkpoint keel already writes — it never drives one 
 - [`docs/keel/operator-consent.md`](docs/keel/operator-consent.md) — live-run operator consent scopes and delegated-agent scope rules
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
 - [`docs/keel/commands.md`](docs/keel/commands.md) — the 17 `/keel:<command>` workflows (plus the `keel status` progress command), each with its description
-- [`docs/keel/swarm.md`](docs/keel/swarm.md) — multi-agent swarm architecture, dependency DAG wave scheduling, isolated worktrees, single-writer batch landing, and the 2D/pseudo-3D snapshot visualizer
+- [`docs/keel/swarm.md`](docs/keel/swarm.md) — multi-agent swarm architecture, dependency DAG wave scheduling, isolated worktrees, single-writer batch landing (a local `git merge --no-ff` into the base branch that pushes nothing), and the 2D/pseudo-3D snapshot visualizer
 - [`docs/keel/cutover.md`](docs/keel/cutover.md) — staged guide to retire a project's copied command bodies (install → verify → retire), losing nothing
 - [`docs/keel/comparison.md`](docs/keel/comparison.md) — competitive landscape (Mergify, GitHub merge queue, Qodo/PR-Agent, CodeRabbit, Sweep, OpenHands, Danger, …) + ranked borrow-ideas
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)
