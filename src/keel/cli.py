@@ -1273,7 +1273,9 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             payload["gates_sha"] = {"bypassed": True, "reason": "hotfix", "head_sha": head_sha}
         else:
             try:
-                gates_records = ledger.read_records(ledger.resolve_path(args.root, config))
+                gates_records = ledger.read_records(
+                    ledger.resolve_path(args.root, config), warn=_ledger_warning
+                )
             except ledger.LedgerError as exc:
                 return _finish_merge(args, payload, f"invalid run ledger: {exc}", code=1)
             matched, record = ledger.gates_pass_for_head(
@@ -1844,7 +1846,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     )
     ledger_path = ledger.resolve_path(args.root, config)
     try:
-        existing_ledger_records = ledger.read_records(ledger_path)
+        existing_ledger_records = ledger.read_records(ledger_path, warn=_ledger_warning)
     except ledger.LedgerError as exc:
         print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
         return 1
@@ -2120,7 +2122,7 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
     contract = ledger.ledger_contract_as_dict(config)
     path = ledger.resolve_path(args.root, config)
     try:
-        records = ledger.read_records(path)
+        records = ledger.read_records(path, warn=_ledger_warning)
     except ledger.LedgerError as exc:
         print(f"invalid ledger {path}: {exc}", file=sys.stderr)
         return 1
@@ -2614,7 +2616,7 @@ def _cmd_capture_land(args: argparse.Namespace) -> int:
     ledger_path = ledger.resolve_path(args.root, config)
     if args.write or (artifact is None and args.pr is not None):
         try:
-            records = ledger.read_records(ledger_path)
+            records = ledger.read_records(ledger_path, warn=_ledger_warning)
         except ledger.LedgerError as exc:
             print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
             return 1
@@ -2729,7 +2731,7 @@ def _cmd_capture_verify(args: argparse.Namespace) -> int:
 
     ledger_path = ledger.resolve_path(args.root, config)
     try:
-        records = ledger.read_records(ledger_path)
+        records = ledger.read_records(ledger_path, warn=_ledger_warning)
     except ledger.LedgerError as exc:
         print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
         return 1
@@ -2853,9 +2855,11 @@ def _consent_ledger_record(
     """
     fixture = getattr(args, "ledger_jsonl", None)
     if fixture is not None:
-        records = ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+        records = ledger.parse_records(
+            Path(fixture).read_text(encoding="utf-8"), warn=_ledger_warning
+        )
     else:
-        records = ledger.read_records(ledger.resolve_path(args.root, config))
+        records = ledger.read_records(ledger.resolve_path(args.root, config), warn=_ledger_warning)
     return ledger.latest_ship_run_for_pr(records, args.pr)
 
 
@@ -2955,8 +2959,8 @@ def _close_ledger_records(
     """
     fixture = getattr(args, "ledger_jsonl", None)
     if fixture is not None:
-        return ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
-    return ledger.read_records(ledger.resolve_path(args.root, config))
+        return ledger.parse_records(Path(fixture).read_text(encoding="utf-8"), warn=_ledger_warning)
+    return ledger.read_records(ledger.resolve_path(args.root, config), warn=_ledger_warning)
 
 
 def _close_observed_issues(
@@ -3063,7 +3067,7 @@ def _dryrun_after_snapshot(
     """
     if args.after_json is not None:
         return _dryrun_snapshot_from_json(args.after_json)
-    records = ledger.read_records(ledger.resolve_path(args.root, config))
+    records = ledger.read_records(ledger.resolve_path(args.root, config), warn=_ledger_warning)
     run_ids = tuple(
         str(record["run_id"])
         for record in records
@@ -3222,7 +3226,7 @@ def _cmd_capture_reconcile(args: argparse.Namespace) -> int:
 
     ledger_path = ledger.resolve_path(args.root, config)
     try:
-        records = ledger.read_records(ledger_path)
+        records = ledger.read_records(ledger_path, warn=_ledger_warning)
     except ledger.LedgerError as exc:
         print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
         return 1
@@ -4811,9 +4815,11 @@ def _scope_ledger_record(
     """
     fixture = getattr(args, "ledger_jsonl", None)
     if fixture is not None:
-        records = ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+        records = ledger.parse_records(
+            Path(fixture).read_text(encoding="utf-8"), warn=_ledger_warning
+        )
     else:
-        records = ledger.read_records(ledger.resolve_path(args.root, config))
+        records = ledger.read_records(ledger.resolve_path(args.root, config), warn=_ledger_warning)
     return ledger.latest_ship_run_for_pr(records, args.pr)
 
 
@@ -4835,7 +4841,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         print(f"invalid checkpoint {checkpoint_path}: {exc}", file=sys.stderr)
         return 1
     try:
-        ledger_records = ledger.read_records(ledger_path)
+        ledger_records = ledger.read_records(ledger_path, warn=_ledger_warning)
     except ledger.LedgerError as exc:
         print(f"invalid ledger {ledger_path}: {exc}", file=sys.stderr)
         return 1
@@ -5859,9 +5865,11 @@ def _evidence_ledger_record(
     """
     fixture = getattr(args, "ledger_jsonl", None)
     if fixture is not None:
-        records = ledger.parse_records(Path(fixture).read_text(encoding="utf-8"))
+        records = ledger.parse_records(
+            Path(fixture).read_text(encoding="utf-8"), warn=_ledger_warning
+        )
     else:
-        records = ledger.read_records(ledger.resolve_path(args.root, config))
+        records = ledger.read_records(ledger.resolve_path(args.root, config), warn=_ledger_warning)
     return ledger.latest_ship_run_for_pr(records, args.pr)
 
 
@@ -6373,6 +6381,11 @@ def _ask(prompt: str, default: str) -> str:
 
 def _warn(message: str) -> None:
     print(message, file=sys.stderr)
+
+
+def _ledger_warning(message: str) -> None:
+    """A run-ledger record kind this keel skipped, reported as every CLI warning is."""
+    print(f"warning: {message}", file=sys.stderr)
 
 
 def _wizard_catalog(_probe=None) -> wizard.Catalog:

@@ -175,6 +175,25 @@ class TestStatusContract(unittest.TestCase):
 
         self.assertEqual(snapshot["next"], {"issue": None, "source": "checkpoint.queue"})
 
+    def test_history_counts_ship_runs_only(self):
+        # #1400: a record of a kind this keel does not know is not a shipped run, even
+        # when handed to the snapshot directly rather than through the ledger reader.
+        records = [_ledger_record(issue=1, pr=10), _ledger_record(issue=2, pr=20)]
+        future = {
+            "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+            "record_type": "future_kind",
+            "pull_request": {"number": 30},
+        }
+
+        def snapshot(ledger_records):
+            return progress.build_status_snapshot(
+                config=_config(), checkpoint_record=None, ledger_records=ledger_records
+            )
+
+        mixed = snapshot([records[0], future, records[1]])
+        self.assertEqual(mixed["history"], snapshot(records)["history"])
+        self.assertEqual(mixed["history"]["total"], 2)
+
     def test_completed_snapshot_summarizes_history(self):
         records = [
             _ledger_record(issue=1, pr=10),

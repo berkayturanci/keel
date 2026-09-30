@@ -75,6 +75,69 @@ class TestResolveRecord(unittest.TestCase):
         self.assertIsNone(rec)
 
 
+def _future_kind_line(pr):
+    """A record of a kind a later keel might append (keel #1400), for the same PR."""
+    import json
+
+    record = {
+        "schema_version": "keel.run-ledger.v1",
+        "record_type": "future_kind",
+        "run_id": "FUTURE-1",
+        "pull_request": {"number": pr},
+    }
+    return json.dumps(record) + "\n"
+
+
+def _sample_with_future_kind():
+    """The sample ledger, twice, with a future-kind record between the two runs."""
+    sample = Path(SAMPLE).read_text(encoding="utf-8")
+    return sample + _future_kind_line(361) + sample
+
+
+class TestReadersSkipUnknownRecordKinds(unittest.TestCase):
+    """A ledger record of a kind this keel does not know is skipped, not a refusal."""
+
+    def test_resolve_record_by_pr_and_latest(self):
+        import tempfile
+
+        from keel import config as cfg
+
+        config = cfg.load_config(PROJECT)
+        with tempfile.TemporaryDirectory() as d:
+            mixed = Path(d) / "mixed.jsonl"
+            mixed.write_text(_sample_with_future_kind(), encoding="utf-8")
+            for pr in (361, None):
+                with self.subTest(pr=pr):
+                    self.assertEqual(
+                        self._resolved(_args(pr=pr, ledger_jsonl=str(mixed)), config),
+                        cli._resolve_record(_args(pr=pr), config),
+                    )
+
+    @staticmethod
+    def _resolved(args, config):
+        """The record, or the refusal as a value, so a refused ledger fails an assertion."""
+        from keel import ledger
+
+        try:
+            return cli._resolve_record(args, config)
+        except ledger.LedgerError as exc:
+            return f"refused: {exc}"
+
+    def test_latest_ship_record(self):
+        import tempfile
+
+        from keel import config as cfg
+        from keel import ledger
+
+        config = cfg.load_config(PROJECT)
+        with tempfile.TemporaryDirectory() as d:
+            led = ledger.resolve_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(_sample_with_future_kind(), encoding="utf-8")
+            rec = cli._latest_ship_record(d, config, 361)
+        self.assertEqual(rec, cli._resolve_record(_args(), config))
+
+
 class TestRender(unittest.TestCase):
     def test_render_writes_html(self):
         import tempfile
