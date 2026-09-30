@@ -252,20 +252,148 @@ class TheImplementerCannotReachTheForge(unittest.TestCase):
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "claude-oauth-provider")
         self.assertEqual((env["PATH"], env["HOME"]), ("/bin", "/home/ops"))
 
-    def test_keels_own_children_keep_the_forge(self):
-        """keel's git commands and gates run under ``child_env``: no consent, but the
-        operator's credentials, which only keel's own push and pull request use."""
-        env = swarm_worker.child_env(_OPERATOR_ENV)
-        self.assertEqual(env["GH_TOKEN"], "gho_operator_gh_token")
-        self.assertEqual(env["GITHUB_TOKEN"], "ghp_operator_github_token")
+    def test_keels_own_git_and_gates_hold_no_forge_token_but_keep_the_operators_git(self):
+        """keel's local git steps and the gates run under ``worker_env``: no consent and no
+        forge token — only keel's push and pull request hold those — but the operator's own
+        git setup, not the implementer's lockdown."""
+        env = swarm_worker.worker_env(_OPERATOR_ENV)
+        for name in swarm_worker.FORGE_TOKEN_ENV_VARS + swarm_worker.CONSENT_ENV_VARS:
+            self.assertNotIn(name, env)
         self.assertEqual(env["GH_CONFIG_DIR"], "/home/ops/.config/gh")
+        self.assertEqual(env["GIT_CONFIG_KEY_8"], "credential.helper")
         self.assertNotIn("GIT_TERMINAL_PROMPT", env)
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-ant-provider")
+        # `child_env` itself only removes consent; the forge goes one level up.
+        self.assertEqual(swarm_worker.child_env(_OPERATOR_ENV)["GH_TOKEN"], "gho_operator_gh_token")
 
     def test_the_brief_says_the_remote_is_out_of_reach(self):
         brief = swarm_worker.render_brief(
             _cluster(7), {}, swarm_id="s", branch="swarm/s/c", base_branch="main"
         )
         self.assertIn("You have no GitHub credentials", brief)
+        self.assertIn("Do not change git's configuration or hooks", brief)
+
+
+def _snapshot(config=("local\tfile:.git/config\tcore.bare=false",), hooks=None, **paths):
+    where = {
+        "git_dir": "/r/.git/worktrees/w",
+        "common_dir": "/r/.git",
+        "hooks_dir": "/r/.git/hooks",
+    }
+    return swarm_worker.GitSnapshot(**{**where, **paths}, config=tuple(config), hooks=hooks or {})
+
+
+class KeelsOwnGitStepsDistrustTheRepository(unittest.TestCase):
+    """#1400: the worktree shares the operator's repository, so keel's own git steps after
+    the implementer run with no hooks, fsmonitor or signing program, and a change to the
+    git setup while the implementer (or the gates) ran is named — without its values."""
+
+    def test_keels_git_runs_no_hook_fsmonitor_or_signing_program(self):
+        self.assertEqual(
+            swarm_worker.keel_git(["commit", "--no-verify", "-m", "m"], hooks_dir="/empty"),
+            [
+                "git",
+                "-c",
+                "core.hooksPath=/empty",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--no-verify",
+                "-m",
+                "m",
+            ],
+        )
+
+    def test_an_unchanged_setup_is_no_finding(self):
+        self.assertEqual(swarm_worker.tamper_findings(_snapshot(), _snapshot()), ())
+
+    def test_a_moved_git_directory_is_named(self):
+        moved = _snapshot(git_dir="/elsewhere", common_dir="/e", hooks_dir="/e/h")
+        self.assertEqual(
+            swarm_worker.tamper_findings(_snapshot(), moved),
+            (
+                "the git directory moved",
+                "the common git directory moved",
+                "the hooks directory moved",
+            ),
+        )
+
+    def test_a_config_change_names_scope_and_key_but_never_the_value(self):
+        before = _snapshot()
+        after = _snapshot(
+            config=(
+                "local\tfile:.git/config\tcore.bare=false",
+                "local\tfile:.git/config\tremote.origin.pushurl=https://evil.invalid/x.git",
+                "global\tfile:/h/.gitconfig\thttp.extraheader=AUTHORIZATION: secret-value",
+            )
+        )
+        (finding,) = swarm_worker.tamper_findings(before, after)
+        self.assertEqual(
+            finding, "git config changed: global http.extraheader, local remote.origin.pushurl"
+        )
+        self.assertNotIn("evil", finding)
+        self.assertNotIn("secret-value", finding)
+        removed = swarm_worker.tamper_findings(after, before)
+        self.assertEqual(removed, (finding,))
+
+    def test_a_key_whose_subsection_is_a_url_is_named_without_it(self):
+        after = _snapshot(
+            config=(
+                "local\tfile:.git/config\tcore.bare=false",
+                "local\tfile:.git/config\turl.https://u:tok@evil.invalid/.pushinsteadof=x",
+                "local\tfile:.git/config\thttp.https://h.invalid/.extraheader=x",
+                "global\tfile:/h/.gitconfig\tcredential.https://h.invalid.helper=x",
+                "local\tfile:.git/config\tincludeif.gitdir:/tok/.path=x",
+                "local\tfile:.git/config\turl.bare=x",
+            )
+        )
+        (finding,) = swarm_worker.tamper_findings(_snapshot(), after)
+        self.assertEqual(
+            finding,
+            "git config changed: global credential.<credential>.helper, "
+            "local http.<http>.extraheader, local includeif.<includeif>.path, "
+            "local url.<url>.pushinsteadof, local url.bare",
+        )
+        self.assertNotIn("tok", finding)
+
+    def test_a_reordered_config_is_a_change(self):
+        lines = ("local\tfile:.git/config\ta.b=1", "local\tfile:.git/config\ta.b=2")
+        self.assertEqual(
+            swarm_worker.tamper_findings(
+                _snapshot(config=lines), _snapshot(config=tuple(reversed(lines)))
+            ),
+            ("git config was reordered",),
+        )
+
+    def test_branch_config_git_writes_itself_is_not_compared(self):
+        after = _snapshot(
+            config=(
+                "local\tfile:.git/config\tcore.bare=false",
+                "local\tfile:.git/config\tbranch.swarm/s/c2.remote=origin",
+            )
+        )
+        self.assertEqual(swarm_worker.tamper_findings(_snapshot(), after), ())
+
+    def test_hooks_added_removed_and_changed_are_named(self):
+        before = _snapshot(hooks={"pre-push": "a", "post-commit": "b"})
+        after = _snapshot(hooks={"pre-push": "a2", "post-merge": "c"})
+        self.assertEqual(
+            swarm_worker.tamper_findings(before, after),
+            ("hook post-commit removed", "hook post-merge added", "hook pre-push changed"),
+        )
+
+    def test_the_reason_says_what_changed_and_that_nothing_is_pushed(self):
+        reason = swarm_worker.tamper_reason(("hook x added", "y"), during="the gates ran")
+        self.assertIn("changed while the gates ran (hook x added; y)", reason)
+        self.assertIn("pushes nothing", reason)
+
+    def test_a_line_without_scope_or_origin_is_still_compared(self):
+        self.assertEqual(
+            swarm_worker.tamper_findings(_snapshot(config=("x",)), _snapshot(config=("y",))),
+            ("git config changed: x, y",),
+        )
 
 
 @unittest.skipUnless(shutil.which("git"), "git is not installed")

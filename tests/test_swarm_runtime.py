@@ -5,11 +5,13 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -73,6 +75,7 @@ class _LiveIo:
         self.push_ok, self.pr_ok = push_ok, pr_ok
         self.implemented: list[tuple[RunPlan, dict, str]] = []
         self.pushes: list[tuple[str, str, str]] = []
+        self.push_argvs: list[list[str]] = []
         self.prs: list[tuple[str, str, str, str]] = []
 
     def implement(self, plan, env):
@@ -84,8 +87,11 @@ class _LiveIo:
             return {"ok": False, "error_code": "nonzero-exit", "error": "codex exited 2"}
         return {"ok": True, "text": "done"}
 
-    def push(self, remote, commit, ref, cwd):
-        self.pushes.append((remote, commit, ref))
+    def push(self, argv, cwd):
+        # `git -c … push --no-verify <url> <commit>:<ref>`: recorded as (url, commit, ref).
+        self.push_argvs.append(list(argv))
+        commit, ref = argv[-1].split(":", 1)
+        self.pushes.append((argv[-2], commit, ref))
         return CommandResult(self.push_ok, 0 if self.push_ok else 1, "" if self.push_ok else "no")
 
     def open_pr(self, title, body, base, head, cwd):
@@ -138,17 +144,32 @@ class _Git:
     named after it; ``fail`` names a command word whose call fails.
     """
 
-    def __init__(self, *, clean=False, fail=None, gates_ok=True):
+    #: What `git remote get-url --push` answers: the URL a worker pushes to.
+    PUSH_URL = "https://forge.example.invalid/o/r.git"
+
+    def __init__(self, *, clean=False, fail=None, gates_ok=True, config=None):
         self.clean, self.fail, self.gates_ok = clean, fail, gates_ok
         self.calls: list[list[str]] = []
         self.committed: set[str] = set()
+        #: `git config --list` answers, in turn; the last one repeats.
+        self.config = list(config or ["local\tfile:.git/config\tcore.bare=false"])
 
     def __call__(self, cmd, cwd):
         self.calls.append(list(cmd))
-        if cmd[:3] == ["git", "worktree", "add"]:
-            Path(cmd[5]).mkdir(parents=True, exist_ok=True)
+        # keel's own steps after the implementer carry `-c key=value` pairs up front.
+        while len(cmd) > 2 and cmd[0] == "git" and cmd[1] == "-c":
+            cmd = [cmd[0], *cmd[3:]]
         if self.fail is not None and self.fail in cmd:
             return CommandResult(False, 1, f"{self.fail} failed")
+        if "--absolute-git-dir" in cmd:
+            return CommandResult(True, 0, "/r/.git/worktrees/w\n/r/.git\n/r/.git/hooks\n")
+        if cmd[:3] == ["git", "config", "--list"]:
+            answer = self.config.pop(0) if len(self.config) > 1 else self.config[0]
+            return CommandResult(True, 0, answer + "\n")
+        if cmd[:3] == ["git", "remote", "get-url"]:
+            return CommandResult(True, 0, self.PUSH_URL + "\n")
+        if cmd[:3] == ["git", "worktree", "add"]:
+            Path(cmd[5]).mkdir(parents=True, exist_ok=True)
         if "run-gates" in cmd:
             return CommandResult(self.gates_ok, 0 if self.gates_ok else 1, "BLOCKED - build")
         if cmd[:2] == ["git", "status"]:
@@ -1156,12 +1177,25 @@ class ALiveWorkerImplementsItsCluster(unittest.TestCase):
         self.assertEqual(len(gates), 2)
         self.assertEqual(gates[0][4], "projects/x.yaml")
         self.assertEqual(gates[0][-3:], ["--phases", "guard,test", "--defer-jury"])
+        # To the URL `origin` had before the implementer ran, never to the remote's name.
         self.assertEqual(
             sorted(io_.pushes),
             sorted(
-                ("origin", f"head-{cid}", f"refs/heads/swarm/swarm-live/{cid}") for cid in clusters
+                (_Git.PUSH_URL, f"head-{cid}", f"refs/heads/swarm/swarm-live/{cid}")
+                for cid in clusters
             ),
         )
+        get_url = git.ran("get-url")
+        self.assertEqual(len(get_url), 2)
+        self.assertEqual(get_url[0][-2:], ["--push", "origin"])
+        # keel's own push and commit: no hooks, no fsmonitor, no signing, no verify.
+        for argv in io_.push_argvs + commits:
+            self.assertEqual(argv[1], "-c")
+            self.assertTrue(argv[2].startswith("core.hooksPath="), argv)
+            self.assertEqual(
+                argv[3:7], ["-c", "core.fsmonitor=false", "-c", "commit.gpgsign=false"]
+            )
+            self.assertIn("--no-verify", argv)
         self.assertEqual(
             sorted((base, head) for _t, _b, base, head in io_.prs),
             sorted(("main", f"swarm/swarm-live/{cid}") for cid in clusters),
@@ -1204,6 +1238,71 @@ class ALiveWorkerImplementsItsCluster(unittest.TestCase):
         self.assertIn("the branch is not pushed", res["output"])
         self.assertIn("BLOCKED", res["output"])
         self.assertEqual((io_.pushes, io_.prs), ([], []))
+
+    def test_a_config_change_while_the_implementer_ran_stops_before_the_commit(self):
+        a = "local\tfile:.git/config\tremote.origin.url=https://forge.example.invalid/o/r.git"
+        b = "local\tfile:.git/config\tremote.origin.url=https://evil.example.invalid/x.git"
+        io_, git = _LiveIo(), _Git(config=[a, b])
+        result, res = self._one(io_, git)
+        self.assertEqual((result.status, res["stage"]), ("failed", "tamper"))
+        self.assertIn("changed while the implementer ran", res["output"])
+        self.assertIn("local remote.origin.url", res["output"])
+        self.assertNotIn("evil", res["output"])
+        self.assertEqual((git.ran("-A"), git.ran("commit"), git.ran("run-gates")), ([], [], []))
+        self.assertEqual((io_.pushes, io_.prs), ([], []))
+        self.assertIn("stopped at tamper", render_swarm_run_result(result))
+
+    def test_a_config_change_while_the_gates_ran_stops_before_the_push(self):
+        a, b = "local\tfile:.git/config\tcore.bare=false", "local\tfile:.git/config\tx.y=z"
+        io_, git = _LiveIo(), _Git(config=[a, a, b])
+        _result, res = self._one(io_, git)
+        self.assertEqual(res["stage"], "tamper")
+        self.assertIn(
+            "while the gates ran (git config changed: local core.bare, local x.y)", res["output"]
+        )
+        self.assertEqual(len(git.ran("run-gates")), 1)
+        self.assertEqual(res["commit"], "head-" + Path(io_.implemented[0][0].cwd).name)
+        self.assertEqual((io_.pushes, io_.prs), ([], []))
+
+    def test_a_setup_that_can_no_longer_be_read_is_a_change(self):
+        class Unreadable(_Git):
+            def __init__(self):
+                super().__init__()
+                self.reads = 0
+
+            def __call__(self, cmd, cwd):
+                if "--absolute-git-dir" in cmd:
+                    self.reads += 1
+                    if self.reads > 1:
+                        return CommandResult(False, 128, "fatal: not a git repository")
+                return super().__call__(cmd, cwd)
+
+        io_, git = _LiveIo(), Unreadable()
+        _result, res = self._one(io_, git)
+        self.assertEqual(res["stage"], "tamper")
+        self.assertIn("the git setup could no longer be read", res["output"])
+        self.assertEqual((git.ran("commit"), io_.pushes), ([], []))
+
+    def test_a_setup_that_cannot_be_read_before_starts_nothing(self):
+        io_, git = _LiveIo(), _Git(fail="--absolute-git-dir")
+        _result, res = self._one(io_, git)
+        self.assertEqual(res["stage"], "worktree")
+        self.assertIn("could not be read", res["output"])
+        self.assertEqual((io_.implemented, io_.pushes), ([], []))
+
+    def test_a_remote_without_a_push_url_starts_nothing(self):
+        io_, git = _LiveIo(), _Git(fail="get-url")
+        _result, res = self._one(io_, git)
+        self.assertEqual(res["stage"], "push")
+        self.assertIn("the push URL of remote 'origin' could not be read", res["output"])
+        self.assertEqual((io_.implemented, io_.pushes), ([], []))
+
+    def test_a_head_that_does_not_descend_from_the_base_is_not_pushed(self):
+        io_, git = _LiveIo(), _Git(fail="merge-base")
+        _result, res = self._one(io_, git)
+        self.assertEqual(res["stage"], "tamper")
+        self.assertIn("does not descend from base", res["output"])
+        self.assertEqual((git.ran("run-gates"), io_.pushes), ([], []))
 
     def test_an_implementer_that_changed_nothing_has_nothing_to_push(self):
         io_, git = _LiveIo(), _Git(clean=True)
@@ -1325,22 +1424,20 @@ class TheLiveWorkersDefaultSeamsAreKeelsOwn(unittest.TestCase):
             )
         self.assertEqual(execute.call_args.kwargs["_run"].keywords, {"env": {"A": "1"}})
 
-    def test_push_and_pull_request_are_the_git_and_github_wrappers(self):
+    def test_push_and_pull_request_are_keels_runner_and_github_wrapper(self):
         from keel import swarm_runtime
 
         with (
-            patch("keel.git.push_commit", return_value="pushed") as push,
+            patch("keel.runner.run_argv", return_value="pushed") as push,
             patch("keel.github.open_pr", return_value="opened") as open_pr,
         ):
-            self.assertEqual(
-                swarm_runtime._default_push("origin", "abc", "refs/heads/b", Path("/w")), "pushed"
-            )
+            self.assertEqual(swarm_runtime._default_push(["git", "push"], Path("/w")), "pushed")
             self.assertEqual(
                 swarm_runtime._default_open_pr("t", "b", "main", "h", Path("/w")), "opened"
             )
         # str(Path), not a literal: on Windows the separator is a backslash.
         worktree = str(Path("/w"))
-        push.assert_called_once_with("origin", "abc", "refs/heads/b", cwd=worktree)
+        push.assert_called_once_with(["git", "push"], cwd=worktree)
         open_pr.assert_called_once_with("t", "b", "main", "h", cwd=worktree)
 
     def test_keels_own_push_and_pull_request_inherit_the_operators_environment(self):
@@ -1349,12 +1446,12 @@ class TheLiveWorkersDefaultSeamsAreKeelsOwn(unittest.TestCase):
         from keel import swarm_runtime
 
         with (
-            patch("keel.git.run_argv", return_value="pushed") as push,
+            patch("keel.runner.run_argv", return_value="pushed") as push,
             patch("keel.github.run_argv", return_value="opened") as open_pr,
         ):
-            swarm_runtime._default_push("origin", "abc", "refs/heads/b", Path("/w"))
+            swarm_runtime._default_push(["git", "push", "u", "abc:refs/heads/b"], Path("/w"))
             swarm_runtime._default_open_pr("t", "b", "main", "h", Path("/w"))
-        self.assertEqual(push.call_args.args[0], ["git", "push", "origin", "abc:refs/heads/b"])
+        self.assertEqual(push.call_args.args[0], ["git", "push", "u", "abc:refs/heads/b"])
         self.assertEqual(open_pr.call_args.args[0][:3], ["gh", "pr", "create"])
         self.assertNotIn("env", push.call_args.kwargs)
         self.assertNotIn("env", open_pr.call_args.kwargs)
@@ -1370,6 +1467,205 @@ _FORGE_ENV = {
     "GITHUB_ENTERPRISE_TOKEN": "ghe_operator_github_token",
     "ANTHROPIC_API_KEY": "sk-ant-provider",
 }
+
+
+def _git_cli(args, cwd):
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        stdin=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class KeelsOwnGitStepsAgainstARealRepository(unittest.TestCase):
+    """#1400: the worktree shares the operator's repository, and the implementer can write
+    its config and hooks. Measured against a real git, offline, with local repositories:
+    keel's own commit and push run none of the repository's hooks, fsmonitor or signing
+    program, and a change to the git setup while the implementer or the gates ran stops
+    the worker at ``tamper`` with nothing pushed — anywhere."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name).resolve()
+        empty = self.tmp / "empty-gitconfig"
+        empty.write_text("", encoding="utf-8")
+        environ = patch.dict(os.environ)
+        environ.start()
+        self.addCleanup(environ.stop)
+        # Nothing of the machine's own git setup — or a hook's GIT_DIR — reaches the test.
+        for key in [k for k in os.environ if k.startswith("GIT_")]:
+            del os.environ[key]
+        os.environ.update(
+            GIT_CONFIG_GLOBAL=str(empty),
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_AUTHOR_NAME="t",
+            GIT_AUTHOR_EMAIL="t@example.invalid",
+            GIT_COMMITTER_NAME="t",
+            GIT_COMMITTER_EMAIL="t@example.invalid",
+        )
+        self.remote, self.evil = self.tmp / "remote.git", self.tmp / "evil.git"
+        self.repo = self.tmp / "repo"
+        for bare in (self.remote, self.evil):
+            self._ok(["init", "-q", "--bare", str(bare)], self.tmp)
+        self._ok(["init", "-q", "-b", "main", str(self.repo)], self.tmp)
+        (self.repo / "README").write_text("base\n", encoding="utf-8")
+        self._ok(["add", "README"], self.repo)
+        self._ok(["commit", "-q", "-m", "base"], self.repo)
+        self._ok(["remote", "add", "origin", str(self.remote)], self.repo)
+        # The operator's own hooks and exec-capable config, there before the run: keel's
+        # own steps after the implementer run none of them. `ran.log` records any that do.
+        self.ran = self.tmp / "ran.log"
+        for name in ("pre-commit", "commit-msg", "post-commit", "pre-push", "post-rewrite"):
+            self._script(self.repo / ".git" / "hooks" / name, name)
+        fsmonitor = self._script(self.tmp / "fsmonitor.sh", "fsmonitor")
+        gpg = self._script(self.tmp / "gpg.sh", "gpg", code=1)
+        for key, value in (
+            ("core.fsmonitor", fsmonitor),
+            ("commit.gpgsign", "true"),
+            ("gpg.program", gpg),
+        ):
+            self._ok(["config", key, value], self.repo)
+        self.plan = build_swarm_plan(
+            [IssueScope(issue=741, title="T741", predicted_files=("src/741.py",))],
+            swarm_id="swarm-real",
+        )
+        (self.cluster,) = _clusters(self.plan)
+        self.ref = f"refs/heads/swarm/swarm-real/{self.cluster.cluster_id}"
+        #: What the implementer, and then the gates, do to the repository besides the work.
+        self.tamper = None
+        self.during_gates = None
+
+    def _ok(self, args, cwd):
+        result = _git_cli(args, cwd)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def _script(self, path, name, code=0):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"#!/bin/sh\necho {name} >> '{self.ran.as_posix()}'\nexit {code}\n", encoding="utf-8"
+        )
+        path.chmod(0o755)
+        return path.as_posix()
+
+    def _implement(self, plan, env):
+        # What ran before the implementer (cutting the worktree) was the operator's own git.
+        self.ran.unlink(missing_ok=True)
+        (Path(plan.cwd) / "work.txt").write_text("work\n", encoding="utf-8")
+        if self.tamper is not None:
+            self.tamper(Path(plan.cwd))
+        return {"ok": True}
+
+    def _runner(self, cmd, cwd):
+        if "run-gates" in cmd:
+            if self.during_gates is not None:
+                self.during_gates(Path(cwd))
+            return CommandResult(True, 0, "gates passed")
+        return default_runner(cmd, cwd, env=swarm_worker.worker_env(os.environ))
+
+    def _run(self):
+        from keel.swarm_runtime import _default_push, execute_live_cluster_worker
+
+        io_ = _LiveIo()
+        live = replace(
+            _live(self.plan, self.repo, io_), implement=self._implement, push=_default_push
+        )
+        return execute_live_cluster_worker(
+            self.cluster,
+            swarm_id=self.plan.swarm_id,
+            root=self.repo,
+            worktree_dir=build_worktree_path(
+                self.plan.swarm_id, self.cluster.cluster_id, self.repo
+            ),
+            project_yaml="projects/x.yaml",
+            base_branch="main",
+            live=live,
+            runner=self._runner,
+        )
+
+    def _pushed(self, bare):
+        result = _git_cli(["rev-parse", "--verify", "-q", self.ref], bare)
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    def _ran(self):
+        return self.ran.read_text(encoding="utf-8").split() if self.ran.exists() else []
+
+    @unittest.skipIf(os.name == "nt", "the control runs POSIX hook scripts")
+    def test_the_fixtures_hooks_do_run_for_a_plain_git(self):
+        self._ok(
+            ["-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "c"], self.repo
+        )
+        self.assertIn("pre-commit", self._ran())
+        self.assertIn("post-commit", self._ran())
+
+    def test_keels_commit_and_push_run_no_hook_fsmonitor_or_signing_program(self):
+        res = self._run()
+        self.assertEqual((res["ok"], res["stage"]), (True, "done"), res["output"])
+        self.assertEqual(self._ran(), [])
+        self.assertEqual(self._pushed(self.remote), res["commit"])
+        commit = self._ok(["cat-file", "commit", res["commit"]], self.repo).stdout
+        self.assertNotIn("gpgsig", commit)
+
+    def _assert_tampered(self, during, *names):
+        res = self._run()
+        self.assertEqual((res["ok"], res["stage"]), (False, "tamper"), res["output"])
+        self.assertIn(f"changed while {during}", res["output"])
+        for name in names:
+            self.assertIn(name, res["output"])
+        self.assertNotIn(self.evil.as_posix(), res["output"])
+        self.assertEqual((self._pushed(self.remote), self._pushed(self.evil)), (None, None))
+        self.assertEqual(self._ran(), [])
+        return res
+
+    def test_a_hook_the_implementer_plants_stops_the_worker(self):
+        hooks = self.repo / ".git" / "hooks"
+        self.tamper = lambda _wt: self._script(hooks / "post-merge", "planted")
+        self._assert_tampered("the implementer ran", "hook post-merge added")
+
+    def test_a_hook_the_implementer_changes_stops_the_worker(self):
+        hooks = self.repo / ".git" / "hooks"
+        self.tamper = lambda _wt: self._script(hooks / "pre-push", "planted")
+        self._assert_tampered("the implementer ran", "hook pre-push changed")
+
+    def test_a_push_url_the_implementer_sets_stops_the_worker(self):
+        self.tamper = lambda wt: self._ok(["config", "remote.origin.pushurl", str(self.evil)], wt)
+        self._assert_tampered("the implementer ran", "local remote.origin.pushurl")
+
+    def test_a_push_rewrite_the_implementer_sets_stops_the_worker(self):
+        key = f"url.{self.evil.as_posix()}.pushInsteadOf"
+        self.tamper = lambda wt: self._ok(["config", key, str(self.remote)], wt)
+        self._assert_tampered("the implementer ran", "local url.<url>.pushinsteadof")
+
+    def test_a_hooks_path_the_implementer_sets_stops_the_worker(self):
+        planted = self.tmp / "planted-hooks"
+        self.tamper = lambda wt: self._ok(["config", "core.hooksPath", str(planted)], wt)
+        self._assert_tampered("the implementer ran", "local core.hookspath", "hooks directory")
+
+    def test_a_change_to_a_file_the_config_includes_stops_the_worker(self):
+        included = self.tmp / "included.cfg"
+        included.write_text("[keel]\n\tprobe = 1\n", encoding="utf-8")
+        self._ok(["config", "include.path", str(included)], self.repo)
+
+        def append(_wt):
+            with included.open("a", encoding="utf-8") as handle:
+                handle.write(f"[core]\n\tsshCommand = {self.evil.as_posix()}\n")
+
+        self.tamper = append
+        self._assert_tampered("the implementer ran", "core.sshcommand")
+
+    def test_a_config_change_while_the_gates_ran_stops_the_push(self):
+        self.during_gates = lambda wt: self._ok(
+            ["config", "remote.origin.pushurl", str(self.evil)], wt
+        )
+        res = self._assert_tampered("the gates ran", "local remote.origin.pushurl")
+        # The commit was made — before the gates — and stays local.
+        self.assertTrue(res["commit"])
 
 
 class OnlyKeelReachesTheRemote(unittest.TestCase):
@@ -1426,7 +1722,10 @@ class OnlyKeelReachesTheRemote(unittest.TestCase):
         self.assertEqual(len(io_.pushes), 1)
         self.assertEqual(len(io_.prs), 1)
 
-    def test_keels_own_git_and_gates_keep_the_operators_environment(self):
+    def test_keels_own_git_and_gates_run_without_the_forge_or_the_lockdown(self):
+        """keel's local git steps and the gates — which run the implementer's code — hold
+        no forge token (``keel run-gates --phases guard,test --defer-jury`` reads nothing
+        from GitHub), but keep the operator's own git: they are not locked out of it."""
         plan = self._plan()
         (cluster,) = _clusters(plan)
         io_, git = _LiveIo(), _Git()
@@ -1456,10 +1755,12 @@ class OnlyKeelReachesTheRemote(unittest.TestCase):
 
         self.assertTrue(res["ok"], res["output"])
         self.assertTrue(any("run-gates" in cmd for cmd, _env in envs))
-        self.assertTrue(any(cmd[:2] == ["git", "commit"] for cmd, _env in envs))
+        self.assertTrue(any("commit" in cmd for cmd, _env in envs))
         for cmd, env in envs:
-            self.assertEqual(env.get("GH_TOKEN"), "gho_operator_token", cmd)
-            self.assertFalse("KEEL_APPROVE_SCOPE" in env, cmd)
+            # Compared as names, so a failure never prints the environment's values.
+            leaked = set(swarm_worker.FORGE_TOKEN_ENV_VARS + swarm_worker.CONSENT_ENV_VARS)
+            self.assertEqual(leaked & set(env), set(), cmd)
+            self.assertEqual(env.get("ANTHROPIC_API_KEY"), "sk-ant-provider", cmd)
             # Not the implementer's lockdown: keel's own git is the operator's git.
             self.assertNotIn(".no-gh-login", env.get("GH_CONFIG_DIR", ""), cmd)
             self.assertNotEqual(env.get("GIT_CONFIG_KEY_1"), "protocol.allow", cmd)

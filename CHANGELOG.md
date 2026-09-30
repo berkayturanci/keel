@@ -32,7 +32,8 @@ All notable changes to keel are documented here. The format follows
     them, and nothing lands them (#1287). The run ledger is not written.
 
 ### Fixed
-- **A live swarm worker's implementer cannot reach the remote** (#1400, second slice). The
+- **A live swarm worker's implementer cannot reach the remote, or tamper with keel's own git
+  steps** (#1400, second slice). The
   implementer seat — an agent CLI with tools, steered by issue text nobody vetted — inherited the
   operator's `GH_TOKEN`/`GITHUB_TOKEN`/`GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN`, `gh`'s
   stored login and git's credential helpers, so it could push or call `gh` itself. It now runs
@@ -42,13 +43,27 @@ All notable changes to keel are documented here. The format follows
   `credential.helper` cleared and every network transport refused (`protocol.allow=never`, and
   `never` for `http`/`https`/`ssh`/`git` by name), with `protocol.file.allow=user` so a
   repository on disk still works. Only keel's own push and `gh pr create`, made after the
-  implementer exits, reach the forge; keel's git commands and gates keep the operator's
-  environment, and a model provider's key passes through to the seat. The brief says so. Measured
-  against a real git in the suite: no credential helper is asked (a URL-scoped one included), no
-  HTTPS or SSH transport opens, a local push still succeeds. It is not a sandbox — the seat runs
-  as the operator's OS user — and `docs/keel/swarm.md` names the limits: the gates run the
-  implementer's code with keel's environment, and the worktree shares the operator's repository
-  config and hooks. Recording the consent delegation in the run ledger is left for a decision:
+  implementer exits, reach the forge: the gates (which run the implementer's code) and keel's
+  local git steps run without the forge tokens too, and a model provider's key passes through to
+  the seat. The brief says so. Measured against a real git in the suite: no credential helper is
+  asked (a URL-scoped one included), no HTTPS or SSH transport opens, a local push still succeeds.
+  - **The shared `.git`.** The worktree points into the operator's repository, so the seat could
+    plant a hook, a `core.fsmonitor` or `gpg.program` for keel's credentialed commit and push to
+    run, or redirect the push (`remote.origin.pushurl`, `url.<base>.pushInsteadOf`, a file an
+    `include.path` pulls in). The worker now reads the push URL, the base commit and a snapshot
+    of the git setup (every config scope with its origin, the git/common/hooks directories, a
+    digest of each hook) before the seat runs; compares it after the seat and again after the
+    gates, stopping at a new `tamper` stage — named by scope and key or hook, never by value — with
+    nothing pushed; runs its own git steps with `core.hooksPath` set to an empty directory made
+    after the seat exits, `core.fsmonitor=false`, `commit.gpgsign=false` (keel's commit is
+    unsigned) and `--no-verify`; refuses a head that does not descend from the base commit; and
+    pushes to the URL it read, not to the remote's name. Measured against a real git: the
+    operator's own hooks, fsmonitor and signing program do not run in keel's steps, and a planted
+    or changed hook, a `pushurl`, a `pushInsteadOf`, a `core.hooksPath` or an edit to an included
+    file each stop the worker with nothing pushed to either remote.
+  - It is not a sandbox — the seat runs as the operator's OS user — and `docs/keel/swarm.md`
+    says so, and that the gates still run the implementer's code. Recording the consent delegation
+    in the run ledger is left for a decision:
   every ledger reader refuses the whole file on an unknown record type, so a new one would stop
   an older `keel` from shipping or merging on the same checkout.
 - **Each swarm issue is planned from its own scope, and an issue that declares none conflicts

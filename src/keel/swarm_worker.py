@@ -29,6 +29,7 @@ Pure and deterministic: no subprocess, no filesystem, no clock. The runtime
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -43,7 +44,19 @@ WORKER_SIDE_EFFECTS = ("git_worktree", "file_edit", "git_commit", "git_push", "p
 
 #: Where a live worker can stop, in order. A worker reports the stage it failed at; the
 #: branch is pushed only past ``gates`` and the pull request opened only past ``push``.
-STAGES = ("consent", "worktree", "implement", "commit", "gates", "push", "pull_request", "done")
+#: ``tamper`` is asked twice — after the implementer, and again after the gates, which run
+#: the implementer's code — and stops the worker before its first git step that follows.
+STAGES = (
+    "consent",
+    "worktree",
+    "implement",
+    "tamper",
+    "commit",
+    "gates",
+    "push",
+    "pull_request",
+    "done",
+)
 
 #: The consent a parent may have read from its own environment. It is the parent's to
 #: delegate, explicitly, and never reaches a worker's children through inheritance: the
@@ -54,9 +67,10 @@ CONSENT_ENV_VARS = ("KEEL_APPROVE_SCOPE", "KEEL_OPERATOR", "KEEL_CONSENT_MODE")
 #: The forge credentials ``gh`` (and most GitHub API clients) read from the environment.
 #: The implementer is an agent CLI with tools, steered by issue text nobody vetted, and
 #: keel pushes the branch and opens the pull request itself once the implementer has
-#: exited — so the implementer is never handed these. Only the implementer loses them:
-#: keel's own push and ``gh pr create`` run in keel's process, with the operator's
-#: environment. A model provider's key (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``,
+#: exited — so the implementer is never handed these. Nor are the gates, which run the
+#: code the implementer wrote, or keel's own local git steps, which need no forge: only
+#: keel's push and ``gh pr create`` hold them, running in keel's process with the
+#: operator's environment. A model provider's key (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``,
 #: ``GEMINI_API_KEY`` …) is not a forge credential and passes through: the seat needs it
 #: to reach its model.
 FORGE_TOKEN_ENV_VARS = (
@@ -227,12 +241,20 @@ def consent_refusal(scopes: Iterable[str]) -> str:
 
 
 def child_env(environ: Mapping[str, str]) -> dict[str, str]:
-    """``environ`` without the parent's consent variables, for a worker's children.
-
-    keel's own git commands and the gates run under this one; the implementer seat runs
-    under :func:`implementer_env`, which also takes away the forge.
-    """
+    """``environ`` without the parent's consent variables, for a worker's children."""
     return {key: value for key, value in environ.items() if key not in CONSENT_ENV_VARS}
+
+
+def worker_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """keel's own local git steps and the gates: :func:`child_env` without the forge.
+
+    The gates run the code the implementer wrote, and ``keel run-gates --phases
+    guard,test --defer-jury`` reads nothing from GitHub, so they are not handed
+    :data:`FORGE_TOKEN_ENV_VARS`; nor are keel's ``git status``/``add``/``commit``, which
+    are local. git keeps the operator's own configuration here — only the implementer is
+    locked out of the remote (:func:`implementer_env`).
+    """
+    return {k: v for k, v in child_env(environ).items() if k not in FORGE_TOKEN_ENV_VARS}
 
 
 def _inherited_git_config(key: str) -> bool:
@@ -242,8 +264,8 @@ def _inherited_git_config(key: str) -> bool:
 def implementer_env(environ: Mapping[str, str], *, gh_config_dir: str) -> dict[str, str]:
     """The implementer seat's environment: the worker's, with no way to the forge.
 
-    :func:`child_env` (no consent), without :data:`FORGE_TOKEN_ENV_VARS`, and with git
-    and ``gh`` locked out of the remote:
+    :func:`worker_env` (no consent, no :data:`FORGE_TOKEN_ENV_VARS`), with git and ``gh``
+    locked out of the remote:
 
     - ``GH_CONFIG_DIR`` is ``gh_config_dir``, a directory holding no login, so ``gh``
       finds no stored account — neither in its config nor, having no host listed there,
@@ -259,9 +281,7 @@ def implementer_env(environ: Mapping[str, str], *, gh_config_dir: str) -> dict[s
     OS user and can read what that user can. See ``docs/keel/swarm.md``, trust notes.
     """
     env = {
-        key: value
-        for key, value in child_env(environ).items()
-        if key not in FORGE_TOKEN_ENV_VARS and not _inherited_git_config(key)
+        key: value for key, value in worker_env(environ).items() if not _inherited_git_config(key)
     }
     env["GH_CONFIG_DIR"] = gh_config_dir
     env["GIT_TERMINAL_PROMPT"] = "0"
@@ -271,6 +291,108 @@ def implementer_env(environ: Mapping[str, str], *, gh_config_dir: str) -> dict[s
         env[f"GIT_CONFIG_KEY_{index}"] = key
         env[f"GIT_CONFIG_VALUE_{index}"] = value
     return env
+
+
+#: What keel's own git steps after the implementer run under, besides a ``core.hooksPath``
+#: of an empty directory keel makes once the implementer has exited: the worktree shares
+#: the operator's repository, whose config and hooks the implementer could write.
+#: ``core.fsmonitor`` names a program ``git status``/``add``/``commit`` would run, and
+#: ``commit.gpgsign`` would run ``gpg.program``; both are off, so keel's commit is not
+#: signed. ``--no-verify`` on the commit and the push is the hooks' second lock.
+KEEL_GIT_CONFIG = (("core.fsmonitor", "false"), ("commit.gpgsign", "false"))
+
+
+def keel_git(args: Iterable[str], *, hooks_dir: str) -> list[str]:
+    """A git argv for one of keel's own steps after the implementer: no hooks, no
+    fsmonitor, no signing program, whatever the repository's config now says."""
+    argv = ["git", "-c", f"core.hooksPath={hooks_dir}"]
+    for key, value in KEEL_GIT_CONFIG:
+        argv += ["-c", f"{key}={value}"]
+    return [*argv, *args]
+
+
+#: Config the tamper check does not compare. ``branch.<name>.*`` is what git itself writes
+#: when a sibling worker cuts its worktree under ``branch.autoSetupMerge``, and none of
+#: keel's steps reads it: the push names its URL and its refspec.
+TAMPER_IGNORED_CONFIG_PREFIXES = ("branch.",)
+
+
+@dataclass(frozen=True)
+class GitSnapshot:
+    """What of the repository's git setup keel's own steps would run under.
+
+    ``config`` is ``git config --list --show-origin --show-scope`` — every scope, with the
+    files ``include.path``/``includeIf`` pull in — one line per entry, in order; ``hooks``
+    maps each file under the hooks directory to its digest.
+    """
+
+    git_dir: str
+    common_dir: str
+    hooks_dir: str
+    config: tuple[str, ...]
+    hooks: Mapping[str, str] = field(default_factory=dict)
+
+
+#: Config sections whose subsection is a URL or a condition — ``url.<base>.insteadOf``,
+#: ``credential.<url>.helper``, ``http.<url>.extraHeader``, ``includeIf.<cond>.path`` —
+#: which a finding names without it: a URL can carry a credential.
+_URL_SUBSECTIONS = ("url", "credential", "http", "includeif")
+
+
+def _config_entry(line: str) -> tuple[str, str]:
+    """``(scope, key)`` of one ``--show-scope --show-origin`` line; never its value."""
+    parts = line.split("\t", 2)
+    key = parts[-1].split("=", 1)[0]
+    section, _, rest = key.partition(".")
+    if section in _URL_SUBSECTIONS and "." in rest:
+        key = f"{section}.<{section}>.{rest.rsplit('.', 1)[1]}"
+    return (parts[0] if len(parts) == 3 else ""), key
+
+
+def _compared(config: tuple[str, ...]) -> list[str]:
+    return [
+        line
+        for line in config
+        if not _config_entry(line)[1].startswith(TAMPER_IGNORED_CONFIG_PREFIXES)
+    ]
+
+
+def tamper_findings(before: GitSnapshot, after: GitSnapshot) -> tuple[str, ...]:
+    """What changed between two snapshots, named without the values (a config value can
+    be a credential); ``()`` when nothing did."""
+    findings = [
+        f"the {label} moved"
+        for label, old, new in (
+            ("git directory", before.git_dir, after.git_dir),
+            ("common git directory", before.common_dir, after.common_dir),
+            ("hooks directory", before.hooks_dir, after.hooks_dir),
+        )
+        if old != new
+    ]
+    old, new = _compared(before.config), _compared(after.config)
+    if old != new:
+        changed = (Counter(old) - Counter(new)) + (Counter(new) - Counter(old))
+        keys = sorted({" ".join(_config_entry(line)).strip() for line in changed.elements()})
+        findings.append(
+            f"git config changed: {', '.join(keys)}" if keys else "git config was reordered"
+        )
+    for name in sorted(set(before.hooks) | set(after.hooks)):
+        if name not in before.hooks:
+            findings.append(f"hook {name} added")
+        elif name not in after.hooks:
+            findings.append(f"hook {name} removed")
+        elif before.hooks[name] != after.hooks[name]:
+            findings.append(f"hook {name} changed")
+    return tuple(findings)
+
+
+def tamper_reason(findings: Iterable[str], *, during: str) -> str:
+    """Why a worker stops at ``tamper``."""
+    return (
+        f"the repository's git setup changed while {during} ({'; '.join(findings)}); keel's "
+        "own git steps run with the operator's credentials and would run under it, so the "
+        "worker stops and pushes nothing"
+    )
 
 
 def plan_implementer(
@@ -358,6 +480,10 @@ def render_brief(
         (
             "- You have no GitHub credentials, and git here cannot reach any remote: `git "
             "push`, `git fetch` and `gh` fail by design, so do not work around them."
+        ),
+        (
+            "- Do not change git's configuration or hooks: keel neither commits nor pushes "
+            "the work of an implementer that does."
         ),
         (
             "- If an issue cannot be implemented as written, leave it unchanged and say why "

@@ -15,17 +15,19 @@ from __future__ import annotations
 import concurrent.futures
 import datetime
 import functools
+import hashlib
 import os
 import shutil
 import subprocess  # nosec B404
 import sys
+import tempfile
 import traceback
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import delegaterun, git, github, runner, swarm_worker
+from . import delegaterun, github, runner, swarm_worker
 from .delegate import RunPlan
 from .runner import CommandResult
 from .swarm import (
@@ -45,8 +47,11 @@ from .swarm import (
 SubprocessRunner = Callable[[list[str], Path], CommandResult]
 #: Runs one implementer plan with the given child environment; returns the delegate result.
 Implementer = Callable[[RunPlan, dict[str, str]], dict[str, Any]]
-#: ``(remote, commit, ref, cwd)`` -> the push's result.
-Pusher = Callable[[str, str, str, Path], CommandResult]
+#: ``(argv, cwd)`` -> the push's result. The worker builds the argv — its hardened ``git
+#: push --no-verify <url> <commit>:<ref>`` (:func:`keel.swarm_worker.keel_git`), to the URL
+#: it read before the implementer ran — and the seat runs it in keel's own process, with the
+#: operator's environment, which is where the credentials are.
+Pusher = Callable[[list[str], Path], CommandResult]
 #: ``(title, body, base, head, cwd)`` -> ``gh pr create``'s result.
 PullRequestOpener = Callable[[str, str, str, str, Path], CommandResult]
 
@@ -140,8 +145,9 @@ def _default_implement(plan: RunPlan, env: dict[str, str]) -> dict[str, Any]:
     return delegaterun.execute(plan, _run=functools.partial(runner.run_argv, env=env))
 
 
-def _default_push(remote: str, commit: str, ref: str, cwd: Path) -> CommandResult:
-    return git.push_commit(remote, commit, ref, cwd=str(cwd))
+def _default_push(argv: list[str], cwd: Path) -> CommandResult:
+    """The worker's push, with the operator's environment (``env`` not passed)."""
+    return runner.run_argv(argv, cwd=str(cwd))
 
 
 def _default_open_pr(title: str, body: str, base: str, head: str, cwd: Path) -> CommandResult:
@@ -293,14 +299,22 @@ def execute_live_cluster_worker(
     under its own plan's timeout.
 
     The worker's children — the implementer, git, the gates — run without the parent's
-    consent variables (:func:`keel.swarm_worker.child_env`): consent reaches a worker as the
-    delegation it is handed, never through inheritance. The implementer also runs without
-    the forge (:func:`keel.swarm_worker.implementer_env`): no GitHub token, no ``gh``
-    login, no git credential helper and no network transport, so only keel's own push and
-    pull request — made here, in keel's process, after the implementer has exited — reach
-    the remote.
+    consent variables or forge tokens (:func:`keel.swarm_worker.worker_env`): consent
+    reaches a worker as the delegation it is handed, never through inheritance. The
+    implementer also runs without the forge (:func:`keel.swarm_worker.implementer_env`): no
+    ``gh`` login, no git credential helper and no network transport, so only keel's own
+    push and pull request — made here, in keel's process, after the implementer has exited
+    — reach the remote.
+
+    The worktree shares the operator's repository, so the implementer could also write its
+    config and hooks, which keel's own credentialed steps would then run. The worker reads
+    the push URL and the git setup before the implementer runs, stops at ``tamper`` when
+    that setup changed — after the implementer, and again after the gates — and runs its
+    own git steps with no hooks, fsmonitor or signing program
+    (:func:`keel.swarm_worker.keel_git`), pushing to the URL it read rather than a remote's
+    name.
     """
-    env = swarm_worker.child_env(os.environ)
+    env = swarm_worker.worker_env(os.environ)
     run = runner or functools.partial(default_runner, timeout_s=timeout_s, env=env)
     scopes = swarm_worker.worker_scopes(live.consent, cluster.cluster_id)
     branch = cluster_branch(swarm_id, cluster.cluster_id)
@@ -325,7 +339,16 @@ def execute_live_cluster_worker(
     created = create_swarm_worktree(root, worktree_dir, branch, base_branch=base_branch, runner=run)
     if not created or not worktree_dir.exists():
         return stop("worktree", f"failed to create isolated worktree at {worktree_dir}")
+    # Read before the implementer runs, from configuration it has not touched yet: where
+    # keel will push, the commit the work must descend from, and the git setup keel's own
+    # steps will run under.
     start = _last_line(run(["git", "rev-parse", "HEAD"], worktree_dir))
+    push_url = _last_line(run(["git", "remote", "get-url", "--push", live.remote], root))
+    if not push_url:
+        return stop("push", f"the push URL of remote {live.remote!r} could not be read")
+    before = _git_snapshot(run, worktree_dir)
+    if before is None or not start:
+        return stop("worktree", f"the git setup of {worktree_dir} could not be read")
 
     brief = Path(plan.prompt_path)
     brief.parent.mkdir(parents=True, exist_ok=True)
@@ -345,16 +368,102 @@ def execute_live_cluster_worker(
             f"the implementer {system} failed ({result.get('error_code')}): {result.get('error')}",
         )
 
-    status = run(["git", "status", "--porcelain"], worktree_dir)
+    if findings := _tampered(run, worktree_dir, before):
+        return stop("tamper", swarm_worker.tamper_reason(findings, during="the implementer ran"))
+    # Every git step from here is keel's own, and runs with no hooks (an empty directory
+    # made only now, so nothing could be planted in it), no fsmonitor and no signing program.
+    with tempfile.TemporaryDirectory(prefix="keel-no-hooks-") as no_hooks:
+        return _commit_gate_push_open(
+            cluster,
+            record,
+            stop,
+            git=functools.partial(swarm_worker.keel_git, hooks_dir=no_hooks),
+            run=run,
+            before=before,
+            start=start,
+            push_url=push_url,
+            swarm_id=swarm_id,
+            worktree_dir=worktree_dir,
+            project_yaml=project_yaml,
+            base_branch=base_branch,
+            branch=branch,
+            plan=plan,
+            live=live,
+        )
+
+
+def _hook_digests(hooks_dir: Path) -> dict[str, str]:
+    """Each file under ``hooks_dir`` -> the digest of what it holds (through a symlink)."""
+    paths = sorted(hooks_dir.rglob("*")) if hooks_dir.is_dir() else []
+    return {
+        path.relative_to(hooks_dir).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in paths
+        if path.is_file()
+    }
+
+
+def _git_snapshot(run: SubprocessRunner, worktree_dir: Path) -> swarm_worker.GitSnapshot | None:
+    """The worktree's git setup as keel's own steps would meet it, or ``None`` when git
+    could not say. Read with plain ``git`` — ``rev-parse`` and ``config`` run no hook."""
+    where = run(
+        ["git", "rev-parse", "--absolute-git-dir", "--git-common-dir", "--git-path", "hooks"],
+        worktree_dir,
+    )
+    config = run(["git", "config", "--list", "--show-origin", "--show-scope"], worktree_dir)
+    paths = (where.stdout or where.output).splitlines() if where.ok else []
+    if len(paths) != 3 or not config.ok:
+        return None
+    # `--git-common-dir` and `--git-path` may answer relative to the worktree.
+    git_dir, common_dir, hooks_dir = (str(worktree_dir / p) for p in paths)
+    return swarm_worker.GitSnapshot(
+        git_dir=git_dir,
+        common_dir=common_dir,
+        hooks_dir=hooks_dir,
+        config=tuple((config.stdout or config.output).splitlines()),
+        hooks=_hook_digests(Path(hooks_dir)),
+    )
+
+
+def _tampered(
+    run: SubprocessRunner, worktree_dir: Path, before: swarm_worker.GitSnapshot
+) -> tuple[str, ...]:
+    """What changed in the worktree's git setup since ``before``; unreadable is a change."""
+    after = _git_snapshot(run, worktree_dir)
+    if after is None:
+        return ("the git setup could no longer be read",)
+    return swarm_worker.tamper_findings(before, after)
+
+
+def _commit_gate_push_open(
+    cluster: SwarmCluster,
+    record: dict[str, Any],
+    stop: Callable[..., dict[str, Any]],
+    *,
+    git: Callable[[list[str]], list[str]],
+    run: SubprocessRunner,
+    before: swarm_worker.GitSnapshot,
+    start: str,
+    push_url: str,
+    swarm_id: str,
+    worktree_dir: Path,
+    project_yaml: str,
+    base_branch: str,
+    branch: str,
+    plan: RunPlan,
+    live: LiveRun,
+) -> dict[str, Any]:
+    """The worker's steps after the implementer: commit, gates, push, pull request."""
+    system = plan.attribution.get("system") or plan.provider
+    status = run(git(["status", "--porcelain"]), worktree_dir)
     if not status.ok:
         return stop("commit", f"git status failed in {worktree_dir}: {status.output.strip()}")
     if status.output.strip():
         message = swarm_worker.commit_message(cluster, swarm_id=swarm_id, plan=plan)
-        for argv in (["git", "add", "-A"], ["git", "commit", "-m", message]):
-            step = run(argv, worktree_dir)
+        for args in (["add", "-A"], ["commit", "--no-verify", "-m", message]):
+            step = run(git(args), worktree_dir)
             if not step.ok:
-                return stop("commit", f"{' '.join(argv[:2])} failed: {step.output.strip()}")
-    head = _last_line(run(["git", "rev-parse", "HEAD"], worktree_dir))
+                return stop("commit", f"git {args[0]} failed: {step.output.strip()}")
+    head = _last_line(run(git(["rev-parse", "HEAD"]), worktree_dir))
     if not head or head == start:
         return stop(
             "implement",
@@ -362,6 +471,14 @@ def execute_live_cluster_worker(
             "to commit or push",
         )
     record["commit"] = head
+    # A seat may commit its own work, but not replace the branch's history: what keel
+    # pushes must descend from the commit the worktree was cut at.
+    if not run(git(["merge-base", "--is-ancestor", start, head]), worktree_dir).ok:
+        return stop(
+            "tamper",
+            f"{head} does not descend from {start}, the commit the worktree was cut at; the "
+            "branch's history was replaced, so nothing is pushed",
+        )
 
     gates = run(
         [
@@ -386,7 +503,14 @@ def execute_live_cluster_worker(
             code=gates.code,
         )
 
-    pushed = live.push(live.remote, head, f"refs/heads/{branch}", worktree_dir)
+    # The gates ran the implementer's code, which could have written the git setup too.
+    if findings := _tampered(run, worktree_dir, before):
+        return stop("tamper", swarm_worker.tamper_reason(findings, during="the gates ran"))
+
+    # To the URL read before the implementer ran, never to the remote's name.
+    pushed = live.push(
+        git(["push", "--no-verify", push_url, f"{head}:refs/heads/{branch}"]), worktree_dir
+    )
     if not pushed.ok:
         return stop("push", f"git push {live.remote} {branch} failed: {pushed.output.strip()}")
 
