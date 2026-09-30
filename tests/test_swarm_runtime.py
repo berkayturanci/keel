@@ -1338,8 +1338,10 @@ class TheLiveWorkersDefaultSeamsAreKeelsOwn(unittest.TestCase):
             self.assertEqual(
                 swarm_runtime._default_open_pr("t", "b", "main", "h", Path("/w")), "opened"
             )
-        push.assert_called_once_with("origin", "abc", "refs/heads/b", cwd="/w")
-        open_pr.assert_called_once_with("t", "b", "main", "h", cwd="/w")
+        # str(Path), not a literal: on Windows the separator is a backslash.
+        worktree = str(Path("/w"))
+        push.assert_called_once_with("origin", "abc", "refs/heads/b", cwd=worktree)
+        open_pr.assert_called_once_with("t", "b", "main", "h", cwd=worktree)
 
     def test_the_default_runner_passes_the_environment_through(self):
         seen = {}
