@@ -348,9 +348,15 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
 
     def test_worktrees_are_cut_only_outside_a_dry_run(self):
         source = inspect.getsource(swarm_runtime.run_swarm_orchestration)
-        self.assertIn("if create_worktrees and not dry_run:", source)
+        self.assertIn("if not dry_run:", source)
+        # The `create_worktrees` switch beside `dry_run` is gone (#1280): the run's mode
+        # alone decides, so the prose names no second condition.
+        self.assertNotIn(
+            "create_worktrees", inspect.signature(swarm_runtime.run_swarm_orchestration).parameters
+        )
         prose = _prose("swarm")
-        self.assertIn("only when worktrees are enabled **and** the run is not dry", prose)
+        self.assertIn("only when the run is not dry", prose)
+        self.assertNotIn("worktrees are enabled", prose)
         self.assertNotIn("Launch parallel workers per cluster in dedicated git worktrees", prose)
         self.assertNotIn("That cuts a worktree per cluster", prose)
 

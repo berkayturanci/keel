@@ -7,6 +7,17 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **A swarm worker reports its wave, stage and elapsed time** (#1280 item 2). A worker record
+  had no wave, no progress and no times, so `step` jumped `s0 → s4 → s10`, `keel swarm-status`
+  could not group by wave, and a run in flight showed nothing of how far a worker had got. Each
+  record now carries `wave`, `stage` (a live worker's `keel.swarm_worker.STAGES` entry, written
+  as it enters it — `consent` … `pull_request`, then `done`, or the stage that stopped it; empty
+  for a dry run's child `keel ship`), `started_at` and `finished_at`. The board is grouped by wave,
+  each wave headed by its status counts, with `Stage` and `Elapsed` columns (to now while a worker
+  runs). `swarm-status --json` keeps its flat `workers`, each with `elapsed_s`, and adds `as_of`
+  and `waves` (`wave`, `clusters`, `statuses`). A worker is now `running` from when it starts,
+  not when its wave does, so a dry run's waiting workers read `queued`. State files written
+  before the fields still load. keel-visual's worker card shows the wave and stage.
 - **`swarm-land` merges each cluster's pull request through `keel merge`** (#1287). Landing was a
   local `git merge --no-ff` into the checkout's base branch: nothing was pushed, every cluster's
   pull request stayed open, and on a protected base the merge commits could never leave the
@@ -58,6 +69,21 @@ All notable changes to keel are documented here. The format follows
     them, and nothing lands them (#1287). The run ledger is not written.
 - **A write-up on what 100 % coverage cannot tell you, and the `revert-check` gate** (#1403). `website/revert-check.html`, "100% coverage didn't prove our fixes were tested", tells #1289's audit in its own tense — today all fourteen closed fixes fail without their fix; three survived at the time their issue was closed — then explains the opt-in gate from 1.25.0: what counts as an assertion failure, its bounds and defaults, why it is off by default (including for keel itself), and the configuration reference's "What it does not check" list, paraphrased and linked. Its configuration, diff and `keel run-gates` output come from a real run on a scratch repository. It is in `sitemap.xml`, `llms.txt`, the homepage sidebar and `website/README.md`.
   - **The guards.** `tests/test_site_seo.py` and `tests/test_website_csp.py` enumerate it with the other articles. `tests/test_revert_check_article.py` rebuilds the article's fixture from its configuration block, requires `git diff -U0` to print the diff it shows and `keel run-gates` to print its output line for line, runs the follow-up it describes, and holds the stated defaults to `revertcheck`, the off-by-default claim to `projects/keel.yaml` and `.keel/project.yaml`, and the audit's framing to the CHANGELOG.
+
+### Changed
+- **Two swarm parameters only tests could reach are gone, and the kept seams say what they are**
+  (#1280 item 7). `run_swarm_orchestration(create_worktrees=)` could only ever agree with
+  `dry_run` — a dry run creates no worktree (#1288) and a live run refused `False` — so the run's
+  mode alone decides now. `land_wave_clusters(pr_diff_map=)` was passed by no caller and could
+  only relabel the wave's reported `mode`, since every cluster lands through its own `keel merge`.
+  (`resolver=` was already gone with #1409.) Each function's `runner=` stays as a documented
+  injection seam for tests. The swarm adapter's "only when worktrees are enabled **and** the run
+  is not dry" now reads "only when the run is not dry".
+- **`--max-workers` says what each worker costs** (#1280 item 5). `swarm-run --help`,
+  `docs/keel/cli.md` and `docs/keel/swarm.md` state the default (4, capped by the wave's cluster
+  count; a dry run runs one at a time) and that each live worker is an agent CLI that may call its
+  provider's API and runs the gate suite, with no config key or CPU/memory/API budget behind the
+  flag — so the operator sizes it to their quota and machine. No config key was added.
 
 ### Fixed
 - **A run-ledger reader skips a record kind it does not know instead of refusing the ledger**

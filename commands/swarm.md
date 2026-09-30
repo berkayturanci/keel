@@ -153,7 +153,7 @@ keel swarm-run .keel/project.yaml --root . --issues <n,n,n>
 
 This is the dry run: it assesses each cluster and commits nothing. A worker gets its own git
 worktree (`.keel/worktrees/<swarm_id>/<cluster_id>/`, branch `swarm/<swarm_id>/<cluster_id>`)
-only when worktrees are enabled **and** the run is not dry — so in the one mode this command
+only when the run is not dry — so in the one mode this command
 allows, no worktree is created: each cluster's child assessment runs in your own checkout,
 one at a time (#1288). Add `--live` only when the user has consented to the scopes it needs
 (see the top of this command) and wants one unreviewed pull request per cluster; otherwise the
@@ -235,4 +235,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=plugin command=swarm keel_version=1.25.0 source_sha256=8eddfda9f96a22395cb3e52e6e95dc41ecfc2efee81c4d3cff1ed581716bd26b generated_sha256=8eddfda9f96a22395cb3e52e6e95dc41ecfc2efee81c4d3cff1ed581716bd26b -->
+<!-- keel-generated: surface=plugin command=swarm keel_version=1.25.0 source_sha256=0a81937b4e686dbb7f32ccc2230d3d603f316e033fd32e9383199c526f5c9cfc generated_sha256=0a81937b4e686dbb7f32ccc2230d3d603f316e033fd32e9383199c526f5c9cfc -->

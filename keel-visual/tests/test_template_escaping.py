@@ -52,6 +52,9 @@ ALLOWED = {
         "modeLabel",
         *SWARM_MARKUP_NAMES,
         "w.details ? `...` : ''",
+        # A worker's wave and stage (keel #1280); each nested literal escapes its value.
+        "w.wave ? `...` : ''",
+        "w.stage ? `...` : ''",
     },
 }
 
