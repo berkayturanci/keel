@@ -174,11 +174,13 @@ def _gate_runner(
     def run(spec: GateSpec):
         # Same shape the jury takes below, and the same reason: a gate this run is not
         # judging must be reported, never executed, and never recorded as a pass.
+        # Every literal return is the full (ok, found, timed_out, not_run, skipped) shape
+        # that `gates.run_gates` reads, so no two branches disagree on its length.
         if phases is not None and spec.phase not in phases:
-            return True, [], False, True
+            return True, [], False, True, False
         if spec.kind == "builtin" and spec.id == "jury":
             if not run_jury:
-                return True, [], False, True
+                return True, [], False, True, False
             jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
             ok, found, timed_out = jury.run_gate(
                 diff_text, cwd=root, mode=jury_mode, timeout=jury_limit
