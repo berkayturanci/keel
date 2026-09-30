@@ -137,11 +137,11 @@
         }
       } else if (st.status === "landing") {
         state.lock = "LOCKED (" + issue.id + ")";
-        st.log = "Merging into the base branch with git merge --no-ff...";
+        st.log = "keel merge: window, evidence, head pin — merging the pull request...";
         st.status = "merged";
       } else if (st.status === "merged") {
         state.lock = "UNLOCKED";
-        st.log = "Merged locally ✓ — nothing pushed, the PR is not merged (#1287)";
+        st.log = "Pull request merged through keel merge ✓ (#1287)";
       }
     });
 

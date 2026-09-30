@@ -29,8 +29,8 @@
    onto the pull request's branch (the base branch without `--onto`), the verdict and closure
    comments `keel post-comment` and `keel review --live` post or update, the labels
    `keel doctor --fix` creates, and the branch and pull request per cluster that the experimental
-   `keel swarm-run --live` pushes and opens. Locally: `keel swarm-land --live` merges cluster
-   branches into the local base branch and pushes nothing, `keel worktree-remove` removes a
+   `keel swarm-run --live` pushes and opens, and `keel swarm-land --live` merges each such pull
+   request through `keel merge`. Locally: `keel worktree-remove` removes a
    worktree, `keel rollback` (or `keel canary --auto-revert`) commits a revert, and the opt-in
    `revert-check` gate has `keel run-gates` and `keel ship` add and remove a temp worktree.
 3. **A pull request merges only through `keel merge`**, which takes the merge lock,
@@ -214,7 +214,8 @@ bill.
   as degraded there ([transport](docs/keel/github-transport.md)).
 - **Swarm is experimental.** `/keel:swarm` plans waves, and `swarm-run --live` now has each
   cluster's implementer seat write the change and opens one pull request per cluster, but those
-  pull requests carry no review evidence and nothing lands them yet
+  pull requests carry no review evidence, and nothing in the swarm reviews them; `swarm-land`
+  merges them through `keel merge` only once their review is recorded
   ([#1400](https://github.com/berkayturanci/keel/issues/1400),
   [#1287](https://github.com/berkayturanci/keel/issues/1287)). Use `/keel:ship` for work you
   need merged.
@@ -518,7 +519,7 @@ keel run from the ledger/checkpoint keel already writes — it never drives one 
 - [`docs/keel/operator-consent.md`](docs/keel/operator-consent.md) — live-run operator consent scopes and delegated-agent scope rules
 - [`docs/keel/cli.md`](docs/keel/cli.md) — CLI reference
 - [`docs/keel/commands.md`](docs/keel/commands.md) — the 17 `/keel:<command>` workflows (plus the `keel status` progress command), each with its description
-- [`docs/keel/swarm.md`](docs/keel/swarm.md) — multi-agent swarm architecture, dependency DAG wave scheduling, isolated worktrees, single-writer batch landing (a local `git merge --no-ff` into the base branch that pushes nothing), and the 2D/pseudo-3D snapshot visualizer
+- [`docs/keel/swarm.md`](docs/keel/swarm.md) — multi-agent swarm architecture, dependency DAG wave scheduling, isolated worktrees, batch landing (each cluster's pull request merged through `keel merge`, one at a time), and the 2D/pseudo-3D snapshot visualizer
 - [`docs/keel/cutover.md`](docs/keel/cutover.md) — staged guide to retire a project's copied command bodies (install → verify → retire), losing nothing
 - [`docs/keel/comparison.md`](docs/keel/comparison.md) — competitive landscape (Mergify, GitHub merge queue, Qodo/PR-Agent, CodeRabbit, Sweep, OpenHands, Danger, …) + ranked borrow-ideas
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)

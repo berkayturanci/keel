@@ -1210,6 +1210,8 @@ class ALiveWorkerImplementsItsCluster(unittest.TestCase):
         self.assertEqual(state.consent["clusters"], sorted(clusters))
         self.assertEqual({w.scopes for w in state.workers}, {FULL_SCOPES})
         self.assertEqual({(w.status, w.step) for w in state.workers}, {("passed", "s6")})
+        # The number of the pull request each worker opened: what swarm-land merges (#1287).
+        self.assertEqual({w.pull_request for w in state.workers}, {1, 2})
         self.assertEqual(result.consent, state.consent)
         rendered = render_swarm_run_result(result)
         self.assertIn("consent       : delegated by ops (filesystem, git, github)", rendered)

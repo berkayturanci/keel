@@ -8,8 +8,9 @@ every one of them is a claim of a different shape:
   `canary`, `rollback`, `cost-report`, `close-reconcile`, `dryrun-verify`,
   `scratch-dir`, `release`, `adapter-status`, `update-adapter`, `sync`. A
   reference is not a reference if reaching a command means reading `cli.py`.
-* `knobs.swarm_review_evidence` — the knob that decides whether swarm landings
-  enforce review at all — was in the schema and in no configuration table.
+* `knobs.swarm_review_evidence` — the knob that decided whether swarm landings
+  enforced review at all (it no longer can, #1287) — was in the schema and in no
+  configuration table.
 * The website said **16** `/keel` commands in five places and **17** in five
   others. `swarm` made it 17; half the site was never updated.
 * `website/integrations.js` promises "100% real Keel CLI commands" in its own
@@ -165,7 +166,7 @@ class TestEverySubcommandHasAReferenceSection(unittest.TestCase):
 class TestEveryKnobIsDocumented(unittest.TestCase):
     """A knob in the schema and in no table is a knob nobody can find.
 
-    `knobs.swarm_review_evidence` decides whether `keel swarm-land` enforces the
+    `knobs.swarm_review_evidence` decided whether `keel swarm-land` enforced the
     ship s10 review-evidence contract at all (#828). It shipped documented only
     in its own schema `description`.
     """
@@ -1253,22 +1254,22 @@ _SWARM_LANDING_SURFACES = (
     ("website/index.html", "<code>keel swarm-land", "</div>"),
 )
 
-#: The local-only statement each surface has to make: the merge is local...
-_SAYS_LOCAL = re.compile(r"\blocal(?:ly)?\b")
-#: ...and nothing is pushed.
-_SAYS_NO_PUSH = re.compile(
-    r"\b(?:pushes nothing|does not push|never pushes|nothing is pushed|not pushed)\b"
+#: The statement each surface has to make: the landing goes through `keel merge`...
+_SAYS_KEEL_MERGE = re.compile(r"\bkeel merge\b")
+#: ...and what it merges is a pull request.
+_SAYS_PULL_REQUEST = re.compile(r"\bpull requests?\b|\bPRs?\b")
+#: The wording of the local landing #1287 removed. Each alternative describes the local path
+#: as the present behaviour; a sentence that negates a local merge ("merges nothing locally")
+#: matches none of them.
+_CLAIMS_LOCAL_LANDING = re.compile(
+    r"(?i)merge --no-ff"
+    r"|\blocal (?:copy of the )?base branch\b"
+    r"|\blocal merge\b"
+    r"|\bmerged locally\b"
+    r"|\bpushes nothing\b"
+    r"|\bnothing is pushed\b"
+    r"|\bpushing is the operator's step\b"
 )
-#: A clause that says something is pushed, a pull request is merged, or the remote moves.
-_AFFIRMS_REMOTE_LANDING = re.compile(
-    r"\bpush(?:es|ed)?\b"
-    r"|\bmerg(?:e[sd]?|ing)\b(?:\W+\w+){0,3}?\W+(?:pull requests?|PRs?)\b"
-    r"|\b(?:origin|the remote)\b"
-)
-#: What makes such a clause a denial rather than a claim.
-_NEGATES = re.compile(r"\b(?:not|never|nothing|no|unchanged|refuses|refused|cannot)\b")
-#: A clause about `keel merge` or `/keel:ship` describes *that* command, which does merge PRs.
-_OTHER_COMMAND = re.compile(r"`?keel merge`?|/keel:ship")
 
 
 def _swarm_landing_excerpt(path: str, start: str, end: str) -> str:
@@ -1277,73 +1278,70 @@ def _swarm_landing_excerpt(path: str, start: str, end: str) -> str:
     return " ".join(text[begin : text.index(end, begin + len(start))].split())
 
 
-def _remote_landing_claims(text: str) -> list[str]:
-    """The clauses of ``text`` that claim a push, a pull-request merge or a remote landing."""
-    clauses = re.split(r"(?<=[.;:!?])\s+|\s+—\s+|\s+--\s+", re.sub(r"<[^>]+>", "", text))
-    return [
-        clause
-        for clause in clauses
-        if _AFFIRMS_REMOTE_LANDING.search(clause)
-        and not _NEGATES.search(clause)
-        and not _OTHER_COMMAND.search(clause)
-    ]
+def _local_landing_claims(text: str) -> list[str]:
+    """Every phrase of ``text`` that describes the removed local landing as current."""
+    return [m.group(0) for m in _CLAIMS_LOCAL_LANDING.finditer(re.sub(r"<[^>]+>", "", text))]
 
 
-class TestSwarmLandingIsDescribedAsLocal(unittest.TestCase):
-    """#1287 (first slice): `swarm-land`'s landing is a local merge only.
+class TestSwarmLandingMergesPullRequestsThroughKeelMerge(unittest.TestCase):
+    """#1287: `swarm-land` lands each cluster's pull request through `keel merge`.
 
-    `merge_cluster_branch` runs `git checkout <base>` and `git merge --no-ff` in the
-    checkout, and neither it nor `_cmd_swarm_land` pushes or calls GitHub to merge.
-    The swarm guide still said landing was "the one part that works as written", and
-    the cli reference said it landed "into `main`" — both read as work reaching the
-    repository. Every surface that describes the landing must say it is local and
-    that nothing is pushed, and none may say that it pushes or merges a pull request.
+    The first slice (#1396) made every surface say the landing was a local
+    `git merge --no-ff` that pushed nothing, because it was. The owner's decision
+    replaced that path with `keel merge`'s own: the pull request is merged on GitHub
+    under the window, the lock and the evidence gate. So every surface that describes
+    the landing now has to name `keel merge` and the pull request, and none may still
+    describe the local merge as what happens.
     """
 
-    def test_the_landing_code_neither_pushes_nor_merges_a_pull_request(self):
+    def test_the_landing_code_runs_keel_merge_and_no_local_merge(self):
         """The fact the docs rest on: when this fails, the docs below need rewriting."""
-        merge = inspect.getsource(swarm_landing.merge_cluster_branch)
-        self.assertIn('"merge", "--no-ff"', merge)
-        self.assertIn('"checkout", base_branch', merge)
-        for source in (inspect.getsource(swarm_landing), inspect.getsource(cli._cmd_swarm_land)):  # noqa: SLF001
-            self.assertNotIn('"push"', source)
-            self.assertNotIn("merge_pr", source)
+        landing = inspect.getsource(swarm_landing)
+        for local in ('"--no-ff"', '"rebase"', '"merge", "--abort"'):
+            with self.subTest(local=local):
+                self.assertNotIn(local, landing)
+        merge = inspect.getsource(cli._swarm_land_merge)  # noqa: SLF001
+        self.assertIn("build_parser().parse_args(argv)", merge)
+        self.assertIn("_cmd_merge(merge_args)", merge)
+        self.assertIn('"merge",', merge)
 
-    def test_every_landing_surface_says_the_merge_is_local_and_unpushed(self):
+    def test_every_landing_surface_names_keel_merge_and_the_pull_request(self):
         for path, start, end in _SWARM_LANDING_SURFACES:
             with self.subTest(path=path, start=start):
                 excerpt = _swarm_landing_excerpt(path, start, end)
-                self.assertRegex(excerpt, _SAYS_LOCAL)
-                self.assertRegex(excerpt, _SAYS_NO_PUSH)
+                self.assertRegex(excerpt, _SAYS_KEEL_MERGE)
+                self.assertRegex(excerpt, _SAYS_PULL_REQUEST)
 
-    def test_no_landing_surface_says_swarm_land_pushes_or_merges_a_pull_request(self):
+    def test_no_landing_surface_still_describes_the_local_merge(self):
         for path, start, end in _SWARM_LANDING_SURFACES:
             with self.subTest(path=path, start=start):
                 self.assertEqual(
-                    [], _remote_landing_claims(_swarm_landing_excerpt(path, start, end))
+                    [], _local_landing_claims(_swarm_landing_excerpt(path, start, end))
                 )
 
-    def test_the_guide_no_longer_calls_landing_the_part_that_works(self):
-        """The banner's "works as written" is true of the review guard, not of the merge."""
+    def test_the_guide_banner_says_landing_goes_through_keel_merge(self):
         banner = _swarm_landing_excerpt("docs/keel/swarm.md", "> Landing is guarded", "> The rest")
-        self.assertNotIn("Landing is guarded, which is the one part that works as written", banner)
-        self.assertIn("The guard is what works as written", banner)
+        self.assertIn("Landing is guarded, and it goes through **`keel merge`**", banner)
+        self.assertIn("`knobs.swarm_review_evidence: false` > no longer skips anything", banner)
 
-    def test_the_claim_detector_catches_a_remote_landing_claim(self):
+    def test_the_claim_detector_catches_a_local_landing_claim(self):
         """The negative check is only worth something if it fires on the wording it bans."""
         for claim in (
-            "swarm-land then pushes the base branch.",
-            "It merges each cluster's pull request under the lock.",
-            "The cluster lands on origin.",
+            "swarm-land merges each branch with `git merge --no-ff`.",
+            "It merges into the local base branch.",
+            "The landing is a local merge only.",
+            "A cluster reported merged is merged locally.",
+            "It pushes nothing.",
+            "Pushing is the operator's step.",
         ):
             with self.subTest(claim=claim):
-                self.assertEqual([claim], _remote_landing_claims(claim))
-        for denial in (
-            "It does not push, and it does not open or merge a pull request.",
-            "Use `keel merge` per pull request.",
+                self.assertTrue(_local_landing_claims(claim), claim)
+        for current in (
+            "swarm-land checks out, rebases and merges nothing locally.",
+            "Each cluster's pull request is merged through `keel merge`.",
         ):
-            with self.subTest(denial=denial):
-                self.assertEqual([], _remote_landing_claims(denial))
+            with self.subTest(current=current):
+                self.assertEqual([], _local_landing_claims(current))
 
 
 class TestTheDogfoodTerminalIsTheDryAssessment(unittest.TestCase):

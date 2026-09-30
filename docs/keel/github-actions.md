@@ -198,9 +198,10 @@ composite steps inherit:
 ```
 
 There is no `swarm` subcommand — the four real ones are `swarm-plan`, `swarm-run`,
-`swarm-land` and `swarm-status`. `swarm-land` merges into the **local** base branch with
-`git merge --no-ff` and pushes nothing, opening or merging no pull request, so on a runner its
-merges end with the job ([#1287](https://github.com/berkayturanci/keel/issues/1287)).
+`swarm-land` and `swarm-status`. `swarm-land` merges each cluster's pull request through
+`keel merge`, so on a runner it needs what `keel merge` needs there: `gh` authenticated with
+merge rights, the operator's consent, and the review evidence on each pull request
+([#1287](https://github.com/berkayturanci/keel/issues/1287)).
 
 ## Adopting it in a consumer repo
 

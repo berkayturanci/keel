@@ -36,6 +36,7 @@ from .swarm import (
     SwarmRunResult,
     SwarmRunState,
     SwarmWorkerStatus,
+    pull_request_number,
     rebalance_swarm_plan,
     save_swarm_state,
     ship_handoff_args,
@@ -728,6 +729,8 @@ def run_swarm_orchestration(
                         step="s10" if live is None else "s6",
                         status="passed",
                         details="pipeline completed" if live is None else worker_res["output"],
+                        # The pull request `swarm-land` merges (#1287); a dry run opens none.
+                        pull_request=pull_request_number(str(worker_res.get("pr_url") or "")),
                     )
                 else:
                     failed_count += 1

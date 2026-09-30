@@ -1,6 +1,6 @@
 # Keel Swarm — High-Concurrency Multi-Agent Orchestration
 
-> ## ⚠️ Experimental — this subsystem does not land work
+> ## ⚠️ Experimental — nothing in this subsystem reviews the work it produces
 >
 > The planning commands run, and since
 > [#1400](https://github.com/berkayturanci/keel/issues/1400) a live run implements: **`swarm-run
@@ -10,9 +10,12 @@
 > [How a live worker implements a cluster](#how-a-live-worker-implements-a-cluster) and
 > [Consent delegation](#consent-delegation)). What it does not do yet is the rest of the ship:
 >
-> - The pull request carries **no review evidence**. Nothing reviews it, and nothing lands it —
->   review and landing through `keel merge` are the next slices
->   ([#1287](https://github.com/berkayturanci/keel/issues/1287)).
+> - The pull request carries **no review evidence**, and nothing in swarm reviews it.
+>   `swarm-land` merges it through `keel merge`
+>   ([#1287](https://github.com/berkayturanci/keel/issues/1287)), so it holds the cluster until
+>   the pull request's review verdicts and a gates-pass for its head are recorded — today by
+>   hand, as for any pull request; reviewing inside the swarm is still open
+>   ([#1281](https://github.com/berkayturanci/keel/issues/1281)).
 > - A **dry** run is unchanged: its worker is `keel ship` — the *CLI subcommand*, registered as
 >   `dry ship assessment (tier, window, gates, decision)` — which never commits, pushes or opens a
 >   pull request. It is not inert: it runs `git diff` and executes the project's planned gates, so
@@ -39,16 +42,17 @@
 > ([#1275](https://github.com/berkayturanci/keel/issues/1275),
 > [#1280](https://github.com/berkayturanci/keel/issues/1280)).
 >
-> Landing is guarded, and it is **local**: `swarm-land` merges each cleared cluster branch into the
-> **local base branch** with `git merge --no-ff`. It does not push, and it does not open or merge a
-> pull request — pushing the base branch, and closing each cluster's pull request, is the
-> operator's step ([#1287](https://github.com/berkayturanci/keel/issues/1287)). On a protected base
-> branch that push is refused, so the merge commits stay local. The guard is what works as written:
-> with `knobs.swarm_review_evidence`
-> on — the default — `swarm-land` holds any cluster with no open PR, an unarmed gate, missing
-> evidence, or a local head that differs from the reviewed PR head. Setting it to `false` is a
-> documented opt-out, logged on every *live* landing (a dry preview with it off prints nothing and
-> shows the clusters as landing); with it off, cluster branches merge with no PR and no evidence.
+> Landing is guarded, and it goes through **`keel merge`**: `swarm-land` hands each cluster's
+> pull request (the one its live worker opened, recorded in the run state) to the code `keel merge`
+> runs, one cluster at a time ([#1287](https://github.com/berkayturanci/keel/issues/1287)). The
+> merge window, the merge lock, the CI rollup, the review-evidence gate, the gates-pass for the
+> head, the head-pinned squash and the drift check apply to it as to any other pull request, so a
+> cluster lands only once its pull request has what `/keel:ship` needs: verdicts pinned to its head
+> and a gates-pass recorded for it. A cluster whose pull request is missing, closed, not mergeable,
+> outside the window or without evidence is held with that reason; the rest of the wave is not
+> affected. Nothing is checked out or merged in your checkout. `knobs.swarm_review_evidence: false`
+> no longer skips anything, because `keel merge`'s evidence gate has no opt-out; `swarm-land` says
+> so on stderr.
 >
 > The rest is tracked under the audit epic
 > [#1281](https://github.com/berkayturanci/keel/issues/1281). Everything below describes the design
@@ -60,9 +64,8 @@
 multiple AI developer agents working in parallel across complex backlogs. It transforms a list of
 GitHub issues into a topologically ordered execution graph, partitions issues into conflict-free
 clusters, implements each cluster in its own git worktree through the cluster's implementer seat
-and opens one pull request per cluster (a live run), and lands cluster branches under a
-single-writer merge lock with sequential `git merge --no-ff` into the local base branch — a
-local merge that pushes nothing.
+and opens one pull request per cluster (a live run), and lands each cluster's pull request
+through `keel merge`, one at a time, under the same merge lock every other merge takes.
 
 ---
 
@@ -141,13 +144,13 @@ an operator sees the chain at a glance.
                         ▼                                   │
               ┌───────────────────┐                         │
               │ keel swarm-land   │                         │
-              │  • Batch Landing  │                         │
+              │  • keel merge/PR  │                         │
               │  • merge_lock     │                         │
               └─────────┬─────────┘                         │
                         │                                   │
                         ▼                                   ▼
               ┌───────────────────┐               ┌───────────────────┐
-              │ local base branch │ ◄─────────────┤  keel swarm-land  │
+              │ base branch (host)│ ◄─────────────┤  keel swarm-land  │
               │   (Wave 1 Done)   │               │(after re-planning)│
               └───────────────────┘               └───────────────────┘
 ```
@@ -384,11 +387,11 @@ issue, so a live swarm depends on no agent host. `swarm-run --live` runs, per cl
    the implementer seat, the commit the gates passed at, and the consent delegation.
 
 **What a worker leaves behind.** On success: a committed, pushed cluster branch and one open pull
-request, reported as the cluster's `pr_url`, with the worker at step `s6` in `swarm-status`. The
-pull request does **not** carry review evidence yet, so `swarm-land` still holds it until review
-is attached; reviewing and landing it are the next slices
-([#1287](https://github.com/berkayturanci/keel/issues/1287)). The worktree itself is removed when
-the worker ends; the branch stays.
+request, reported as the cluster's `pr_url` and recorded as the worker's `pull_request` number in
+the run state, with the worker at step `s6` in `swarm-status`. The pull request does **not**
+carry review evidence yet, so `swarm-land` holds it until its review verdicts and a gates-pass for
+its head are recorded, as `keel merge` requires of any pull request. The worktree itself is
+removed when the worker ends; the branch stays.
 
 **Failure.** A worker stops at the first stage that fails and reports it: `stage` in its
 `cluster_results` entry (`consent`, `worktree`, `implement`, `tamper`, `commit`, `gates`, `push`,
@@ -571,11 +574,12 @@ run". The table is in [the CLI reference](cli.md#keel-swarm-status-projectyaml--
 
 ## 4. Landing (`keel swarm-land`)
 
-Landing is coordinated by `src/keel/swarm_landing.py` under the atomic `merge_lock`
-(`.keel/state/locks/merge-<sha12>.lock`):
+Landing is coordinated by `src/keel/swarm_landing.py`; each merge is `keel merge`'s own, under
+its atomic merge lock (`.keel/state/locks/merge-<sha12>.lock`):
 
 ```bash
-keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live
+keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --live \
+  --approve-scope filesystem,git,github --operator you
 ```
 
 ### Which plan lands
@@ -611,67 +615,66 @@ warning's lines as `plan_drift`.
 
 `evaluate_wave_landing_mode` decides from the plan's wave mode whether the wave lands at all:
 
-- **Direct batch** — the wave is `orthogonal_parallel` (wave 1, or a later wave with no
-  dependency left). Each cluster branch is merged into the **local** copy of the configured base
-  branch with `git merge --no-ff`, **one after another** inside the lock. A merge that conflicts
-  is `git merge --abort`ed, the base is left untouched, and the cluster is reported `merge failed`.
-  The decision's reason is `single_cluster` for a wave of one and `orthogonal_diff_trees`
-  otherwise: `build_swarm_plan` only admits an issue to a wave it conflicts with nothing in, and
-  the CLI passes no PR diff map, so a wave's own clusters never overlap each other.
 - **Refused** — the wave is `sequential_dependent`, whatever its size (reason
   `depends_on_earlier_wave`, [#1276](https://github.com/berkayturanci/keel/issues/1276)). Its
   branches were cut before the earlier wave it depends on landed, so `swarm-land` lands none of
-  it, dry run or live: it runs no git command and no review-evidence check, reports
+  it, dry run or live: it looks up no pull request and calls no `keel merge`, reports
   `mode : refused` with `refused : wave N depends on issues landed by an earlier wave (#a, #b)…`,
   and exits 1. Land the earlier wave, then re-plan the remaining issues (`keel swarm-plan` /
   `swarm-run` without the landed ones, so they plan as a fresh wave 1 on the moved base) and land
-  again. Before #1276 every wave claimed direct landing, so `keel swarm-land --wave 2` merged a
-  branch cut before wave 1 landed and reported the conflict as `merge failed`.
+  again. The refusal is chosen from the plan's dependency edges, not from how far the base branch
+  has actually moved since each branch was cut; comparing against that drift is the open half of
+  #1276.
+- **Otherwise** (`direct_batch`; `sequential_funnel` only when a caller supplies overlapping
+  diffs, which the CLI does not) every cluster of the wave is landed in plan order, each on its
+  own ([#1287](https://github.com/berkayturanci/keel/issues/1287)):
 
-`swarm_landing.py` also implements an adaptive rebase funnel (rebase onto the moved base,
-deterministic marker-resolver healing, hold-and-rewind of anything the resolver touched). No
-`keel swarm-land` invocation reaches it: it is selected only for an `orthogonal_parallel` wave
-whose supplied `pr_diff_map` overlaps (`overlapping_diff_trees`), and the CLI passes none. It
-stays off for dependent waves until
-[#1266](https://github.com/berkayturanci/keel/issues/1266) feeds its overlap check real diffs.
-The refusal is chosen from the plan's dependency edges, not from how far the base branch has
-actually moved since each branch was cut; comparing against that drift is the open half of #1276.
+1. **Find the cluster's pull request.** The number the live worker recorded in the run state,
+   confirmed with `gh pr view` to be open, headed by `swarm/<swarm_id>/<cluster_id>` and aimed at
+   the configured base branch. With no record (a run from before #1287, or a pull request opened
+   by hand), the one open pull request `gh pr list --head swarm/<swarm_id>/<cluster_id>` names. No
+   open pull request, several, a merged or closed one, or one for another branch or base holds
+   the cluster with that reason.
+2. **Hand it to `keel merge`.** Not a copy of it: `swarm-land` parses a `keel merge` argv with
+   `keel merge`'s own parser and runs the same function, so the cluster's pull request gets the
+   merge window, the merge lock (claimed and released for this one merge, so a concurrent
+   `keel merge` waits between clusters rather than racing one), the operator consent, the merge
+   state (`DIRTY`, `BLOCKED` and the rest refuse), the CI rollup, the review-evidence gate, the
+   gates-pass for the head, the checkpoint gate, the squash pinned to the verified head, and the
+   post-merge drift check. `--transport`, `--approve-scope`, `--operator` and `--consent-mode` are
+   passed through; the method is `keel merge`'s default, squash.
+3. **Report it.** Merged: `landed`, the worker `merged` at `s10` in the run state. Refused by any of
+   the above: `held` with `keel merge`'s reason, e.g. `PR #12: keel merge: merge window is closed`
+   or `PR #12: keel merge: missing evidence: review-verdict-1`. The merge call itself failed:
+   `failed`. Drift after a merge: `landed`, with a `warning` to run `keel verify-merge`.
 
-**The landing is a local merge only.** `merge_cluster_branch` runs `git checkout <base_branch>` and
-`git merge --no-ff <cluster branch>` in your checkout, and nothing after it pushes: `swarm-land`
-does not push the base branch, and it does not open or merge a pull request — each cluster's pull
-request stays open. A cluster reported `merged` is merged locally; `origin` is unchanged. Pushing
-is the operator's step, and on a protected base branch (the configuration keel recommends) a
-direct push is refused, so the merge commits cannot reach the remote that way. Use `keel merge`
-per pull request — through `/keel:ship` — for work that has to reach the repository
-([#1287](https://github.com/berkayturanci/keel/issues/1287)).
+The next cluster is tried whatever happened to the one before, and the wave exits non-zero when
+any cluster did not land. A **dry run** (no `--live`) runs `keel merge --dry-run` for each
+cluster — every check above, no merge — and reports what the live landing would do; like
+`keel merge --dry-run`, it needs the operator's consent. A dry run writes nothing to the run state.
 
-All of this happens in the checkout `--root` points at, which is usually your own. So a live
-landing starts only from a clean tree: when `git status --porcelain` shows any change, tracked or
-untracked, it names the files, checks out and merges nothing, and exits 1 with
-`refused : the working tree has uncommitted changes…`. Untracked files keel writes itself, under
-`.keel/state/`, `.keel/activity/`, `.keel/scratch/`, `.keel/worktrees/` and the scaffolded
-`.keel/.gitignore`, do not count. It records the branch (or detached commit) you were on and checks
-it out again when the wave ends, however it ends: landed, conflicted, aborted, or raised. If that
-checkout fails, the result carries `warning : could not return the checkout to <branch>…` with the
-command to run ([#1279](https://github.com/berkayturanci/keel/issues/1279)). A dry run touches no
-branch and is unchanged.
+**Nothing happens in your checkout.** Before #1287 a landing checked out the base branch and
+merged each cluster branch into it inside the checkout `--root` points at; that never reached the
+repository and left every pull request open. That path is gone rather than kept behind a flag, because every
+cluster a live run produces has a pull request to merge. `swarm-land` checks out, rebases and
+merges nothing locally, so it no longer refuses a dirty working tree. It still reads where HEAD is
+before the wave and puts it back if anything moved it, with
+`warning : could not return the checkout to <branch>…` when it cannot
+([#1279](https://github.com/berkayturanci/keel/issues/1279)).
 
 ### Review Evidence Gate (`knobs.swarm_review_evidence`)
 
-Before a **live** landing, every cluster branch's open PR must pass the same pre-merge
-review-evidence verification `keel merge` enforces at ship s10 (#828): an armed gate,
-the tier-derived verdict count, and verdicts pinned to the PR head. A cluster that does
-not verify is **held** — reported with its reason, never merged — and a live wave with
-any held cluster exits non-zero, so automation cannot read "refused to land unreviewed
-code" as success. The gate also runs in dry runs (the checks are read-only), which report
-`would hold: <reason>` per cluster.
+The review-evidence gate is `keel merge`'s: an armed gate, the tier-derived verdict count, and
+verdicts pinned to the pull request's head (#828). A cluster whose pull request does not verify is
+**held** with the missing items named, and the wave exits non-zero, so automation cannot read
+"refused to land unreviewed code" as success. The gate runs in dry runs too.
 
-`knobs.swarm_review_evidence: false` is the explicit opt-out, and it is loud: a live
-`swarm-land` prints `swarm review evidence: OFF by config` to stderr, because `swarm-land`
-runs no CI of its own — with the gate off, clusters land unverified. See
-[configuration.md](configuration.md#swarm_review_evidence) and the
-`keel swarm-land` section of [cli.md](cli.md).
+`knobs.swarm_review_evidence: false` used to skip this gate at landing. Since landing is
+`keel merge` ([#1287](https://github.com/berkayturanci/keel/issues/1287)), whose gate has no
+opt-out, it skips nothing: `swarm-land` prints
+`swarm-land: knobs.swarm_review_evidence: false has no effect …` to stderr and holds any cluster
+without evidence like any other. See [configuration.md](configuration.md#swarm_review_evidence)
+and the `keel swarm-land` section of [cli.md](cli.md).
 
 ---
 
@@ -729,9 +732,9 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | **Declared Org Chart (CTO/lead/worker)** | **Yes (`knobs.team`, one resolver)** | Role prompts | Conversational | SOP roles | Single agent |
 | **Fixed Backbone Machine** | **Yes (`s0`–`s12` immutable)** | No | No | No | No |
 | **Isolated Git Worktrees** | **Yes (`.keel/worktrees/`)** | No (shared workspace) | No | No (file overwrite) | Docker container |
-| **Batch landing under one writer lock** | **Yes (sequential local `merge --no-ff`; pushes nothing)** | No | No | No | PR per run |
+| **Batch landing under one writer lock** | **Yes (each cluster's PR through `keel merge`, one at a time)** | No | No | No | PR per run |
 | **Atomic Single-Host Lock** | **Yes (`merge_lock`)** | No | No | No | No |
-| **Fail-soft conflict handling** | **Yes (`merge --abort`, cluster reported failed)** | No | No | No | Manual |
+| **Fail-soft conflict handling** | **Yes (a `DIRTY` PR is held; the wave goes on)** | No | No | No | Manual |
 | **Per-Branch Review-Evidence Gate** | **Yes (cross-vendor panel per cluster, when configured)** | No | Conversational | No | Single Agent |
 | **2D DAG & pseudo-3D snapshot** | **Yes (`keel-visual`, rendered)** | Basic Tree | Plotly / None | Static Diagrams | Web Terminal |
 
@@ -742,8 +745,8 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 | Risk / Failure Scenario | Detection Mechanism | Fail-Soft Mitigation |
 | :--- | :--- | :--- |
 | **A cluster changes files another cluster also touches** | Plan-time static file-overlap partitioning (disjoint trees only share a wave) + isolated per-cluster worktrees | Overlapping clusters are sequenced into later waves. A failed cluster's issue is dropped from the plan and every later wave still runs ([#1268](https://github.com/berkayturanci/keel/issues/1268), fixed in [#1312](https://github.com/berkayturanci/keel/pull/1312)); nothing is re-scheduled — see item 3 above. |
-| **Merge conflict during landing** | `git merge` non-zero exit code | Automatic `git merge --abort`; the base branch remains untouched; the cluster is reported `merge failed`. |
-| **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock. When another writer holds it, `swarm-land` merges nothing: every cleared cluster is reported `held` with the lock named in the reason, the hold is written to the run state, and the wave's result is returned rather than retried ([#1272](https://github.com/berkayturanci/keel/issues/1272)) — landing is single-writer by refusal. |
+| **Merge conflict during landing** | `keel merge` reads the pull request's merge state | A `DIRTY` (or `BLOCKED`, …) pull request is held with that state named; nothing is merged for it, and the next cluster is tried ([#1287](https://github.com/berkayturanci/keel/issues/1287)). |
+| **Concurrent Merge Race Condition** | `merge_lock` file mutex | Atomic `mkdir`-based lock, claimed by `keel merge` for each cluster's merge. When another writer holds it, that cluster is reported `held` with `resource lock is already held`, the hold is written to the run state, and it is not retried ([#1272](https://github.com/berkayturanci/keel/issues/1272), [#1287](https://github.com/berkayturanci/keel/issues/1287)) — landing is single-writer by refusal. |
 | **Worker Subprocess Crash / OOM** | Subprocess exit status monitoring | Fail-soft error capture in `SwarmRunState`; remaining parallel workers continue unimpeded. |
 | **Missing or unreadable run state** | `load_swarm_state` JSON/Value/Key/Type/Overflow errors, and an `OSError` opening the file | Fails soft to no state rather than raising; the plan is a separate file, so a lost state file costs the board, not the landing. |
 | **The issues changed between the run and the landing** | `swarm_plan_drift` against the persisted plan | `swarm-land` lands the persisted plan — the one whose branches exist — and prints each difference as a warning ([#1275](https://github.com/berkayturanci/keel/issues/1275)). |

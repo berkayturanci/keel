@@ -235,10 +235,11 @@ class TheSwarmSimulatorShowsWhatThePlannerWouldPlan(unittest.TestCase):
                 self.assertEqual(planned, shown)
 
     def test_no_worker_claims_a_closed_or_merged_pull_request(self):
-        """K62: `swarm-land` merges locally and never pushes or merges the PR (#1287)."""
+        """K62, then #1287: the simulated landing is the real one — the pull request merged
+        through `keel merge` — and no worker claims a closed or stamped PR."""
         text = _read("website/swarm-simulator.js")
-        self.assertIsNone(re.search(r"PR closed|stamped", text))
-        self.assertIn("the PR is not merged (#1287)", text)
+        self.assertIsNone(re.search(r"PR closed|stamped|Merged locally", text))
+        self.assertIn("Pull request merged through keel merge", text)
         self.assertIn("A simulation of the design, not a live run", text)
 
     def test_the_backbone_map_does_not_draw_swarm_to_the_merge(self):
