@@ -7630,17 +7630,8 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    swarm_id = args.swarm_id
-    if not swarm_id:
-        state_dir = Path(args.root) / ".keel" / "state" / "swarm"
-        if state_dir.exists():
-            files = sorted(
-                state_dir.glob("*.json"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if files:
-                swarm_id = files[0].stem
+    # The newest run's *state* file: a plan file beside it names no run (#1275).
+    swarm_id = args.swarm_id or swarm.latest_swarm_id(args.root)
 
     state = swarm.load_swarm_state(swarm_id, root=args.root) if swarm_id else None
     state_file = Path(args.root) / ".keel" / "state" / "swarm" / f"{swarm_id}.json"
@@ -7814,6 +7805,12 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
                 print(f"  {refusal}", file=sys.stderr)
             return 1
 
+    # The plan this run executes, beside its state, so `swarm-land` lands exactly these
+    # waves rather than whatever the issues plan into by then (#1275). Written before the
+    # run starts, so the state — rewritten throughout the run — is always the newer file.
+    plan_file = swarm.save_swarm_plan(plan, root=args.root)
+    print(f"swarm-run: plan persisted to {plan_file}", file=sys.stderr)
+
     result = swarm_runtime.run_swarm_orchestration(
         plan,
         project_yaml=args.path,
@@ -7832,7 +7829,7 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        print(json.dumps(result.to_dict(), indent=2))
+        print(json.dumps({**result.to_dict(), "plan_file": str(plan_file)}, indent=2))
     elif args.tree:
         print(swarm.render_swarm_plan_tree(plan))
         print("")
@@ -7965,40 +7962,62 @@ def _swarm_land_evidence_checker(
     return check
 
 
-def _cmd_swarm_land(args: argparse.Namespace) -> int:
-    try:
-        config = cfg.load_config(args.path)
-    except FileNotFoundError:
-        print(f"no such config: {args.path}", file=sys.stderr)
-        return 1
-    except cfg.ConfigError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
+def _swarm_land_plan(
+    args: argparse.Namespace, config: cfg.ProjectConfig, swarm_id: str | None
+) -> tuple[swarm.SwarmPlan | None, str, tuple[str, ...]]:
+    """The plan ``swarm-land`` lands, where it came from, and how the issues drifted (#1275).
 
-    swarm_id = args.swarm_id
-    if not swarm_id:
-        state_dir = Path(args.root) / ".keel" / "state" / "swarm"
-        if state_dir.exists():
-            files = sorted(
-                state_dir.glob("*.json"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if files:
-                swarm_id = files[0].stem
+    The plan ``swarm-run`` persisted for ``swarm_id`` wins: it is what ran, so its waves
+    are the ones with branches. Named issues are then only compared against it, and any
+    difference is a warning, never a switch. Only with no persisted plan are the waves
+    re-planned from the issues — the pre-#1275 behaviour — and stderr says so, because a
+    re-plan can partition differently from the run. A persisted plan keel cannot read is
+    refused: re-planning around it would be that silent switch.
+
+    ``(plan, "persisted" | "re-planned", drift)``, or ``(None, "", ())`` after printing why
+    there is nothing to land.
+    """
+    try:
+        persisted = swarm.load_swarm_plan(swarm_id, root=args.root) if swarm_id else None
+    except swarm.SwarmPlanError as exc:
+        print(f"swarm-land: refusing the persisted plan: {exc}", file=sys.stderr)
+        return None, "", ()
 
     scopes = _swarm_issue_scopes(args, config)
     if scopes is None:
-        return 1
+        return None, "", ()
+
+    if persisted is not None:
+        print(
+            "swarm-land: landing the plan swarm-run persisted at "
+            f"{swarm.swarm_plan_path(persisted.swarm_id, args.root)}",
+            file=sys.stderr,
+        )
+        drift: tuple[str, ...] = ()
+        if scopes:
+            # Staffing is not compared, so the re-plan needs no provider probe.
+            current = swarm.build_swarm_plan(scopes, swarm_id=persisted.swarm_id, config=config)
+            drift = swarm.swarm_plan_drift(persisted, current)
+        if drift:
+            print(
+                "swarm-land: warning: the issues now plan differently from the run; "
+                "landing the persisted plan (what ran):",
+                file=sys.stderr,
+            )
+            for line in drift:
+                print(f"  {line}", file=sys.stderr)
+        return persisted, "persisted", drift
+
     if not scopes:
         # With no scope there is no plan and so no wave; the command used to report
         # `status: failed` for that, the same words as every cluster failing (#1279).
         print(
             "swarm-land needs the wave's issues: pass --issues/--issue (or the scope "
-            "flags) the run was planned with",
+            "flags) the run was planned with, or --swarm-id of a run whose plan "
+            "swarm-run persisted",
             file=sys.stderr,
         )
-        return 1
+        return None, "", ()
 
     overrides = _swarm_overrides(args)
     plan = swarm.build_swarm_plan(
@@ -8010,6 +8029,34 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
             config, profile=overrides.team_profile
         ),
     )
+    where = (
+        f"swarm {swarm_id!r} ({swarm.swarm_plan_path(swarm_id, args.root)})"
+        if swarm_id
+        else "any swarm run under this root"
+    )
+    print(
+        f"swarm-land: no plan persisted for {where}; re-planned from the issues, so the "
+        "waves may not be the ones the run executed",
+        file=sys.stderr,
+    )
+    return plan, "re-planned", ()
+
+
+def _cmd_swarm_land(args: argparse.Namespace) -> int:
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    # The newest run's *state* file: a plan file beside it names no run (#1275).
+    swarm_id = args.swarm_id or swarm.latest_swarm_id(args.root)
+    plan, plan_source, plan_drift = _swarm_land_plan(args, config, swarm_id)
+    if plan is None:
+        return 1
 
     from . import swarm_landing
 
@@ -8041,7 +8088,8 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        print(json.dumps(result.to_dict(), indent=2))
+        payload = {**result.to_dict(), "plan_source": plan_source, "plan_drift": list(plan_drift)}
+        print(json.dumps(payload, indent=2))
     else:
         print(swarm.render_swarm_landing_result(result))
 
