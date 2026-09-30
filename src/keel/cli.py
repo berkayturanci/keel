@@ -7649,6 +7649,9 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    if args.orphans or args.clean:
+        return _swarm_status_leftovers(args)
+
     # The newest run's *state* file: a plan file beside it names no run (#1275).
     swarm_id = args.swarm_id or swarm.latest_swarm_id(args.root)
 
@@ -7693,6 +7696,54 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
     else:
         print(swarm.render_swarm_status_dashboard(state))
     return 0
+
+
+def _swarm_status_leftovers(args: argparse.Namespace) -> int:
+    """``swarm-status --orphans`` / ``--clean``: what swarm runs left behind (#1278).
+
+    Lists every worktree, directory and branch under keel's own swarm paths
+    (``.keel/worktrees/<swarm_id>/<cluster_id>``) and branch namespace
+    (``swarm/<swarm_id>/<cluster_id>``) — of every run, or of ``--swarm-id`` — with what
+    ``--clean`` does to each and why; ``--clean`` then removes the ones marked ``remove``.
+    Exit 1 when git cannot list them or a removal fails.
+    """
+    from . import swarm_runtime
+
+    leftovers, error = swarm_runtime.find_swarm_leftovers(args.root, swarm_id=args.swarm_id)
+    if error:
+        print(f"swarm-status: {error}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"error_code": "git-failed", "error": error}, indent=2))
+        return 1
+    removed: list[swarm_worker.SwarmLeftover] = []
+    failed: list[tuple[swarm_worker.SwarmLeftover, str]] = []
+    if args.clean:
+        removed, failed = swarm_runtime.clean_swarm_leftovers(args.root, leftovers)
+    if args.json:
+        payload = {
+            "swarm_id": args.swarm_id,
+            "cleaned": bool(args.clean),
+            "leftovers": [x.to_dict() for x in leftovers],
+            "removed": [x.to_dict() for x in removed],
+            "failed": [{**x.to_dict(), "error": why} for x, why in failed],
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        scope = f"swarm run {args.swarm_id}" if args.swarm_id else "every swarm run"
+        print(f"keel swarm leftovers — {scope}")
+        if not leftovers:
+            print("  nothing: no swarm worktree, directory or branch is left behind")
+        for x in leftovers:
+            where = f"{x.swarm_id}/{x.cluster_id}" if x.cluster_id else x.swarm_id
+            print(f"  {x.action:<6} {x.kind:<12} {where}  {x.target}")
+            print(f"         {x.reason}")
+        if args.clean:
+            print(f"  removed {len(removed)}, failed {len(failed)}")
+            for x, why in failed:
+                print(f"  failed {x.kind} {x.target}: {why}")
+        elif any(x.action == "remove" for x in leftovers):
+            print("  --clean removes the ones marked remove")
+    return 1 if failed else 0
 
 
 def _swarm_run_consent(
@@ -10294,12 +10345,30 @@ def build_parser() -> argparse.ArgumentParser:
             "     (nothing in flight; --json prints {})\n"
             "  1  the run's state file exists but cannot be read, or --swarm-id names no run\n"
             "     (--json prints {swarm_id, error_code, error}, never {}); or the config\n"
-            "     does not load"
+            "     does not load\n"
+            "with --orphans / --clean: 0 when listed (and every removal succeeded); 1 when\n"
+            "git cannot list them or a removal failed"
         ),
     )
     p_ss.add_argument("path", help="path to project.yaml")
     p_ss.add_argument("--root", default=".", help="repo root for state")
     p_ss.add_argument("--swarm-id", default=None, help="specific swarm execution ID")
+    p_ss.add_argument(
+        "--orphans",
+        action="store_true",
+        help=(
+            "list the worktrees, directories and swarm/<id>/<cluster> branches swarm runs "
+            "left behind, and what --clean would do to each"
+        ),
+    )
+    p_ss.add_argument(
+        "--clean",
+        action="store_true",
+        help=(
+            "remove the leftovers --orphans marks remove: never an unfinished run's unless "
+            "--swarm-id names it, never a pushed branch, nothing outside keel's swarm paths"
+        ),
+    )
     p_ss.add_argument("--json", action="store_true", help="emit structured JSON")
     p_ss.set_defaults(func=_cmd_swarm_status)
 

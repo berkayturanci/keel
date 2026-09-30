@@ -223,6 +223,20 @@ When `--visual` was requested, launch the localhost visualizer dashboard:
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
 
+A live worker that failed after its implementer seat ran keeps its worktree
+(`.keel/worktrees/<swarm_id>/<cluster_id>/`) and branch for inspection, and names the path at
+the end of its output. Report those paths to the user. When they are done with them — or after
+a killed run — list and remove what swarm runs left behind (#1278):
+
+```bash
+keel swarm-status .keel/project.yaml --root . --orphans
+keel swarm-status .keel/project.yaml --root . --clean
+```
+
+`--clean` never removes an unfinished run's leftovers unless `--swarm-id` names that run (only
+do that once you know no `swarm-run` of it is still running), and never a branch its worker
+pushed or opened a pull request for.
+
 ## Step 5 — Swarm recap report
 
 Compile the overall multi-agent swarm outcome:
@@ -235,4 +249,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.25.0 source_sha256=8eddfda9f96a22395cb3e52e6e95dc41ecfc2efee81c4d3cff1ed581716bd26b generated_sha256=8eddfda9f96a22395cb3e52e6e95dc41ecfc2efee81c4d3cff1ed581716bd26b -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.25.0 source_sha256=b70d8e20c2ef4916abd7a2d625e6c45a17a4e5d02ce839fc4ce81c9905329d80 generated_sha256=b70d8e20c2ef4916abd7a2d625e6c45a17a4e5d02ce839fc4ce81c9905329d80 -->

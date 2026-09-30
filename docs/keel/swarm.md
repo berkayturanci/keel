@@ -393,7 +393,8 @@ request, reported as the cluster's `pr_url` and recorded as the worker's `pull_r
 the run state, with the worker at step `s6` in `swarm-status`. The pull request does **not**
 carry review evidence yet, so `swarm-land` holds it until its review verdicts and a gates-pass for
 its head are recorded, as `keel merge` requires of any pull request. The worktree itself is
-removed when the worker ends; the branch stays.
+removed when the worker ends; the branch stays, because it heads the pull request. What a
+failed worker leaves is in [Worktree Lifecycle & Isolation](#worktree-lifecycle--isolation).
 
 **Failure.** A worker stops at the first stage that fails and reports it: `stage` in its
 `cluster_results` entry (`consent`, `worktree`, `implement`, `tamper`, `commit`, `gates`, `push`,
@@ -402,6 +403,8 @@ failed stage runs: a failed implementer commits nothing; a `tamper` after the im
 nothing, and one after the gates leaves the commit local and the branch unpushed; a red gate
 leaves the commit local and the branch unpushed; a refused push opens no pull request; a pull request `gh` could not open
 says the branch is already pushed. A failed cluster is dropped from the later waves as before.
+A worker that failed after its seat ran keeps its worktree and branch for inspection, and its
+`output` ends by naming the path ([#1278](https://github.com/berkayturanci/keel/issues/1278)).
 
 **Trust notes.** The implementer is an agent with tools, running in the cluster's worktree with
 the delegate machinery's existing sandbox and limits — keel adds none of its own, and the brief
@@ -536,26 +539,45 @@ record carries the `scopes` it was handed, and each pull request body names the 
 
    (There is also no runtime scope audit — clusters are kept off each other's files by plan-time
    overlap partitioning and per-worktree isolation, not by watching what a worker writes.)
-4. **Cleanup**: partial, and only on a live run. `remove_swarm_worktree` runs
-   `git worktree remove --force` on the cluster's leaf directory (falling back to `rmtree`), from a
-   `finally` on the live worker's path (`create_worktrees and not dry_run`) that runs when the
-   worktree exists — a dry run creates no worktree to remove. Four things it does **not** do, each verified against
-   `src/keel/swarm_runtime.py`:
+4. **Cleanup** — only on a live run; a dry run creates no worktree
+   ([#1278](https://github.com/berkayturanci/keel/issues/1278)). Before cutting its worktree, a
+   worker runs `git worktree prune`, which drops the registration of any worktree whose directory
+   is gone (a crashed run's, after its directory was deleted), so reusing a `--swarm-id` no longer
+   fails with "already used by worktree". Prune touches no directory, no branch and no locked
+   worktree, and skips a sibling worker's worktree while git is still adding it. When the worker
+   ends — returning or raising — `keel.swarm_worker.worktree_disposal` decides what stays:
 
-   - the `.keel/worktrees/<swarm_id>/` parent directory is created by `mkdir(parents=True)` and
-     never
-     removed, so one directory per run accumulates;
-   - the `swarm/<swarm_id>/<cluster_id>` branch is never deleted — nothing in `src/keel` runs
-     `git branch -d/-D`. A re-run with the same `--swarm-id` therefore force-resets a surviving
-     branch, because the worktree is created with `git worktree add -B`;
-   - `git worktree prune` is never run, so a registration left behind by a failed remove stays in
-     `.git/worktrees`;
-   - `remove_swarm_worktree` returns `True` unconditionally and its caller discards the value, so a
-     failed cleanup is silent.
+   | The worker | Its worktree | Its branch `swarm/<swarm_id>/<cluster_id>` |
+   |---|---|---|
+   | opened its pull request | removed | kept: it heads the pull request |
+   | failed after its implementer seat ran (`implement`, `tamper`, `commit`, `gates`, `push`, `pull_request`, or raised) | **kept for inspection** | kept |
+   | failed after cutting the worktree but before its seat ran (the push URL or git setup could not be read) | removed | deleted: nothing was pushed, nothing to inspect |
+   | never created the worktree (`consent`, or `git worktree add` failed) | untouched — what is at its path is not its own, e.g. a previous run's kept worktree | untouched |
+
+   This settles the "destroyed before a lead can use it" part of #1278. Since #1400 a live
+   worker's seat implements *inside* the worktree, and a lead driving a dry run cuts its own, so
+   no lead is left without one; but a failed worker's worktree held the only copy of what its
+   seat wrote and never committed (a failed or tampering seat's edits), and the tree its gates
+   failed on — the gate output a debugger needs next is produced there — and removing it with
+   the rest left only a 4096-character output tail to debug from. A kept worktree is named at the end of the worker's
+   `output`, in `details` and as `worktree` on its record in the state file; `keel swarm-status
+   --clean` removes it once you are done.
+
+   `remove_swarm_worktree` answers from the directory's own state: `git worktree remove --force`,
+   `rmtree` of whatever is left, and `git worktree prune` when git refused. A removal or branch
+   deletion that fails is a `warnings` entry of the run result (`swarm-run --json` and the text
+   summary) and leaves the worktree's path on the worker record — it used to return `True`
+   unconditionally, to a caller that discarded it. Once a wave's workers are done,
+   `.keel/worktrees/<swarm_id>/`, and then `.keel/worktrees/`, are removed when empty.
+
+   **Recovery.** A `SIGKILL`ed run settles nothing. `keel swarm-status --orphans` lists what swarm
+   runs left under keel's own paths and branch namespace, and `--clean` removes it — never an
+   unfinished run's leftovers unless `--swarm-id` names the run, never a branch its worker pushed
+   or opened a pull request for; the rules are in
+   [the CLI reference](cli.md#leftovers---orphans-and---clean).
 
    Nothing here manages locks, so "without leaving orphaned locks" — which this line claimed until
-   #1285 was audited — described a mechanism that does not exist. Tracked under
-   [#1278](https://github.com/berkayturanci/keel/issues/1278).
+   #1285 was audited — described a mechanism that does not exist.
 
 ### Status board (`keel swarm-status`)
 Print the swarm's clusters — each one's lead, difficulty band, role, step and status
@@ -570,7 +592,15 @@ keel swarm-status .keel/project.yaml --root .
 It exits `0` when it read the run, or when no `--swarm-id` was given and there is no run at all;
 it exits `1` when the run's state file cannot be read or `--swarm-id` names a run that does not
 exist, and `--json` then prints an object with an `error_code` instead of the `{}` that means "no
-run". The table is in [the CLI reference](cli.md#keel-swarm-status-projectyaml---root-dir---swarm-id-id---json).
+run". The table is in [the CLI reference](cli.md#keel-swarm-status-projectyaml---root-dir---swarm-id-id---orphans---clean---json).
+
+`--orphans` lists the worktrees, directories and branches swarm runs left behind, and `--clean`
+removes the ones no running run owns (see Cleanup above):
+
+```bash
+keel swarm-status .keel/project.yaml --root . --orphans
+keel swarm-status .keel/project.yaml --root . --clean
+```
 
 ---
 

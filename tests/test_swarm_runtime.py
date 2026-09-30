@@ -423,7 +423,14 @@ class TestSwarmOrchestration(unittest.TestCase):
             state = load_swarm_state("swarm-raises", root=tmpdir)
             assert state is not None
             self.assertNotIn("running", {w.status for w in state.workers})
-            self.assertEqual(len(removed), 2, "the raising worker's worktree must be removed too")
+            # #1278: the passing worker's worktree goes; the raising one's seat had run, so
+            # its worktree is kept for inspection, named in the result and the state file.
+            self.assertEqual(len(removed), 1)
+            raised = next(w for w in state.workers if w.status == "failed")
+            kept = build_worktree_path("swarm-raises", raised.cluster_id, root=Path(tmpdir))
+            self.assertEqual(raised.worktree, str(kept.resolve()))
+            self.assertTrue(kept.exists())
+            self.assertIn(f"kept for inspection at {kept.resolve()}", raised.details)
 
     def test_orchestration_all_passed_live_worktrees(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1918,6 +1925,531 @@ class ALiveSwarmRunDelegatesTheOperatorsConsent(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("KEEL_OPERATOR is required", err)
         orchestrate.assert_not_called()
+
+
+# ---------------------------------------------------------------------------------------
+# #1278: worktree hygiene — honest removal, settlement by outcome, prune, orphan recovery.
+# ---------------------------------------------------------------------------------------
+
+
+class _NoRmtree:
+    """``shutil.rmtree`` in swarm_runtime replaced by a no-op: a directory that cannot be
+    removed, without depending on permissions (which Windows and root do not honour)."""
+
+    def __enter__(self):
+        self._patch = patch("keel.swarm_runtime.shutil.rmtree")
+        self._patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._patch.stop()
+
+
+def _answer(ok_for=(), fail_for=(), output="git said no"):
+    """A runner that fails every command naming a word in ``fail_for`` and records all."""
+    calls: list[list[str]] = []
+
+    def run(cmd, cwd):
+        calls.append(list(cmd))
+        failed = any(word in cmd for word in fail_for)
+        return CommandResult(not failed, 1 if failed else 0, output if failed else "")
+
+    return run, calls
+
+
+class RemovalReportsTheTruth(unittest.TestCase):
+    """#1278: `remove_swarm_worktree` returned True unconditionally, and its caller
+    discarded the answer, so a worktree that could not be removed was never mentioned."""
+
+    def test_a_directory_that_survives_is_reported_and_its_registration_pruned(self):
+        with tempfile.TemporaryDirectory() as tmpdir, _NoRmtree():
+            wt = Path(tmpdir) / "wt"
+            wt.mkdir()
+            run, calls = _answer(fail_for=("remove",))
+            self.assertFalse(remove_swarm_worktree(Path(tmpdir), wt, runner=run))
+            self.assertEqual(calls[-1], ["git", "worktree", "prune"])
+
+    def test_what_git_leaves_on_disk_is_removed_and_nothing_pruned(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wt = Path(tmpdir) / "wt"
+            (wt / "sub").mkdir(parents=True)
+            run, calls = _answer()
+            self.assertTrue(remove_swarm_worktree(Path(tmpdir), wt, runner=run))
+            self.assertFalse(wt.exists())
+            self.assertEqual(len(calls), 1)
+
+    def test_a_failed_removal_is_a_warning_not_a_deleted_branch(self):
+        from keel.swarm_runtime import settle_live_worktree
+
+        remove = swarm_worker.worktree_disposal(
+            ok=False, worktree_created=True, implementer_ran=False
+        )
+        with tempfile.TemporaryDirectory() as tmpdir, _NoRmtree():
+            wt = Path(tmpdir) / "wt"
+            wt.mkdir()
+            run, calls = _answer(fail_for=("remove",))
+            got = settle_live_worktree(Path(tmpdir), wt, "swarm/s/c", remove, runner=run)
+        self.assertEqual(got["worktree_state"], "remove-failed")
+        self.assertEqual(got["worktree"], str(wt))
+        self.assertFalse(got["branch_deleted"])
+        self.assertIn("could not be removed", got["warnings"][0])
+        self.assertNotIn("branch", [c[1] for c in calls])
+
+    def test_a_branch_git_will_not_delete_is_a_warning(self):
+        from keel.swarm_runtime import settle_live_worktree
+
+        remove = swarm_worker.worktree_disposal(
+            ok=False, worktree_created=True, implementer_ran=False
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run, calls = _answer(fail_for=("branch",))
+            got = settle_live_worktree(Path(tmpdir), Path(tmpdir) / "wt", "swarm/s/c", remove, run)
+        self.assertEqual((got["worktree_state"], got["worktree"]), ("removed", None))
+        self.assertEqual(calls[-1], ["git", "branch", "-D", "swarm/s/c"])
+        self.assertEqual(
+            got["warnings"], ["the branch swarm/s/c could not be deleted: git said no"]
+        )
+
+    def test_the_orchestration_records_a_failed_removal(self):
+        s1 = IssueScope(issue=761, title="T", predicted_files=("src/761.py",))
+        plan = build_swarm_plan([s1], swarm_id="swarm-stuck")
+        with tempfile.TemporaryDirectory() as tmpdir, _NoRmtree():
+            result = run_swarm_orchestration(
+                plan,
+                "projects/x.yaml",
+                root=tmpdir,
+                dry_run=False,
+                live=_live(plan, tmpdir, _LiveIo()),
+                runner=_Git(fail="remove"),
+                base_branch="main",
+            )
+            state = load_swarm_state("swarm-stuck", root=tmpdir)
+            (cid,) = [c.cluster_id for c in _clusters(plan)]
+            stuck = str(build_worktree_path("swarm-stuck", cid, Path(tmpdir).resolve()))
+        self.assertEqual(result.status, "success")
+        self.assertEqual(len(result.warnings), 1)
+        self.assertTrue(result.warnings[0].startswith(f"{cid}: the worktree {stuck}"))
+        self.assertIn(f"warning       : {cid}: the worktree", render_swarm_run_result(result))
+        (worker,) = state.workers
+        self.assertEqual((worker.worktree, worker.pushed), (stuck, True))
+        self.assertEqual(result.to_dict()["warnings"], list(result.warnings))
+
+
+class AWorkerThatRaisesIsStillSettled(unittest.TestCase):
+    """#1278: the worktree is settled whichever way the worker ends. One that raises before
+    its seat ran (here, writing the brief) had nothing to keep: both are removed."""
+
+    def test_a_raise_before_the_seat_removes_the_worktree_and_the_branch(self):
+        s1 = IssueScope(issue=781, title="T", predicted_files=("src/781.py",))
+        plan = build_swarm_plan([s1], swarm_id="swarm-brief")
+        (cid,) = [c.cluster_id for c in _clusters(plan)]
+        git, io_ = _Git(), _LiveIo()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # A directory where the brief goes: writing it raises.
+            build_brief_path("swarm-brief", cid, Path(tmpdir).resolve()).mkdir(parents=True)
+            with redirect_stderr(io.StringIO()):
+                result = run_swarm_orchestration(
+                    plan,
+                    "projects/x.yaml",
+                    root=tmpdir,
+                    dry_run=False,
+                    live=_live(plan, tmpdir, io_),
+                    runner=git,
+                    base_branch="main",
+                )
+            left = (Path(tmpdir) / ".keel" / "worktrees").exists()
+        (res,) = result.wave_results[0]["cluster_results"].values()
+        self.assertIn("worker raised", res["output"])
+        self.assertEqual(io_.implemented, [])
+        self.assertEqual(len(git.ran("remove")), 1)
+        self.assertEqual(git.calls[-1], ["git", "branch", "-D", f"swarm/swarm-brief/{cid}"])
+        self.assertFalse(left)
+
+
+class TheWorkerRecordRoundTrips(unittest.TestCase):
+    def test_worktree_and_pushed_survive_a_save_an_update_and_a_load(self):
+        from keel.swarm import save_swarm_state
+
+        seed = SwarmWorkerStatus(cluster_id="c", issue=1, role="core")
+        state = SwarmRunState(swarm_id="rt", total_workers=1, workers=(seed,))
+        state = update_worker_state(state, "c", worktree="/w/rt/c", pushed=True)
+        state = update_worker_state(state, "c", status="failed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_swarm_state(state, root=tmpdir)
+            (worker,) = load_swarm_state("rt", root=tmpdir).workers
+            self.assertEqual((worker.worktree, worker.pushed), ("/w/rt/c", True))
+            path = Path(tmpdir) / ".keel" / "state" / "swarm" / "rt.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["workers"][0].update(worktree=None, pushed="yes")
+            path.write_text(json.dumps(data), encoding="utf-8")
+            (worker,) = load_swarm_state("rt", root=tmpdir).workers
+        # Only a written `true` is a push: `--clean` keeps a pushed branch on its word.
+        self.assertEqual((worker.worktree, worker.pushed), ("", False))
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class WorktreesAreSettledAgainstARealRepository(unittest.TestCase):
+    """#1278, measured against a real git, offline: what a live worker leaves behind, the
+    prune that lets a crashed run's id be reused, and `swarm-status --orphans/--clean`."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name).resolve()
+        empty = self.tmp / "empty-gitconfig"
+        empty.write_text("", encoding="utf-8")
+        environ = patch.dict(os.environ)
+        environ.start()
+        self.addCleanup(environ.stop)
+        for key in [k for k in os.environ if k.startswith("GIT_")]:
+            del os.environ[key]
+        os.environ.update(
+            GIT_CONFIG_GLOBAL=str(empty),
+            GIT_CONFIG_NOSYSTEM="1",
+            GIT_AUTHOR_NAME="t",
+            GIT_AUTHOR_EMAIL="t@example.invalid",
+            GIT_COMMITTER_NAME="t",
+            GIT_COMMITTER_EMAIL="t@example.invalid",
+        )
+        self.remote, self.repo = self.tmp / "remote.git", self.tmp / "repo"
+        self._git("init", "-q", "--bare", str(self.remote), cwd=self.tmp)
+        self._git("init", "-q", "-b", "main", str(self.repo), cwd=self.tmp)
+        (self.repo / "README").write_text("base\n", encoding="utf-8")
+        self._git("add", "README")
+        self._git("commit", "-q", "-m", "base")
+        self._git("remote", "add", "origin", str(self.remote))
+        self.base = self.repo / ".keel" / "worktrees"
+        self.gates_ok = True
+
+    def _git(self, *args, cwd=None):
+        result = _git_cli(list(args), cwd or self.repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def _implement(self, plan, env):
+        (Path(plan.cwd) / "work.txt").write_text("work\n", encoding="utf-8")
+        return {"ok": True}
+
+    def _runner(self, cmd, cwd):
+        if "run-gates" in cmd:
+            return CommandResult(self.gates_ok, 0 if self.gates_ok else 1, "gates")
+        return default_runner(cmd, cwd, env=swarm_worker.worker_env(os.environ))
+
+    def _plan(self, swarm_id, issue=751):
+        plan = build_swarm_plan(
+            [IssueScope(issue=issue, title=f"T{issue}", predicted_files=(f"src/{issue}.py",))],
+            swarm_id=swarm_id,
+        )
+        (cluster,) = _clusters(plan)
+        return plan, cluster.cluster_id
+
+    def _run(self, plan):
+        from keel.swarm_runtime import _default_push
+
+        live = replace(
+            _live(plan, self.repo, _LiveIo()), implement=self._implement, push=_default_push
+        )
+        result = run_swarm_orchestration(
+            plan,
+            "projects/x.yaml",
+            root=self.repo,
+            dry_run=False,
+            live=live,
+            runner=self._runner,
+            base_branch="main",
+        )
+        (res,) = result.wave_results[0]["cluster_results"].values()
+        return result, res
+
+    def _branches(self):
+        return set(self._git("for-each-ref", "--format=%(refname:short)", "refs/heads/").split())
+
+    def _registered(self):
+        listed = self._git("worktree", "list", "--porcelain")
+        return {Path(e.path).resolve() for e in swarm_worker.parse_worktree_list(listed)}
+
+    def test_a_successful_worker_keeps_its_branch_and_leaves_no_directory(self):
+        plan, cid = self._plan("swarm-ok")
+        result, res = self._run(plan)
+        self.assertEqual((result.status, res["worktree_state"]), ("success", "removed"))
+        self.assertIn(f"swarm/swarm-ok/{cid}", self._branches())
+        self.assertEqual(self._registered(), {self.repo})
+        # The per-run directory, and `.keel/worktrees` with it, go once nothing is in them.
+        self.assertFalse(self.base.exists())
+        (worker,) = load_swarm_state("swarm-ok", root=self.repo).workers
+        self.assertEqual((worker.worktree, worker.pushed), ("", True))
+        self.assertEqual(result.warnings, ())
+
+    def test_a_worker_that_failed_after_its_seat_ran_keeps_its_worktree(self):
+        self.gates_ok = False
+        plan, cid = self._plan("swarm-red")
+        result, res = self._run(plan)
+        kept = self.base / "swarm-red" / cid
+        self.assertEqual((res["stage"], res["worktree_state"]), ("gates", "kept"))
+        self.assertTrue((kept / "work.txt").exists(), "the seat's work must still be there")
+        self.assertIn(kept, self._registered())
+        self.assertIn(f"swarm/swarm-red/{cid}", self._branches())
+        self.assertIn(f"kept for inspection at {kept}", res["output"])
+        (worker,) = load_swarm_state("swarm-red", root=self.repo).workers
+        self.assertEqual((worker.worktree, worker.pushed), (str(kept), False))
+        self.assertIn("--clean", worker.details)
+
+    def test_a_worker_that_failed_before_its_seat_ran_removes_what_it_cut(self):
+        self._git("remote", "remove", "origin")
+        plan, cid = self._plan("swarm-early")
+        _result, res = self._run(plan)
+        self.assertEqual((res["stage"], res["worktree_state"]), ("push", "removed"))
+        self.assertTrue(res["branch_deleted"])
+        self.assertNotIn(f"swarm/swarm-early/{cid}", self._branches())
+        self.assertEqual(self._registered(), {self.repo})
+        self.assertFalse(self.base.exists())
+
+    def test_a_crashed_runs_stale_registration_does_not_stop_the_same_id(self):
+        """A run killed, its directory then deleted: the registration stays, and `git
+        worktree add -B` of the same branch refused ("already used by worktree")."""
+        plan, cid = self._plan("swarm-again")
+        stale = self.base / "swarm-again" / cid
+        self._git("worktree", "add", "-q", "-B", f"swarm/swarm-again/{cid}", str(stale), "main")
+        shutil.rmtree(stale)
+        result, res = self._run(plan)
+        self.assertEqual((result.status, res.get("stage")), ("success", "done"), res["output"])
+
+    def test_a_worktree_that_cannot_be_created_is_left_alone_and_named(self):
+        """Not created by this worker — here, a previous run's kept worktree — so nothing
+        is removed, and the reason says how to clean it."""
+        self.gates_ok = False
+        plan, cid = self._plan("swarm-twice")
+        self._run(plan)
+        _result, res = self._run(plan)
+        self.assertEqual((res["stage"], res["worktree_state"]), ("worktree", "none"))
+        self.assertIn("--swarm-id swarm-twice --clean", res["output"])
+        self.assertTrue((self.base / "swarm-twice" / cid / "work.txt").exists())
+
+    def _status(self, *extra):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["swarm-status", ".keel/project.yaml", "--root", str(self.repo), *extra])
+        return code, out.getvalue(), err.getvalue()
+
+    def _leftovers(self, *extra):
+        code, out, _err = self._status("--orphans", "--json", *extra)
+        self.assertEqual(code, 0)
+        return {x["target"]: (x["kind"], x["action"]) for x in json.loads(out)["leftovers"]}
+
+    def _scene(self):
+        """Leftovers of every kind, and things that are not keel's, side by side."""
+        from keel.swarm import save_swarm_state
+
+        self.gates_ok = False
+        red, red_cid = self._plan("swarm-red", issue=752)
+        self._run(red)  # completed; its failed worker's worktree and branch are kept
+        crashed = self.base / "swarm-crashed" / "cluster-1-9"
+        self._git("worktree", "add", "-q", "-b", "swarm/swarm-crashed/cluster-1-9", str(crashed))
+        save_swarm_state(
+            SwarmRunState(
+                swarm_id="swarm-crashed",
+                total_workers=1,
+                workers=(SwarmWorkerStatus(cluster_id="cluster-1-9", issue=9, role="core"),),
+            ),
+            root=self.repo,
+        )
+        save_swarm_state(
+            SwarmRunState(
+                swarm_id="swarm-pr",
+                total_workers=2,
+                workers=(
+                    SwarmWorkerStatus(cluster_id="c5", issue=5, role="core", pull_request=5),
+                    SwarmWorkerStatus(cluster_id="c6", issue=6, role="core", pushed=True),
+                ),
+                completed_at="2026-09-30T00:00:00Z",
+            ),
+            root=self.repo,
+        )
+        for branch in ("swarm/swarm-pr/c5", "swarm/swarm-pr/c6", "swarm/nostate/c1"):
+            self._git("branch", branch)
+        # A cluster directory git no longer knows: a finished run's, so it goes.
+        (self.base / "swarm-pr" / "c7" / "partial").mkdir(parents=True)
+        # Not keel's: a worktree outside its paths, one inside them at another depth, and
+        # branches outside its namespace or of another shape.
+        self._git("worktree", "add", "-q", "-b", "feature/x", str(self.tmp / "other"))
+        deep = self.base / "deep" / "a" / "b"
+        self._git("worktree", "add", "-q", "-b", "deep-branch", str(deep))
+        self._git("branch", "swarm/deep/a/b")
+        (self.base / "swarm-empty").mkdir(parents=True)
+        (self.base / "stray.txt").write_text("not a run\n", encoding="utf-8")
+        stale = self.base / "swarm-stale" / "c1"
+        self._git("worktree", "add", "-q", "-b", "swarm/swarm-stale/c1", str(stale))
+        shutil.rmtree(stale)
+        return red_cid, crashed, deep, stale
+
+    def test_orphans_are_listed_and_only_keels_own_are_cleaned(self):
+        red_cid, crashed, deep, stale = self._scene()
+        red_wt = self.base / "swarm-red" / red_cid
+        listed = self._leftovers()
+        self.assertEqual(listed[str(red_wt)], ("worktree", "remove"))
+        self.assertEqual(listed[f"swarm/swarm-red/{red_cid}"], ("branch", "remove"))
+        self.assertEqual(listed[str(crashed)], ("worktree", "keep"))
+        self.assertEqual(listed["swarm/swarm-crashed/cluster-1-9"], ("branch", "keep"))
+        self.assertEqual(listed["swarm/swarm-pr/c5"], ("branch", "keep"))
+        self.assertEqual(listed["swarm/swarm-pr/c6"], ("branch", "keep"))
+        self.assertEqual(listed["swarm/nostate/c1"], ("branch", "keep"))
+        self.assertEqual(listed[str(self.base / "swarm-empty")], ("directory", "remove"))
+        self.assertEqual(listed[str(self.base / "swarm-pr" / "c7")], ("directory", "remove"))
+        self.assertEqual(listed[str(stale)][0], "registration")
+        for other in (
+            "feature/x",
+            "deep-branch",
+            "swarm/deep/a/b",
+            str(deep),
+            str(self.base / "deep"),
+        ):
+            with self.subTest(not_keels=other):
+                self.assertNotIn(other, listed)
+        self.assertNotIn(str(self.base / "deep" / "a"), listed)
+
+        code, out, _err = self._status("--clean", "--json")
+        report = json.loads(out)
+        self.assertEqual((code, report["cleaned"], report["failed"]), (0, True, []))
+        self.assertFalse(red_wt.exists())
+        self.assertFalse((self.base / "swarm-red").exists())
+        self.assertFalse((self.base / "swarm-empty").exists())
+        self.assertFalse((self.base / "swarm-pr").exists())
+        self.assertNotIn(stale, self._registered())
+        branches = self._branches()
+        self.assertNotIn(f"swarm/swarm-red/{red_cid}", branches)
+        for kept in (
+            "swarm/swarm-crashed/cluster-1-9",
+            "swarm/swarm-pr/c5",
+            "swarm/swarm-pr/c6",
+            "swarm/nostate/c1",
+            "feature/x",
+            "deep-branch",
+            "swarm/deep/a/b",
+        ):
+            with self.subTest(kept=kept):
+                self.assertIn(kept, branches)
+        self.assertTrue(crashed.exists())
+        self.assertTrue((deep / "README").exists())
+        self.assertTrue((self.tmp / "other" / "README").exists())
+        self.assertTrue((self.base / "stray.txt").exists())
+
+        # Naming the unfinished run is the operator's word that it is not running.
+        code, out, _err = self._status("--clean", "--swarm-id", "swarm-crashed")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(crashed.exists())
+        self.assertNotIn("swarm/swarm-crashed/cluster-1-9", self._branches())
+        self.assertIn("removed 2, failed 0", out)
+
+    def test_the_text_listing_says_what_clean_would_do(self):
+        code, out, _err = self._status("--orphans")
+        self.assertEqual(code, 0)
+        self.assertIn("nothing: no swarm worktree", out)
+        self._scene()
+        code, out, _err = self._status("--orphans", "--swarm-id", "swarm-crashed")
+        self.assertEqual(code, 0)
+        self.assertIn("keel swarm leftovers — swarm run swarm-crashed", out)
+        self.assertIn("remove worktree     swarm-crashed/cluster-1-9", out)
+        self.assertIn("--clean removes the ones marked remove", out)
+        code, out, _err = self._status("--orphans", "--swarm-id", "nostate")
+        self.assertNotIn("--clean removes", out)
+        self.assertIn("keep   branch       nostate/c1", out)
+
+    def test_git_that_cannot_list_is_an_error(self):
+        plain = self.tmp / "not-a-repo"
+        plain.mkdir()
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(
+                ["swarm-status", ".keel/project.yaml", "--root", str(plain), "--orphans", "--json"]
+            )
+        self.assertEqual((code, json.loads(out.getvalue())["error_code"]), (1, "git-failed"))
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["swarm-status", ".keel/project.yaml", "--root", str(plain), "--clean"])
+        self.assertEqual((code, out.getvalue()), (1, ""))
+        self.assertIn("swarm-status: git could not list", err.getvalue())
+
+    def test_a_dry_worker_that_raises_names_no_worktree(self):
+        """Only a live worker has a worktree to keep; a dry one runs in the checkout."""
+        s1 = IssueScope(issue=771, title="T", predicted_files=("src/771.py",))
+        plan = build_swarm_plan([s1], swarm_id="swarm-dry-raise")
+
+        def raising(cmd, cwd):
+            raise RuntimeError("dry boom")
+
+        with redirect_stderr(io.StringIO()):
+            result = run_swarm_orchestration(
+                plan, "projects/x.yaml", root=self.repo, runner=raising, base_branch="main"
+            )
+        (res,) = result.wave_results[0]["cluster_results"].values()
+        self.assertIn("worker raised RuntimeError: dry boom", res["output"])
+        self.assertNotIn("worktree", res)
+
+
+class CleaningReportsWhatItCouldNotRemove(unittest.TestCase):
+    """#1278: every removal `--clean` attempts is checked, and a failure is named."""
+
+    def test_each_kind_of_failure_is_reported(self):
+        from keel.swarm_runtime import clean_swarm_leftovers
+
+        def item(kind, target, cluster="c"):
+            return swarm_worker.SwarmLeftover(kind, "s", cluster, target, "remove", "r")
+
+        with tempfile.TemporaryDirectory() as tmpdir, _NoRmtree():
+            root = Path(tmpdir)
+            wt, loose, full = root / "wt", root / "loose", root / ".keel" / "worktrees" / "s"
+            for d in (wt, loose, full):
+                d.mkdir(parents=True)
+            (full / "left.txt").write_text("x", encoding="utf-8")
+            kept = swarm_worker.SwarmLeftover("branch", "s", "k", "swarm/s/k", "keep", "pushed")
+            run, calls = _answer(fail_for=("prune", "remove", "branch"))
+            removed, failed = clean_swarm_leftovers(
+                root,
+                (
+                    item("registration", "/gone"),
+                    item("worktree", str(wt)),
+                    item("directory", str(loose)),
+                    item("branch", "swarm/s/c"),
+                    item("directory", str(full), cluster=""),
+                    kept,
+                ),
+                runner=run,
+            )
+        self.assertEqual(removed, [])
+        self.assertEqual(
+            [(x.kind, why) for x, why in failed],
+            [
+                ("registration", "git worktree prune failed: git said no"),
+                ("worktree", "the directory is still there"),
+                ("directory", "the directory is still there"),
+                ("branch", "git said no"),
+                ("directory", "the directory is not empty"),
+            ],
+        )
+        self.assertNotIn(["git", "branch", "-D", "swarm/s/k"], calls)
+
+    def test_a_ref_listing_that_fails_is_the_error(self):
+        from keel.swarm_runtime import find_swarm_leftovers
+
+        run, _calls = _answer(fail_for=("for-each-ref",), output="refs broke")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertEqual(
+                find_swarm_leftovers(tmpdir, runner=run),
+                ((), "git could not list the worktrees or branches: refs broke"),
+            )
+
+    def test_a_failed_clean_exits_1_and_names_the_failure(self):
+        failed = swarm_worker.SwarmLeftover("branch", "s", "c", "swarm/s/c", "remove", "r")
+        out = io.StringIO()
+        with (
+            patch("keel.swarm_runtime.find_swarm_leftovers", return_value=((failed,), "")),
+            patch("keel.swarm_runtime.clean_swarm_leftovers", return_value=([], [(failed, "no")])),
+            redirect_stdout(out),
+        ):
+            code = main(["swarm-status", ".keel/project.yaml", "--clean"])
+        self.assertEqual(code, 1)
+        self.assertIn("removed 0, failed 1", out.getvalue())
+        self.assertIn("failed branch swarm/s/c: no", out.getvalue())
 
 
 if __name__ == "__main__":
