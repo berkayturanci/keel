@@ -253,17 +253,23 @@ def render_brief(
     scope = ", ".join(cluster.combined_scope) or "*"
     lines = [
         f"You are the implementer for cluster {cluster.cluster_id} of keel swarm {swarm_id}.",
-        f"Your working directory is this cluster's own git worktree, on branch {branch}, cut "
-        f"from {base_branch}.",
+        (
+            f"Your working directory is this cluster's own git worktree, on branch {branch}, "
+            f"cut from {base_branch}."
+        ),
         "",
         "Implement the issue(s) below completely, in this working tree:",
         f"- Change only files inside this working tree, within the cluster's scope: {scope}.",
         "- Add or update tests for what you change, and leave the project's tests passing.",
-        "- Do not commit, push, open a pull request, or run any command that changes the "
-        "repository's history or its remote. keel commits your changes, runs the project's "
-        "gates, pushes the branch and opens the pull request itself.",
-        "- If an issue cannot be implemented as written, leave it unchanged and say why in "
-        "your final message.",
+        (
+            "- Do not commit, push, open a pull request, or run any command that changes the "
+            "repository's history or its remote. keel commits your changes, runs the "
+            "project's gates, pushes the branch and opens the pull request itself."
+        ),
+        (
+            "- If an issue cannot be implemented as written, leave it unchanged and say why "
+            "in your final message."
+        ),
     ]
     for number in cluster.issues:
         title, body = _issue_line(number, issue_scopes)
@@ -321,12 +327,18 @@ def pull_request_body(
         "",
         f"- **Branch:** `{branch}`, cut from `{base_branch}`, at `{commit}`",
         f"- **Implementer:** `{system}` (seat from `{seat_source or 'unknown'}`)",
-        f"- **Gates:** `keel run-gates --phases {GATE_PHASES} --defer-jury` passed in the "
-        "cluster worktree at that commit",
-        f"- **Consent:** delegated by `{delegation.operator}` ({delegation.source}, "
-        f"{delegation.delegated_at}) for `{', '.join(delegation.scopes)}`",
+        (
+            f"- **Gates:** `keel run-gates --phases {GATE_PHASES} --defer-jury` passed in the "
+            "cluster worktree at that commit"
+        ),
+        (
+            f"- **Consent:** delegated by `{delegation.operator}` ({delegation.source}, "
+            f"{delegation.delegated_at}) for `{', '.join(delegation.scopes)}`"
+        ),
         "",
-        "This pull request carries no review evidence yet: review and landing are not part of "
-        "`swarm-run`.",
+        (
+            "This pull request carries no review evidence yet: review and landing are not "
+            "part of `swarm-run`."
+        ),
     ]
     return "\n".join(lines) + "\n"
