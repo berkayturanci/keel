@@ -3271,7 +3271,8 @@ clusters carrying that issue from the remaining waves (there is no runtime file-
 
 ## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--swarm-id ID] [--live] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
-Land passing cluster branches from completed execution waves into `main` under atomic `merge_lock`:
+Land passing cluster branches from completed execution waves into the **local** base branch
+(`base_branch` from the project config) under atomic `merge_lock`:
 
 ```bash
 keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1
@@ -3283,8 +3284,22 @@ predicted scopes for the wave and, for any planned wave, always resolves to dire
 is no `--mode` flag to get wrong. `--wave` selects the
 wave (default `1`); without `--live` the command reports what it would land.
 
-- **Direct Batch Mode**: Orthogonal disjoint diff trees are merged one after another with
-  `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+**The landing is a local merge only.** `--live` runs `git checkout <base_branch>` and
+`git merge --no-ff <cluster branch>` in the checkout at `--root`; the command does not push, and it
+does not open or merge a pull request. A cluster reported `merged` is merged in the local base
+branch, each cluster's pull request stays open, and `origin` is unchanged — pushing is the
+operator's step, and a protected base branch refuses that push
+([#1287](https://github.com/berkayturanci/keel/issues/1287)). `keel merge` is the command that
+merges a pull request on GitHub.
+
+- **Direct Batch Mode**: Orthogonal disjoint diff trees are merged into the local base branch one
+  after another with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **Your checkout (#1279)**: a live landing checks out and merges in the `--root` checkout, so it
+  refuses to start when `git status --porcelain` shows any tracked or untracked change (keel's own
+  untracked runtime files under `.keel/` excepted). It names the files in `refused`, touches no
+  branch, and exits 1. It then returns HEAD to the branch or commit it started on, whether the
+  wave landed, conflicted or raised; a return that fails is reported in `warnings`. Dry runs are
+  unchanged.
 - **Adaptive Funnel Mode**: implemented in `swarm_landing.py` (rebase onto the moved base, marker-resolver healing, hold-and-rewind) but selected only when a caller supplies a PR diff map — **no `keel swarm-land` invocation reaches it today**, because a planned wave's clusters are always disjoint.
 - **Review evidence (#828)**: before a live landing, every cluster branch's open PR must pass
   the same pre-merge review-evidence verification `keel merge` enforces — armed gate label,
