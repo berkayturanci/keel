@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import datetime
+import functools
 import shutil
 import subprocess  # nosec B404
 import sys
@@ -33,9 +34,20 @@ from .swarm import (
 
 SubprocessRunner = Callable[[list[str], Path], CommandResult]
 
+#: The runner's own wall-clock limit, for the short git commands swarm and canary run
+#: through it (worktree add/remove, checkout, merge). A worker's child ``keel ship`` is
+#: not one of them: it runs the gate suite, and gets the swarm's worker timeout (#1279).
+DEFAULT_RUNNER_TIMEOUT_S = 300
 
-def default_runner(cmd: list[str], cwd: Path) -> CommandResult:
-    """Run a subprocess command in cwd and return a CommandResult."""
+
+def default_runner(
+    cmd: list[str], cwd: Path, timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S
+) -> CommandResult:
+    """Run a subprocess command in cwd and return a CommandResult.
+
+    A command still running after ``timeout_s`` seconds is killed and reported
+    ``timed_out`` with ``code=124``, the gate runner's code for the same case.
+    """
     try:
         proc = subprocess.run(  # nosec B603
             cmd,
@@ -44,7 +56,7 @@ def default_runner(cmd: list[str], cwd: Path) -> CommandResult:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=300,
+            timeout=timeout_s,
             check=False,
         )
         return CommandResult(
@@ -132,9 +144,15 @@ def execute_cluster_worker(
     role: str = "core",
     extra_args: list[str] | None = None,
     runner: SubprocessRunner | None = None,
+    timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S,
 ) -> dict[str, Any]:
-    """Execute a single cluster worker pipeline (keel ship) within its worktree."""
-    run = runner or default_runner
+    """Execute a single cluster worker pipeline (keel ship) within its worktree.
+
+    ``timeout_s`` bounds the child when keel runs it (no ``runner`` passed): the child
+    runs the project's gate suite even in a dry run, so the runner's own 300 s cut off
+    a suite the project allows longer (#1279). A passed ``runner`` owns its own bound.
+    """
+    run = runner or functools.partial(default_runner, timeout_s=timeout_s)
     cmd = [
         sys.executable,
         "-m",
@@ -155,13 +173,25 @@ def execute_cluster_worker(
 
     target_cwd = worktree_dir if worktree_dir.exists() else root
     res = run(cmd, target_cwd)
+    output = res.stdout or res.output
+    if res.timed_out:
+        # Said last, where the tail the swarm keeps of the output still holds it: a
+        # killed child printed no verdict, and its partial output read like a failure
+        # of the change rather than of the budget (#1279).
+        prefix = f"{output.rstrip()}\n" if output.strip() else ""
+        output = (
+            f"{prefix}keel ship timed out after {timeout_s}s (exit 124) and returned no "
+            "verdict; raise the limit with swarm-run --worker-timeout if the gate suite "
+            "legitimately needs longer."
+        )
 
     return {
         "issue": issue,
         "role": role,
         "ok": res.ok,
         "code": res.code,
-        "output": res.stdout or res.output,
+        "timed_out": res.timed_out,
+        "output": output,
     }
 
 
@@ -175,12 +205,16 @@ def run_swarm_orchestration(
     runner: SubprocessRunner | None = None,
     create_worktrees: bool = True,
     base_branch: str,
+    timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S,
 ) -> SwarmRunResult:
     """Execute the waves and clusters of a SwarmPlan with fail-soft isolation.
 
     ``base_branch`` is required, as it is for ``land_wave_clusters``: the worktrees
     are branched from it and the wave is later landed onto it, and a default of
     ``main`` branched a ``develop`` project's clusters off the wrong history (#1262).
+
+    ``timeout_s`` is each worker's child ``keel ship`` budget; ``swarm-run`` passes
+    :func:`keel.swarm.worker_timeout_s` or its ``--worker-timeout`` (#1279).
     """
     root_path = Path(root).resolve()
     workers_list: list[SwarmWorkerStatus] = []
@@ -275,6 +309,7 @@ def run_swarm_orchestration(
                     # bench and the operator's per-run overrides.
                     extra_args=list(ship_handoff_args(cluster.assignment)),
                     runner=runner,
+                    timeout_s=timeout_s,
                 )
             finally:
                 if create_worktrees and not dry_run:

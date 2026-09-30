@@ -198,7 +198,9 @@ composite steps inherit:
 ```
 
 There is no `swarm` subcommand — the four real ones are `swarm-plan`, `swarm-run`,
-`swarm-land` and `swarm-status`.
+`swarm-land` and `swarm-status`. `swarm-land` merges into the **local** base branch with
+`git merge --no-ff` and pushes nothing, opening or merging no pull request, so on a runner its
+merges end with the job ([#1287](https://github.com/berkayturanci/keel/issues/1287)).
 
 ## Adopting it in a consumer repo
 

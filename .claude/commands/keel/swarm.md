@@ -72,7 +72,7 @@ Never silently skip a step because the runtime, agent, or prompt feels obvious.
 Run a high-concurrency multi-agent swarm: partition dependent and independent backlog issues
 into topologically ordered execution waves, execute disjoint clusters in parallel isolated
 git worktrees, and land them under a single-writer merge lock with sequential
-`git merge --no-ff`.
+`git merge --no-ff` into the local base branch — a local merge that pushes nothing.
 
 ## Who does what — CTO, team lead, worker
 
@@ -180,8 +180,9 @@ keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
 - The landing mode is **derived from the plan's wave mode**, not passed on the command line.
-- **Orthogonal Batch Landing** (wave 1, and any later wave none of whose clusters depends on an earlier wave's issue): disjoint diff trees are merged into `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- **Sequential Funnel** (a `sequential_dependent` wave — in a fresh plan, every wave after the first): each cluster is rebased onto the moved base first; a conflict the marker resolver heals is held for re-review, not landed.
+- **Orthogonal Batch Landing** (wave 1, and any later wave none of whose clusters depends on an earlier wave's issue): disjoint diff trees are merged into the local `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **A dependent wave is refused.** A `sequential_dependent` wave — in a fresh plan, every wave after the first — had its branches cut before the earlier wave it depends on landed, so `swarm-land --wave N` refuses it, dry run or live: no checkout, no merge, exit 1, `"mode": "refused"` with the reason in `refused`. Land the earlier wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the landed ones) and land again. The library's adaptive rebase funnel is not reached from this command until #1266 feeds its overlap check real diffs.
+- **The landing is a local merge only.** `swarm-land` does not push, and it does not open or merge a pull request: a cluster reported `merged` is merged in the local base branch, its pull request stays open, and `origin` is unchanged (#1287). Pushing is the operator's step — leave it to them, and do not report the work as landed on the repository. A protected base branch refuses the push anyway; work that has to reach the repository goes through `/keel:ship` and `keel merge`, one pull request at a time.
 
 ## Step 4 — Visual tracking & terminal dashboard
 
@@ -204,9 +205,9 @@ Compile the overall multi-agent swarm outcome:
 - Per cluster: its difficulty band and score, its lead, and the implementer/reviewer seats
   that ran it — plus any `assignment.warnings` that were raised and what was done about them.
 - Worker success/failure breakdown.
-- Landing outcome per cluster: merged, or `merge failed` / held with its reason.
+- Landing outcome per cluster: merged into the local base branch (not pushed; its pull request still open), or `merge failed` / held with its reason.
 - Per-cluster review outcome (the configured review, or the ai-jury panel on tier-3) and each cluster's `compound-learning:` ledger marker.
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.24.3 source_sha256=4e72feb863c75c4ae4bdfa8480b150c25408e7ec16d2bbbc9cdb39cf9a4a47ef generated_sha256=4e72feb863c75c4ae4bdfa8480b150c25408e7ec16d2bbbc9cdb39cf9a4a47ef -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.24.3 source_sha256=8700d7fcafc017e29ecec9d3c92ded3083342e63ac55bbb0336ad45970aad569 generated_sha256=8700d7fcafc017e29ecec9d3c92ded3083342e63ac55bbb0336ad45970aad569 -->

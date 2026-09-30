@@ -1320,14 +1320,41 @@ class AWavesLandingModeFollowsItsDependencies(unittest.TestCase):
         free = SwarmCluster(cluster_id="c", issues=(9,), role="core", combined_scope=("b.py",))
         self.assertEqual(swarm_module.wave_landing_mode(4, [free]), ("orthogonal_parallel", True))
 
-    def test_a_single_cluster_wave_lands_by_its_mode_not_its_size(self):
+    def test_a_single_cluster_dependent_wave_is_refused_not_funneled(self):
+        """The owner's call on #1276: the funnel's overlap check is fed no real diffs
+        from the CLI (#1266), so a dependent wave is refused rather than rebased."""
         plan = self._chain()
         first = swarm_module.evaluate_wave_landing_mode(plan.waves[0], {})
         self.assertEqual((first.mode, first.reason), ("direct_batch", "single_cluster"))
         later = swarm_module.evaluate_wave_landing_mode(plan.waves[1], {})
         self.assertEqual(
             (later.mode, later.eligible, later.reason),
-            ("sequential_funnel", False, "depends_on_earlier_wave"),
+            ("refused", False, "depends_on_earlier_wave"),
+        )
+        # Even a supplied diff map that would funnel an orthogonal wave does not
+        # reopen the funnel for a dependent one.
+        overlapping = {c.cluster_id: ["src/a.py"] for c in plan.waves[1].clusters}
+        self.assertEqual(
+            swarm_module.evaluate_wave_landing_mode(plan.waves[1], overlapping).mode, "refused"
+        )
+
+    def test_the_refusal_names_the_dependencies_and_the_way_through(self):
+        refusal = swarm_module.render_dependent_wave_refusal(self._chain().waves[2])
+        self.assertIn("wave 3 depends on issues landed by an earlier wave (#1, #2);", refusal)
+        self.assertIn("its branches were cut before that landing", refusal)
+        self.assertIn("Land the earlier wave, then re-plan", refusal)
+        self.assertIn("keel swarm-plan / swarm-run", refusal)
+        self.assertIn("until #1266 feeds it real diffs", refusal)
+        self.assertIn("nothing was checked out or merged", refusal)
+
+    def test_a_hand_built_dependent_wave_without_dependencies_still_reads(self):
+        c = SwarmCluster(cluster_id="c", issues=(9,), role="core", combined_scope=("b.py",))
+        wave = swarm_module.SwarmWave(
+            wave_index=2, mode="sequential_dependent", eligible_direct_landing=False, clusters=(c,)
+        )
+        refusal = swarm_module.render_dependent_wave_refusal(wave)
+        self.assertTrue(
+            refusal.startswith("wave 2 depends on issues landed by an earlier wave; "), refusal
         )
 
 

@@ -263,6 +263,19 @@ def tail_child_output(text: str) -> str:
     )
 
 
+def worker_timeout_s(config: ProjectConfig) -> int:
+    """Return the wall-clock seconds one swarm worker's child ``keel ship`` may run.
+
+    Derived from the two budgets the project already sets for what the child runs
+    (#1279): ``knobs.gate_timeout_s`` for its command gates and ``knobs.jury_timeout_s``
+    for the ``jury`` builtin. The child runs the gate suite in a dry run too, so a
+    fixed 300 s killed a suite the project itself allows ten minutes. The sum covers
+    one gate at its full budget plus a panel at its full budget; a suite whose gates
+    add up to more than that is raised per run with ``swarm-run --worker-timeout``.
+    """
+    return config.knobs.gate_timeout_s + config.knobs.jury_timeout_s
+
+
 @dataclass(frozen=True)
 class SwarmRunResult:
     """Outcome summary for a complete or partial swarm execution."""
@@ -291,7 +304,7 @@ class SwarmRunResult:
 class LandingDecision:
     """Evaluation of whether a wave can directly land or requires sequential funneling."""
 
-    mode: str  # "direct_batch" or "sequential_funnel"
+    mode: str  # "direct_batch", "sequential_funnel" or "refused"
     eligible: bool
     cluster_ids: tuple[str, ...]
     reason: str = "orthogonal_diffs"
@@ -320,6 +333,14 @@ class SwarmLandingResult:
     #: verify — (cluster_id, reason) pairs. Held is not failed: the code is
     #: intact, the independent-review contract is simply not yet satisfied.
     held_clusters: tuple[tuple[str, str], ...] = ()
+    #: Why a landing did not start at all: a ``sequential_dependent`` wave (dry
+    #: run or live, ``mode`` is then ``"refused"``, #1276), or, live only, a dirty
+    #: working tree or a checkout whose status or HEAD could not be read. Empty
+    #: when it started.
+    refused: str = ""
+    #: What the operator must still do by hand after the wave; today only a
+    #: checkout that could not be returned to the branch it started on.
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -331,6 +352,8 @@ class SwarmLandingResult:
             "failed_clusters": list(self.failed_clusters),
             "held_clusters": [list(pair) for pair in self.held_clusters],
             "status": self.status,
+            "refused": self.refused,
+            "warnings": list(self.warnings),
         }
 
 
@@ -1284,17 +1307,20 @@ def evaluate_wave_landing_mode(
     wave: SwarmWave,
     pr_diff_map: dict[str, list[str] | tuple[str, ...]],
 ) -> LandingDecision:
-    """Evaluate whether a wave can directly land or requires sequential funneling.
+    """Evaluate whether a wave can directly land, needs sequential funneling, or is refused.
 
-    A wave the plan marked ``sequential_dependent`` funnels whatever its size: it
-    exists because its clusters overlap work an earlier wave lands, so its branches
-    were cut from a base that has since moved (#1276). Only a wave the plan found
-    orthogonal is then judged on its own clusters' diffs.
+    A wave the plan marked ``sequential_dependent`` is **refused** whatever its size:
+    it exists because its clusters overlap work an earlier wave lands, so its
+    branches were cut from a base that has since moved (#1276). Rebasing them
+    through the funnel would lean on an overlap check nothing feeds real diffs yet
+    (#1266), so the operator lands the earlier wave and re-plans instead. Only a
+    wave the plan found orthogonal is then judged on its own clusters' diffs; the
+    funnel stays reachable for a caller that supplies ``pr_diff_map``.
     """
     cluster_ids = tuple(c.cluster_id for c in wave.clusters)
     if not wave.eligible_direct_landing:
         return LandingDecision(
-            mode="sequential_funnel",
+            mode="refused",
             eligible=False,
             cluster_ids=cluster_ids,
             reason="depends_on_earlier_wave",
@@ -1341,6 +1367,72 @@ def evaluate_wave_landing_mode(
     )
 
 
+#: keel's own runtime subtrees of a ``.keel`` directory (see
+#: ``workspace.RUNTIME_IGNORE_ENTRIES``), and the ``.keel/.gitignore`` keel
+#: scaffolds to ignore them. keel writes all of these itself (the swarm run state
+#: and the merge lock scaffold the gitignore on first write), so a project that
+#: has not committed that gitignore yet sees them as untracked. They are not the
+#: operator's work, so they do not make a tree dirty.
+_KEEL_RUNTIME_PATH = re.compile(
+    r'^"?(?:.*/)?\.keel/(?:(?:state|activity|scratch|worktrees)/|\.gitignore$)'
+)
+
+#: How many status entries a dirty-tree refusal names before it summarises.
+_DIRTY_TREE_LISTED = 20
+
+
+def landing_tree_changes(porcelain: str) -> tuple[str, ...]:
+    """The ``status --porcelain`` entries that make a checkout unsafe to land in.
+
+    Landing checks out, rebases and merges branches in the operator's own
+    checkout, so any change there (staged, unstaged or untracked) is either
+    carried onto another branch or blocks a checkout halfway through a wave
+    (#1279). Every entry counts except untracked files under keel's own runtime
+    subtrees. Each entry is returned as printed, status code included, so the
+    refusal says which files are tracked and which are new.
+    """
+    changes: list[str] = []
+    for line in porcelain.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("?? ") and _KEEL_RUNTIME_PATH.match(line[3:]):
+            continue
+        changes.append(line)
+    return tuple(changes)
+
+
+def render_dependent_wave_refusal(wave: SwarmWave) -> str:
+    """The reason ``swarm-land`` gives for refusing a ``sequential_dependent`` wave.
+
+    Its branches were cut before the earlier wave it depends on landed, and the
+    rebase funnel that could carry them over stays off until its overlap check is
+    fed real diffs (#1266), so the way through is to land the earlier wave and
+    re-plan the rest (#1276).
+    """
+    deps = sorted({d for c in wave.clusters for d in c.depends_on_issues})
+    listed = f" ({', '.join(f'#{d}' for d in deps)})" if deps else ""
+    return (
+        f"wave {wave.wave_index} depends on issues landed by an earlier wave{listed}; "
+        "its branches were cut before that landing. Land the earlier wave, then re-plan "
+        "the remaining issues (keel swarm-plan / swarm-run without the landed ones) and "
+        "land again. The rebase funnel stays off until #1266 feeds it real diffs; "
+        "nothing was checked out or merged"
+    )
+
+
+def render_dirty_tree_refusal(changes: Sequence[str]) -> str:
+    """The reason a live landing gives for refusing a dirty working tree."""
+    listed = ", ".join(changes[:_DIRTY_TREE_LISTED])
+    more = len(changes) - _DIRTY_TREE_LISTED
+    if more > 0:
+        listed += f", and {more} more"
+    return (
+        "the working tree has uncommitted changes, and landing checks out and merges "
+        f"branches in it: {listed}. Commit or remove them (or land from a clean clone), "
+        "then run swarm-land again; nothing was checked out or merged"
+    )
+
+
 def render_swarm_landing_result(result: SwarmLandingResult) -> str:
     """Render human-readable summary of a SwarmLandingResult."""
     status_icon = (
@@ -1358,4 +1450,8 @@ def render_swarm_landing_result(result: SwarmLandingResult) -> str:
         lines.append("  held    : review evidence missing — not landed")
         for cluster_id, reason in result.held_clusters:
             lines.append(f"    {cluster_id}: {reason}")
+    if result.refused:
+        lines.append(f"  refused : {result.refused}")
+    for warning in result.warnings:
+        lines.append(f"  warning : {warning}")
     return "\n".join(lines)
