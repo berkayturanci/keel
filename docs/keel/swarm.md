@@ -371,6 +371,17 @@ direct push is refused, so the merge commits cannot reach the remote that way. U
 per pull request — through `/keel:ship` — for work that has to reach the repository
 ([#1287](https://github.com/berkayturanci/keel/issues/1287)).
 
+All of this happens in the checkout `--root` points at, which is usually your own. So a live
+landing starts only from a clean tree: when `git status --porcelain` shows any change, tracked or
+untracked, it names the files, checks out and merges nothing, and exits 1 with
+`refused : the working tree has uncommitted changes…`. Untracked files keel writes itself, under
+`.keel/state/`, `.keel/activity/`, `.keel/scratch/`, `.keel/worktrees/` and the scaffolded
+`.keel/.gitignore`, do not count. It records the branch (or detached commit) you were on and checks
+it out again when the wave ends, however it ends: landed, conflicted, aborted, or raised. If that
+checkout fails, the result carries `warning : could not return the checkout to <branch>…` with the
+command to run ([#1279](https://github.com/berkayturanci/keel/issues/1279)). A dry run touches no
+branch and is unchanged.
+
 **Every wave lands in direct-batch mode today.** `build_swarm_plan` only admits an issue to a wave
 it conflicts with nothing in, so a wave's clusters are always mutually disjoint; the CLI also passes
 no PR diff map, so `evaluate_wave_landing_mode` returns `direct_batch` (`orthogonal_diff_trees`, or

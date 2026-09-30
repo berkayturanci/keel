@@ -17,7 +17,9 @@ from .swarm import (
     SwarmPlan,
     SwarmWave,
     evaluate_wave_landing_mode,
+    landing_tree_changes,
     load_swarm_state,
+    render_dirty_tree_refusal,
     save_swarm_state,
     update_worker_state,
 )
@@ -269,6 +271,79 @@ def _restore_pin(
     )
 
 
+def _output(res: object) -> str:
+    return str(getattr(res, "stdout", "") or getattr(res, "output", "")).strip()
+
+
+def _read_head(repo_root: Path, runner: SubprocessRunner | None) -> tuple[str, str] | None:
+    """Where the checkout is: ``("branch", name)``, ``("detached", sha)`` or ``None``."""
+    run = runner or default_runner
+    res = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], repo_root)
+    if res.ok and _output(res):
+        return ("branch", _output(res))
+    res = run(["git", "rev-parse", "--verify", "--quiet", "HEAD"], repo_root)
+    if res.ok and _output(res):
+        return ("detached", _output(res))
+    return None
+
+
+def _landing_start(
+    repo_root: Path, runner: SubprocessRunner | None
+) -> tuple[tuple[str, str] | None, str]:
+    """Check the operator's checkout can be landed in; record where it is.
+
+    Returns ``(head, "")`` when landing may start, or ``(None, reason)`` when it
+    must not. Landing checks out, rebases and merges in this very checkout, so a
+    change there is carried onto another branch or stops a checkout halfway
+    through a wave; that one of those checkouts happened to fail was the only
+    guard (#1279).
+    """
+    run = runner or default_runner
+    status = run(["git", "status", "--porcelain", "--untracked-files=all"], repo_root)
+    if not status.ok:
+        return None, (
+            f"could not read the working tree's status ({_output(status) or 'no output'}), "
+            "so landing did not start"
+        )
+    # Not `_output`: stripping would eat the leading space of " M path", the
+    # status column that says a change is unstaged.
+    changes = landing_tree_changes(
+        str(getattr(status, "stdout", "") or getattr(status, "output", ""))
+    )
+    if changes:
+        return None, render_dirty_tree_refusal(changes)
+    head = _read_head(repo_root, runner)
+    if head is None:
+        return None, (
+            "could not read HEAD, so landing could not promise to return the checkout "
+            "to it and did not start"
+        )
+    return head, ""
+
+
+def _return_to(
+    repo_root: Path, head: tuple[str, str], runner: SubprocessRunner | None
+) -> str | None:
+    """Put the checkout back where the operator had it; a warning when that fails.
+
+    A merge leaves HEAD on the base branch and a failed rebase on the cluster
+    branch, so without this the operator's next command runs somewhere else.
+    """
+    if _read_head(repo_root, runner) == head:
+        return None
+    ref = head[1]
+    run = runner or default_runner
+    # A branch name checks that branch out; a sha detaches at it, as it started.
+    # `--` so a file that happens to share the name is never read as a path.
+    res = run(["git", "checkout", ref, "--"], repo_root)
+    if res.ok:
+        return None
+    return (
+        f"could not return the checkout to {ref} ({_output(res) or 'no output'}); "
+        f"run `git checkout {ref}` by hand"
+    )
+
+
 def land_wave_clusters(
     plan: SwarmPlan,
     wave_index: int,
@@ -357,6 +432,22 @@ def land_wave_clusters(
             held_clusters=tuple(held),
         )
 
+    # Live landing runs in the operator's own checkout, so it starts only from a
+    # clean tree and records where HEAD was, to put it back afterwards (#1279).
+    home, refusal = _landing_start(root_path, runner)
+    if home is None:
+        return SwarmLandingResult(
+            swarm_id=plan.swarm_id,
+            wave_index=wave_index,
+            mode=decision.mode,
+            landed_clusters=(),
+            healed_clusters=(),
+            failed_clusters=(),
+            status="failed",
+            refused=refusal,
+        )
+    warnings: list[str] = []
+
     # Live landing protected by atomic merge lock
     lock_path = resource_path(root_path / ".keel" / "state" / "locks", "merge")
     # Evidence checks are read-only (gh + rev-parse) but network-bound, so they
@@ -432,99 +523,29 @@ def land_wave_clusters(
                 )
         cleared = []
     with lock:
-        for c in cleared:
-            branch_name = f"swarm/{plan.swarm_id}/{c.cluster_id}"
-            # Applies to both arms: the evidence check ran outside the lock,
-            # and on the funnel path the rebase itself voids the pin, so the
-            # re-read has to happen before either one touches the branch.
-            drift = _pin_drifted(root_path, branch_name, pinned.get(c.cluster_id), runner)
-            if drift is not None:
-                held.append((c.cluster_id, drift))
-                if state:
-                    state = update_worker_state(
-                        state,
-                        c.cluster_id,
-                        step="s10",
-                        status="held",
-                        details=f"pin drift: {drift}",
-                    )
-                continue
-            if decision.mode == "direct_batch":
-                ok = merge_cluster_branch(
-                    root_path, branch_name, base_branch=base_branch, runner=runner
-                )
-                if ok:
-                    landed.append(c.cluster_id)
-                    if state:
-                        state = update_worker_state(
-                            state, c.cluster_id, step="s10", status="merged"
-                        )
-                else:
-                    failed.append(c.cluster_id)
+        try:
+            for c in cleared:
+                branch_name = f"swarm/{plan.swarm_id}/{c.cluster_id}"
+                # Applies to both arms: the evidence check ran outside the lock,
+                # and on the funnel path the rebase itself voids the pin, so the
+                # re-read has to happen before either one touches the branch.
+                drift = _pin_drifted(root_path, branch_name, pinned.get(c.cluster_id), runner)
+                if drift is not None:
+                    held.append((c.cluster_id, drift))
                     if state:
                         state = update_worker_state(
                             state,
                             c.cluster_id,
                             step="s10",
-                            status="failed",
-                            details=f"merge into {base_branch} failed (or could not check it out)",
+                            status="held",
+                            details=f"pin drift: {drift}",
                         )
-            else:
-                # Sequential funnel with rebase & heal
-                rebase_ok, reason = rebase_and_heal_cluster_branch(
-                    root_path,
-                    branch_name,
-                    base_branch=base_branch,
-                    runner=runner,
-                    resolver=resolver,
-                )
-                if rebase_ok:
-                    # The heal rewrote the branch: new SHAs, and on the
-                    # self-healed path new *content* the resolver authored.
-                    # The pin taken before the rebase is void, so re-check
-                    # against the new tip — landing here would otherwise bless
-                    # bytes nobody reviewed, the exact bypass #828 closes on
-                    # the direct-batch path.
-                    # A rebase always rewrites SHAs, so re-pinning to the old
-                    # head can never pass — that would make funnel mode, which
-                    # exists precisely because the base moved, a permanent
-                    # no-op. What matters is whether any *content* decision was
-                    # made: git reports "clean_rebase" when it replayed the
-                    # reviewed commits with no conflict, and
-                    # "self_healed_rebase" when the resolver authored bytes
-                    # nobody reviewed. Only the latter breaks the guarantee.
-                    if evidence_checker is not None and reason != "clean_rebase":
-                        # The rebase already rewrote the branch before we could
-                        # judge it. Leaving it rewritten would strand the
-                        # cluster: every later run would compare the new tip
-                        # against the unchanged reviewed head and hold forever.
-                        # Restore the pinned commit so the next run starts from
-                        # the reviewed state, and say so in the reason.
-                        restored = _restore_pin(
-                            root_path, branch_name, pinned.get(c.cluster_id), runner
-                        )
-                        held.append(
-                            (
-                                c.cluster_id,
-                                f"landing rebase resolved conflicts ({reason}), so "
-                                f"content nobody reviewed would land; {restored} — "
-                                "rebase and re-review the PR before landing",
-                            )
-                        )
-                        if state:
-                            state = update_worker_state(
-                                state,
-                                c.cluster_id,
-                                step="s10",
-                                status="held",
-                                details=f"post-rebase content: {reason}",
-                            )
-                        continue
-                    healed.append(c.cluster_id)
-                    merge_ok = merge_cluster_branch(
+                    continue
+                if decision.mode == "direct_batch":
+                    ok = merge_cluster_branch(
                         root_path, branch_name, base_branch=base_branch, runner=runner
                     )
-                    if merge_ok:
+                    if ok:
                         landed.append(c.cluster_id)
                         if state:
                             state = update_worker_state(
@@ -538,22 +559,101 @@ def land_wave_clusters(
                                 c.cluster_id,
                                 step="s10",
                                 status="failed",
-                                details="post-rebase merge failed",
+                                details=(
+                                    f"merge into {base_branch} failed (or could not check it out)"
+                                ),
                             )
                 else:
-                    failed.append(c.cluster_id)
-                    if state:
-                        state = update_worker_state(
-                            state,
-                            c.cluster_id,
-                            step="s10",
-                            status="failed",
-                            details=(
-                                f"could not check out {branch_name}"
-                                if reason == "checkout_failed"
-                                else f"rebase conflict: {reason}"
-                            ),
+                    # Sequential funnel with rebase & heal
+                    rebase_ok, reason = rebase_and_heal_cluster_branch(
+                        root_path,
+                        branch_name,
+                        base_branch=base_branch,
+                        runner=runner,
+                        resolver=resolver,
+                    )
+                    if rebase_ok:
+                        # The heal rewrote the branch: new SHAs, and on the
+                        # self-healed path new *content* the resolver authored.
+                        # The pin taken before the rebase is void, so re-check
+                        # against the new tip — landing here would otherwise bless
+                        # bytes nobody reviewed, the exact bypass #828 closes on
+                        # the direct-batch path.
+                        # A rebase always rewrites SHAs, so re-pinning to the old
+                        # head can never pass — that would make funnel mode, which
+                        # exists precisely because the base moved, a permanent
+                        # no-op. What matters is whether any *content* decision was
+                        # made: git reports "clean_rebase" when it replayed the
+                        # reviewed commits with no conflict, and
+                        # "self_healed_rebase" when the resolver authored bytes
+                        # nobody reviewed. Only the latter breaks the guarantee.
+                        if evidence_checker is not None and reason != "clean_rebase":
+                            # The rebase already rewrote the branch before we could
+                            # judge it. Leaving it rewritten would strand the
+                            # cluster: every later run would compare the new tip
+                            # against the unchanged reviewed head and hold forever.
+                            # Restore the pinned commit so the next run starts from
+                            # the reviewed state, and say so in the reason.
+                            restored = _restore_pin(
+                                root_path, branch_name, pinned.get(c.cluster_id), runner
+                            )
+                            held.append(
+                                (
+                                    c.cluster_id,
+                                    f"landing rebase resolved conflicts ({reason}), so "
+                                    f"content nobody reviewed would land; {restored} — "
+                                    "rebase and re-review the PR before landing",
+                                )
+                            )
+                            if state:
+                                state = update_worker_state(
+                                    state,
+                                    c.cluster_id,
+                                    step="s10",
+                                    status="held",
+                                    details=f"post-rebase content: {reason}",
+                                )
+                            continue
+                        healed.append(c.cluster_id)
+                        merge_ok = merge_cluster_branch(
+                            root_path, branch_name, base_branch=base_branch, runner=runner
                         )
+                        if merge_ok:
+                            landed.append(c.cluster_id)
+                            if state:
+                                state = update_worker_state(
+                                    state, c.cluster_id, step="s10", status="merged"
+                                )
+                        else:
+                            failed.append(c.cluster_id)
+                            if state:
+                                state = update_worker_state(
+                                    state,
+                                    c.cluster_id,
+                                    step="s10",
+                                    status="failed",
+                                    details="post-rebase merge failed",
+                                )
+                    else:
+                        failed.append(c.cluster_id)
+                        if state:
+                            state = update_worker_state(
+                                state,
+                                c.cluster_id,
+                                step="s10",
+                                status="failed",
+                                details=(
+                                    f"could not check out {branch_name}"
+                                    if reason == "checkout_failed"
+                                    else f"rebase conflict: {reason}"
+                                ),
+                            )
+        finally:
+            # Whatever happened above (landed, conflict, abort, or an exception),
+            # the operator gets their branch back, still under the lock.
+            warning = _return_to(root_path, home, runner)
+            if warning:
+                warnings.append(warning)
 
     if state:
         save_swarm_state(state, root=root_path)
@@ -577,4 +677,5 @@ def land_wave_clusters(
         failed_clusters=tuple(failed),
         status=overall_status,
         held_clusters=tuple(held),
+        warnings=tuple(warnings),
     )

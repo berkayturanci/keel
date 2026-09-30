@@ -16,6 +16,17 @@ All notable changes to keel are documented here. The format follows
   out of it is reported `timed_out: true`, and its output ends with a line saying so, rather
   than reading as a failing change. The short git commands the swarm, landing and canary
   run through `default_runner` keep its own 300 s limit.
+- **`swarm-land --live` refuses a dirty checkout and puts you back on your branch.** Landing
+  checks out, rebases and merges in the `--root` checkout. It left HEAD on the base branch
+  after a merge, or on a cluster branch after an aborted rebase, and a dirty tree stopped it
+  only when a checkout happened to collide with the change; otherwise the edit was carried
+  onto the base branch and the merge went ahead. A live run now reads `git status --porcelain`
+  first and, on any tracked or untracked change, names the files and exits 1 without checking
+  anything out (the JSON result carries it as `refused`). keel's own untracked runtime files
+  under `.keel/` do not count. It records the branch or commit it started on and checks it out
+  again in a `finally`, whether the wave landed, conflicted, aborted or raised; a return that
+  fails is reported in `warnings` with the command to run. Dry runs are unchanged (#1279,
+  item 3).
 - **The Ship watermark names ai-jury only when a jury sat.** The s11 closure comment's
   signature said "with ai-jury consensus" on every run, including ones whose `Jury` line read
   `off`. It now adds the clause only when the record's `run_context.jury_mode` is `gating` or
