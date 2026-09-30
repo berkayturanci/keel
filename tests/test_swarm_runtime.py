@@ -67,20 +67,25 @@ def _clusters(plan):
 
 
 class _LiveIo:
-    """Recording stand-ins for a live worker's three I/O seams (#1400).
+    """Recording stand-ins for a live worker's four I/O seams (#1400).
 
     ``implement`` records the plan it was handed, the environment and the brief, and can
-    fail, or raise for a cluster whose brief names a given issue; ``push``/``open_pr``
-    record their arguments and succeed unless told otherwise.
+    fail, or raise for a cluster whose brief names a given issue; ``push``/``open_pr``/
+    ``post_comment`` record their arguments and succeed unless told otherwise.
     """
 
-    def __init__(self, *, implement_ok=True, raise_for=None, push_ok=True, pr_ok=True):
+    def __init__(
+        self, *, implement_ok=True, raise_for=None, push_ok=True, pr_ok=True, comment_ok=True
+    ):
         self.implement_ok, self.raise_for = implement_ok, raise_for
-        self.push_ok, self.pr_ok = push_ok, pr_ok
+        self.push_ok, self.pr_ok, self.comment_ok = push_ok, pr_ok, comment_ok
         self.implemented: list[tuple[RunPlan, dict, str]] = []
         self.pushes: list[tuple[str, str, str]] = []
         self.push_argvs: list[list[str]] = []
         self.prs: list[tuple[str, str, str, str]] = []
+        self.comments: list[tuple[str, int, str]] = []
+        #: Every seam call, in order: what the ordering tests read.
+        self.events: list[str] = []
 
     def implement(self, plan, env):
         brief = Path(plan.prompt_path).read_text(encoding="utf-8")
@@ -99,10 +104,18 @@ class _LiveIo:
         return CommandResult(self.push_ok, 0 if self.push_ok else 1, "" if self.push_ok else "no")
 
     def open_pr(self, title, body, base, head, cwd):
+        self.events.append("open_pr")
         self.prs.append((title, body, base, head))
         if not self.pr_ok:
             return CommandResult(False, 1, "gh: not authenticated")
         return CommandResult(True, 0, f"https://github.com/o/r/pull/{len(self.prs)}\n")
+
+    def post_comment(self, owner_repo, number, body, cwd):
+        self.events.append("post_comment")
+        self.comments.append((owner_repo, number, body))
+        if not self.comment_ok:
+            return CommandResult(False, 1, "HTTP 403: Resource not accessible")
+        return CommandResult(True, 0, '{"id": 1}')
 
 
 def _live(plan, root, io, *, scopes=FULL_SCOPES, clusters=None) -> LiveRun:
@@ -137,6 +150,7 @@ def _live(plan, root, io, *, scopes=FULL_SCOPES, clusters=None) -> LiveRun:
         implement=io.implement,
         push=io.push,
         open_pr=io.open_pr,
+        post_comment=io.post_comment,
     )
 
 
@@ -1456,6 +1470,161 @@ class TheLiveWorkersDefaultSeamsAreKeelsOwn(unittest.TestCase):
         self.assertEqual(open_pr.call_args.args[0][:3], ["gh", "pr", "create"])
         self.assertNotIn("env", push.call_args.kwargs)
         self.assertNotIn("env", open_pr.call_args.kwargs)
+
+
+class AClusterPullRequestArmsTheEvidenceGate(unittest.TestCase):
+    """Found on the first end-to-end live run: a cluster PR carried no keel signal that arms
+    keel merge's evidence gate — `swarm/<id>/<cluster>` matches no ship-branch pattern — so
+    `swarm-land` held it as "evidence gate is not enforced". The worker now posts the
+    ship-provenance comment a live `keel ship` run posts, right after the PR is opened."""
+
+    SWARM = "swarm-arm"
+
+    def _plan(self):
+        return build_swarm_plan(
+            [IssueScope(issue=741, title="T741", predicted_files=("src/741.py",))],
+            swarm_id=self.SWARM,
+        )
+
+    def _run(self, io_, git=None):
+        plan = self._plan()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.root = tmpdir
+            result = run_swarm_orchestration(
+                plan,
+                "projects/x.yaml",
+                root=tmpdir,
+                dry_run=False,
+                live=_live(plan, tmpdir, io_),
+                runner=git or _Git(),
+                base_branch="main",
+            )
+            state = load_swarm_state(self.SWARM, root=tmpdir)
+        (cluster,) = _clusters(plan)
+        (res,) = result.wave_results[0]["cluster_results"].values()
+        return cluster, result, res, state
+
+    def test_the_pull_request_carries_the_comment_keel_ship_posts(self):
+        from keel import artifacts, cli, evidence
+
+        io_ = _LiveIo()
+        cluster, result, res, _state = self._run(io_)
+
+        cid = cluster.cluster_id
+        run_id = f"{self.SWARM}/{cid}"
+        # The body keel ship renders (`artifact_bodies.ship_provenance`), for this cluster:
+        # the seat's attribution verbatim, the issue, and the head keel pushed.
+        expected = artifacts.render_ship_provenance(
+            run_id=run_id,
+            issue=741,
+            head_sha=f"head-{cid}",
+            implementer_attribution={"system": "codex:gpt-5"},
+        )
+        self.assertEqual(io_.comments, [("o/r", 1, expected)])
+        (_repo, _number, body) = io_.comments[0]
+        # What `keel post-comment --run-id` would send is this body unchanged: its
+        # `run-id:` line already makes a re-post find and edit it.
+        self.assertEqual(cli._with_run_id_marker(body, run_id), body)
+        self.assertEqual((res["stage"], res["ok"], res["provenance_posted"]), ("done", True, True))
+        self.assertEqual((result.status, result.warnings), ("success", ()))
+        # keel merge reads it back as a keel run: the gate is armed by the comment, where
+        # the branch alone leaves it unarmed — the finding.
+        branch = f"swarm/{self.SWARM}/{cid}"
+        posted = {"body": body, "author_association": "OWNER"}
+        armed = evidence.gate_decision([], "keel:gate", head_ref=branch, pr_comments=[posted])
+        bare = evidence.gate_decision([], "keel:gate", head_ref=branch, pr_comments=[])
+        self.assertEqual((armed["enforced"], armed["reason"]), (True, "ship-provenance-comment"))
+        self.assertEqual((bare["enforced"], bare["reason"]), (False, "no-ship-provenance"))
+
+    def test_it_is_posted_after_the_pull_request_opens_and_before_the_worker_is_done(self):
+        test = self
+
+        class Watching(_LiveIo):
+            """Reads the state file as the comment is posted — what swarm-status reads."""
+
+            def post_comment(self, owner_repo, number, body, cwd):
+                self.during = load_swarm_state(test.SWARM, root=test.root)
+                return super().post_comment(owner_repo, number, body, cwd)
+
+        io_ = Watching()
+        _cluster, _result, res, state = self._run(io_)
+
+        self.assertEqual(io_.events, ["open_pr", "post_comment"])
+        (during,) = io_.during.workers
+        self.assertEqual((during.status, during.stage), ("running", "pull_request"))
+        (after,) = state.workers
+        self.assertEqual((after.status, after.stage, after.pull_request), ("passed", "done", 1))
+        self.assertTrue(res["provenance_posted"])
+
+    def test_a_failed_post_keeps_the_pull_request_and_says_it_will_be_held(self):
+        io_, git = _LiveIo(comment_ok=False), _Git()
+        cluster, result, res, state = self._run(io_, git)
+
+        self.assertEqual(len(io_.comments), 1)
+        # The pull request stands: the worker passed, its branch is not deleted.
+        self.assertEqual((result.status, res["ok"], res["stage"]), ("success", True, "done"))
+        self.assertEqual(res["pr_url"], "https://github.com/o/r/pull/1")
+        self.assertFalse(res["provenance_posted"])
+        self.assertFalse(res["branch_deleted"])
+        self.assertEqual([c for c in git.calls if "-D" in c], [])
+        # Reported, in the worker record, the run's warnings and the state file.
+        (warning,) = res["warnings"]
+        self.assertIn("the ship-provenance comment was not posted on", warning)
+        self.assertIn("HTTP 403: Resource not accessible", warning)
+        self.assertIn('"evidence gate is not enforced"', warning)
+        self.assertEqual(result.warnings, (f"{cluster.cluster_id}: {warning}",))
+        self.assertIn(warning, res["output"])
+        self.assertIn(f"warning       : {cluster.cluster_id}: ", render_swarm_run_result(result))
+        (worker,) = state.workers
+        self.assertEqual((worker.status, worker.pull_request), ("passed", 1))
+        self.assertIn("ship-provenance comment was not posted", worker.details)
+
+    def test_a_pull_request_url_keel_cannot_read_is_reported_not_guessed(self):
+        class Unreadable(_LiveIo):
+            def open_pr(self, title, body, base, head, cwd):
+                super().open_pr(title, body, base, head, cwd)
+                return CommandResult(True, 0, "")
+
+        io_ = Unreadable()
+        _cluster, result, res, _state = self._run(io_)
+        self.assertEqual(io_.comments, [])
+        self.assertEqual((result.status, res["provenance_posted"]), ("success", False))
+        (warning,) = res["warnings"]
+        self.assertIn("not posted on the pull request (gh pr create printed no", warning)
+
+    def test_the_settles_warnings_join_the_workers_rather_than_replace_them(self):
+        merged = swarm_runtime_module._with_settlement(
+            {"output": "o", "warnings": ["unstamped"]},
+            {"worktree": None, "worktree_state": "remove-failed", "warnings": ["kept"]},
+            "b",
+        )
+        self.assertEqual(merged["warnings"], ["unstamped", "kept"])
+
+    def test_the_repository_is_read_off_the_url_gh_printed(self):
+        for url, repo in (
+            ("https://github.com/o/r/pull/12", "o/r"),
+            (" https://ghe.example.invalid/org/repo/pull/3/\n", "org/repo"),
+            ("https://github.com/o/r/pull/0", None),
+            ("https://github.com/o/r/issues/1", None),
+            ("https://github.com/o/r/x/pull/1", None),
+            ("Created pull request", None),
+            ("", None),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(swarm_worker.pull_request_repo(url), repo)
+
+    def test_the_default_seam_is_keels_own_comment_post_with_the_operators_env(self):
+        with patch("keel.github.run_argv", return_value="posted") as run_argv:
+            self.assertEqual(
+                swarm_runtime_module._default_post_comment("o/r", 5, "B", Path("/w")), "posted"
+            )
+        argv = run_argv.call_args.args[0]
+        self.assertEqual(
+            argv, ["gh", "api", "repos/o/r/issues/5/comments", "-X", "POST", "-F", "body=B"]
+        )
+        # str(Path), not a literal: on Windows the separator is a backslash.
+        self.assertEqual(run_argv.call_args.kwargs["cwd"], str(Path("/w")))
+        self.assertNotIn("env", run_argv.call_args.kwargs)
 
 
 #: The operator's environment for the forge tests: consent, forge tokens, a provider key.

@@ -6,7 +6,8 @@ handling worker state persistence, and managing fail-soft rebalancing across wav
 A dry run's worker is a ``keel ship --dry-run`` assessment per cluster. A live run's worker
 (#1400) is the cluster's implementer seat, dispatched through :mod:`keel.delegaterun` in
 the cluster's own worktree, followed by a commit, the project's gates, a push and one pull
-request — every mutation behind the consent scopes the parent delegated
+request, stamped with the ship-provenance comment a live ``keel ship`` run posts on its own
+— every mutation behind the consent scopes the parent delegated
 (:mod:`keel.swarm_worker`, where each of those decisions is made).
 """
 
@@ -57,6 +58,8 @@ Implementer = Callable[[RunPlan, dict[str, str]], dict[str, Any]]
 Pusher = Callable[[list[str], Path], CommandResult]
 #: ``(title, body, base, head, cwd)`` -> ``gh pr create``'s result.
 PullRequestOpener = Callable[[str, str, str, str, Path], CommandResult]
+#: ``(owner_repo, number, body, cwd)`` -> the result of posting ``body`` on that pull request.
+CommentPoster = Callable[[str, int, str, Path], CommandResult]
 
 #: The runner's own wall-clock limit, for the short git commands swarm and canary run
 #: through it (worktree add/remove, checkout, merge). A worker's child ``keel ship`` is
@@ -170,10 +173,16 @@ def _default_open_pr(title: str, body: str, base: str, head: str, cwd: Path) -> 
     return github.open_pr(title, body, base, head, cwd=str(cwd))
 
 
+def _default_post_comment(owner_repo: str, number: int, body: str, cwd: Path) -> CommandResult:
+    """The call ``keel post-comment`` makes for a live ship run's provenance, with the
+    operator's environment — so the comment's author is the account keel's ``gh`` is."""
+    return github.post_issue_comment(owner_repo, number, body, cwd=str(cwd))
+
+
 @dataclass(frozen=True)
 class LiveRun:
     """What a live run's parent hands its workers: the operator's consent, delegated, and
-    each cluster's planned implementer seat. The three callables are the I/O seams."""
+    each cluster's planned implementer seat. The four callables are the I/O seams."""
 
     consent: swarm_worker.ConsentDelegation
     #: ``cluster_id`` -> the cluster's implementer :class:`keel.delegate.RunPlan`.
@@ -186,6 +195,7 @@ class LiveRun:
     implement: Implementer = _default_implement
     push: Pusher = _default_push
     open_pr: PullRequestOpener = _default_open_pr
+    post_comment: CommentPoster = _default_post_comment
 
 
 def create_swarm_worktree(
@@ -406,8 +416,8 @@ def execute_live_cluster_worker(
     reaches a worker as the delegation it is handed, never through inheritance. The
     implementer also runs without the forge (:func:`keel.swarm_worker.implementer_env`): no
     ``gh`` login, no git credential helper and no network transport, so only keel's own
-    push and pull request — made here, in keel's process, after the implementer has exited
-    — reach the remote.
+    push, pull request and provenance comment — made here, in keel's process, after the
+    implementer has exited — reach the remote.
 
     The worktree shares the operator's repository, so the implementer could also write its
     config and hooks, which keel's own credentialed steps would then run. The worker reads
@@ -433,6 +443,9 @@ def execute_live_cluster_worker(
         "commit": None,
         "pr_url": None,
         "pushed": False,
+        # Whether the pull request carries the ship-provenance comment that arms keel
+        # merge's evidence gate; an open pull request without it is held at landing.
+        "provenance_posted": False,
     }
     progress = {} if progress is None else progress
 
@@ -577,7 +590,8 @@ def _commit_gate_push_open(
     live: LiveRun,
     on_stage: StageReporter,
 ) -> dict[str, Any]:
-    """The worker's steps after the implementer: commit, gates, push, pull request."""
+    """The worker's steps after the implementer: commit, gates, push, pull request, and the
+    pull request's ship-provenance comment."""
     system = plan.attribution.get("system") or plan.provider
     on_stage("commit")
     status = run(git(["status", "--porcelain"]), worktree_dir)
@@ -666,14 +680,46 @@ def _commit_gate_push_open(
             f"{branch} is pushed, but gh pr create failed: {opened.output.strip()}",
         )
     url = _last_line(opened)
-    return {
+    # A keel-made pull request arms keel merge's evidence gate at creation, as a live
+    # `keel ship` run's does: its branch matches no ship-branch pattern, and without the
+    # stamp `swarm-land` is held on "evidence gate is not enforced" (found on the first
+    # end-to-end live run). Posted by keel, with the operator's credentials, after the
+    # implementer exited — like the push and the pull request.
+    missing = _post_provenance(
+        live,
+        url,
+        swarm_worker.ship_provenance_body(cluster, swarm_id=swarm_id, commit=head, plan=plan),
+        worktree_dir,
+    )
+    done = {
         **record,
         "ok": True,
         "code": 0,
         "stage": "done",
         "pr_url": url,
+        "provenance_posted": not missing,
         "output": f"pull request opened: {url}",
     }
+    if missing:
+        # Not a failed worker: the pull request is open and stays open. It is held at
+        # landing until the stamp or its review verdicts are posted, so the run says so.
+        done["output"] += f"\n{missing}"
+        done["warnings"] = [missing]
+    return done
+
+
+def _post_provenance(live: LiveRun, url: str, body: str, cwd: Path) -> str:
+    """Post ``body`` on the pull request at ``url``; ``""`` once posted, else the warning."""
+    owner_repo = swarm_worker.pull_request_repo(url)
+    number = pull_request_number(url)
+    if owner_repo is None or number is None:
+        why = "gh pr create printed no pull request URL keel can read"
+    else:
+        posted = live.post_comment(owner_repo, number, body, cwd)
+        if posted.ok:
+            return ""
+        why = f"the comment post failed: {posted.output.strip() or 'no output'}"
+    return swarm_worker.provenance_warning(url or "the pull request", why)
 
 
 def _swarm_ids_under(base: Path, path: str) -> tuple[str, str] | None:
@@ -841,7 +887,10 @@ def _with_settlement(
             f"{output}\nthe worktree is kept for inspection at {settled['worktree']} (branch "
             f"{branch}); `keel swarm-status <project.yaml> --clean` removes it"
         )
-    return {**outcome, **settled, "output": output}
+    # The worker's own warnings (an unstamped pull request) come first, then the settle's:
+    # a plain merge would let the settle's list replace the worker's.
+    warnings = [*outcome.get("warnings", ()), *settled["warnings"]]
+    return {**outcome, **settled, "output": output, "warnings": warnings}
 
 
 def run_swarm_orchestration(

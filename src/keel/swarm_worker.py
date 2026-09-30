@@ -21,7 +21,8 @@ This module holds every *decision* in that flow, and nothing else:
   :func:`keel.team.resolve_assignment`) into a :class:`keel.delegate.RunPlan`, and refuses a
   seat keel cannot run as a worker: a host subagent, and a transport that cannot edit a
   worktree.
-- **What is written.** The brief, the commit message and the pull request's title and body.
+- **What is written.** The brief, the commit message, the pull request's title and body,
+  and the ship-provenance comment that arms ``keel merge``'s evidence gate on it.
 - **What is left behind** (#1278). :func:`worktree_disposal` decides what becomes of a
   worker's worktree and branch when it ends, and :func:`classify_leftovers` which of a run's
   worktrees, directories and branches ``keel swarm-status --clean`` may remove.
@@ -32,12 +33,13 @@ Pure and deterministic: no subprocess, no filesystem, no clock. The runtime
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from . import consent, delegate
+from . import artifacts, consent, delegate
 from . import providers as providers_mod
 
 #: Every mutation a live worker performs, in the order it performs them. The parent's
@@ -564,6 +566,50 @@ def pull_request_body(
         ),
     ]
     return "\n".join(lines) + "\n"
+
+
+#: ``https://<host>/<owner>/<repo>/pull/<n>``: the URL ``gh pr create`` prints last.
+_PULL_REQUEST_REPO_URL = re.compile(r"^https?://[^/\s]+/([^/\s]+/[^/\s]+)/pull/[1-9][0-9]*/?$")
+
+
+def pull_request_repo(url: str) -> str | None:
+    """The ``owner/repo`` a ``gh pr create`` URL names, or ``None`` when it names none."""
+    match = _PULL_REQUEST_REPO_URL.match(url.strip())
+    return match.group(1) if match else None
+
+
+def provenance_run_id(swarm_id: str, cluster_id: str) -> str:
+    """The run id a cluster's ship-provenance comment carries: one per cluster of a run."""
+    return f"{swarm_id}/{cluster_id}"
+
+
+def ship_provenance_body(
+    cluster: Any, *, swarm_id: str, commit: str, plan: delegate.RunPlan
+) -> str:
+    """The ship-provenance comment for a cluster's pull request — the one a live ``keel
+    ship`` run posts on its own (:func:`keel.artifacts.render_ship_provenance`).
+
+    A keel-made pull request arms ``keel merge``'s evidence gate itself, the way a ship run's
+    does: the branch ``swarm/<id>/<cluster>`` matches no ship-branch pattern, so without this
+    comment the gate reads the pull request as not a keel run, and ``swarm-land`` is held on
+    "evidence gate is not enforced" rather than on the review evidence it lacks. The
+    attribution is the seat's, verbatim from :mod:`keel.agents` (``plan.attribution``).
+    """
+    return artifacts.render_ship_provenance(
+        run_id=provenance_run_id(swarm_id, cluster.cluster_id),
+        issue=cluster.issues[0] if cluster.issues else None,
+        head_sha=commit,
+        implementer_attribution=dict(plan.attribution),
+    )
+
+
+def provenance_warning(pull_request: str, why: str) -> str:
+    """What a worker reports when its pull request is open but not stamped."""
+    return (
+        f"the ship-provenance comment was not posted on {pull_request} ({why}); keel merge "
+        'will hold it as "evidence gate is not enforced" until the comment is posted '
+        "(`keel post-comment --artifact ship-provenance`) or its review verdicts are"
+    )
 
 
 @dataclass(frozen=True)
