@@ -1727,11 +1727,13 @@ class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
         self.assertTrue(self.reaches({"w": worker, "c": after}, "c.h"), "refused too late")
         self.assertTrue(self.reaches({"w": worker, "c": unguarded}, "c.h"))
 
-    def test_the_cli_writes_from_exactly_twelve_commands(self):
+    def test_the_cli_writes_from_exactly_thirteen_commands(self):
         """The hardening found nothing new. `ship` and `run-gates` joined with the opt-in
         `revert-check` gate, whose scratch worktree is added, reset and removed through git
         (#1289). `swarm-run` joined when `--live` stopped being refused: a live worker
-        commits, pushes and opens a pull request under delegated consent (#1400)."""
+        commits, pushes and opens a pull request under delegated consent (#1400).
+        `swarm-status` joined with `--clean`, which removes the worktrees, directories and
+        branches swarm runs left under keel's own paths (#1278)."""
         self.assertEqual(
             {
                 "ship",
@@ -1743,6 +1745,7 @@ class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
                 "doctor",
                 "swarm-land",
                 "swarm-run",
+                "swarm-status",
                 "worktree-remove",
                 "rollback",
                 "canary",

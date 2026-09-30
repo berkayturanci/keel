@@ -37,6 +37,7 @@ from .swarm import (
     SwarmRunResult,
     SwarmRunState,
     SwarmWorkerStatus,
+    load_swarm_state,
     pull_request_number,
     rebalance_swarm_plan,
     save_swarm_state,
@@ -215,13 +216,90 @@ def remove_swarm_worktree(
     worktree_path: Path,
     runner: SubprocessRunner | None = None,
 ) -> bool:
-    """Remove a previously created isolated git worktree."""
+    """Remove a previously created isolated git worktree; ``True`` only when it is gone.
+
+    ``git worktree remove --force`` first. Whatever it leaves on disk is removed with
+    ``rmtree``, and when git refused, ``git worktree prune`` then drops the registration of
+    a directory that is now gone — a registration left behind makes the next ``git
+    worktree add`` of the same branch fail. The answer is the directory's own state
+    afterwards: this used to return ``True`` unconditionally, even when nothing was
+    removed (#1278).
+    """
     run = runner or default_runner
-    cmd = ["git", "worktree", "remove", "--force", str(worktree_path)]
-    res = run(cmd, repo_root)
-    if not res.ok and worktree_path.exists():
+    res = run(["git", "worktree", "remove", "--force", str(worktree_path)], repo_root)
+    if worktree_path.exists():
         shutil.rmtree(worktree_path, ignore_errors=True)
-    return True
+    if not res.ok:
+        run(["git", "worktree", "prune"], repo_root)
+    return not worktree_path.exists()
+
+
+def prune_worktrees(repo_root: Path, runner: SubprocessRunner | None = None) -> str:
+    """Run ``git worktree prune``; ``""``, or why it failed (#1278).
+
+    It drops the registration of every worktree whose directory is gone — git's own
+    ``gc`` does the same after ``gc.worktreePruneExpire`` — and touches no directory, no
+    branch, and no worktree that is locked.
+    """
+    res = (runner or default_runner)(["git", "worktree", "prune"], repo_root)
+    return "" if res.ok else (res.output.strip() or f"exit {res.code}")
+
+
+def remove_empty_swarm_dirs(root: Path, swarm_id: str) -> None:
+    """Remove ``.keel/worktrees/<swarm_id>/``, then ``.keel/worktrees/``, when each is empty.
+
+    ``rmdir`` only — a directory with anything in it (a sibling worker's worktree, one kept
+    for inspection) stays, and so does a symlink (#1278).
+    """
+    base = Path(root) / ".keel" / "worktrees"
+    for directory in (base / swarm_id, base):
+        try:
+            # Refuses a directory with anything in it, a missing one, and a symlink.
+            directory.rmdir()
+        except OSError:
+            continue
+
+
+def settle_live_worktree(
+    root: Path,
+    worktree_path: Path,
+    branch: str,
+    disposal: swarm_worker.WorktreeDisposal,
+    runner: SubprocessRunner | None = None,
+) -> dict[str, Any]:
+    """Carry out a :class:`keel.swarm_worker.WorktreeDisposal`, and say what happened.
+
+    Returns the keys a worker's result gains: ``worktree`` (where it is still on disk, or
+    ``None``), ``worktree_state`` (``removed``, ``kept``, ``remove-failed`` or ``none``),
+    ``branch_deleted`` and ``warnings`` — so a removal that failed is recorded, not
+    swallowed (#1278).
+    """
+    warnings: list[str] = []
+    branch_deleted = False
+    state = "kept" if disposal.worktree == "keep" else "none"
+    if disposal.worktree == "remove":
+        removed = remove_swarm_worktree(root, worktree_path, runner=runner)
+        if not removed:
+            warnings.append(
+                f"the worktree {worktree_path} could not be removed; "
+                "`keel swarm-status --clean` retries it"
+            )
+        elif disposal.delete_branch:
+            deleted = (runner or default_runner)(["git", "branch", "-D", branch], root)
+            branch_deleted = deleted.ok
+            if not deleted.ok:
+                warnings.append(
+                    f"the branch {branch} could not be deleted: {deleted.output.strip()}"
+                )
+        state = "removed" if removed else "remove-failed"
+    return {
+        # A kept worktree, or one whose removal failed (`remove_swarm_worktree` answers
+        # from the directory's own state, so it is still there).
+        "worktree": str(worktree_path) if state in ("kept", "remove-failed") else None,
+        "worktree_state": state,
+        "branch_deleted": branch_deleted,
+        "warnings": warnings,
+    }
 
 
 def execute_cluster_worker(
@@ -302,9 +380,14 @@ def execute_live_cluster_worker(
     live: LiveRun,
     runner: SubprocessRunner | None = None,
     timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S,
+    progress: dict[str, bool] | None = None,
     on_stage: StageReporter = _no_stage,
 ) -> dict[str, Any]:
     """Implement one cluster live: its implementer seat, a commit, the gates, a push, a PR.
+
+    ``progress``, when given, is filled in as the worker goes — ``worktree_created`` once
+    its worktree exists, ``implementer_ran`` once the seat is started — so a caller can
+    settle the worktree correctly even when the worker raises part-way (#1278).
 
     ``on_stage`` is called with each stage of :data:`keel.swarm_worker.STAGES` as the
     worker enters it, so ``keel swarm-status`` can show how far a worker has got while it
@@ -349,7 +432,9 @@ def execute_live_cluster_worker(
         "implementer": system,
         "commit": None,
         "pr_url": None,
+        "pushed": False,
     }
+    progress = {} if progress is None else progress
 
     def stop(stage: str, reason: str, code: int = 1) -> dict[str, Any]:
         return {**record, "ok": False, "code": code, "stage": stage, "output": reason}
@@ -357,10 +442,22 @@ def execute_live_cluster_worker(
     on_stage("consent")
     if why := swarm_worker.consent_refusal(scopes):
         return stop("consent", why)
+    # A registration whose directory is gone — a crashed run's, after its directory was
+    # deleted — makes `git worktree add -B` of the same branch fail, so it is dropped
+    # first (#1278). A sibling's worktree still being added is locked, and prune skips it.
     on_stage("worktree")
+    pruned = prune_worktrees(root, runner=run)
     created = create_swarm_worktree(root, worktree_dir, branch, base_branch=base_branch, runner=run)
     if not created or not worktree_dir.exists():
-        return stop("worktree", f"failed to create isolated worktree at {worktree_dir}")
+        # Most often a previous run of this --swarm-id left its worktree or branch behind.
+        prune_note = f" (git worktree prune failed first: {pruned})" if pruned else ""
+        return stop(
+            "worktree",
+            f"failed to create isolated worktree at {worktree_dir}{prune_note}; if a "
+            f"previous run of this swarm left it behind, `keel swarm-status <project.yaml> "
+            f"--swarm-id {swarm_id} --clean` removes it",
+        )
+    progress["worktree_created"] = True
     # Read before the implementer runs, from configuration it has not touched yet: where
     # keel will push, the commit the work must descend from, and the git setup keel's own
     # steps will run under.
@@ -382,6 +479,8 @@ def execute_live_cluster_worker(
         encoding="utf-8",
     )
     gh_config = build_gh_config_path(swarm_id, cluster.cluster_id, root)
+    # From here the worktree holds what the seat did, and a failure keeps it (#1278).
+    progress["implementer_ran"] = True
     result = live.implement(
         plan, swarm_worker.implementer_env(os.environ, gh_config_dir=str(gh_config))
     )
@@ -542,6 +641,7 @@ def _commit_gate_push_open(
     )
     if not pushed.ok:
         return stop("push", f"git push {live.remote} {branch} failed: {pushed.output.strip()}")
+    record["pushed"] = True
 
     on_stage("pull_request")
     opened = live.open_pr(
@@ -574,6 +674,174 @@ def _commit_gate_push_open(
         "pr_url": url,
         "output": f"pull request opened: {url}",
     }
+
+
+def _swarm_ids_under(base: Path, path: str) -> tuple[str, str] | None:
+    """``(swarm_id, cluster_id)`` of a worktree path exactly two levels under ``base``."""
+    try:
+        parts = Path(path).resolve().relative_to(base).parts
+    except ValueError:
+        return None
+    return (parts[0], parts[1]) if len(parts) == 2 else None
+
+
+def _run_record(swarm_id: str, root: Path) -> swarm_worker.SwarmRunRecord | None:
+    """What ``swarm_id``'s state file says about its leftovers; ``None`` with no file."""
+    state = load_swarm_state(swarm_id, root=root)
+    if state is None:
+        exists = (root / ".keel" / "state" / "swarm" / f"{swarm_id}.json").exists()
+        # A state file keel cannot read may belong to a running run.
+        return swarm_worker.SwarmRunRecord(unfinished=True) if exists else None
+    return swarm_worker.SwarmRunRecord(
+        unfinished=state.completed_at is None,
+        pull_requests={
+            w.cluster_id: w.pull_request for w in state.workers if w.pull_request is not None
+        },
+        pushed=frozenset(w.cluster_id for w in state.workers if w.pushed),
+    )
+
+
+def find_swarm_leftovers(
+    root: str | Path,
+    *,
+    swarm_id: str | None = None,
+    runner: SubprocessRunner | None = None,
+) -> tuple[tuple[swarm_worker.SwarmLeftover, ...], str]:
+    """Every worktree, directory and branch a swarm run left behind, and what to do (#1278).
+
+    Looks only under keel's own paths — worktrees registered, or directories present,
+    exactly at ``.keel/worktrees/<swarm_id>/<cluster_id>`` — and its own branch namespace,
+    ``swarm/<swarm_id>/<cluster_id>``; ``swarm_id`` narrows it to one run.
+    :func:`keel.swarm_worker.classify_leftovers` decides what may be removed. Returns
+    ``(leftovers, "")``, or ``((), why)`` when git could not list them.
+    """
+    root_path = Path(root).resolve()
+    run = runner or default_runner
+    base = root_path / ".keel" / "worktrees"
+    listed = run(["git", "worktree", "list", "--porcelain"], root_path)
+    refs = run(["git", "for-each-ref", "--format=%(refname)", "refs/heads/swarm/"], root_path)
+    if not listed.ok or not refs.ok:
+        failed = listed if not listed.ok else refs
+        return (), f"git could not list the worktrees or branches: {failed.output.strip()}"
+
+    worktrees: list[tuple[str, str, str, bool]] = []
+    entries = swarm_worker.parse_worktree_list(listed.stdout or listed.output)
+    for entry in entries:
+        ids = _swarm_ids_under(base, entry.path)
+        if ids is not None:
+            # In the platform's own spelling: git prints `C:/…` on Windows.
+            worktrees.append((*ids, str(Path(entry.path).resolve()), entry.prunable))
+    # Every worktree registered under `.keel/worktrees/`, of keel's shape or not: a
+    # directory that is one, holds one or sits inside one is never taken for a leftover
+    # directory. (The main worktree holds all of it, so only those below the base count.)
+    resolved = (Path(entry.path).resolve() for entry in entries)
+    registered = [p for p in resolved if base in p.parents]
+
+    def unregistered(path: Path) -> bool:
+        return not any(p == path or p in path.parents or path in p.parents for p in registered)
+
+    directories: list[tuple[str, str, str]] = []
+    runs_dirs = sorted(base.iterdir()) if base.is_dir() and not base.is_symlink() else []
+    for run_dir in runs_dirs:
+        if run_dir.is_symlink() or not run_dir.is_dir():
+            continue
+        children = sorted(run_dir.iterdir())
+        if not children:
+            directories.append((run_dir.name, "", str(run_dir)))
+        for child in children:
+            if child.is_dir() and not child.is_symlink() and unregistered(child):
+                directories.append((run_dir.name, child.name, str(child)))
+
+    branches: dict[str, str] = {}  # branch -> its run
+    for line in (refs.stdout or refs.output).splitlines():
+        ids = swarm_worker.swarm_branch_ids(line.strip())
+        if ids is not None:
+            branches[line.strip()] = ids[0]
+    if swarm_id is not None:
+        worktrees = [w for w in worktrees if w[0] == swarm_id]
+        directories = [d for d in directories if d[0] == swarm_id]
+        branches = {b: sid for b, sid in branches.items() if sid == swarm_id}
+    seen = {w[0] for w in worktrees} | {d[0] for d in directories} | set(branches.values())
+    runs = {sid: record for sid in sorted(seen) if (record := _run_record(sid, root_path))}
+    leftovers = swarm_worker.classify_leftovers(
+        worktrees=worktrees,
+        directories=directories,
+        branches=branches,
+        runs=runs,
+        named=swarm_id,
+    )
+    return leftovers, ""
+
+
+def clean_swarm_leftovers(
+    root: str | Path,
+    leftovers: tuple[swarm_worker.SwarmLeftover, ...],
+    *,
+    runner: SubprocessRunner | None = None,
+) -> tuple[list[swarm_worker.SwarmLeftover], list[tuple[swarm_worker.SwarmLeftover, str]]]:
+    """Remove every leftover marked ``remove``; ``(removed, [(failed, why)])`` (#1278).
+
+    Registrations go with ``git worktree prune``, worktrees with
+    :func:`remove_swarm_worktree`, unregistered directories with ``rmtree`` — before the
+    branches, which git will not delete while a worktree has them checked out — and each
+    run directory left empty with ``rmdir``. Nothing marked ``keep`` is touched.
+    """
+    root_path = Path(root).resolve()
+    run = runner or default_runner
+    todo = [x for x in leftovers if x.action == "remove"]
+    removed: list[swarm_worker.SwarmLeftover] = []
+    failed: list[tuple[swarm_worker.SwarmLeftover, str]] = []
+
+    def settle(item: swarm_worker.SwarmLeftover, gone: bool, why: str) -> None:
+        if gone:
+            removed.append(item)
+        else:
+            failed.append((item, why))
+
+    registrations = [x for x in todo if x.kind == "registration"]
+    if registrations:
+        why = prune_worktrees(root_path, runner=run)
+        for item in registrations:
+            settle(item, not why, f"git worktree prune failed: {why}")
+    for item in todo:
+        if item.kind == "worktree":
+            gone = remove_swarm_worktree(root_path, Path(item.target), runner=run)
+            settle(item, gone, "the directory is still there")
+        elif item.kind == "directory" and item.cluster_id:
+            shutil.rmtree(item.target, ignore_errors=True)
+            settle(item, not Path(item.target).exists(), "the directory is still there")
+    for item in todo:
+        if item.kind == "branch":
+            deleted = run(["git", "branch", "-D", item.target], root_path)
+            settle(item, deleted.ok, deleted.output.strip() or f"exit {deleted.code}")
+    for swarm_id in sorted({x.swarm_id for x in todo}):
+        remove_empty_swarm_dirs(root_path, swarm_id)
+    for item in todo:
+        if item.kind == "directory" and not item.cluster_id:
+            settle(item, not Path(item.target).exists(), "the directory is not empty")
+    return removed, failed
+
+
+def _disposal(ok: bool, progress: Mapping[str, bool]) -> swarm_worker.WorktreeDisposal:
+    return swarm_worker.worktree_disposal(
+        ok=ok,
+        worktree_created=progress.get("worktree_created", False),
+        implementer_ran=progress.get("implementer_ran", False),
+    )
+
+
+def _with_settlement(
+    outcome: dict[str, Any], settled: dict[str, Any], branch: str
+) -> dict[str, Any]:
+    """A live worker's result with what became of its worktree; a kept worktree is named
+    at the end of ``output``, where the tail the swarm keeps still holds it (#1278)."""
+    output = outcome.get("output", "")
+    if settled["worktree_state"] == "kept":
+        output = (
+            f"{output}\nthe worktree is kept for inspection at {settled['worktree']} (branch "
+            f"{branch}); `keel swarm-status <project.yaml> --clean` removes it"
+        )
+    return {**outcome, **settled, "output": output}
 
 
 def run_swarm_orchestration(
@@ -656,6 +924,7 @@ def run_swarm_orchestration(
     passed_count = 0
     failed_count = 0
     wave_results: list[dict[str, Any]] = []
+    warnings: list[str] = []
     current_plan = plan
 
     # Waves are followed by their index, not by position: a failure makes
@@ -691,11 +960,14 @@ def run_swarm_orchestration(
             # workers run one at a time, and the rest are still queued (#1280).
             report(c_id, step="s4", status="running", details=running, started_at=_now())
 
-            # A live worker implements its cluster in a worktree of its own, cut and
-            # removed here; the worktree goes, the committed branch stays (#1400).
+            # A live worker implements its cluster in a worktree of its own, cut here and
+            # settled here, whichever way the worker ends — a returned failure or a raise
+            # (#1400, #1278): see `swarm_worker.worktree_disposal` for what stays.
             if not dry_run:
+                branch = cluster_branch(plan.swarm_id, c_id)
+                progress: dict[str, bool] = {}
                 try:
-                    return c_id, execute_live_cluster_worker(
+                    outcome = execute_live_cluster_worker(
                         cluster,
                         swarm_id=plan.swarm_id,
                         root=root_path,
@@ -705,11 +977,25 @@ def run_swarm_orchestration(
                         live=live,
                         runner=runner,
                         timeout_s=timeout_s,
+                        progress=progress,
                         on_stage=functools.partial(_enter_stage, c_id),
                     )
-                finally:
-                    if wt_path.exists():
-                        remove_swarm_worktree(root_path, wt_path, runner=runner)
+                except BaseException:
+                    # What the seat touched is kept for inspection; nothing is lost to
+                    # a crash in keel's own code.
+                    settle_live_worktree(
+                        root_path, wt_path, branch, _disposal(False, progress), runner
+                    )
+                    raise
+                else:
+                    settled = settle_live_worktree(
+                        root_path,
+                        wt_path,
+                        branch,
+                        _disposal(bool(outcome.get("ok")), progress),
+                        runner,
+                    )
+                    return c_id, _with_settlement(outcome, settled, branch)
 
             # A dry run's worker is an assessment in the operator's checkout.
             return c_id, execute_cluster_worker(
@@ -759,6 +1045,14 @@ def run_swarm_orchestration(
                         "code": 1,
                         "output": f"worker raised {type(exc).__name__}: {exc}",
                     }
+                    # A raising live worker keeps what its seat touched (#1278).
+                    kept = build_worktree_path(plan.swarm_id, c_id, root=root_path)
+                    if not dry_run and kept.exists():
+                        worker_res["worktree"] = str(kept)
+                        worker_res["output"] += (
+                            f"\nthe worktree is kept for inspection at {kept}; "
+                            "`keel swarm-status <project.yaml> --clean` removes it"
+                        )
                 # Bounded once, here, where every origin of `output` — the child's
                 # stdout, a worktree failure, a raised worker — meets both places it is
                 # kept: this wave record and, on failure, the state file's `details`
@@ -766,6 +1060,13 @@ def run_swarm_orchestration(
                 worker_res = {**worker_res, "output": tail_child_output(worker_res["output"])}
                 wave_record["cluster_results"][c_id] = worker_res
                 issue_val = worker_res.get("issue", 0)
+                warnings.extend(f"{c_id}: {w}" for w in worker_res.get("warnings", ()))
+                # Where the worker's worktree still is, and whether its branch was pushed:
+                # what `keel swarm-status --clean` reads (#1278).
+                left = {
+                    "worktree": worker_res.get("worktree") or "",
+                    "pushed": bool(worker_res.get("pushed")),
+                }
 
                 # The stage a live worker ended at: `done`, or the one that stopped it. A
                 # dry run's worker, or one that raised, reports none, and keeps the last
@@ -782,6 +1083,7 @@ def run_swarm_orchestration(
                         details="pipeline completed" if live is None else worker_res["output"],
                         # The pull request `swarm-land` merges (#1287); a dry run opens none.
                         pull_request=pull_request_number(str(worker_res.get("pr_url") or "")),
+                        **left,
                         **ended,
                     )
                 else:
@@ -791,11 +1093,16 @@ def run_swarm_orchestration(
                         step="s4",
                         status="failed",
                         details=worker_res.get("output", ""),
+                        **left,
                         **ended,
                     )
                     # Dynamically rebalance subsequent waves if needed
                     current_plan = rebalance_swarm_plan(current_plan, issue_val)
 
+        # Once the wave's workers are done, the run's directory goes when nothing is left
+        # in it — it used to accumulate, one per run (#1278).
+        if not dry_run:
+            remove_empty_swarm_dirs(root_path, plan.swarm_id)
         wave_results.append(wave_record)
 
     # Finalize state
@@ -819,4 +1126,5 @@ def run_swarm_orchestration(
         dry_run=dry_run,
         wave_results=tuple(wave_results),
         consent=state.consent,
+        warnings=tuple(warnings),
     )

@@ -22,6 +22,9 @@ This module holds every *decision* in that flow, and nothing else:
   seat keel cannot run as a worker: a host subagent, and a transport that cannot edit a
   worktree.
 - **What is written.** The brief, the commit message and the pull request's title and body.
+- **What is left behind** (#1278). :func:`worktree_disposal` decides what becomes of a
+  worker's worktree and branch when it ends, and :func:`classify_leftovers` which of a run's
+  worktrees, directories and branches ``keel swarm-status --clean`` may remove.
 
 Pure and deterministic: no subprocess, no filesystem, no clock. The runtime
 (:mod:`keel.swarm_runtime`) performs the mutations, behind :func:`consent_refusal`.
@@ -561,3 +564,207 @@ def pull_request_body(
         ),
     ]
     return "\n".join(lines) + "\n"
+
+
+@dataclass(frozen=True)
+class WorktreeDisposal:
+    """What becomes of a live worker's worktree and branch when the worker ends (#1278)."""
+
+    #: ``remove``, ``keep``, or ``none`` when the worker created no worktree to act on.
+    worktree: str
+    delete_branch: bool
+    #: Why, in words the run result and the state file can carry.
+    reason: str
+
+
+def worktree_disposal(
+    *, ok: bool, worktree_created: bool, implementer_ran: bool
+) -> WorktreeDisposal:
+    """Decide what a live worker leaves behind (#1278).
+
+    - A worker that never created its worktree touches nothing: what sits at its path, and
+      the branch of that name, are not its own — a previous run's kept worktree, say.
+    - A worker that succeeded has an open pull request headed by its branch: the worktree
+      goes, the branch stays.
+    - A worker that failed after its implementer ran keeps both, so the operator can
+      inspect what the seat wrote, the commit the gates rejected, or the branch a pull
+      request could not be opened for. ``keel swarm-status --clean`` removes them later.
+    - A worker that failed before its implementer ran (its push URL or git setup could not
+      be read) pushed nothing and has nothing to inspect: the worktree goes, and so does
+      the branch keel cut for it.
+    """
+    if not worktree_created:
+        return WorktreeDisposal("none", False, "no worktree was created")
+    if ok:
+        return WorktreeDisposal("remove", False, "its branch heads the open pull request")
+    if implementer_ran:
+        return WorktreeDisposal("keep", False, "kept for inspection: the worker failed")
+    return WorktreeDisposal(
+        "remove", True, "the worker failed before its implementer ran; nothing was pushed"
+    )
+
+
+@dataclass(frozen=True)
+class WorktreeEntry:
+    """One block of ``git worktree list --porcelain``."""
+
+    path: str
+    branch: str | None
+    #: git's own verdict that the worktree's directory is gone.
+    prunable: bool
+
+
+def parse_worktree_list(porcelain: str) -> tuple[WorktreeEntry, ...]:
+    """``git worktree list --porcelain`` as entries; text outside a block is ignored."""
+    entries: list[WorktreeEntry] = []
+    for block in porcelain.replace("\r\n", "\n").split("\n\n"):
+        lines = [line for line in block.split("\n") if line]
+        if not lines or not lines[0].startswith("worktree "):
+            continue
+        branch = next((ln[len("branch ") :] for ln in lines if ln.startswith("branch ")), None)
+        entries.append(
+            WorktreeEntry(
+                path=lines[0][len("worktree ") :],
+                branch=branch,
+                prunable=any(ln == "prunable" or ln.startswith("prunable ") for ln in lines),
+            )
+        )
+    return tuple(entries)
+
+
+#: The namespace keel cuts a live worker's branch in: ``swarm/<swarm_id>/<cluster_id>``.
+SWARM_BRANCH_PREFIX = "swarm/"
+
+
+def swarm_branch_ids(branch: str) -> tuple[str, str] | None:
+    """``(swarm_id, cluster_id)`` of a branch keel's swarm cut, or ``None`` for any other.
+
+    ``branch`` may be the short name or ``refs/heads/…``. Only the exact shape
+    ``swarm/<id>/<cluster>`` counts, so a branch someone keeps under ``swarm/`` at another
+    depth is never taken for keel's.
+    """
+    name = branch.removeprefix("refs/heads/")
+    if not name.startswith(SWARM_BRANCH_PREFIX):
+        return None
+    parts = name[len(SWARM_BRANCH_PREFIX) :].split("/")
+    if len(parts) != 2 or not all(parts):
+        return None
+    return parts[0], parts[1]
+
+
+@dataclass(frozen=True)
+class SwarmRunRecord:
+    """What a run's state file says about its leftovers."""
+
+    #: No ``completed_at`` yet, or a state file keel cannot read: the run may be running.
+    unfinished: bool
+    #: ``cluster_id`` -> the pull request its worker opened.
+    pull_requests: Mapping[str, int] = field(default_factory=dict)
+    #: Clusters whose worker pushed its branch (with or without a pull request).
+    pushed: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class SwarmLeftover:
+    """One thing a swarm run left under keel's own paths or branch namespace (#1278)."""
+
+    #: ``worktree`` (registered), ``directory`` (on disk, not registered), ``registration``
+    #: (registered, its directory gone) or ``branch``.
+    kind: str
+    swarm_id: str
+    #: Empty for a run's own ``.keel/worktrees/<swarm_id>/`` directory.
+    cluster_id: str
+    #: The path, or the branch name.
+    target: str
+    #: ``remove`` or ``keep``.
+    action: str
+    reason: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "kind": self.kind,
+            "swarm_id": self.swarm_id,
+            "cluster_id": self.cluster_id,
+            "target": self.target,
+            "action": self.action,
+            "reason": self.reason,
+        }
+
+
+LEFTOVER_KINDS = ("registration", "worktree", "directory", "branch")
+
+
+def _branch_keep_reason(record: SwarmRunRecord | None, cluster_id: str) -> str:
+    if record is None:
+        return "no run state says whether it was pushed; delete it by hand if it was not"
+    if cluster_id in record.pull_requests:
+        return f"it heads pull request #{record.pull_requests[cluster_id]}"
+    if cluster_id in record.pushed:
+        return "it was pushed"
+    return ""
+
+
+def classify_leftovers(
+    *,
+    worktrees: Iterable[tuple[str, str, str, bool]],
+    directories: Iterable[tuple[str, str, str]],
+    branches: Iterable[str],
+    runs: Mapping[str, SwarmRunRecord],
+    named: str | None = None,
+) -> tuple[SwarmLeftover, ...]:
+    """Which of the swarm's leftovers ``keel swarm-status --clean`` may remove (#1278).
+
+    ``worktrees`` are the registered worktrees under ``.keel/worktrees/`` as
+    ``(swarm_id, cluster_id, path, prunable)``; ``directories`` what sits there on disk and
+    is not registered, as ``(swarm_id, cluster_id, path)`` (``cluster_id`` empty for an
+    empty run directory); ``branches`` local branch names, of which only keel's swarm
+    namespace is considered; ``runs`` what each run's state file says; ``named`` the run
+    the operator named with ``--swarm-id``.
+
+    keel cannot tell a killed run from a running one: both have a state file with no
+    ``completed_at``. Such a run's leftovers are kept unless the operator names the run —
+    naming it is their statement that no ``swarm-run`` of it is still running. A branch is
+    also kept when its worker recorded a push or a pull request (the pull request is headed
+    by it), and when no state file says either way.
+    """
+
+    def in_flight(swarm_id: str) -> str:
+        record = runs.get(swarm_id)
+        if record is None or not record.unfinished or swarm_id == named:
+            return ""
+        return (
+            f"swarm run {swarm_id!r} has not completed; if no swarm-run of it is still "
+            f"running, name it with --swarm-id {swarm_id}"
+        )
+
+    found: list[SwarmLeftover] = []
+    for swarm_id, cluster_id, path, prunable in worktrees:
+        if prunable:
+            why = "its directory is gone; git worktree prune drops the registration"
+            found.append(SwarmLeftover("registration", swarm_id, cluster_id, path, "remove", why))
+            continue
+        why = in_flight(swarm_id)
+        action = "keep" if why else "remove"
+        why = why or "no running swarm run owns it"
+        found.append(SwarmLeftover("worktree", swarm_id, cluster_id, path, action, why))
+    for swarm_id, cluster_id, path in directories:
+        why = in_flight(swarm_id)
+        action = "keep" if why else "remove"
+        why = why or ("an empty run directory" if not cluster_id else "not a registered worktree")
+        found.append(SwarmLeftover("directory", swarm_id, cluster_id, path, action, why))
+    for branch in branches:
+        ids = swarm_branch_ids(branch)
+        if ids is None:
+            continue
+        swarm_id, cluster_id = ids
+        why = in_flight(swarm_id) or _branch_keep_reason(runs.get(swarm_id), cluster_id)
+        action = "keep" if why else "remove"
+        why = why or "nothing was pushed and no pull request was opened"
+        name = branch.removeprefix("refs/heads/")
+        found.append(SwarmLeftover("branch", swarm_id, cluster_id, name, action, why))
+    return tuple(
+        sorted(
+            found,
+            key=lambda x: (x.swarm_id, x.cluster_id, LEFTOVER_KINDS.index(x.kind), x.target),
+        )
+    )

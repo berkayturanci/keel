@@ -436,6 +436,13 @@ class SwarmWorkerStatus:
     #: The pull request a live worker opened for its cluster (#1287): the one
     #: ``swarm-land`` merges. ``None`` until a worker opens one, and for a dry run.
     pull_request: int | None = None
+    #: Where a live worker's worktree is still on disk when the worker ended — kept for
+    #: inspection after a failure, or left by a removal that failed (#1278). Empty when
+    #: the worktree was removed or never created.
+    worktree: str = ""
+    #: Whether a live worker pushed its branch; ``keel swarm-status --clean`` keeps a
+    #: pushed branch (#1278).
+    pushed: bool = False
     #: The wave the worker's cluster runs in, so the board can group by it (#1280). ``0``
     #: in a record written before the field existed.
     wave: int = 0
@@ -475,6 +482,8 @@ class SwarmWorkerStatus:
             "difficulty": self.difficulty,
             "scopes": list(self.scopes),
             "pull_request": self.pull_request,
+            "worktree": self.worktree,
+            "pushed": self.pushed,
             "wave": self.wave,
             "stage": self.stage,
             "started_at": self.started_at,
@@ -569,6 +578,9 @@ class SwarmRunResult:
     wave_results: tuple[dict[str, Any], ...] = ()
     #: The consent delegation a live run's workers ran under (#1400); ``None`` when dry.
     consent: dict[str, Any] | None = None
+    #: What the operator must look at by hand (#1278): a worktree or branch keel could not
+    #: remove, a ``git worktree prune`` that failed, a worktree kept for inspection.
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -580,6 +592,7 @@ class SwarmRunResult:
             "dry_run": self.dry_run,
             "wave_results": list(self.wave_results),
             "consent": self.consent,
+            "warnings": list(self.warnings),
         }
 
 
@@ -1699,6 +1712,9 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
                 difficulty=str(w.get("difficulty", "")),
                 scopes=_stored_scopes(w.get("scopes")),
                 pull_request=_stored_pull_request(w.get("pull_request")),
+                worktree=str(w.get("worktree") or ""),
+                # Only a `true` that was written is a push: `--clean` keeps what it says.
+                pushed=w.get("pushed") is True,
                 # A record from before #1280 has none of these, and still loads.
                 wave=_stored_wave(w.get("wave")),
                 stage=_stored_stage(w.get("stage")),
@@ -1911,6 +1927,8 @@ def update_worker_state(
     status: str | None = None,
     details: str | None = None,
     pull_request: int | None = None,
+    worktree: str | None = None,
+    pushed: bool | None = None,
     stage: str | None = None,
     started_at: str | None = None,
     finished_at: str | None = None,
@@ -1918,8 +1936,8 @@ def update_worker_state(
     """Return a new SwarmRunState with the specified worker's fields updated.
 
     ``pull_request`` is recorded when given and otherwise kept, so a later status update
-    never forgets the pull request ``swarm-land`` has to merge (#1287). ``stage``,
-    ``started_at`` and ``finished_at`` likewise (#1280).
+    never forgets the pull request ``swarm-land`` has to merge (#1287). ``worktree`` and
+    ``pushed`` likewise (#1278), and ``stage``, ``started_at`` and ``finished_at`` (#1280).
     """
     # `replace` rather than a field-by-field rebuild: the rebuild had to name every
     # field, so each field added to the record (the lead and difficulty band a worker
@@ -1932,6 +1950,8 @@ def update_worker_state(
             updated_at=datetime.datetime.now(datetime.UTC).isoformat(),
             details=details if details is not None else w.details,
             pull_request=pull_request if pull_request is not None else w.pull_request,
+            worktree=worktree if worktree is not None else w.worktree,
+            pushed=pushed if pushed is not None else w.pushed,
             stage=stage if stage is not None else w.stage,
             started_at=started_at if started_at is not None else w.started_at,
             finished_at=finished_at if finished_at is not None else w.finished_at,
@@ -2017,6 +2037,7 @@ def render_swarm_run_result(result: SwarmRunResult) -> str:
                 lines.append(f"  {cluster_id:<13} : pull request {res['pr_url']}")
             elif res.get("stage") and not res.get("ok"):
                 lines.append(f"  {cluster_id:<13} : stopped at {res['stage']} — {res['output']}")
+    lines.extend(f"  warning       : {warning}" for warning in result.warnings)
     return "\n".join(lines)
 
 

@@ -3213,7 +3213,7 @@ Scoring and staffing run **after** the partition and never feed back into it: ch
 `team.by_difficulty` (or passing `--team`) changes who runs a cluster and cannot change which
 wave it lands in.
 
-## `keel swarm-status <project.yaml> [--root DIR] [--swarm-id ID] [--json]`
+## `keel swarm-status <project.yaml> [--root DIR] [--swarm-id ID] [--orphans] [--clean] [--json]`
 
 Inspect each cluster's status (`running` / `passed` / `failed`) across
 active or recent multi-agent swarm runs. Each row names the worker's **lead** and the difficulty
@@ -3253,6 +3253,43 @@ always was, each record now with `wave`, `stage`, `started_at` and `finished_at`
   Wave `0` holds records written before workers carried their wave.
 
 A state file written before these fields still loads.
+
+### Leftovers: `--orphans` and `--clean`
+
+`--orphans` lists what swarm runs left behind instead of the board
+([#1278](https://github.com/berkayturanci/keel/issues/1278)): every worktree registered at, and
+every directory present at, `.keel/worktrees/<swarm_id>/<cluster_id>/`, every empty
+`.keel/worktrees/<swarm_id>/`, and every local branch `swarm/<swarm_id>/<cluster_id>` — of every
+run, or of the run `--swarm-id` names. Each is marked `remove` or `keep`, with the reason.
+`--clean` lists them the same way and then removes the ones marked `remove`:
+
+```bash
+keel swarm-status .keel/project.yaml --root . --orphans
+keel swarm-status .keel/project.yaml --root . --clean
+keel swarm-status .keel/project.yaml --root . --swarm-id swarm-20260930-120000 --clean --json
+```
+
+| Leftover | `--clean` |
+|---|---|
+| a registration whose directory is gone | dropped by `git worktree prune` |
+| a worktree of a finished run (a failed worker's, kept for inspection; one whose removal failed) | `git worktree remove --force`, then `rmtree` of anything left |
+| a directory git does not know, or an empty run directory | removed |
+| a branch whose worker recorded no push and no pull request | `git branch -D` |
+| a branch whose worker pushed it, or that heads the pull request it opened | **kept** |
+| a branch of a run with no state file | **kept**: nothing says whether it was pushed |
+| anything of a run whose state has no `completed_at` (running, or killed) | **kept**, unless `--swarm-id` names that run |
+
+keel cannot tell a killed run from a running one — both have a state file with no
+`completed_at` — so naming the run with `--swarm-id` is your statement that no `swarm-run` of it
+is still running. Nothing outside `.keel/worktrees/` and the `swarm/<id>/<cluster>` branch shape
+is ever listed or touched: not a worktree elsewhere, not a directory that holds or sits inside a
+registered worktree of another shape, not a branch such as `swarm/a/b/c`. Like
+`keel worktree-remove`, it is a local cleanup and asks for no operator consent.
+
+`--json` prints `{swarm_id, cleaned, leftovers, removed, failed}`, each leftover as
+`{kind, swarm_id, cluster_id, target, action, reason}` and each failure with its `error`. It
+exits `0` when the listing (and every removal) succeeded, and `1` when git cannot list the
+worktrees or branches (`--json`: `{"error_code": "git-failed", "error"}`) or a removal failed.
 
 ## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--max-workers N] [--worker-timeout SECONDS] [--live] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
@@ -3294,7 +3331,12 @@ the first stage that fails and reports it as `stage` in its `cluster_results` en
 `worktree`, `implement`, `tamper`, `commit`, `gates`, `push`, `pull_request`); a failed implementer
 or a red gate pushes nothing and opens nothing. A successful one reports `pr_url` and `stage:
 done`. The same stage is written to the worker's record in the run state as the worker enters
-it, which is what `keel swarm-status` shows while the run is in flight.
+it, which is what `keel swarm-status` shows while the run is in flight. Each live cluster
+result also says what became of its worktree — `worktree_state` (`removed`, `kept`,
+`remove-failed`, `none`), `worktree` (its path while it is still on disk) and `branch_deleted`:
+a worker that failed after its seat ran keeps its worktree for inspection
+([#1278](https://github.com/berkayturanci/keel/issues/1278); `keel swarm-status --clean` removes
+it later), and a removal that failed is a `warnings` entry of the run result.
 
 `--live` needs the operator's consent for the scopes `filesystem`, `git` and `github`, obtained
 as every live command obtains it: `--approve-scope` with `--operator`, or `KEEL_APPROVE_SCOPE` +
