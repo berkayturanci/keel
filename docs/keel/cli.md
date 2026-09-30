@@ -3404,6 +3404,11 @@ keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
 
+The DAG is the plan `swarm-run` persisted as `.keel/state/swarm/<swarm_id>.plan.json`; with
+none, or one it cannot read, the page says so instead of drawing one. `--json` prints the
+payload: `swarm_id`, `plan` (or `null`), `plan_status` (`persisted`/`missing`/`unreadable`),
+`plan_detail` and `state`. See [swarm.md §5](swarm.md#5-visual-dashboard-integration-keel-visual-swarm).
+
 ## Exit codes
 
 Most commands use only 0 and 1; a few give a third answer its own code, so a caller can tell

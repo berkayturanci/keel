@@ -37,9 +37,11 @@
 > [Declaring an issue's scope](#declaring-an-issues-scope). `swarm-run` persists the plan it
 > executes and `swarm-land` lands exactly that plan
 > ([#1275](https://github.com/berkayturanci/keel/issues/1275), see
-> [Which plan lands](#which-plan-lands)); `keel-visual swarm` does not read it yet — it rebuilds
-> its scopes without predicted files, so its DAG is always one flat wave
-> ([#1275](https://github.com/berkayturanci/keel/issues/1275),
+> [Which plan lands](#which-plan-lands)); `keel-visual swarm` draws that same plan — its
+> waves, predicted files and dependencies — and says so when a run has none, instead of
+> rebuilding one (keel-visual 0.9.0 still rebuilds its scopes without predicted files, so its
+> DAG there is always one flat wave;
+> [#1275](https://github.com/berkayturanci/keel/issues/1275),
 > [#1280](https://github.com/berkayturanci/keel/issues/1280)).
 >
 > Landing is guarded, and it goes through **`keel merge`**: `swarm-land` hands each cluster's
@@ -690,9 +692,24 @@ keel-visual swarm .keel/project.yaml --root . --out keel-swarm.html
 keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 ```
 
+It finds the newest run by its state file, `.keel/state/swarm/<swarm_id>.json` (or the one
+`--swarm-id` names), never by the `<swarm_id>.plan.json` beside it, and draws the plan
+`swarm-run` persisted in that file. A run with no plan file (one from before
+[#1275](https://github.com/berkayturanci/keel/issues/1275)), or one keel-visual cannot read —
+not JSON, not a `keel.swarm-plan`, a schema version other than `1`, another run's plan — shows
+a sentence saying so in place of the DAG; the worker matrix still shows the run's state. It
+never re-plans: a plan rebuilt from the workers has no predicted files, so it was always one
+flat wave with no dependencies, a picture of a plan that never ran
+([#1280](https://github.com/berkayturanci/keel/issues/1280)). With a core that has
+`keel.swarm.swarm_plan_from_payload`, the plan is parsed by the same strict reader
+`swarm-land` uses, so the page never draws a plan `swarm-land` would refuse.
+
 ### Visual Features:
-- **2D DAG Cluster Partition View**: Interactive graph displaying wave tiers, cluster cards, issue
-  pills, and role badges.
+- **2D DAG Cluster Partition View**: the persisted plan's waves — each labelled
+  `Orthogonal Parallel` or `Dependent — Refused` — and their cluster cards: issue pills, each
+  issue's title and where its scope came from, the predicted files (six, then `+N more`), the
+  issues a cluster depends on and the wave each lands in, the difficulty band, the implementer,
+  and the role badge.
 - **Pseudo-3D Multi-Wave Topology**: An HTML5 Canvas renderer projecting the stacked wave layers as
   a pseudo-3D scene, with drag-to-rotate and scroll-to-zoom.
 - **Worker Matrix**: Worker cards showing each cluster's state —

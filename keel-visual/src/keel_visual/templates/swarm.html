@@ -67,6 +67,17 @@
   .issue-pill{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(73,182,255,.12);color:var(--txt)}
   .scope-list{font-size:11px;color:var(--dim);display:flex;flex-direction:column;gap:2px}
   .scope-item{font-family:ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .scope-item.none{font-style:italic}
+  .band-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:6px;background:var(--panel2);color:var(--minor);border:1px solid var(--line);margin-left:auto;margin-right:6px}
+  .issue-list{font-size:12px;color:var(--mut);display:flex;flex-direction:column;gap:3px}
+  .issue-row{display:flex;gap:6px;align-items:baseline;min-width:0}
+  .issue-row .issue-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+  .scope-src{font-size:10px;color:var(--dim);font-family:ui-monospace,Menlo,monospace}
+  .deps-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:11px;color:var(--warn)}
+  .dep-pill{font-family:ui-monospace,Menlo,monospace;font-weight:700;padding:1px 7px;border-radius:999px;background:rgba(240,160,32,.14)}
+  .impl-line{font-size:11px;color:var(--dim)}
+  .plan-notice{border:1px dashed var(--line2);border-radius:12px;padding:18px;color:var(--mut);font-size:13px;line-height:1.5}
+  .plan-notice[hidden]{display:none}
   #scene3d{position:relative;height:clamp(440px,70vh,820px);border-radius:var(--r);overflow:hidden;background:radial-gradient(120% 100% at 50% 0%,var(--scene-a) 0%,var(--scene-b) 70%);border:1px solid var(--line)}
   #canvas3d{display:block;width:100%;height:100%}
   .hud3d{position:absolute;left:18px;bottom:16px;font-size:12px;color:var(--dim);display:flex;gap:16px;align-items:center}
@@ -124,6 +135,7 @@
   <!-- 2D DAG Partition View -->
   <section id="view-dag" class="view show">
     <div class="dag-container">
+      <div id="plan-notice" class="plan-notice" hidden></div>
       <div id="waves-dag-row" class="waves-row"></div>
     </div>
   </section>
@@ -181,12 +193,41 @@ function switchView(viewName){
   }
 }
 
+// A list the payload promised, or an empty one: a hand-edited fixture must not kill the page.
+function arr(v){
+  return Array.isArray(v) ? v : [];
+}
+
+// The sentence shown instead of a DAG, or '' when there is a plan to draw. The plan is
+// the one keel swarm-run persisted (keel #1275); keel-visual no longer rebuilds one from
+// the workers, because a rebuild has no predicted files and always came out as one flat
+// wave with no dependencies (keel #1280) — a picture of a plan that never ran.
+function planNotice(data){
+  const detail = data.plan_detail ? ' (' + data.plan_detail + ')' : '';
+  if(data.plan_status === 'unreadable'){
+    return 'The persisted plan for this run could not be read, so no DAG is drawn' + detail + '.';
+  }
+  if(data.plan_status === 'missing' || !data.plan || typeof data.plan !== 'object'){
+    return 'This run persisted no plan, so no DAG is drawn' + detail +
+      '. keel swarm-run writes one beside the run state; runs from before keel #1275 have none.';
+  }
+  return '';
+}
+
 function renderSwarmData(){
   const data = window.KEEL_SWARM || {};
-  const plan = data.plan || {};
+  const notice = planNotice(data);
+  const plan = (!notice && data.plan) || {};
   const state = data.state || {};
-  const waves = plan.waves || [];
-  const workers = state.workers || [];
+  const waves = arr(plan.waves).filter(w => w && typeof w === 'object');
+  const workers = arr(state.workers).filter(w => w && typeof w === 'object');
+  const scopes = (plan.issue_scopes && typeof plan.issue_scopes === 'object') ? plan.issue_scopes : {};
+
+  // Which wave each issue lands in, so a dependency can name the wave it waits on.
+  const waveOf = {};
+  waves.forEach((w, wIdx) => arr(w.clusters).forEach(c => arr(c && c.issues).forEach(num => {
+    waveOf[String(num)] = w.wave_index || (wIdx + 1);
+  })));
 
   document.getElementById('swarm-id-badge').textContent = data.swarm_id || plan.swarm_id || 'swarm-live';
   document.getElementById('stat-issues').textContent = plan.total_issues || workers.length || 0;
@@ -197,7 +238,12 @@ function renderSwarmData(){
   document.getElementById('stat-passed').textContent = passedCount;
 
   const isParallel = waves.every(w => w.eligible_direct_landing);
-  document.getElementById('stat-landing-mode').textContent = isParallel ? 'Direct Batch' : 'Direct Batch · Dependent Refused';
+  document.getElementById('stat-landing-mode').textContent = notice ? 'No plan' :
+    (isParallel ? 'Direct Batch' : 'Direct Batch · Dependent Refused');
+
+  const noticeEl = document.getElementById('plan-notice');
+  noticeEl.textContent = notice;
+  noticeEl.hidden = !notice;
 
   // Render 2D DAG
   const dagRow = document.getElementById('waves-dag-row');
@@ -215,22 +261,43 @@ function renderSwarmData(){
       </div>
     `;
 
-    (w.clusters || []).forEach(c => {
+    arr(w.clusters).filter(c => c && typeof c === 'object').forEach(c => {
       const card = document.createElement('div');
       const workerMatch = workers.find(wk => wk.cluster_id === c.cluster_id);
       const st = workerMatch ? workerMatch.status : 'queued';
       card.className = `cluster-card ${statusClass(st)}`;
 
-      const issuesHtml = (c.issues || []).map(num => `<span class="issue-pill">#${esc(num)}</span>`).join('');
-      const scopeHtml = (c.combined_scope || []).slice(0, 3).map(s => `<span class="scope-item">${esc(s)}</span>`).join('');
+      const issues = arr(c.issues);
+      const scope = arr(c.combined_scope);
+      const deps = arr(c.depends_on_issues);
+      const band = c.difficulty && typeof c.difficulty === 'object' ? c.difficulty.band : '';
+      const impl = c.assignment && c.assignment.implementer;
+      const implName = impl && typeof impl === 'object' ? (impl.name || impl.provider || '') : '';
+
+      const issuesHtml = issues.map(num => `<span class="issue-pill">#${esc(num)}</span>`).join('');
+      const issueRowsHtml = issues.filter(num => scopes[String(num)] && typeof scopes[String(num)] === 'object')
+        .map(num => `<div class="issue-row"><span class="issue-title">#${esc(num)} ${esc(scopes[String(num)].title || '')}</span><span class="scope-src">${esc(scopes[String(num)].scope_source || '')}</span></div>`)
+        .join('');
+      const scopeHtml = scope.length
+        ? scope.slice(0, 6).map(s => `<span class="scope-item">${esc(s)}</span>`).join('') +
+          (scope.length > 6 ? `<span class="scope-item">+${esc(scope.length - 6)} more</span>` : '')
+        : `<span class="scope-item none">no predicted files</span>`;
+      const depsHtml = deps.map(num => `<span class="dep-pill">#${esc(num)}${esc(waveOf[String(num)] ? ' · wave ' + waveOf[String(num)] : '')}</span>`).join('');
+      const depsBlock = deps.length ? `<div class="deps-row"><span>depends on</span>${depsHtml}</div>` : '';
+      const bandHtml = band ? `<span class="band-badge">${esc(band)}</span>` : '';
+      const implHtml = implName ? `<div class="impl-line">implementer ${esc(implName)}</div>` : '';
 
       card.innerHTML = `
         <div class="cluster-header">
           <span class="cluster-id">${esc(c.cluster_id)}</span>
+          ${bandHtml}
           <span class="role-badge">${esc(c.role || 'core')}</span>
         </div>
         <div class="issues-row">${issuesHtml}</div>
+        <div class="issue-list">${issueRowsHtml}</div>
         <div class="scope-list">${scopeHtml}</div>
+        ${depsBlock}
+        ${implHtml}
       `;
       col.appendChild(card);
     });
@@ -299,7 +366,7 @@ function draw3DTopology(){
   ctx.clearRect(0, 0, w, h);
 
   const data = window.KEEL_SWARM || {};
-  const waves = (data.plan && data.plan.waves) || [];
+  const waves = planNotice(data) ? [] : arr(data.plan.waves).filter(w => w && typeof w === 'object');
   const cx = w / 2, cy = h / 2;
 
   function project(x, y, z){
@@ -327,7 +394,7 @@ function draw3DTopology(){
   // Draw stacked wave planes and nodes
   waves.forEach((wave, wIdx) => {
     const waveZ = (wIdx - (waves.length - 1) / 2) * 160;
-    const clusters = wave.clusters || [];
+    const clusters = arr(wave.clusters).filter(c => c && typeof c === 'object');
 
     // Draw wave boundary ring
     ctx.strokeStyle = wave.eligible_direct_landing ? 'rgba(122,209,74,0.3)' : 'rgba(240,160,32,0.3)';
@@ -359,7 +426,7 @@ function draw3DTopology(){
       // Label
       ctx.fillStyle = '#e7ecf7';
       ctx.font = `${Math.max(10, 11 * pt.scale)}px monospace`;
-      ctx.fillText(c.cluster_id, pt.px + 12 * pt.scale, pt.py + 4 * pt.scale);
+      ctx.fillText(String(c.cluster_id), pt.px + 12 * pt.scale, pt.py + 4 * pt.scale);
     });
   });
 }
