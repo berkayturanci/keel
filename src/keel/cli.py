@@ -72,6 +72,7 @@ from . import (
     status,
     stepverifier,
     swarm,
+    swarm_worker,
     tdd,
     team,
     window,
@@ -7684,6 +7685,79 @@ def _cmd_swarm_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _swarm_run_consent(
+    args: argparse.Namespace, config: cfg.ProjectConfig
+) -> tuple[swarm_worker.ConsentDelegation | None, str]:
+    """The operator's consent for a live swarm run, as a delegation, or the refusal.
+
+    Obtained exactly as every live keel command obtains it — ``--approve-scope`` /
+    ``--operator``, or ``KEEL_APPROVE_SCOPE`` + ``KEEL_OPERATOR`` / ``automation`` under
+    ``consent_mode: standing`` — over the mutations a live worker performs
+    (:data:`keel.swarm_worker.WORKER_SIDE_EFFECTS`). Checked before any issue is read, so
+    a refused run reads nothing and starts nothing. The delegation names no run or cluster
+    yet; :func:`_cmd_swarm_run` fills both in once the plan exists (#1400).
+    """
+    try:
+        approved, source, operator, mode = _approved_consent(args, config, True)
+        contract = consent.build_consent_contract(
+            command="swarm-run",
+            side_effects=swarm_worker.WORKER_SIDE_EFFECTS,
+            dry_run=False,
+            approved_scopes=approved,
+            approval_source=source,
+            mode=mode,
+            operator=operator,
+            target=f"{args.root} (one branch and one pull request per swarm cluster)",
+        )
+    except ValueError as exc:
+        return None, str(exc)
+    return swarm_worker.delegate_consent(contract, swarm_id="", cluster_ids=())
+
+
+def _swarm_run_live(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    plan: swarm.SwarmPlan,
+    delegation: swarm_worker.ConsentDelegation,
+):
+    """``(LiveRun, [])``, or ``(None, refusals)`` naming each cluster keel cannot dispatch.
+
+    Every cluster's implementer seat is planned before any worker starts, so a seat keel
+    cannot run as a worker (a host subagent, a transport that cannot edit a worktree) stops
+    the whole run up front rather than one worker after the others have pushed.
+    """
+    from . import swarm_runtime
+
+    root = Path(args.root).resolve()
+    registry = providers_mod.load_registry()
+    clusters = [c for wave in plan.waves for c in wave.clusters]
+    dispatches: dict[str, delegate.RunPlan] = {}
+    refusals: list[str] = []
+    for cluster in clusters:
+        run_plan, reason = swarm_worker.plan_implementer(
+            cluster.assignment,
+            config=config,
+            registry=registry,
+            prompt_path=str(
+                swarm_runtime.build_brief_path(plan.swarm_id, cluster.cluster_id, root)
+            ),
+            cwd=str(swarm_runtime.build_worktree_path(plan.swarm_id, cluster.cluster_id, root)),
+        )
+        if run_plan is None:
+            refusals.append(f"{cluster.cluster_id}: {reason}")
+        else:
+            dispatches[cluster.cluster_id] = run_plan
+    if refusals:
+        return None, refusals
+    live = swarm_runtime.LiveRun(
+        consent=delegation.for_run(plan.swarm_id, (c.cluster_id for c in clusters)),
+        dispatches=dispatches,
+        issue_scopes=plan.issue_scopes,
+        seat_sources={c.cluster_id: c.assignment["implementer"]["source"] for c in clusters},
+    )
+    return live, []
+
+
 def _cmd_swarm_run(args: argparse.Namespace) -> int:
     try:
         config = cfg.load_config(args.path)
@@ -7694,19 +7768,15 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    # A live worker implements its cluster through the cluster's implementer seat, commits,
+    # runs the gates, pushes and opens a pull request (#1400) — under the operator's
+    # consent, which the parent obtains here and hands to each worker explicitly.
+    delegation: swarm_worker.ConsentDelegation | None = None
     if args.live:
-        # Its workers now get `--live` (#1269), and `keel ship --live` stops at the
-        # operator-consent gate, which swarm-run has no way to satisfy for a child.
-        # A live run would fail every worker and leave `swarm/<id>/…` branches
-        # behind, so it is refused before anything starts, with the reason.
-        print(
-            "swarm-run --live is refused: each worker would run `keel ship --live`, which "
-            "needs operator consent that swarm-run cannot hand down, and `keel ship` never "
-            "commits or opens a pull request in any mode. Run it without --live to plan and "
-            "assess. Tracked on https://github.com/berkayturanci/keel/issues/1281.",
-            file=sys.stderr,
-        )
-        return 1
+        delegation, reason = _swarm_run_consent(args, config)
+        if delegation is None:
+            print(f"swarm-run --live is refused: {reason}", file=sys.stderr)
+            return 1
 
     scopes = _swarm_issue_scopes(args, config)
     if scopes is None:
@@ -7731,11 +7801,25 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
 
     from . import swarm_runtime
 
+    live = None
+    if delegation is not None:
+        live, refusals = _swarm_run_live(args, config, plan, delegation)
+        if live is None:
+            print(
+                "swarm-run --live is refused: keel cannot dispatch every cluster's "
+                "implementer seat, and no worker starts until it can:",
+                file=sys.stderr,
+            )
+            for refusal in refusals:
+                print(f"  {refusal}", file=sys.stderr)
+            return 1
+
     result = swarm_runtime.run_swarm_orchestration(
         plan,
         project_yaml=args.path,
         root=args.root,
         dry_run=not args.live,
+        live=live,
         max_workers=args.max_workers,
         base_branch=config.base_branch,
         # The child runs the gate suite even dry, so its budget is the project's own
@@ -10191,8 +10275,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr = sub.add_parser(
         "swarm-run",
         help=(
-            "EXPERIMENTAL: run a keel ship assessment per cluster (a dry run: one at a time "
-            "in this checkout, the gate suite once per issue); commits nothing, opens no PR"
+            "EXPERIMENTAL: dry, a keel ship assessment per cluster (one at a time in this "
+            "checkout); --live, each cluster's implementer seat in its own worktree, then a "
+            "commit, the gates, a push and one pull request per cluster, under consent"
         ),
     )
     p_sr.add_argument("path", help="path to project.yaml")
@@ -10240,7 +10325,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_sr.add_argument(
         "--live",
         action="store_true",
-        help="refused: live workers could not pass keel ship --live's consent gate (#1281)",
+        help=(
+            "implement each cluster through its implementer seat, then commit, gate, push "
+            "and open one PR per cluster; needs the operator's consent (#1400)"
+        ),
+    )
+    p_sr.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for the live run's workers (filesystem, git, github)",
+    )
+    p_sr.add_argument("--operator", default=None, help="who consents; recorded with the delegation")
+    p_sr.add_argument(
+        "--consent-mode", choices=consent.CONSENT_MODES, default=None, help="operator consent mode"
     )
     p_sr.add_argument("--tree", action="store_true", help="render visual DAG tree")
     p_sr.add_argument("--json", action="store_true", help="emit structured JSON")

@@ -1729,11 +1729,11 @@ class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
         self.assertTrue(self.reaches({"w": worker, "c": after}, "c.h"), "refused too late")
         self.assertTrue(self.reaches({"w": worker, "c": unguarded}, "c.h"))
 
-    def test_the_cli_writes_from_exactly_eleven_commands(self):
-        """The hardening found nothing new, and the refusal rule drops `swarm-run`,
-        whose `--live` is refused before anything starts (#1281). `ship` and `run-gates`
-        joined with the opt-in `revert-check` gate, whose scratch worktree is added, reset
-        and removed through git (#1289)."""
+    def test_the_cli_writes_from_exactly_twelve_commands(self):
+        """The hardening found nothing new. `ship` and `run-gates` joined with the opt-in
+        `revert-check` gate, whose scratch worktree is added, reset and removed through git
+        (#1289). `swarm-run` joined when `--live` stopped being refused: a live worker
+        commits, pushes and opens a pull request under delegated consent (#1400)."""
         self.assertEqual(
             {
                 "ship",
@@ -1744,6 +1744,7 @@ class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
                 "review",
                 "doctor",
                 "swarm-land",
+                "swarm-run",
                 "worktree-remove",
                 "rollback",
                 "canary",
@@ -1812,8 +1813,9 @@ class TestTheReadmeFirstScreenDoesItsJob(unittest.TestCase):
         It named the merge, `capture-land`, `post-comment` and `review`. The code also
         creates labels (`doctor --fix`), and in the local checkout removes worktrees
         (`worktree-remove`), rebases and merges (`swarm-land --live`) and commits reverts
-        (`rollback`, `canary --auto-revert`). `swarm-run --live` is refused before its
-        worktrees are made, so it is not one (#1367 review).
+        (`rollback`, `canary --auto-revert`). `swarm-run --live` was refused before its
+        worktrees were made (#1367 review); since #1400 its workers commit, push and open a
+        pull request, so it is one.
         The list is compared with :func:`_cli_write_commands`, not with a list typed here.
         """
         screen = " ".join(_readme_first_screen().split())

@@ -2,23 +2,27 @@
 
 > ## ⚠️ Experimental — this subsystem does not land work
 >
-> The planning commands run. **A live run cannot produce a commit or a pull request**, and the
-> reason is deeper than a missing flag:
+> The planning commands run, and since
+> [#1400](https://github.com/berkayturanci/keel/issues/1400) a live run implements: **`swarm-run
+> --live` dispatches each cluster's implementer seat in the cluster's own worktree, commits the
+> result, runs the project's gates, pushes the cluster branch and opens one pull request per
+> cluster** — under operator consent the parent obtains and delegates explicitly (see
+> [How a live worker implements a cluster](#how-a-live-worker-implements-a-cluster) and
+> [Consent delegation](#consent-delegation)). What it does not do yet is the rest of the ship:
 >
-> - `keel ship` — the *CLI subcommand*, registered as `dry ship assessment (tier, window, gates,
->   decision)` — never commits, pushes or opens a pull request, in any mode. It is not inert: it
->   runs `git diff` and executes the project's planned gates, and that gate run is **not** behind
->   `--live`, so a dry `swarm-run` over N issues still runs the whole gate suite N times. A dry
->   run creates no worktrees, so those runs share your checkout; they run one at a time
->   ([#1288](https://github.com/berkayturanci/keel/issues/1288)), whatever `--max-workers`
->   says. What it never does is produce the commit. In keel's design the
->   implementation is done by the **agent** following `/keel:ship`, and the CLI assesses it;
->   swarm's workers spawn the CLI, so a worker cannot produce a commit in any mode.
-> - `swarm-run --live` is refused before anything starts. Its workers are handed `--live`
->   ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and `keel ship --live` stops
->   at the operator-consent gate, which swarm has no way to satisfy for a child — so a live run
->   would fail every worker and leave `swarm/<id>/…` branches behind
->   ([#1281](https://github.com/berkayturanci/keel/issues/1281)).
+> - The pull request carries **no review evidence**. Nothing reviews it, and nothing lands it —
+>   review and landing through `keel merge` are the next slices
+>   ([#1287](https://github.com/berkayturanci/keel/issues/1287)).
+> - A **dry** run is unchanged: its worker is `keel ship` — the *CLI subcommand*, registered as
+>   `dry ship assessment (tier, window, gates, decision)` — which never commits, pushes or opens a
+>   pull request. It is not inert: it runs `git diff` and executes the project's planned gates, so
+>   a dry `swarm-run` over N issues still runs the whole gate suite N times. A dry run creates no
+>   worktrees, so those runs share your checkout; they run one at a time
+>   ([#1288](https://github.com/berkayturanci/keel/issues/1288)), whatever `--max-workers` says.
+> - A live worker needs an implementer keel can run itself — an agent CLI (`claude`, `codex`,
+>   `agy`) named by `knobs.team.implement` or `--delegate`. A cluster whose seat is a host
+>   `subagent:` or an API/Ollama/profile transport refuses the whole live run before any worker
+>   starts, with the reason.
 >
 > Planning reads each issue's own scope, and is only as parallel as the issues say it can be:
 > every named issue is read from GitHub, and an issue that declares no scope is planned as `*`
@@ -52,9 +56,10 @@
 **keel-swarm** is an additive, high-concurrency orchestration layer designed to coordinate
 multiple AI developer agents working in parallel across complex backlogs. It transforms a list of
 GitHub issues into a topologically ordered execution graph, partitions issues into conflict-free
-clusters, executes them in isolated git worktrees, and lands them under a single-writer merge
-lock with sequential `git merge --no-ff` into the local base branch — a local merge that pushes
-nothing.
+clusters, implements each cluster in its own git worktree through the cluster's implementer seat
+and opens one pull request per cluster (a live run), and lands cluster branches under a
+single-writer merge lock with sequential `git merge --no-ff` into the local base branch — a
+local merge that pushes nothing.
 
 ---
 
@@ -63,8 +68,9 @@ nothing.
 Keel Swarm is built on three core pillars:
 
 1. **Backbone Immutability**: The keel core step machine (`s0`–`s12` in `src/keel/model.py`) is
-   strictly immutable. Swarm does not alter or bypass backbone steps; instead, each parallel cluster
-   worker executes a complete, standard `keel ship` run within its own isolated worktree.
+   strictly immutable. Swarm does not alter or bypass backbone steps. A dry run's worker is a
+   standard `keel ship` assessment; a live run's worker performs s4 (implement) for its cluster
+   in its own worktree and stops at an open pull request, which the later steps take from there.
 2. **Pure Core / Thin I/O Separation**: Dependency analysis, clustering, wave partitioning, and landing
    decision logic are 100% pure and deterministic (`src/keel/swarm.py`). Every **subprocess and
    git**
@@ -91,7 +97,7 @@ Keel Swarm is built on three core pillars:
 | :--- | :--- | :--- | :--- |
 | **CTO** | the `/keel:swarm` coordinator | clusters the backlog, launches one lead per cluster, lands the waves | implement, review, drive a child ship |
 | **Team lead** | one subagent per cluster | runs that cluster's `/keel:ship` runs with the providers its `assignment` names; reports through the cluster's worker status record | re-score or re-staff its own cluster |
-| **Worker** | one child `keel ship` run per issue | the standard `s0`–`s12` backbone in the cluster's worktree | reach outside its predicted scope |
+| **Worker** | dry: one child `keel ship --dry-run` per cluster; live: the cluster's implementer seat, run by keel | dry: the assessment; live: implement, commit, gates, push, one pull request, in the cluster's worktree | reach outside its predicted scope, or hold a consent scope the parent did not hand it |
 
 The hierarchy is load-bearing, not stylistic: a lead that reports anywhere other than the
 worker record is invisible to `keel swarm-status`, and a CTO that implements has no one left
@@ -331,21 +337,107 @@ Parallel execution runs across isolated git worktrees created under
 keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
 ```
 
-Each worker's child `keel ship` may run for `--worker-timeout SECONDS`, by default
-`knobs.gate_timeout_s + knobs.jury_timeout_s`; one that runs longer is killed and its cluster
-fails with `timed_out: true` ([#1279](https://github.com/berkayturanci/keel/issues/1279)).
+Each worker's gate run — a dry run's child `keel ship`, a live worker's `keel run-gates` — may
+run for `--worker-timeout SECONDS`, by default `knobs.gate_timeout_s + knobs.jury_timeout_s`; one
+that runs longer is killed and its cluster fails with `timed_out: true`
+([#1279](https://github.com/berkayturanci/keel/issues/1279)).
+
+### How a live worker implements a cluster
+
+Decided in [#1400](https://github.com/berkayturanci/keel/issues/1400): keel dispatches each
+cluster's resolved implementer seat itself, with the machinery `keel delegate run` uses for one
+issue, so a live swarm depends on no agent host. `swarm-run --live` runs, per cluster:
+
+1. **Plan the seat, before anything starts.** The seat is `assignment.implementer`, resolved by
+   `keel.team.resolve_assignment` — `--delegate` over a `--team` or difficulty bench over
+   `knobs.team.implement` over the host default — and planned exactly as `keel delegate run
+   --provider <seat> --role implement` plans it (`keel.swarm_worker.plan_implementer`). Only an
+   agent CLI can edit a worktree, so a `subagent:` seat (only an agent host can spawn one) or an
+   `api`/`ollama`/generic-profile transport is refused. One refused cluster refuses the run: no
+   worker starts, and stderr lists every cluster keel could not dispatch.
+2. **Cut the worktree** on `swarm/<swarm_id>/<cluster_id>` from `base_branch`.
+3. **Implement.** The brief — the cluster's issues, its scope, and "do not commit, push or open
+   a pull request" — is written to `.keel/state/swarm/<swarm_id>/<cluster_id>.brief.md`, outside
+   the worktree so it is never committed, and the seat runs through `keel.delegaterun.execute`
+   with the worktree as its working directory, under the delegate machinery's own limits: the
+   prompt on stdin, never in argv; the plan's timeout (`keel delegate run`'s default, 1800 s);
+   the vendor's own tool-enabled invocation for the `implement` role.
+4. **Commit** whatever the seat changed (`git add -A`, one commit naming the issues with `Refs`
+   and the seat that wrote it). A seat that committed its own work is kept as it is; a seat that
+   changed nothing stops the worker.
+5. **Gate.** `keel run-gates <project.yaml> --root <worktree> --phases guard,test --defer-jury` —
+   the gates the s4 loop judges an implementation by, bounded by `--worker-timeout`. The jury is
+   a review and is deferred with the rest of review.
+6. **Push** the commit to `refs/heads/swarm/<swarm_id>/<cluster_id>` on `origin`
+   (`keel.git.push_commit`, never forced).
+7. **Open one pull request** for the cluster against `base_branch` (`keel.github.open_pr`). Its
+   body says `Refs #N` for each issue — never `Closes`, since nothing has reviewed it — and records
+   the implementer seat, the commit the gates passed at, and the consent delegation.
+
+**What a worker leaves behind.** On success: a committed, pushed cluster branch and one open pull
+request, reported as the cluster's `pr_url`, with the worker at step `s6` in `swarm-status`. The
+pull request does **not** carry review evidence yet, so `swarm-land` still holds it until review
+is attached; reviewing and landing it are the next slices
+([#1287](https://github.com/berkayturanci/keel/issues/1287)). The worktree itself is removed when
+the worker ends; the branch stays.
+
+**Failure.** A worker stops at the first stage that fails and reports it: `stage` in its
+`cluster_results` entry (`consent`, `worktree`, `implement`, `commit`, `gates`, `push`,
+`pull_request`) and the reason in `output` and the state file's `details`. Nothing after the
+failed stage runs: a failed implementer commits nothing; a red gate leaves the commit local and
+the branch unpushed; a refused push opens no pull request; a pull request `gh` could not open
+says the branch is already pushed. A failed cluster is dropped from the later waves as before.
+
+**Trust notes.** The implementer is an agent with tools, running in the cluster's worktree with
+the delegate machinery's existing sandbox and limits — keel adds none of its own, and the brief
+is guidance, not enforcement: nothing stops a seat from writing outside its scope, which is why
+the gates run on the commit before anything is pushed and why the pull request still has to be
+reviewed. The issue text is untrusted input to the seat, as it is in `/keel:ship` s4.
+
+### Consent delegation
+
+`swarm-run --live` obtains the operator's consent at the parent exactly the way every live keel
+command does — `--approve-scope` / `--operator`, or `KEEL_APPROVE_SCOPE` + `KEEL_OPERATOR` (or
+`automation.approved_scopes` + `automation.operator`) under `consent_mode: standing` — over the
+mutations a worker makes: `git_worktree`, `file_edit`, `git_commit`, `git_push`, `pull_request`,
+which need the scopes `filesystem`, `git` and `github`. It is checked before any issue is read:
+without it the run is refused with the missing scopes and nothing starts.
+
+```bash
+keel swarm-run .keel/project.yaml --root . --issues 714,715 --live \
+  --approve-scope filesystem,git,github --operator "$USER" --delegate codex
+```
+
+The approved contract becomes a **delegation** (`keel.swarm_worker.ConsentDelegation`) that
+records who consented, which scopes, from which source and mode, when (the consent record's
+timestamp), and which run and clusters it was delegated to. It is stored as `consent` in the
+run's state file (`.keel/state/swarm/<swarm_id>.json`) and in `swarm-run --json`, each worker's
+record carries the `scopes` it was handed, and each pull request body names the delegation.
+
+- **Explicit, never ambient.** The parent hands each worker the delegation as an argument. The
+  worker's children — the implementer, git, the gates — run with `KEEL_APPROVE_SCOPE`,
+  `KEEL_OPERATOR` and `KEEL_CONSENT_MODE` removed from their environment, so an implementer that
+  runs `keel` itself cannot approve its own mutations with the parent's consent.
+- **Never wider.** A worker is handed exactly the parent's effective scopes — an extra approved
+  scope such as `secrets` is not passed down — and a cluster the delegation does not name gets
+  none. Before its first mutation a worker checks that what it holds covers every mutation it
+  will make, and does nothing otherwise.
+- **Agent mode delegates nothing.** `consent_mode: agent` leaves approval to a host agent's own
+  permission system; `swarm-run` dispatches its workers itself, so a live swarm under `agent`
+  mode is refused and asks for explicit scopes. A delegation also names its operator: approving
+  scopes without `--operator` is refused.
+- The run ledger is not written: its only record type is a ship run, and a live worker does not
+  run `keel ship`. The delegation lives in the swarm state file until the landing slices record
+  the cluster's ship.
 
 ### Worktree Lifecycle & Isolation
 
-> While `swarm-run --live` is refused ([#1269](https://github.com/berkayturanci/keel/issues/1269)),
-> no CLI path creates worktrees: this lifecycle is the library's
-> (`run_swarm_orchestration(dry_run=False)`), described so the next change starts from what it does.
-
 1. **Creation**: Dedicated worktrees are branched from the configured `base_branch` onto
    `swarm/<swarm_id>/<cluster_id>` ([#1262](https://github.com/berkayturanci/keel/issues/1262)).
-2. **Execution**: One **team lead** per cluster dispatches the implementer its `assignment`
-   named, to execute the full `s0`–`s12` backbone. The lead appends the cluster's team to every
-   child ship — `--delegate <implementer>`, one `--review-delegate` per staffed reviewer
+2. **Execution**: a live worker runs the cluster's implementer seat (see
+   [How a live worker implements a cluster](#how-a-live-worker-implements-a-cluster)). A dry
+   run's worker is a `keel ship --dry-run` assessment, and the parent appends the cluster's team
+   to every child ship — `--delegate <implementer>`, one `--review-delegate` per staffed reviewer
    slot **whose seat is a provider** (a host-subagent seat gets no flag and the child re-resolves
    it), `--role`, and `--effort`/`--team` for the bench the cluster was staffed from — so
    the child reproduces the parent's resolution instead of quietly deriving a different
@@ -369,9 +461,9 @@ fails with `timed_out: true` ([#1279](https://github.com/berkayturanci/keel/issu
    (There is also no runtime scope audit — clusters are kept off each other's files by plan-time
    overlap partitioning and per-worktree isolation, not by watching what a worker writes.)
 4. **Cleanup**: partial, and only on a live run. `remove_swarm_worktree` runs
-   `git worktree remove --force` on the cluster's leaf directory (falling back to `rmtree`), and the
-   `finally` that calls it is guarded by `create_worktrees and not dry_run` — a dry run creates no
-   worktree to remove. Four things it does **not** do, each verified against
+   `git worktree remove --force` on the cluster's leaf directory (falling back to `rmtree`), from a
+   `finally` on the live worker's path (`create_worktrees and not dry_run`) that runs when the
+   worktree exists — a dry run creates no worktree to remove. Four things it does **not** do, each verified against
    `src/keel/swarm_runtime.py`:
 
    - the `.keel/worktrees/<swarm_id>/` parent directory is created by `mkdir(parents=True)` and

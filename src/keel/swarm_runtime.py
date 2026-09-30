@@ -1,8 +1,13 @@
 """Keel Swarm Runtime — Isolated multi-worktree execution & cluster orchestration.
 
 Thin I/O execution layer for running parallel swarm workers in isolated Git worktrees,
-dispatching keel ship jobs, handling worker state persistence, and managing fail-soft
-rebalancing across waves.
+handling worker state persistence, and managing fail-soft rebalancing across waves.
+
+A dry run's worker is a ``keel ship --dry-run`` assessment per cluster. A live run's worker
+(#1400) is the cluster's implementer seat, dispatched through :mod:`keel.delegaterun` in
+the cluster's own worktree, followed by a commit, the project's gates, a push and one pull
+request — every mutation behind the consent scopes the parent delegated
+(:mod:`keel.swarm_worker`, where each of those decisions is made).
 """
 
 from __future__ import annotations
@@ -10,16 +15,21 @@ from __future__ import annotations
 import concurrent.futures
 import datetime
 import functools
+import os
 import shutil
 import subprocess  # nosec B404
 import sys
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from . import delegaterun, git, github, runner, swarm_worker
+from .delegate import RunPlan
 from .runner import CommandResult
 from .swarm import (
+    SwarmCluster,
     SwarmPlan,
     SwarmRunResult,
     SwarmRunState,
@@ -33,6 +43,12 @@ from .swarm import (
 )
 
 SubprocessRunner = Callable[[list[str], Path], CommandResult]
+#: Runs one implementer plan with the given child environment; returns the delegate result.
+Implementer = Callable[[RunPlan, dict[str, str]], dict[str, Any]]
+#: ``(remote, commit, ref, cwd)`` -> the push's result.
+Pusher = Callable[[str, str, str, Path], CommandResult]
+#: ``(title, body, base, head, cwd)`` -> ``gh pr create``'s result.
+PullRequestOpener = Callable[[str, str, str, str, Path], CommandResult]
 
 #: The runner's own wall-clock limit, for the short git commands swarm and canary run
 #: through it (worktree add/remove, checkout, merge). A worker's child ``keel ship`` is
@@ -41,17 +57,22 @@ DEFAULT_RUNNER_TIMEOUT_S = 300
 
 
 def default_runner(
-    cmd: list[str], cwd: Path, timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S
+    cmd: list[str],
+    cwd: Path,
+    timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S,
+    env: dict[str, str] | None = None,
 ) -> CommandResult:
     """Run a subprocess command in cwd and return a CommandResult.
 
     A command still running after ``timeout_s`` seconds is killed and reported
     ``timed_out`` with ``code=124``, the gate runner's code for the same case.
+    ``env`` replaces the child's environment when given (``None`` inherits it).
     """
     try:
         proc = subprocess.run(  # nosec B603
             cmd,
             cwd=cwd,
+            env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -95,6 +116,48 @@ def default_runner(
 def build_worktree_path(swarm_id: str, cluster_id: str, root: str | Path = ".") -> Path:
     """Return the isolated worktree filesystem path for a specific swarm cluster worker."""
     return Path(root) / ".keel" / "worktrees" / swarm_id / cluster_id
+
+
+def build_brief_path(swarm_id: str, cluster_id: str, root: str | Path = ".") -> Path:
+    """Where a live worker's implementer brief is written: beside the run's state file,
+    outside the cluster's worktree, so the brief is never committed with the work."""
+    return Path(root) / ".keel" / "state" / "swarm" / swarm_id / f"{cluster_id}.brief.md"
+
+
+def cluster_branch(swarm_id: str, cluster_id: str) -> str:
+    """The branch a cluster's worktree is cut on, and the head of its pull request."""
+    return f"swarm/{swarm_id}/{cluster_id}"
+
+
+def _default_implement(plan: RunPlan, env: dict[str, str]) -> dict[str, Any]:
+    """``keel delegate run``'s executor, with the worker's scrubbed environment."""
+    return delegaterun.execute(plan, _run=functools.partial(runner.run_argv, env=env))
+
+
+def _default_push(remote: str, commit: str, ref: str, cwd: Path) -> CommandResult:
+    return git.push_commit(remote, commit, ref, cwd=str(cwd))
+
+
+def _default_open_pr(title: str, body: str, base: str, head: str, cwd: Path) -> CommandResult:
+    return github.open_pr(title, body, base, head, cwd=str(cwd))
+
+
+@dataclass(frozen=True)
+class LiveRun:
+    """What a live run's parent hands its workers: the operator's consent, delegated, and
+    each cluster's planned implementer seat. The three callables are the I/O seams."""
+
+    consent: swarm_worker.ConsentDelegation
+    #: ``cluster_id`` -> the cluster's implementer :class:`keel.delegate.RunPlan`.
+    dispatches: Mapping[str, RunPlan]
+    #: ``issue`` -> its scope, for the brief and the pull request's title.
+    issue_scopes: Mapping[int, Any] = field(default_factory=dict)
+    #: ``cluster_id`` -> where its implementer seat came from (``assignment`` source).
+    seat_sources: Mapping[str, str] = field(default_factory=dict)
+    remote: str = "origin"
+    implement: Implementer = _default_implement
+    push: Pusher = _default_push
+    open_pr: PullRequestOpener = _default_open_pr
 
 
 def create_swarm_worktree(
@@ -195,6 +258,157 @@ def execute_cluster_worker(
     }
 
 
+def _last_line(result: CommandResult) -> str:
+    """The last line a successful command printed; ``""`` for a failed one."""
+    lines = (result.stdout or result.output or "").strip().splitlines() if result.ok else []
+    return lines[-1].strip() if lines else ""
+
+
+def execute_live_cluster_worker(
+    cluster: SwarmCluster,
+    *,
+    swarm_id: str,
+    root: Path,
+    worktree_dir: Path,
+    project_yaml: str,
+    base_branch: str,
+    live: LiveRun,
+    runner: SubprocessRunner | None = None,
+    timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S,
+) -> dict[str, Any]:
+    """Implement one cluster live: its implementer seat, a commit, the gates, a push, a PR.
+
+    Before its first mutation the worker checks that the scopes the parent delegated to
+    *this* cluster cover every mutation it will make
+    (:func:`keel.swarm_worker.consent_refusal`), and does nothing when they do not. It then
+    stops at the first stage that fails — so a failed implementer or a red gate leaves the
+    branch unpushed and no pull request opened, and the result says which stage stopped it
+    and why. ``timeout_s`` bounds the gate run and the git commands; the implementer runs
+    under its own plan's timeout.
+
+    The worker's children — the implementer, git, the gates — run without the parent's
+    consent variables (:func:`keel.swarm_worker.child_env`): consent reaches a worker as the
+    delegation it is handed, never through inheritance.
+    """
+    env = swarm_worker.child_env(os.environ)
+    run = runner or functools.partial(default_runner, timeout_s=timeout_s, env=env)
+    scopes = swarm_worker.worker_scopes(live.consent, cluster.cluster_id)
+    branch = cluster_branch(swarm_id, cluster.cluster_id)
+    plan = live.dispatches[cluster.cluster_id]
+    system = plan.attribution.get("system") or plan.provider
+    record: dict[str, Any] = {
+        "issue": cluster.issues[0] if cluster.issues else 0,
+        "issues": list(cluster.issues),
+        "role": cluster.role,
+        "branch": branch,
+        "scopes": list(scopes),
+        "implementer": system,
+        "commit": None,
+        "pr_url": None,
+    }
+
+    def stop(stage: str, reason: str, code: int = 1) -> dict[str, Any]:
+        return {**record, "ok": False, "code": code, "stage": stage, "output": reason}
+
+    if why := swarm_worker.consent_refusal(scopes):
+        return stop("consent", why)
+    created = create_swarm_worktree(root, worktree_dir, branch, base_branch=base_branch, runner=run)
+    if not created or not worktree_dir.exists():
+        return stop("worktree", f"failed to create isolated worktree at {worktree_dir}")
+    start = _last_line(run(["git", "rev-parse", "HEAD"], worktree_dir))
+
+    brief = Path(plan.prompt_path)
+    brief.parent.mkdir(parents=True, exist_ok=True)
+    brief.write_text(
+        swarm_worker.render_brief(
+            cluster, live.issue_scopes, swarm_id=swarm_id, branch=branch, base_branch=base_branch
+        ),
+        encoding="utf-8",
+    )
+    result = live.implement(plan, env)
+    if not result.get("ok"):
+        return stop(
+            "implement",
+            f"the implementer {system} failed ({result.get('error_code')}): {result.get('error')}",
+        )
+
+    status = run(["git", "status", "--porcelain"], worktree_dir)
+    if not status.ok:
+        return stop("commit", f"git status failed in {worktree_dir}: {status.output.strip()}")
+    if status.output.strip():
+        message = swarm_worker.commit_message(cluster, swarm_id=swarm_id, plan=plan)
+        for argv in (["git", "add", "-A"], ["git", "commit", "-m", message]):
+            step = run(argv, worktree_dir)
+            if not step.ok:
+                return stop("commit", f"{' '.join(argv[:2])} failed: {step.output.strip()}")
+    head = _last_line(run(["git", "rev-parse", "HEAD"], worktree_dir))
+    if not head or head == start:
+        return stop(
+            "implement",
+            f"the implementer {system} changed nothing in the worktree, so there is no work "
+            "to commit or push",
+        )
+    record["commit"] = head
+
+    gates = run(
+        [
+            sys.executable,
+            "-m",
+            "keel",
+            "run-gates",
+            project_yaml,
+            "--root",
+            str(worktree_dir),
+            "--phases",
+            swarm_worker.GATE_PHASES,
+            "--defer-jury",
+        ],
+        worktree_dir,
+    )
+    if not gates.ok:
+        return stop(
+            "gates",
+            f"the project's gates failed at {head}; the branch is not pushed:\n"
+            f"{(gates.stdout or gates.output).strip()}",
+            code=gates.code,
+        )
+
+    pushed = live.push(live.remote, head, f"refs/heads/{branch}", worktree_dir)
+    if not pushed.ok:
+        return stop("push", f"git push {live.remote} {branch} failed: {pushed.output.strip()}")
+
+    opened = live.open_pr(
+        swarm_worker.pull_request_title(cluster, live.issue_scopes, swarm_id=swarm_id),
+        swarm_worker.pull_request_body(
+            cluster,
+            swarm_id=swarm_id,
+            branch=branch,
+            base_branch=base_branch,
+            commit=head,
+            plan=plan,
+            seat_source=live.seat_sources.get(cluster.cluster_id),
+            delegation=live.consent,
+        ),
+        base_branch,
+        branch,
+        worktree_dir,
+    )
+    if not opened.ok:
+        return stop(
+            "pull_request",
+            f"{branch} is pushed, but gh pr create failed: {opened.output.strip()}",
+        )
+    url = _last_line(opened)
+    return {
+        **record,
+        "ok": True,
+        "code": 0,
+        "stage": "done",
+        "pr_url": url,
+        "output": f"pull request opened: {url}",
+    }
+
+
 def run_swarm_orchestration(
     plan: SwarmPlan,
     project_yaml: str,
@@ -206,6 +420,7 @@ def run_swarm_orchestration(
     create_worktrees: bool = True,
     base_branch: str,
     timeout_s: int = DEFAULT_RUNNER_TIMEOUT_S,
+    live: LiveRun | None = None,
 ) -> SwarmRunResult:
     """Execute the waves and clusters of a SwarmPlan with fail-soft isolation.
 
@@ -213,19 +428,32 @@ def run_swarm_orchestration(
     are branched from it and the wave is later landed onto it, and a default of
     ``main`` branched a ``develop`` project's clusters off the wrong history (#1262).
 
-    ``timeout_s`` is each worker's child ``keel ship`` budget; ``swarm-run`` passes
+    ``timeout_s`` is each worker's gate budget — the child ``keel ship`` of a dry run, the
+    ``keel run-gates`` of a live one; ``swarm-run`` passes
     :func:`keel.swarm.worker_timeout_s` or its ``--worker-timeout`` (#1279).
+
+    A live run (``dry_run=False``) needs ``live``: the operator's consent as the parent
+    delegated it, and each cluster's planned implementer seat (#1400). Without it nothing
+    starts — there is no live worker that runs without delegated consent — and a live
+    worker always gets its own worktree, so ``create_worktrees`` must be on.
     """
+    if not dry_run and (live is None or not create_worktrees):
+        raise ValueError(
+            "a live swarm run needs the operator's delegated consent and a worktree per "
+            "cluster (#1400)"
+        )
     root_path = Path(root).resolve()
     workers_list: list[SwarmWorkerStatus] = []
 
     # Initialize workers from the plan's own staffing, so the board reports the team the
-    # planner resolved rather than the record's placeholder defaults (#1017).
+    # planner resolved rather than the record's placeholder defaults (#1017). A live
+    # worker's record also says which consent scopes it was handed (#1400).
     for w in plan.waves:
         for c in w.clusters:
-            workers_list.append(
-                worker_seed(c, updated_at=datetime.datetime.now(datetime.UTC).isoformat())
-            )
+            seed = worker_seed(c, updated_at=datetime.datetime.now(datetime.UTC).isoformat())
+            if live is not None:
+                seed = replace(seed, scopes=swarm_worker.worker_scopes(live.consent, c.cluster_id))
+            workers_list.append(seed)
 
     state = SwarmRunState(
         swarm_id=plan.swarm_id,
@@ -233,6 +461,7 @@ def run_swarm_orchestration(
         active_wave=1,
         workers=tuple(workers_list),
         started_at=datetime.datetime.now(datetime.UTC).isoformat(),
+        consent=None if live is None else live.consent.to_dict(),
     )
     save_swarm_state(state, root=root_path)
 
@@ -251,13 +480,7 @@ def run_swarm_orchestration(
             break
         wave = remaining[0]
         last_wave = wave.wave_index
-        state = SwarmRunState(
-            swarm_id=state.swarm_id,
-            total_workers=state.total_workers,
-            active_wave=wave.wave_index,
-            workers=state.workers,
-            started_at=state.started_at,
-        )
+        state = replace(state, active_wave=wave.wave_index)
 
         cluster_tasks = list(wave.clusters)
         if not cluster_tasks:
@@ -271,51 +494,51 @@ def run_swarm_orchestration(
         }
 
         # Mark clusters in this wave as running
+        running = "implementing the cluster" if live is not None else "executing ship pipeline"
         for c in cluster_tasks:
             state = update_worker_state(
-                state, c.cluster_id, step="s4", status="running", details="executing ship pipeline"
+                state, c.cluster_id, step="s4", status="running", details=running
             )
         save_swarm_state(state, root=root_path)
 
         def _worker_fn(cluster: Any) -> tuple[str, dict[str, Any]]:
             c_id = cluster.cluster_id
-            issue_n = cluster.issues[0] if cluster.issues else 0
             wt_path = build_worktree_path(plan.swarm_id, c_id, root=root_path)
 
+            # A live worker implements its cluster in a worktree of its own, cut and
+            # removed here; the worktree goes, the committed branch stays (#1400).
             if create_worktrees and not dry_run:
-                branch_name = f"swarm/{plan.swarm_id}/{c_id}"
-                ok = create_swarm_worktree(
-                    root_path, wt_path, branch_name, base_branch=base_branch, runner=runner
-                )
-                if not ok or not wt_path.exists():
-                    return c_id, {
-                        "issue": issue_n,
-                        "role": cluster.role,
-                        "ok": False,
-                        "code": 1,
-                        "output": f"failed to create isolated worktree at {wt_path}",
-                    }
+                try:
+                    return c_id, execute_live_cluster_worker(
+                        cluster,
+                        swarm_id=plan.swarm_id,
+                        root=root_path,
+                        worktree_dir=wt_path,
+                        project_yaml=project_yaml,
+                        base_branch=base_branch,
+                        live=live,
+                        runner=runner,
+                        timeout_s=timeout_s,
+                    )
+                finally:
+                    if wt_path.exists():
+                        remove_swarm_worktree(root_path, wt_path, runner=runner)
 
-            try:
-                res = execute_cluster_worker(
-                    project_yaml=project_yaml,
-                    issue=issue_n,
-                    root=root_path,
-                    worktree_dir=wt_path,
-                    dry_run=dry_run,
-                    role=cluster.role,
-                    # The lead hands its cluster's team to the child ship. Without this the
-                    # child re-resolved from config alone and dropped both the difficulty
-                    # bench and the operator's per-run overrides.
-                    extra_args=list(ship_handoff_args(cluster.assignment)),
-                    runner=runner,
-                    timeout_s=timeout_s,
-                )
-            finally:
-                if create_worktrees and not dry_run:
-                    remove_swarm_worktree(root_path, wt_path, runner=runner)
-
-            return c_id, res
+            # A dry run's worker is an assessment in the operator's checkout.
+            return c_id, execute_cluster_worker(
+                project_yaml=project_yaml,
+                issue=cluster.issues[0] if cluster.issues else 0,
+                root=root_path,
+                worktree_dir=wt_path,
+                dry_run=True,
+                role=cluster.role,
+                # The lead hands its cluster's team to the child ship. Without this the
+                # child re-resolved from config alone and dropped both the difficulty
+                # bench and the operator's per-run overrides.
+                extra_args=list(ship_handoff_args(cluster.assignment)),
+                runner=runner,
+                timeout_s=timeout_s,
+            )
 
         # Run wave clusters in parallel thread pool
         # Without a worktree each child runs in the operator's own checkout (a dry run
@@ -360,8 +583,14 @@ def run_swarm_orchestration(
 
                 if worker_res.get("ok", False):
                     passed_count += 1
+                    # A live worker stops at an open pull request, which CI (s6) and review
+                    # take from there; a dry assessment ran the whole backbone.
                     state = update_worker_state(
-                        state, c_id, step="s10", status="passed", details="pipeline completed"
+                        state,
+                        c_id,
+                        step="s10" if live is None else "s6",
+                        status="passed",
+                        details="pipeline completed" if live is None else worker_res["output"],
                     )
                 else:
                     failed_count += 1
@@ -388,14 +617,7 @@ def run_swarm_orchestration(
     if passed_count == 0 and failed_count == 0:
         overall_status = "success"
 
-    state = SwarmRunState(
-        swarm_id=state.swarm_id,
-        total_workers=state.total_workers,
-        active_wave=state.active_wave,
-        workers=state.workers,
-        started_at=state.started_at,
-        completed_at=datetime.datetime.now(datetime.UTC).isoformat(),
-    )
+    state = replace(state, completed_at=datetime.datetime.now(datetime.UTC).isoformat())
     save_swarm_state(state, root=root_path)
 
     return SwarmRunResult(
@@ -406,4 +628,5 @@ def run_swarm_orchestration(
         failed_count=failed_count,
         dry_run=dry_run,
         wave_results=tuple(wave_results),
+        consent=state.consent,
     )

@@ -3235,23 +3235,52 @@ code makes it usable as a gate ([#1280](https://github.com/berkayturanci/keel/is
 `{}` therefore always means "no run", never "a run keel could not read"; the text board is not
 printed in either failure.
 
-## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--max-workers N] [--worker-timeout SECONDS] [--live] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
+## `keel swarm-run <project.yaml> [--root DIR] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--max-workers N] [--worker-timeout SECONDS] [--live] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--tree] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
-> **Experimental — `--live` is refused.** Its workers are handed `--live`
-> ([#1269](https://github.com/berkayturanci/keel/issues/1269)), and `keel ship --live` stops at the
-> operator-consent gate, which swarm cannot satisfy for a child; `keel ship` also never commits or
-> opens a pull request in any mode. `swarm-run --live` exits 1 with that reason before anything
-> starts. Audit epic: [#1281](https://github.com/berkayturanci/keel/issues/1281).
+> **Experimental.** A live run implements each cluster and opens its pull request, but that pull
+> request carries no review evidence and nothing lands it yet
+> ([#1400](https://github.com/berkayturanci/keel/issues/1400),
+> [#1287](https://github.com/berkayturanci/keel/issues/1287)). Audit epic:
+> [#1281](https://github.com/berkayturanci/keel/issues/1281).
 
-Launch parallel workers per cluster in dedicated git worktrees under
-`.keel/worktrees/<swarm_id>/<cluster_id>/`:
+Without `--live` (a dry run) each cluster's worker is a `keel ship --dry-run --json` assessment,
+run one at a time in this checkout; it dispatches no agent and commits nothing:
 
 ```bash
 keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717
-keel swarm-run .keel/project.yaml --root . --issues 714,715,716,717 --max-workers 2
 ```
 
-Each worker runs the standard `keel ship` backbone machine in its isolated worktree, launched
+With `--live`, each cluster's worker runs in its own git worktree under
+`.keel/worktrees/<swarm_id>/<cluster_id>/`, up to `--max-workers` at a time:
+
+```bash
+keel swarm-run .keel/project.yaml --root . --issues 714,715 --live \
+  --approve-scope filesystem,git,github --operator "$USER" --delegate codex --max-workers 2
+```
+
+A live worker is the cluster's **implementer seat**, dispatched by keel through the machinery
+`keel delegate run` uses (`--role implement`, the worktree as its working directory), followed by
+a commit on `swarm/<swarm_id>/<cluster_id>`, `keel run-gates --phases guard,test --defer-jury` in
+the worktree, a push of that branch to `origin`, and one pull request per cluster against
+`base_branch` whose body says `Refs #N`. The seat is `assignment.implementer`: `--delegate`, else
+a `--team` or difficulty bench, else `knobs.team.implement`. Every cluster's seat is planned before
+any worker starts; a `subagent:` seat or a transport that cannot edit a worktree (`api`,
+`ollama`, a generic profile) refuses the run with the cluster and the reason. A worker stops at
+the first stage that fails and reports it as `stage` in its `cluster_results` entry (`consent`,
+`worktree`, `implement`, `commit`, `gates`, `push`, `pull_request`); a failed implementer or a red
+gate pushes nothing and opens nothing. A successful one reports `pr_url`.
+
+`--live` needs the operator's consent for the scopes `filesystem`, `git` and `github`, obtained
+as every live command obtains it: `--approve-scope` with `--operator`, or `KEEL_APPROVE_SCOPE` +
+`KEEL_OPERATOR` under `consent_mode: standing`, or `automation.approved_scopes` +
+`automation.operator`. Without it, or under `--consent-mode agent`, or without an operator,
+`swarm-run --live` exits 1 before any issue is read. The parent delegates the consent to each
+worker explicitly — exactly its own scopes, never wider — and records who, which scopes, which
+clusters and when as `consent` in the run's state file and in `--json`; the workers' children run
+without the `KEEL_*` consent variables. See
+[Consent delegation](swarm.md#consent-delegation).
+
+A dry run's worker runs the standard `keel ship` backbone machine, launched
 with its cluster's resolved team: the implementer seat becomes `--delegate`, each staffed
 reviewer slot a `--review-delegate`, the cluster's role `--role`, and the bench it was staffed
 from `--effort` / `--team`. Passing the last two means **the child inherits the cluster's
@@ -3262,8 +3291,9 @@ which is the layer that can spawn one. A role label outside `[A-Za-z0-9][A-Za-z0
 dropped rather than passed — it would be read as a flag by the child — and the reason is
 recorded in `assignment.warnings`.
 
-Each worker's child `keel ship` runs the project's gate suite, in a dry run too, so it is
-bounded by `--worker-timeout SECONDS` (a positive integer). Left out, the budget is
+Each worker's gate run — a dry run's child `keel ship`, which runs the project's gate suite too,
+or a live worker's `keel run-gates` — is bounded by `--worker-timeout SECONDS` (a positive
+integer); a live worker's implementer runs under its own delegate timeout (1800 s). Left out, the budget is
 `knobs.gate_timeout_s + knobs.jury_timeout_s` — `1200` with neither knob set — rather than
 the fixed 300 s that killed a suite the project itself allows ten minutes
 ([#1279](https://github.com/berkayturanci/keel/issues/1279)). A worker killed by it fails its

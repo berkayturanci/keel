@@ -227,6 +227,9 @@ class SwarmWorkerStatus:
     #: The difficulty band the worker was staffed from, so a status board shows *why*
     #: this cluster drew this provider.
     difficulty: str = ""
+    #: The consent scopes a live worker was handed by its parent (#1400) — exactly the
+    #: parent's delegated scopes, or none. Empty for a dry run, which mutates nothing.
+    scopes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -241,6 +244,7 @@ class SwarmWorkerStatus:
             "details": self.details,
             "lead": self.lead,
             "difficulty": self.difficulty,
+            "scopes": list(self.scopes),
         }
 
 
@@ -254,6 +258,10 @@ class SwarmRunState:
     workers: tuple[SwarmWorkerStatus, ...] = ()
     started_at: str = ""
     completed_at: str | None = None
+    #: The operator consent a live run's parent delegated to its workers (#1400): who
+    #: consented, which scopes, which clusters, when —
+    #: :meth:`keel.swarm_worker.ConsentDelegation.to_dict`. ``None`` for a dry run.
+    consent: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -263,6 +271,7 @@ class SwarmRunState:
             "workers": [w.to_dict() for w in self.workers],
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "consent": self.consent,
         }
 
 
@@ -315,6 +324,8 @@ class SwarmRunResult:
     failed_count: int
     dry_run: bool
     wave_results: tuple[dict[str, Any], ...] = ()
+    #: The consent delegation a live run's workers ran under (#1400); ``None`` when dry.
+    consent: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -325,6 +336,7 @@ class SwarmRunResult:
             "failed_count": self.failed_count,
             "dry_run": self.dry_run,
             "wave_results": list(self.wave_results),
+            "consent": self.consent,
         }
 
 
@@ -1372,9 +1384,11 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
                 details=str(w.get("details", "")),
                 lead=str(w.get("lead", "")),
                 difficulty=str(w.get("difficulty", "")),
+                scopes=_stored_scopes(w.get("scopes")),
             )
             for w in raw_workers
         )
+        stored_consent = data.get("consent")
         return SwarmRunState(
             swarm_id=str(data.get("swarm_id", swarm_id)),
             total_workers=int(data.get("total_workers", len(workers))),
@@ -1382,12 +1396,21 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
             workers=workers,
             started_at=str(data.get("started_at", "")),
             completed_at=data.get("completed_at"),
+            consent=stored_consent if isinstance(stored_consent, dict) else None,
         )
     # OverflowError: `1e999` is valid JSON, parses to infinity, and `int()` refuses it.
     # OSError: a file that exists but cannot be opened — no read permission, or a
     # directory named `<id>.json` — is unreadable in the same sense (#1280).
     except (json.JSONDecodeError, ValueError, KeyError, TypeError, OverflowError, OSError):
         return None
+
+
+def _stored_scopes(value: Any) -> tuple[str, ...]:
+    """A worker record's ``scopes`` as written, or none — a record from before #1400 has
+    no such field, and a malformed one must not read as a scope the worker held."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(scope for scope in value if isinstance(scope, str))
 
 
 def update_worker_state(
@@ -1415,14 +1438,8 @@ def update_worker_state(
         for w in state.workers
     ]
 
-    return SwarmRunState(
-        swarm_id=state.swarm_id,
-        total_workers=state.total_workers,
-        active_wave=state.active_wave,
-        workers=tuple(updated_workers),
-        started_at=state.started_at,
-        completed_at=state.completed_at,
-    )
+    # `replace` for the same reason: a run's `consent` record (#1400) must survive an update.
+    return replace(state, workers=tuple(updated_workers))
 
 
 def rebalance_swarm_plan(plan: SwarmPlan, failed_issue: int) -> SwarmPlan:
@@ -1486,6 +1503,17 @@ def render_swarm_run_result(result: SwarmRunResult) -> str:
         f"  dry-run       : {'true' if result.dry_run else 'false'}",
         f"  total waves   : {len(result.wave_results)}",
     ]
+    if result.consent is not None:
+        lines.append(
+            f"  consent       : delegated by {result.consent.get('operator')} "
+            f"({', '.join(result.consent.get('scopes', ()))})"
+        )
+    for wave in result.wave_results:
+        for cluster_id, res in wave.get("cluster_results", {}).items():
+            if res.get("pr_url"):
+                lines.append(f"  {cluster_id:<13} : pull request {res['pr_url']}")
+            elif res.get("stage") and not res.get("ok"):
+                lines.append(f"  {cluster_id:<13} : stopped at {res['stage']} — {res['output']}")
     return "\n".join(lines)
 
 

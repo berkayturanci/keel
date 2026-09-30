@@ -8,13 +8,16 @@ allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, 
 
 ## ⚠️ Experimental — do not use this to land work
 
-`keel swarm-plan`, `--plan-only` and `--tree` run and render a plan. **A live run cannot produce a
-commit or a pull request**, and the reason is deeper than a missing flag: `keel ship` the CLI
-subcommand is a *dry ship assessment* — it reports tier, window, gates and a decision, and never
-commits, pushes or opens a PR in any mode. In keel's design the **agent** does the implementation
-by following `/keel:ship`; swarm's workers spawn the CLI instead, so a worker cannot commit.
-`swarm-run --live` is refused outright: its workers would run `keel ship --live`, whose
-operator-consent gate swarm cannot satisfy for a child (#1269, #1281).
+`keel swarm-plan`, `--plan-only` and `--tree` run and render a plan. A dry `swarm-run`'s worker is
+`keel ship` the CLI subcommand — a *dry ship assessment* that reports tier, window, gates and a
+decision and never commits, pushes or opens a PR. `swarm-run --live` (#1400) is different: keel
+dispatches each cluster's implementer seat (`--delegate`, else `knobs.team.implement`; it must be an
+agent CLI such as `claude`, `codex` or `agy` — a `subagent:` seat refuses the run) in the cluster's
+own worktree, commits the result, runs the gates, pushes `swarm/<swarm_id>/<cluster_id>` and opens
+one pull request per cluster. It needs the **operator's** consent — `--approve-scope
+filesystem,git,github --operator <name>` — which you ask the user for and never supply on your own,
+and its pull requests carry **no review evidence**: nothing reviews or lands them yet, so
+`swarm-land` holds them (#1287).
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
@@ -150,9 +153,9 @@ This is the dry run: it assesses each cluster and commits nothing. A worker gets
 worktree (`.keel/worktrees/<swarm_id>/<cluster_id>/`, branch `swarm/<swarm_id>/<cluster_id>`)
 only when worktrees are enabled **and** the run is not dry — so in the one mode this command
 allows, no worktree is created: each cluster's child assessment runs in your own checkout,
-one at a time (#1288). Do not add
-`--live` — it is refused (see the top of this command), because its workers could not pass
-`keel ship --live`'s operator-consent gate. The implementation is the leads' work, below.
+one at a time (#1288). Add `--live` only when the user has consented to the scopes it needs
+(see the top of this command) and wants one unreviewed pull request per cluster; otherwise the
+implementation is the leads' work, below.
 
 - Spawn **one team lead subagent per cluster**, briefed with that cluster's `assignment`
   and `difficulty` verbatim. The lead runs the cluster's issues through the standard
@@ -220,4 +223,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.25.0 source_sha256=0a4ad7008f9c85e6a381b1d54ed52a4f446d4e1359c5daa38f7831638a19cf03 generated_sha256=0a4ad7008f9c85e6a381b1d54ed52a4f446d4e1359c5daa38f7831638a19cf03 -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.25.0 source_sha256=9110ba5e915b47592120b674b12a63a437551dc6a2806b3da814e22031768b87 generated_sha256=9110ba5e915b47592120b674b12a63a437551dc6a2806b3da814e22031768b87 -->
