@@ -124,6 +124,12 @@ def build_brief_path(swarm_id: str, cluster_id: str, root: str | Path = ".") -> 
     return Path(root) / ".keel" / "state" / "swarm" / swarm_id / f"{cluster_id}.brief.md"
 
 
+def build_gh_config_path(swarm_id: str, cluster_id: str, root: str | Path = ".") -> Path:
+    """The ``GH_CONFIG_DIR`` a live worker's implementer runs with: a directory beside the
+    brief, outside the worktree, that holds no ``gh`` login (#1400)."""
+    return Path(root) / ".keel" / "state" / "swarm" / swarm_id / f"{cluster_id}.no-gh-login"
+
+
 def cluster_branch(swarm_id: str, cluster_id: str) -> str:
     """The branch a cluster's worktree is cut on, and the head of its pull request."""
     return f"swarm/{swarm_id}/{cluster_id}"
@@ -288,7 +294,11 @@ def execute_live_cluster_worker(
 
     The worker's children — the implementer, git, the gates — run without the parent's
     consent variables (:func:`keel.swarm_worker.child_env`): consent reaches a worker as the
-    delegation it is handed, never through inheritance.
+    delegation it is handed, never through inheritance. The implementer also runs without
+    the forge (:func:`keel.swarm_worker.implementer_env`): no GitHub token, no ``gh``
+    login, no git credential helper and no network transport, so only keel's own push and
+    pull request — made here, in keel's process, after the implementer has exited — reach
+    the remote.
     """
     env = swarm_worker.child_env(os.environ)
     run = runner or functools.partial(default_runner, timeout_s=timeout_s, env=env)
@@ -325,7 +335,10 @@ def execute_live_cluster_worker(
         ),
         encoding="utf-8",
     )
-    result = live.implement(plan, env)
+    gh_config = build_gh_config_path(swarm_id, cluster.cluster_id, root)
+    result = live.implement(
+        plan, swarm_worker.implementer_env(os.environ, gh_config_dir=str(gh_config))
+    )
     if not result.get("ok"):
         return stop(
             "implement",

@@ -51,6 +51,53 @@ STAGES = ("consent", "worktree", "implement", "commit", "gates", "push", "pull_r
 #: ``KEEL_APPROVE_SCOPE`` would let it approve its own mutations.
 CONSENT_ENV_VARS = ("KEEL_APPROVE_SCOPE", "KEEL_OPERATOR", "KEEL_CONSENT_MODE")
 
+#: The forge credentials ``gh`` (and most GitHub API clients) read from the environment.
+#: The implementer is an agent CLI with tools, steered by issue text nobody vetted, and
+#: keel pushes the branch and opens the pull request itself once the implementer has
+#: exited — so the implementer is never handed these. Only the implementer loses them:
+#: keel's own push and ``gh pr create`` run in keel's process, with the operator's
+#: environment. A model provider's key (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``,
+#: ``GEMINI_API_KEY`` …) is not a forge credential and passes through: the seat needs it
+#: to reach its model.
+FORGE_TOKEN_ENV_VARS = (
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+)
+
+#: The git configuration the implementer runs under, handed over through git's
+#: environment channel (``GIT_CONFIG_COUNT`` / ``GIT_CONFIG_KEY_<n>`` /
+#: ``GIT_CONFIG_VALUE_<n>``, git 2.31+), which outranks every config file. Each entry is
+#: there for one reason:
+#:
+#: - ``credential.helper`` set empty clears the helper list every config file built
+#:   (``osxkeychain``, ``manager``, ``store`` …), including a helper scoped to a URL —
+#:   the form ``gh auth setup-git`` writes — so git has no stored password to offer.
+#: - ``protocol.allow=never`` and ``never`` for each network transport by name make git
+#:   refuse to reach any remote at all — fetch included, HTTPS and SSH alike. This is the
+#:   entry that holds when a credential still exists somewhere (an SSH key, a helper the
+#:   list above does not reach): the transport never opens. The transports are named as
+#:   well as defaulted so a user's own ``protocol.https.allow=always`` cannot outrank it.
+#: - ``protocol.file.allow=user`` restores git's own default for local paths, which
+#:   ``protocol.allow=never`` would otherwise also cover: a project whose tests clone or
+#:   push to a repository on disk keeps working, and a path on disk is not the forge.
+IMPLEMENTER_GIT_CONFIG = (
+    ("credential.helper", ""),
+    ("protocol.allow", "never"),
+    ("protocol.http.allow", "never"),
+    ("protocol.https.allow", "never"),
+    ("protocol.ssh.allow", "never"),
+    ("protocol.git.allow", "never"),
+    ("protocol.file.allow", "user"),
+)
+
+#: Git configuration the parent's environment may already carry. The implementer does
+#: not inherit it: ``GIT_CONFIG_PARAMETERS`` is read after ``GIT_CONFIG_COUNT`` and would
+#: outrank :data:`IMPLEMENTER_GIT_CONFIG`, and an inherited count would renumber it.
+_INHERITED_GIT_CONFIG_VARS = ("GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
+_INHERITED_GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
 #: The gate phases a worker runs after its commit: the ones the s4 loop judges an
 #: implementation by. The jury is a review, deferred with the rest of review to the steps
 #: that land the cluster (#1287).
@@ -180,8 +227,50 @@ def consent_refusal(scopes: Iterable[str]) -> str:
 
 
 def child_env(environ: Mapping[str, str]) -> dict[str, str]:
-    """``environ`` without the parent's consent variables, for a worker's children."""
+    """``environ`` without the parent's consent variables, for a worker's children.
+
+    keel's own git commands and the gates run under this one; the implementer seat runs
+    under :func:`implementer_env`, which also takes away the forge.
+    """
     return {key: value for key, value in environ.items() if key not in CONSENT_ENV_VARS}
+
+
+def _inherited_git_config(key: str) -> bool:
+    return key in _INHERITED_GIT_CONFIG_VARS or key.startswith(_INHERITED_GIT_CONFIG_PREFIXES)
+
+
+def implementer_env(environ: Mapping[str, str], *, gh_config_dir: str) -> dict[str, str]:
+    """The implementer seat's environment: the worker's, with no way to the forge.
+
+    :func:`child_env` (no consent), without :data:`FORGE_TOKEN_ENV_VARS`, and with git
+    and ``gh`` locked out of the remote:
+
+    - ``GH_CONFIG_DIR`` is ``gh_config_dir``, a directory holding no login, so ``gh``
+      finds no stored account — neither in its config nor, having no host listed there,
+      in the system keyring — and says it is not logged in.
+    - ``GIT_TERMINAL_PROMPT=0`` and an empty ``GIT_ASKPASS`` leave git no one to ask for a
+      password (an empty ``GIT_ASKPASS`` also shadows ``core.askPass``, ``SSH_ASKPASS``
+      and an editor's askpass bridge inherited from the operator's terminal).
+    - :data:`IMPLEMENTER_GIT_CONFIG` clears the credential helpers and refuses every
+      network transport.
+
+    This removes the ambient credentials, so a brief that talks the seat into ``git
+    push`` or ``gh pr create`` fails. It is not a sandbox: the seat runs as the operator's
+    OS user and can read what that user can. See ``docs/keel/swarm.md``, trust notes.
+    """
+    env = {
+        key: value
+        for key, value in child_env(environ).items()
+        if key not in FORGE_TOKEN_ENV_VARS and not _inherited_git_config(key)
+    }
+    env["GH_CONFIG_DIR"] = gh_config_dir
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_ASKPASS"] = ""
+    env["GIT_CONFIG_COUNT"] = str(len(IMPLEMENTER_GIT_CONFIG))
+    for index, (key, value) in enumerate(IMPLEMENTER_GIT_CONFIG):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
+    return env
 
 
 def plan_implementer(
@@ -265,6 +354,10 @@ def render_brief(
             "- Do not commit, push, open a pull request, or run any command that changes the "
             "repository's history or its remote. keel commits your changes, runs the "
             "project's gates, pushes the branch and opens the pull request itself."
+        ),
+        (
+            "- You have no GitHub credentials, and git here cannot reach any remote: `git "
+            "push`, `git fetch` and `gh` fail by design, so do not work around them."
         ),
         (
             "- If an issue cannot be implemented as written, leave it unchanged and say why "

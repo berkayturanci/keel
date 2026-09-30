@@ -32,6 +32,25 @@ All notable changes to keel are documented here. The format follows
     them, and nothing lands them (#1287). The run ledger is not written.
 
 ### Fixed
+- **A live swarm worker's implementer cannot reach the remote** (#1400, second slice). The
+  implementer seat — an agent CLI with tools, steered by issue text nobody vetted — inherited the
+  operator's `GH_TOKEN`/`GITHUB_TOKEN`/`GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN`, `gh`'s
+  stored login and git's credential helpers, so it could push or call `gh` itself. It now runs
+  under `keel.swarm_worker.implementer_env`: the four tokens removed; `GH_CONFIG_DIR` pointed at
+  a directory holding no login, so `gh` finds no account in its config or the keyring;
+  `GIT_TERMINAL_PROMPT=0` and an empty `GIT_ASKPASS`; and, through git's environment config,
+  `credential.helper` cleared and every network transport refused (`protocol.allow=never`, and
+  `never` for `http`/`https`/`ssh`/`git` by name), with `protocol.file.allow=user` so a
+  repository on disk still works. Only keel's own push and `gh pr create`, made after the
+  implementer exits, reach the forge; keel's git commands and gates keep the operator's
+  environment, and a model provider's key passes through to the seat. The brief says so. Measured
+  against a real git in the suite: no credential helper is asked (a URL-scoped one included), no
+  HTTPS or SSH transport opens, a local push still succeeds. It is not a sandbox — the seat runs
+  as the operator's OS user — and `docs/keel/swarm.md` names the limits: the gates run the
+  implementer's code with keel's environment, and the worktree shares the operator's repository
+  config and hooks. Recording the consent delegation in the run ledger is left for a decision:
+  every ledger reader refuses the whole file on an unknown record type, so a new one would stop
+  an older `keel` from shipping or merging on the same checkout.
 - **Each swarm issue is planned from its own scope, and an issue that declares none conflicts
   with everything** (#1274). `swarm-plan`, `swarm-run` and `swarm-land` handed the same
   `--issue-title`/`--issue-body`/`--issue-label`/`--declared-file` to every issue and read

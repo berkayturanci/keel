@@ -1343,6 +1343,127 @@ class TheLiveWorkersDefaultSeamsAreKeelsOwn(unittest.TestCase):
         push.assert_called_once_with("origin", "abc", "refs/heads/b", cwd=worktree)
         open_pr.assert_called_once_with("t", "b", "main", "h", cwd=worktree)
 
+    def test_keels_own_push_and_pull_request_inherit_the_operators_environment(self):
+        """The push and ``gh pr create`` are keel's, made after the implementer exited:
+        they pass no ``env``, so they run with the operator's credentials."""
+        from keel import swarm_runtime
+
+        with (
+            patch("keel.git.run_argv", return_value="pushed") as push,
+            patch("keel.github.run_argv", return_value="opened") as open_pr,
+        ):
+            swarm_runtime._default_push("origin", "abc", "refs/heads/b", Path("/w"))
+            swarm_runtime._default_open_pr("t", "b", "main", "h", Path("/w"))
+        self.assertEqual(push.call_args.args[0], ["git", "push", "origin", "abc:refs/heads/b"])
+        self.assertEqual(open_pr.call_args.args[0][:3], ["gh", "pr", "create"])
+        self.assertNotIn("env", push.call_args.kwargs)
+        self.assertNotIn("env", open_pr.call_args.kwargs)
+
+
+#: The operator's environment for the forge tests: consent, forge tokens, a provider key.
+_FORGE_ENV = {
+    "KEEL_APPROVE_SCOPE": "filesystem,git,github",
+    "KEEL_OPERATOR": "ops",
+    "GH_TOKEN": "gho_operator_token",
+    "GITHUB_TOKEN": "ghp_operator_token",
+    "GH_ENTERPRISE_TOKEN": "ghe_operator_token",
+    "GITHUB_ENTERPRISE_TOKEN": "ghe_operator_github_token",
+    "ANTHROPIC_API_KEY": "sk-ant-provider",
+}
+
+
+class OnlyKeelReachesTheRemote(unittest.TestCase):
+    """#1400: the implementer seat runs without the operator's forge credentials and with
+    git locked out of the remote; keel's own git commands and gates keep the operator's
+    environment (less consent), and keel's push and pull request are what reach the
+    forge."""
+
+    def _plan(self):
+        return build_swarm_plan(
+            [IssueScope(issue=731, title="T731", predicted_files=("src/731.py",))],
+            swarm_id="swarm-forge",
+        )
+
+    def test_the_implementer_runs_without_the_forge(self):
+        plan = self._plan()
+        io_, git = _LiveIo(), _Git()
+        with tempfile.TemporaryDirectory() as tmpdir, patch.dict(os.environ, _FORGE_ENV):
+            result = run_swarm_orchestration(
+                plan,
+                "projects/x.yaml",
+                root=tmpdir,
+                dry_run=False,
+                live=_live(plan, tmpdir, io_),
+                runner=git,
+                base_branch="main",
+            )
+            root = Path(tmpdir).resolve()
+
+        self.assertEqual(result.status, "success")
+        ((_plan, env, _brief),) = io_.implemented
+        (cluster,) = _clusters(plan)
+        # Compared as sets of names, so a failure never prints the environment's values.
+        leaked = set(swarm_worker.FORGE_TOKEN_ENV_VARS + swarm_worker.CONSENT_ENV_VARS) & set(env)
+        self.assertEqual(leaked, set())
+        secrets = {"gho_operator_token", "ghp_operator_token", "ghe_operator_token"}
+        self.assertEqual(secrets & set(env.values()), set())
+        self.assertEqual(
+            env["GH_CONFIG_DIR"],
+            str(
+                root
+                / ".keel"
+                / "state"
+                / "swarm"
+                / "swarm-forge"
+                / (cluster.cluster_id + ".no-gh-login")
+            ),
+        )
+        self.assertEqual((env["GIT_TERMINAL_PROMPT"], env["GIT_ASKPASS"]), ("0", ""))
+        self.assertEqual(env["GIT_CONFIG_KEY_1"], "protocol.allow")
+        self.assertEqual(env["GIT_CONFIG_VALUE_1"], "never")
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-ant-provider")
+        # keel pushed and opened the pull request after the implementer, through its seams.
+        self.assertEqual(len(io_.pushes), 1)
+        self.assertEqual(len(io_.prs), 1)
+
+    def test_keels_own_git_and_gates_keep_the_operators_environment(self):
+        plan = self._plan()
+        (cluster,) = _clusters(plan)
+        io_, git = _LiveIo(), _Git()
+        envs: list[tuple[list[str], dict]] = []
+
+        def recording_runner(cmd, cwd, timeout_s=0, env=None):
+            envs.append((list(cmd), env))
+            return git(cmd, cwd)
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.dict(os.environ, _FORGE_ENV),
+            patch("keel.swarm_runtime.default_runner", side_effect=recording_runner),
+        ):
+            from keel.swarm_runtime import execute_live_cluster_worker
+
+            root = Path(tmpdir).resolve()
+            res = execute_live_cluster_worker(
+                cluster,
+                swarm_id=plan.swarm_id,
+                root=root,
+                worktree_dir=build_worktree_path(plan.swarm_id, cluster.cluster_id, root),
+                project_yaml="projects/x.yaml",
+                base_branch="main",
+                live=_live(plan, root, io_),
+            )
+
+        self.assertTrue(res["ok"], res["output"])
+        self.assertTrue(any("run-gates" in cmd for cmd, _env in envs))
+        self.assertTrue(any(cmd[:2] == ["git", "commit"] for cmd, _env in envs))
+        for cmd, env in envs:
+            self.assertEqual(env.get("GH_TOKEN"), "gho_operator_token", cmd)
+            self.assertFalse("KEEL_APPROVE_SCOPE" in env, cmd)
+            # Not the implementer's lockdown: keel's own git is the operator's git.
+            self.assertNotIn(".no-gh-login", env.get("GH_CONFIG_DIR", ""), cmd)
+            self.assertNotEqual(env.get("GIT_CONFIG_KEY_1"), "protocol.allow", cmd)
+
     def test_the_default_runner_passes_the_environment_through(self):
         seen = {}
 
