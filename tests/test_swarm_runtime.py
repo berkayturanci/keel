@@ -488,6 +488,20 @@ class AFailedWaveDoesNotSkipTheNext(unittest.TestCase):
         self.assertEqual((result.passed_count, result.failed_count), (2, 1))
         assert state is not None
         self.assertNotIn("queued", {w.status for w in state.workers})
+        # #1276: each wave record carries the mode of the plan it ran under. Wave 2
+        # depended only on the failed #1, so the rebalanced plan frees it; wave 3
+        # still waits on #2.
+        self.assertEqual(
+            [
+                (r["wave_index"], r["mode"], r["eligible_direct_landing"])
+                for r in result.wave_results
+            ],
+            [
+                (1, "orthogonal_parallel", True),
+                (2, "orthogonal_parallel", True),
+                (3, "sequential_dependent", False),
+            ],
+        )
 
 
 class TestSwarmPureStateHelpers(unittest.TestCase):

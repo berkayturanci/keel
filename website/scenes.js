@@ -441,7 +441,7 @@
       stage.appendChild(el("div", "sc-lab", "multi-agent swarm (experimental) · DAG wave clustering & batch landing"));
       var plan = el("div", "lanes");
       var w1 = el("div", "chip", '<span class="dot"></span>Wave 1 · Direct Orthogonal Batch<span class="meta">2 parallel clusters</span>');
-      var w2 = el("div", "chip muted", '<span class="dot"></span>Wave 2 · Direct Batch<span class="meta">1 cluster</span>');
+      var w2 = el("div", "chip muted", '<span class="dot"></span>Wave 2 · Dependent — re-plan after wave 1<span class="meta">1 cluster</span>');
       plan.appendChild(w1); plan.appendChild(w2);
       stage.appendChild(plan);
 
@@ -483,7 +483,7 @@
         w2.classList.remove("muted"); w2.classList.add("work");
         fills[2].lane.classList.remove("muted");
         fills[2].out.textContent = "merging"; fills[2].fill.style.width = "40%";
-        capt.textContent = "Wave 2: merging the dependent cluster under the lock…";
+        capt.textContent = "Wave 2 depends on wave 1: re-planned on the moved base, then merged under the lock…";
       });
 
       at(3800, function () {

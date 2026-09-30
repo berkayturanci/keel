@@ -164,9 +164,14 @@ class TestTemplateEscaping(unittest.TestCase):
         )
         self.assertIn(
             "const modeLabel = w.eligible_direct_landing ? 'Orthogonal Parallel' : "
-            "'Sequential Funnel';",
+            "'Dependent — Refused';",
             src,
         )
+
+    def test_the_swarm_view_never_calls_a_dependent_wave_a_funnel(self) -> None:
+        # keel swarm-land refuses a dependent wave (#1276); a "funnel" label
+        # promises a rebase the CLI never performs.
+        self.assertNotIn("funnel", load("swarm.html").lower())
 
     def test_backticks_only_open_literals(self) -> None:
         # A backtick in a // comment would open a literal the scan invents.

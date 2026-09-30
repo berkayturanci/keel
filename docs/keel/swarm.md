@@ -24,7 +24,9 @@
 > every named issue is read from GitHub, and an issue that declares no scope is planned as `*`
 > and serialised against every other issue
 > ([#1274](https://github.com/berkayturanci/keel/issues/1274)). A backlog whose issues carry no
-> `Scope:` line plans one wave per issue — see
+> `Scope:` line plans one wave per issue, and every wave after the first is then
+> `sequential_dependent`, which `swarm-land` refuses until the earlier wave lands and the
+> rest is re-planned — see
 > [Declaring an issue's scope](#declaring-an-issues-scope). `keel-visual swarm` rebuilds its scopes
 > without predicted files, so its DAG is always one flat wave
 > ([#1275](https://github.com/berkayturanci/keel/issues/1275),
@@ -113,7 +115,7 @@ an operator sees the chain at a glance.
                         ▼                                   ▼
               ┌───────────────────┐               ┌───────────────────┐
               │      Wave 1       │               │      Wave 2       │
-              │  (Direct Batch)   │               │  (Direct Batch)   │
+              │  (Direct Batch)   │               │ (Dependent Wave)  │
               └─────────┬─────────┘               └─────────┬─────────┘
                         │                                   │
        ┌────────────────┴────────────────┐                  │
@@ -135,7 +137,7 @@ an operator sees the chain at a glance.
                         ▼                                   ▼
               ┌───────────────────┐               ┌───────────────────┐
               │ local base branch │ ◄─────────────┤  keel swarm-land  │
-              │   (Wave 1 Done)   │               │   (Wave 2 Done)   │
+              │   (Wave 1 Done)   │               │(after re-planning)│
               └───────────────────┘               └───────────────────┘
 ```
 
@@ -238,7 +240,10 @@ the first of these that names anything:
    contributes nothing here; swarm adds no mapping of its own.
 
 An issue with **no declared scope gets `*` — everything** — so it conflicts with every other
-issue and gets a wave to itself; stderr names each such issue. The paths its title and body
+issue and gets a wave to itself; stderr names each such issue. Past wave 1 that wave depends
+on every issue before it, so it is `sequential_dependent` and `swarm-land` refuses it (#1276)
+until the earlier waves land and the rest is re-planned — slow, but never a collision. The
+paths its title and body
 happen to name, and the label hints below, are still kept in its scope (the risk tier and the
 difficulty score read them), but beside `*`, never instead of it: a mention of `a.py` is not a
 promise that the change stays out of `cli.py`.
@@ -275,6 +280,14 @@ so they inform the tier and the difficulty score and never make an issue look di
   they are marked disjoint ($D_{ij} = 1$). If scopes intersect, a conflict edge is created ($C_{ij} = 1$).
 - **Topological Wave Partitioning**: Disjoint clusters are scheduled in Wave 1. Dependent or conflicting
   clusters are placed in subsequent waves (Wave 2, Wave 3...).
+- **Wave mode**: Wave 1 is `orthogonal_parallel` (`eligible_direct_landing: true`). A later wave is
+  `orthogonal_parallel` only when none of its clusters lists a `depends_on_issues` entry; otherwise it
+  is `sequential_dependent` (`eligible_direct_landing: false`), because the wave it depends on moves
+  the base its branches were cut from. A plan built from scratch always gives a later wave a
+  dependency — an issue only waits for a later wave because it overlaps something already placed —
+  so every wave after the first is `sequential_dependent` until a failure's rebalance drops its last
+  dependency ([#1276](https://github.com/berkayturanci/keel/issues/1276)). Before that fix every
+  wave claimed `orthogonal_parallel`.
 
 ### ASCII plan tree
 The `--tree` flag prints the plan as a terminal tree:
@@ -302,7 +315,10 @@ The `--tree` flag prints the plan as a terminal tree:
 
 (The three issues above declare disjoint scopes, so they share one wave; had any of them declared
 none, it would be planned as `*` and sit in a wave of its own. Issues whose predicted
-scopes overlap are pushed into later waves instead — each wave stays internally disjoint.)
+scopes overlap are pushed into later waves instead — each wave stays internally disjoint. Such a
+wave prints as `⏳ Wave 2 [sequential_dependent] — Dependent — refused until re-planned`, because
+`swarm-land` refuses it until the earlier wave lands; see [Landing](#4-landing-keel-swarm-land).
+A `*` issue in a later wave always does: it overlaps everything before it.)
 
 ---
 
@@ -401,9 +417,33 @@ keel swarm-land .keel/project.yaml --root . --issues 714,715,716,717 --wave 1 --
 
 ### What landing actually does
 
-Each cluster branch is merged into the **local** copy of the configured base branch with
-`git merge --no-ff`, **one after another** inside the lock. A merge that conflicts is
-`git merge --abort`ed, the base is left untouched, and the cluster is reported `merge failed`.
+`evaluate_wave_landing_mode` decides from the plan's wave mode whether the wave lands at all:
+
+- **Direct batch** — the wave is `orthogonal_parallel` (wave 1, or a later wave with no
+  dependency left). Each cluster branch is merged into the **local** copy of the configured base
+  branch with `git merge --no-ff`, **one after another** inside the lock. A merge that conflicts
+  is `git merge --abort`ed, the base is left untouched, and the cluster is reported `merge failed`.
+  The decision's reason is `single_cluster` for a wave of one and `orthogonal_diff_trees`
+  otherwise: `build_swarm_plan` only admits an issue to a wave it conflicts with nothing in, and
+  the CLI passes no PR diff map, so a wave's own clusters never overlap each other.
+- **Refused** — the wave is `sequential_dependent`, whatever its size (reason
+  `depends_on_earlier_wave`, [#1276](https://github.com/berkayturanci/keel/issues/1276)). Its
+  branches were cut before the earlier wave it depends on landed, so `swarm-land` lands none of
+  it, dry run or live: it runs no git command and no review-evidence check, reports
+  `mode : refused` with `refused : wave N depends on issues landed by an earlier wave (#a, #b)…`,
+  and exits 1. Land the earlier wave, then re-plan the remaining issues (`keel swarm-plan` /
+  `swarm-run` without the landed ones, so they plan as a fresh wave 1 on the moved base) and land
+  again. Before #1276 every wave claimed direct landing, so `keel swarm-land --wave 2` merged a
+  branch cut before wave 1 landed and reported the conflict as `merge failed`.
+
+`swarm_landing.py` also implements an adaptive rebase funnel (rebase onto the moved base,
+deterministic marker-resolver healing, hold-and-rewind of anything the resolver touched). No
+`keel swarm-land` invocation reaches it: it is selected only for an `orthogonal_parallel` wave
+whose supplied `pr_diff_map` overlaps (`overlapping_diff_trees`), and the CLI passes none. It
+stays off for dependent waves until
+[#1266](https://github.com/berkayturanci/keel/issues/1266) feeds its overlap check real diffs.
+The refusal is chosen from the plan's dependency edges, not from how far the base branch has
+actually moved since each branch was cut; comparing against that drift is the open half of #1276.
 
 **The landing is a local merge only.** `merge_cluster_branch` runs `git checkout <base_branch>` and
 `git merge --no-ff <cluster branch>` in your checkout, and nothing after it pushes: `swarm-land`
@@ -424,17 +464,6 @@ it out again when the wave ends, however it ends: landed, conflicted, aborted, o
 checkout fails, the result carries `warning : could not return the checkout to <branch>…` with the
 command to run ([#1279](https://github.com/berkayturanci/keel/issues/1279)). A dry run touches no
 branch and is unchanged.
-
-**Every wave lands in direct-batch mode today.** `build_swarm_plan` only admits an issue to a wave
-it conflicts with nothing in, so a wave's clusters are always mutually disjoint; the CLI also passes
-no PR diff map, so `evaluate_wave_landing_mode` returns `direct_batch` (`orthogonal_diff_trees`, or
-`single_cluster` for a wave of one) every time.
-
-`swarm_landing.py` *does* implement an adaptive funnel — rebase each overlapping cluster onto the
-moved base, heal adjacent conflicts with the deterministic marker resolver, hold anything the
-resolver touched for re-review, and rewind a held branch. That path is reachable only by a library
-caller that supplies `pr_diff_map`; **no `keel swarm-land` invocation selects it.** It is described
-in [cli.md](cli.md) for callers who drive the library directly.
 
 ### Review Evidence Gate (`knobs.swarm_review_evidence`)
 

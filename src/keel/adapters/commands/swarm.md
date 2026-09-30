@@ -25,7 +25,9 @@ Planning reads each issue's scope from the issue (#1274): a `Scope: a/b.py, docs
 `## Scope` bullet list in its body, else its `area:<name>` labels mapped through
 `policy_pack.scan.areas`. An issue that declares none — or that `gh` cannot read — is planned as
 `*` and serialised against every other issue, and stderr names it; paths its text merely mentions
-do not make it disjoint. So a backlog without `Scope:` lines plans one wave per issue. To give an
+do not make it disjoint. So a backlog without `Scope:` lines plans one wave per issue, and
+every wave after the first is `sequential_dependent`, which `swarm-land` refuses: land wave 1,
+re-plan the rest, land again. To give an
 issue a scope for this run, pass `--issue-scope <n>=<glob>[,<glob>…]` (repeatable, on
 `swarm-plan`, `swarm-run` and `swarm-land` alike — pass the same ones to all three), and never
 pass `--issue-title`/`--issue-body`/`--issue-label`/`--declared-file` beside several issues:
@@ -125,7 +127,8 @@ actually dispatch rather than the default one.
 
 - Inspect the generated waves, disjoint clusters, conflict edges, and direct landing eligibility.
 - Read stderr and each issue's `scope_source` in `issue_scopes`: `default` (scope `*`) means
-  the issue declared no scope — or could not be read — and so runs alone. Report those issues
+  the issue declared no scope — or could not be read — and so runs alone, in a wave
+  `swarm-land` refuses until the waves before it land and the rest is re-planned. Report those issues
   to the operator instead of inventing a scope for them.
 - Each cluster carries a `difficulty` (`band`, `score`, `tier` and the `signals` that
   produced them) and an `assignment` (`lead`, `implementer`, `effort`, `reviewers`,
@@ -186,9 +189,9 @@ When an execution wave completes, land all passing clusters onto the project's
 keel swarm-land .keel/project.yaml --root . --issues <n,n,n> --wave <n> --live
 ```
 
-- The landing mode is **derived from the plan's predicted scopes for the wave**, not passed on the command line.
-- **Orthogonal Batch Landing**: Disjoint diff trees are merged into the local `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
-- Every planned wave is internally disjoint, so landing always runs in direct-batch mode; the library's adaptive rebase funnel is not selected by this command.
+- The landing mode is **derived from the plan's wave mode**, not passed on the command line.
+- **Orthogonal Batch Landing** (wave 1, and any later wave none of whose clusters depends on an earlier wave's issue): disjoint diff trees are merged into the local `base_branch` with `git merge --no-ff`, sequentially under the atomic `merge_lock`.
+- **A dependent wave is refused.** A `sequential_dependent` wave — in a fresh plan, every wave after the first — had its branches cut before the earlier wave it depends on landed, so `swarm-land --wave N` refuses it, dry run or live: no checkout, no merge, exit 1, `"mode": "refused"` with the reason in `refused`. Land the earlier wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the landed ones) and land again. The library's adaptive rebase funnel is not reached from this command until #1266 feeds its overlap check real diffs.
 - **The landing is a local merge only.** `swarm-land` does not push, and it does not open or merge a pull request: a cluster reported `merged` is merged in the local base branch, its pull request stays open, and `origin` is unchanged (#1287). Pushing is the operator's step — leave it to them, and do not report the work as landed on the repository. A protected base branch refuses the push anyway; work that has to reach the repository goes through `/keel:ship` and `keel merge`, one pull request at a time.
 
 ## Step 4 — Visual tracking & terminal dashboard

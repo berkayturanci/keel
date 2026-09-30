@@ -1451,6 +1451,19 @@ class ScopeLessIssuesConflict(unittest.TestCase):
         self.assertEqual(plan.conflict_map, {1: (2,), 2: (1,)})
         self.assertEqual([[c.issues for c in w.clusters] for w in plan.waves], [[(1,)], [(2,)]])
 
+    def test_the_wave_a_scope_less_issue_is_pushed_into_is_refused_by_landing(self):
+        # With #1276, the later wave depends on the earlier one, so swarm-land refuses it
+        # until wave 1 lands and the rest is re-planned — slow, never a collision.
+        plan = build_swarm_plan(
+            [extract_issue_scope(1, body="Scope: docs/a.md"), extract_issue_scope(2)],
+            swarm_id="s",
+        )
+        self.assertEqual(
+            [(w.mode, w.eligible_direct_landing) for w in plan.waves],
+            [("orthogonal_parallel", True), ("sequential_dependent", False)],
+        )
+        self.assertEqual(plan.waves[1].clusters[0].depends_on_issues, (1,))
+
     def test_issues_that_only_mention_disjoint_paths_still_serialise(self):
         # The #1274 failure: two issues naming different files in prose, both of which end
         # up editing `src/keel/cli.py`. A mention is not a declaration.
@@ -1716,6 +1729,104 @@ class SwarmCommandsReadEachIssue(unittest.TestCase):
             main(["swarm-plan", ".keel/project.yaml", "--issue", "1", "--issue-scope", "1="])
         self.assertEqual(caught.exception.code, 2)
         self.assertIn("at least one glob", err.getvalue())
+
+
+class AWavesLandingModeFollowsItsDependencies(unittest.TestCase):
+    """#1276 (part 1): the mode was ``len(current_wave_issues) > 0``, true of every wave,
+    so a wave that exists *because* it overlaps an earlier one still claimed direct
+    batch landing onto a base that wave had just moved."""
+
+    def _chain(self) -> swarm_module.SwarmPlan:
+        # Three issues on one file: one wave each, each depending on every earlier one.
+        scopes = [
+            IssueScope(issue=n, title=f"T{n}", predicted_files=("src/a.py",)) for n in (1, 2, 3)
+        ]
+        plan = build_swarm_plan(scopes, swarm_id="swarm-chain")
+        deps = [w.clusters[0].depends_on_issues for w in plan.waves]
+        self.assertEqual(deps, [(), (1,), (1, 2)], "fixture: a dependency chain")
+        return plan
+
+    def test_the_first_wave_is_orthogonal(self):
+        first = self._chain().waves[0]
+        self.assertEqual((first.mode, first.eligible_direct_landing), ("orthogonal_parallel", True))
+
+    def test_a_later_wave_with_a_dependency_is_sequential(self):
+        plan = self._chain()
+        modes = [(w.mode, w.eligible_direct_landing) for w in plan.waves[1:]]
+        self.assertEqual(modes, [("sequential_dependent", False)] * 2)
+        self.assertEqual(plan.to_dict()["waves"][1]["mode"], "sequential_dependent")
+        self.assertIn(
+            "Wave 2 [sequential_dependent] — dependent on an earlier wave — swarm-land "
+            "refuses it; land the earlier wave, then re-plan:",
+            render_swarm_plan_text(plan),
+        )
+        tree = render_swarm_plan_tree(plan)
+        self.assertIn(
+            "⏳ Wave 2 [sequential_dependent] — Dependent — refused until re-planned", tree
+        )
+        self.assertIn("Direct Landing Waves: 1 ", tree)
+
+    def test_no_renderer_says_a_dependent_wave_funnels(self):
+        """swarm-land refuses a dependent wave (#1276), so a renderer that labels it a
+        funnel promises a rebase the CLI never performs."""
+        plan = self._chain()
+        for name, text in (
+            ("text", render_swarm_plan_text(plan)),
+            ("tree", render_swarm_plan_tree(plan)),
+        ):
+            with self.subTest(renderer=name):
+                dependent = [ln for ln in text.splitlines() if "sequential_dependent" in ln]
+                self.assertEqual(len(dependent), 2, text)
+                self.assertFalse([ln for ln in dependent if "funnel" in ln.lower()], text)
+                self.assertNotIn("funnel", text.lower())
+
+    def test_a_later_wave_without_a_dependency_is_orthogonal(self):
+        # Issue 1 fails: wave 2 loses its only dependency, wave 3 still waits on #2.
+        after = swarm_module.rebalance_swarm_plan(self._chain(), failed_issue=1)
+        modes = {w.wave_index: (w.mode, w.eligible_direct_landing) for w in after.waves}
+        self.assertEqual(
+            modes,
+            {2: ("orthogonal_parallel", True), 3: ("sequential_dependent", False)},
+        )
+        free = SwarmCluster(cluster_id="c", issues=(9,), role="core", combined_scope=("b.py",))
+        self.assertEqual(swarm_module.wave_landing_mode(4, [free]), ("orthogonal_parallel", True))
+
+    def test_a_single_cluster_dependent_wave_is_refused_not_funneled(self):
+        """The owner's call on #1276: the funnel's overlap check is fed no real diffs
+        from the CLI (#1266), so a dependent wave is refused rather than rebased."""
+        plan = self._chain()
+        first = swarm_module.evaluate_wave_landing_mode(plan.waves[0], {})
+        self.assertEqual((first.mode, first.reason), ("direct_batch", "single_cluster"))
+        later = swarm_module.evaluate_wave_landing_mode(plan.waves[1], {})
+        self.assertEqual(
+            (later.mode, later.eligible, later.reason),
+            ("refused", False, "depends_on_earlier_wave"),
+        )
+        # Even a supplied diff map that would funnel an orthogonal wave does not
+        # reopen the funnel for a dependent one.
+        overlapping = {c.cluster_id: ["src/a.py"] for c in plan.waves[1].clusters}
+        self.assertEqual(
+            swarm_module.evaluate_wave_landing_mode(plan.waves[1], overlapping).mode, "refused"
+        )
+
+    def test_the_refusal_names_the_dependencies_and_the_way_through(self):
+        refusal = swarm_module.render_dependent_wave_refusal(self._chain().waves[2])
+        self.assertIn("wave 3 depends on issues landed by an earlier wave (#1, #2);", refusal)
+        self.assertIn("its branches were cut before that landing", refusal)
+        self.assertIn("Land the earlier wave, then re-plan", refusal)
+        self.assertIn("keel swarm-plan / swarm-run", refusal)
+        self.assertIn("until #1266 feeds it real diffs", refusal)
+        self.assertIn("nothing was checked out or merged", refusal)
+
+    def test_a_hand_built_dependent_wave_without_dependencies_still_reads(self):
+        c = SwarmCluster(cluster_id="c", issues=(9,), role="core", combined_scope=("b.py",))
+        wave = swarm_module.SwarmWave(
+            wave_index=2, mode="sequential_dependent", eligible_direct_landing=False, clusters=(c,)
+        )
+        refusal = swarm_module.render_dependent_wave_refusal(wave)
+        self.assertTrue(
+            refusal.startswith("wave 2 depends on issues landed by an earlier wave; "), refusal
+        )
 
 
 if __name__ == "__main__":
