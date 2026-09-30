@@ -375,12 +375,13 @@ class TheWaveLandsEachPullRequestInOrder(unittest.TestCase):
                 result = _land(plan, rec, root=tmp)
             except RuntimeError as exc:
                 self.fail(f"one cluster's keel merge raising stopped the wave: {exc}")
-            state = load_swarm_state(plan.swarm_id, root=tmp)
-        self.assertEqual(result.failed_clusters, ("cluster-1-101",))
-        self.assertEqual(result.landed_clusters, ("cluster-1-102",))
-        self.assertEqual(result.status, "partial_failure")
-        self.assertEqual(state.workers[0].status, "failed")
-        self.assertIn("keel merge raised RuntimeError: boom", state.workers[0].details)
+            else:
+                state = load_swarm_state(plan.swarm_id, root=tmp)
+                self.assertEqual(result.failed_clusters, ("cluster-1-101",))
+                self.assertEqual(result.landed_clusters, ("cluster-1-102",))
+                self.assertEqual(result.status, "partial_failure")
+                self.assertEqual(state.workers[0].status, "failed")
+                self.assertIn("keel merge raised RuntimeError: boom", state.workers[0].details)
 
     def test_a_drift_warning_is_carried_to_the_result(self):
         rec = _Recorder(merged={10: ClusterMerge(LANDED, "merged, but drift", "look at it")})
