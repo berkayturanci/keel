@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-09-30
+
+- An opt-in `revert-check` gate asks what coverage cannot: it reverts each change on the branch alone and requires a test to fail as an assertion, naming every change no test notices.
+- `keel cost-report` can say "measured": hosted-API delegate runs record the token usage the provider reports.
+- The README, the site, the command adapters and the reference pages were audited against the code and now match it, and `swarm-land` says plainly that it is a local merge.
+
 ### Fixed
 - **A swarm worker's timeout follows the project's gate budget** (#1279, item 1). Every
   worker's child `keel ship` was killed after a hard-coded 300 s, and the child runs the gate
