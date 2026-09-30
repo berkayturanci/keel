@@ -27,12 +27,12 @@
    assessment: the agent commits, pushes and opens the pull request. The CLI's own writes are
    these. On GitHub: the merge `keel merge` makes, the lesson commit `keel capture-land` pushes
    onto the pull request's branch (the base branch without `--onto`), the verdict and closure
-   comments `keel post-comment` and `keel review --live` post or update, and the missing labels
-   `keel doctor --fix` creates. In the local checkout: `keel swarm-land --live` merges cluster
-   branches into the local base branch with `--no-ff` and pushes nothing, `keel worktree-remove`
-   removes a worktree, and `keel rollback` (or `keel canary --auto-revert`) commits a revert; the
-   opt-in `revert-check` gate has `keel run-gates` and `keel ship` add and remove a temp
-   worktree. (`swarm-run --live` is refused before it starts, so it writes nothing.)
+   comments `keel post-comment` and `keel review --live` post or update, the labels
+   `keel doctor --fix` creates, and the branch and pull request per cluster that the experimental
+   `keel swarm-run --live` pushes and opens. Locally: `keel swarm-land --live` merges cluster
+   branches into the local base branch and pushes nothing, `keel worktree-remove` removes a
+   worktree, `keel rollback` (or `keel canary --auto-revert`) commits a revert, and the opt-in
+   `revert-check` gate has `keel run-gates` and `keel ship` add and remove a temp worktree.
 3. **A pull request merges only through `keel merge`**, which takes the merge lock,
    re-checks the merge window, reads the live CI rollup and verifies the head-pinned review
    evidence first.
@@ -212,9 +212,12 @@ bill.
   reaches it through `gh` alone; the `mcp` transport describes what an agent host's own
   GitHub MCP server can do for its reads and comments, and marks merges and check rollups
   as degraded there ([transport](docs/keel/github-transport.md)).
-- **Swarm is experimental.** `/keel:swarm` plans waves, but a live run cannot produce a commit
-  or a pull request yet ([#1281](https://github.com/berkayturanci/keel/issues/1281)). Use
-  `/keel:ship` for work you need merged.
+- **Swarm is experimental.** `/keel:swarm` plans waves, and `swarm-run --live` now has each
+  cluster's implementer seat write the change and opens one pull request per cluster, but those
+  pull requests carry no review evidence and nothing lands them yet
+  ([#1400](https://github.com/berkayturanci/keel/issues/1400),
+  [#1287](https://github.com/berkayturanci/keel/issues/1287)). Use `/keel:ship` for work you
+  need merged.
 - **The unit is the issue.** keel has no channel for steering a run in flight: to change
   direction, change the issue. A run that stops resumes from its checkpoint (`keel resume`).
 - **Consent is emit-only in core.** keel emits the consent contract and the gate-review seat;
