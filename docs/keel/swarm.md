@@ -267,7 +267,9 @@ The `--tree` flag prints the plan as a terminal tree:
 ```
 
 (The three issues above touch disjoint trees, so they share one wave. Issues whose predicted
-scopes overlap are pushed into later waves instead — each wave stays internally disjoint.)
+scopes overlap are pushed into later waves instead — each wave stays internally disjoint. Such a
+wave prints as `⏳ Wave 2 [sequential_dependent] — Dependent — refused until re-planned`, because
+`swarm-land` refuses it until the earlier wave lands; see [Landing](#4-landing-keel-swarm-land).)
 
 ---
 

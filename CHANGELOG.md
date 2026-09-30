@@ -20,8 +20,19 @@ All notable changes to keel are documented here. The format follows
   `"status": "failed"` and a `refused` message naming the issues the wave depends on. Land the
   earlier wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the
   landed ones) and land again. The rebase funnel is not reached from the CLI: its overlap check
-  is fed no real diffs until #1266. Comparing each branch against how far the base has actually
-  moved (part 2) is still open.
+  is fed no real diffs until #1266. The `swarm-plan` text and `--tree` output, and the
+  keel-visual swarm view, label such a wave as refused ("dependent on an earlier wave —
+  swarm-land refuses it; land the earlier wave, then re-plan") instead of "sequential merge
+  funnel". Comparing each branch against how far the base has actually moved (part 2) is still
+  open.
+
+## [1.25.0] - 2026-09-30
+
+- An opt-in `revert-check` gate asks what coverage cannot: it reverts each change on the branch alone and requires a test to fail as an assertion, naming every change no test notices.
+- `keel cost-report` can say "measured": hosted-API delegate runs record the token usage the provider reports.
+- The README, the site, the command adapters and the reference pages were audited against the code and now match it, and `swarm-land` says plainly that it is a local merge.
+
+### Fixed
 - **A swarm worker's timeout follows the project's gate budget** (#1279, item 1). Every
   worker's child `keel ship` was killed after a hard-coded 300 s, and the child runs the gate
   suite in a dry `swarm-run` too, so a suite the project allows ten minutes (`gate_timeout_s`

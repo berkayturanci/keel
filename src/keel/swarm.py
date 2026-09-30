@@ -2,8 +2,8 @@
 
 Pure, stdlib-first dependency graph analysis for multi-agent parallel execution.
 Partitions candidate issues into orthogonal (disjoint) Waves and independent Clusters,
-enabling Direct Batch Landing for non-overlapping diff trees and adaptive merge
-funneling with automated conflict recovery for dependent trees.
+enabling Direct Batch Landing for non-overlapping diff trees. A wave that depends on
+an earlier one is refused at landing until that wave lands and the rest is re-planned.
 
 All functions here are pure and deterministic — no subprocess, no network.
 """
@@ -1007,10 +1007,12 @@ def render_swarm_plan_text(plan: SwarmPlan) -> str:
         "",
     ]
     for w in plan.waves:
+        # What swarm-land does with the wave (#1276): a dependent wave is refused.
         landing = (
             "eligible for direct batch landing"
             if w.eligible_direct_landing
-            else "sequential merge funnel"
+            else "dependent on an earlier wave — swarm-land refuses it; "
+            "land the earlier wave, then re-plan"
         )
         lines.append(f"Wave {w.wave_index} [{w.mode}] — {landing}:")
         for c in w.clusters:
@@ -1052,7 +1054,11 @@ def render_swarm_plan_tree(plan: SwarmPlan) -> str:
 
     for w in plan.waves:
         mode_icon = "⚡" if w.eligible_direct_landing else "⏳"
-        landing_label = "Direct Batch Landing" if w.eligible_direct_landing else "Sequential Funnel"
+        landing_label = (
+            "Direct Batch Landing"
+            if w.eligible_direct_landing
+            else "Dependent — refused until re-planned"
+        )
         lines.append(f"{mode_icon} Wave {w.wave_index} [{w.mode}] — {landing_label}")
 
         num_clusters = len(w.clusters)

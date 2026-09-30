@@ -1303,11 +1303,29 @@ class AWavesLandingModeFollowsItsDependencies(unittest.TestCase):
         self.assertEqual(modes, [("sequential_dependent", False)] * 2)
         self.assertEqual(plan.to_dict()["waves"][1]["mode"], "sequential_dependent")
         self.assertIn(
-            "Wave 2 [sequential_dependent] — sequential merge funnel", render_swarm_plan_text(plan)
+            "Wave 2 [sequential_dependent] — dependent on an earlier wave — swarm-land "
+            "refuses it; land the earlier wave, then re-plan:",
+            render_swarm_plan_text(plan),
         )
         tree = render_swarm_plan_tree(plan)
-        self.assertIn("⏳ Wave 2 [sequential_dependent] — Sequential Funnel", tree)
+        self.assertIn(
+            "⏳ Wave 2 [sequential_dependent] — Dependent — refused until re-planned", tree
+        )
         self.assertIn("Direct Landing Waves: 1 ", tree)
+
+    def test_no_renderer_says_a_dependent_wave_funnels(self):
+        """swarm-land refuses a dependent wave (#1276), so a renderer that labels it a
+        funnel promises a rebase the CLI never performs."""
+        plan = self._chain()
+        for name, text in (
+            ("text", render_swarm_plan_text(plan)),
+            ("tree", render_swarm_plan_tree(plan)),
+        ):
+            with self.subTest(renderer=name):
+                dependent = [ln for ln in text.splitlines() if "sequential_dependent" in ln]
+                self.assertEqual(len(dependent), 2, text)
+                self.assertFalse([ln for ln in dependent if "funnel" in ln.lower()], text)
+                self.assertNotIn("funnel", text.lower())
 
     def test_a_later_wave_without_a_dependency_is_orthogonal(self):
         # Issue 1 fails: wave 2 loses its only dependency, wave 3 still waits on #2.

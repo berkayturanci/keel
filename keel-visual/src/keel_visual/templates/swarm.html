@@ -197,7 +197,7 @@ function renderSwarmData(){
   document.getElementById('stat-passed').textContent = passedCount;
 
   const isParallel = waves.every(w => w.eligible_direct_landing);
-  document.getElementById('stat-landing-mode').textContent = isParallel ? 'Direct Batch' : 'Adaptive Funnel';
+  document.getElementById('stat-landing-mode').textContent = isParallel ? 'Direct Batch' : 'Direct Batch · Dependent Refused';
 
   // Render 2D DAG
   const dagRow = document.getElementById('waves-dag-row');
@@ -206,7 +206,7 @@ function renderSwarmData(){
     const col = document.createElement('div');
     col.className = 'wave-col';
     const modeClass = w.eligible_direct_landing ? 'parallel' : 'sequential';
-    const modeLabel = w.eligible_direct_landing ? 'Orthogonal Parallel' : 'Sequential Funnel';
+    const modeLabel = w.eligible_direct_landing ? 'Orthogonal Parallel' : 'Dependent — Refused';
 
     col.innerHTML = `
       <div class="wave-head">

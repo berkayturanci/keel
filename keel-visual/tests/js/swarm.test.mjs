@@ -81,6 +81,25 @@ test('swarm: normal data renders as before', () => {
   assert.equal(h.byId('stat-passed').textContent, '1');
 });
 
+test('swarm: a dependent wave is labelled refused, never a funnel (#1276)', () => {
+  const payload = makeSwarm();
+  payload.plan.waves.push({
+    wave_index: 2,
+    mode: 'sequential_dependent',
+    eligible_direct_landing: false,
+    clusters: [
+      { cluster_id: 'c2', role: 'core', issues: [13], combined_scope: ['src/a.py'], depends_on_issues: [11] },
+    ],
+  });
+  const h = bootSwarm(payload);
+  const dag = allHtml(h.byId('waves-dag-row'));
+  const stat = h.byId('stat-landing-mode').textContent;
+  assert.ok(dag.includes('<span class="wave-mode parallel">Orthogonal Parallel</span>'), dag);
+  assert.ok(dag.includes('<span class="wave-mode sequential">Dependent — Refused</span>'), dag);
+  assert.equal(stat, 'Direct Batch · Dependent Refused');
+  assert.ok(!/funnel/i.test(dag + '\n' + stat), 'a dependent wave was called a funnel:\n' + dag + '\n' + stat);
+});
+
 test('swarm: every run-derived value reaches the page as text, not markup', () => {
   const bad = `x" onmouseover="alert(1)`;
   const payload = makeSwarm({
