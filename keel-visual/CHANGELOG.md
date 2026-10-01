@@ -6,6 +6,12 @@ All notable changes to keel-visual are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-01
+
+- `keel-visual swarm` draws the plan the run executed — its real waves, dependencies, predicted
+  files and a dependent wave marked refused — instead of a flat graph it made up.
+- A swarm worker card shows its wave and the stage a live worker is in.
+
 ### Added
 - **A swarm worker card shows its wave and stage** (keel #1280 item 2). When the worker record
   carries them — keel now writes `wave` and, for a live worker, the `stage` it is in — the card
