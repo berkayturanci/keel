@@ -1384,8 +1384,10 @@ class TheClosureIsIdempotentAndNeverUndoesTheMerge(unittest.TestCase):
             [
                 "the closure comment on PR #10 was not posted: HTTP 403",
                 "the closure comment on issue #101 was not posted: HTTP 403",
-                "the closure comment on issue #103 was not posted: gh api "
-                "repos/berkayturanci/keel/issues/103/comments failed: HTTP 502",
+                (
+                    "the closure comment on issue #103 was not posted: gh api "
+                    "repos/berkayturanci/keel/issues/103/comments failed: HTTP 502"
+                ),
             ],
         )
 
