@@ -2123,7 +2123,7 @@ keel install-legacy-wrappers all --force
 
 > **Experimental subsystem** — nothing in a swarm reviews the pull requests it opens, so a
 > cluster lands only once its review is recorded by hand. See
-> [#1281](https://github.com/berkayturanci/keel/issues/1281).
+> [#1423](https://github.com/berkayturanci/keel/issues/1423).
 
 Land a completed execution wave by merging each cluster's pull request through
 [`keel merge`](#keel-merge) — the same code, one cluster at a time (#1287). Documented here —

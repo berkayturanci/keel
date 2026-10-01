@@ -14,11 +14,13 @@
 >   `swarm-land` merges it through `keel merge`
 >   ([#1287](https://github.com/berkayturanci/keel/issues/1287)), so it holds the cluster until
 >   the pull request's review verdicts are posted — today by hand (`keel review --live`), as for
->   any pull request; reviewing inside the swarm is still open
->   ([#1281](https://github.com/berkayturanci/keel/issues/1281)). The rest of what `keel merge`
+>   any pull request; whether the swarm should review its own pull requests is still open
+>   ([#1423](https://github.com/berkayturanci/keel/issues/1423)). The rest of what `keel merge`
 >   asks of a pull request the worker leaves itself: the seat's attribution labels on it and a
 >   gates-pass for its head in the run ledger
 >   ([#1420](https://github.com/berkayturanci/keel/issues/1420)).
+> - A landed cluster leaves its issues **open** and posts no closure comments: `swarm-land`
+>   stops at the merge ([#1422](https://github.com/berkayturanci/keel/issues/1422)).
 > - A **dry** run is unchanged: its worker is `keel ship` — the *CLI subcommand*, registered as
 >   `dry ship assessment (tier, window, gates, decision)` — which never commits, pushes or opens a
 >   pull request. It is not inert: it runs `git diff` and executes the project's planned gates, so
@@ -59,9 +61,17 @@
 > no longer skips anything, because `keel merge`'s evidence gate has no opt-out; `swarm-land` says
 > so on stderr.
 >
-> The rest is tracked under the audit epic
-> [#1281](https://github.com/berkayturanci/keel/issues/1281). Everything below describes the design
-> and the code that exists; read it as architecture, not as a supported workflow.
+> A live landing has run end to end once, on a throwaway sandbox repository with CI on pull
+> requests: `swarm-run --live` implemented two issues and opened their pull requests,
+> each pull request's review verdicts were posted from outside the swarm, and `swarm-land --live`
+> merged both through `keel merge`
+> ([#1281's closing comment](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)). That is one run on a toy
+> repository, not evidence of maturity.
+>
+> The rest is tracked in [#1423](https://github.com/berkayturanci/keel/issues/1423) (review inside the
+> swarm) and [#1422](https://github.com/berkayturanci/keel/issues/1422) (closing the landed issues); the
+> audit epic [#1281](https://github.com/berkayturanci/keel/issues/1281) is closed. Everything below describes
+> the design and the code that exists; read it as architecture, not as a supported workflow.
 >
 > **Use [`/keel:ship`](../../src/keel/adapters/commands/ship.md) for work you need landed.**
 

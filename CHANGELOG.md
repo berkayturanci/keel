@@ -8,6 +8,22 @@ All notable changes to keel are documented here. The format follows
 
 ### Changed
 - **`knobs.swarm_review_evidence` is marked deprecated** (#1410). Since #1287 `swarm-land` lands each cluster PR through `keel merge`, whose evidence gate has no opt-out, so the knob changes nothing; `src/keel/config.py` still called it "the explicit, logged opt-out". The source comment, the schema description (and the site's parameter page generated from it) and `docs/keel/configuration.md` now say it is deprecated and should be removed; a config that sets it still validates.
+- **The swarm surfaces stop saying no live landing has run** (#1281, #1423, #1422). On
+  2026-10-01 a live swarm landed end to end once, on a throwaway sandbox repository:
+  `swarm-run --live` implemented two issues and opened their pull requests, each pull request's
+  review verdicts were posted from outside the swarm, and `swarm-land --live` merged both
+  through `keel merge` (#1281's closing comment). The README, the `/keel:swarm` adapter (and
+  its generated copies), `docs/keel/` (swarm, overview, badges, cli, parameter-reference,
+  comparison, editors), the VS Code extension README and the website still said no real
+  landing had been exercised. They now say that one landing ran, on a sandbox, reviewed outside
+  the swarm. Swarm stays **experimental** everywhere, and "nothing in the swarm reviews the pull
+  requests it opens" stays: where a surface cited the closed epic #1281 as the reason, it now
+  cites #1423 (whether swarm should dispatch its own reviewers), and the swarm guide adds #1422
+  (a landed cluster leaves its issues open). `comparison.md` also stops crediting keel-swarm
+  with AI review, multi-agent debate "via ai-jury" and a multi-vendor jury — nothing in the
+  swarm convenes a review — and its merge-window cell is ✅ again, since each cluster now lands
+  through `keel merge`, which enforces the window (#1409). `tests/test_adapter_accuracy.py` and
+  `tests/test_docs_claims.py` pin the new wording and fail on the old one.
 
 ### Added
 - **The consent a live swarm run delegates is in the run ledger, and `consent-verify` reads

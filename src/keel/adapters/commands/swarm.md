@@ -1,5 +1,5 @@
 ---
-description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. A live run implements each cluster and opens one PR per cluster; swarm-land merges each through keel merge once its review verdicts are posted — nothing in the swarm reviews them, and no real landing has been exercised yet (#1281). Use /keel:ship for an issue that must merge today.
+description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. A live run implements each cluster and opens one PR per cluster; swarm-land merges each through keel merge once its review verdicts are posted — nothing in the swarm reviews them; one live landing has run, on a sandbox repository (#1281), reviewed outside the swarm (#1423). Use /keel:ship for an issue that must merge today.
 argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
@@ -52,16 +52,19 @@ board without it. A dry run of that kind runs the N child gate suites above, one
 your checkout — for a run that implements and lands nothing. Read the plan it renders as "what I
 passed", not "per-issue scope". A live run implements each cluster and opens one pull request per
 cluster; `swarm-land` merges each through `keel merge` once its review verdicts are posted, and
-nothing in the swarm posts them. Swarm stays experimental — the first end-to-end run implemented,
-gated, pushed and opened its pull requests, and `swarm-land` held them with `keel merge`'s own
-reasons; no real landing has been exercised yet. For an issue the user needs **merged** today,
+nothing in the swarm posts them. Swarm stays experimental. One live landing has run end to end,
+once, on a sandbox repository (#1281): `swarm-run --live` implemented, gated, pushed and opened
+the pull requests, their review verdicts were posted from outside the swarm, and `swarm-land`
+merged them through `keel merge` — and left the landed issues open (#1422). Whether the swarm
+should review its own pull requests is still open (#1423). For an issue the user needs **merged** today,
 say so and run `/keel:ship` per issue — it is still the proven path.
 
 Do not hand-drive the children to work around this. `swarm-land` lands a cluster only through
 `keel merge`, which holds any pull request without an armed gate, its review verdicts pinned to
 its head, or a gates-pass for that head — and `knobs.swarm_review_evidence: false` no longer turns
 that off (#1287). Driving the children by hand would skip the per-issue ledger and the backbone
-that `/keel:ship` gives you. The rest is tracked under the audit epic #1281.
+that `/keel:ship` gives you. What is left is tracked in #1423 (review inside the swarm) and
+#1422 (closing the landed issues); the audit epic #1281 is closed.
 
 ## Live progress — stamp this run (required)
 

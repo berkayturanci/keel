@@ -1238,12 +1238,28 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         """#1402/#1406/#1409/#1414 built the live path: a live `swarm-run` implements each
         cluster and opens one pull request per cluster, and `swarm-land` merges each through
         `keel merge`. Every surface below still said a live run "lands nothing", "does not
-        land work", "plans and dry-runs" or "has never worked end to end"."""
+        land work", "plans and dry-runs" or "has never worked end to end" — and, after one
+        landing ran (#1281's closing comment), "no real landing has been exercised yet"."""
         for rel in _SWARM_STATUS_SURFACES:
-            text = re.sub(r"\s+", " ", (REPO_ROOT / rel).read_text(encoding="utf-8"))
+            text = _flat(rel)
             for stale in _STALE_SWARM_STATUS:
                 with self.subTest(surface=rel, stale=stale.pattern):
                     self.assertIsNone(stale.search(text))
+
+    def test_a_surface_naming_the_one_landing_keeps_its_limits(self):
+        """#1281's closing comment: one live landing ran, on a sandbox repository, with each
+        pull request reviewed outside the swarm (#1423). A surface that says so must still
+        say swarm is experimental and that the review happened outside it."""
+        named = 0
+        for rel in _SWARM_STATUS_SURFACES:
+            text = _flat(rel)
+            if "sandbox repository" not in text:
+                continue
+            named += 1
+            with self.subTest(surface=rel):
+                self.assertIn("experimental", text.lower())
+                self.assertIn("outside the swarm", text)
+        self.assertGreaterEqual(named, 10)
 
     def test_the_security_page_says_the_august_audit_predates_the_live_path(self):
         security = re.sub(r"\s+", " ", (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8"))
@@ -1251,13 +1267,24 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         self.assertIn("this audit does not cover it", security)
 
 
+def _flat(rel: str) -> str:
+    """``rel``'s text on one line: a markdown blockquote's ``>`` line prefixes dropped, then
+    whitespace collapsed — so a sentence wrapped inside ``> …`` reads as it renders."""
+    text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^[ \t]*>[ \t]?", "", text))
+
+
 #: Every surface that states what a live swarm run does today.
 _SWARM_STATUS_SURFACES = (
     "README.md",
     "SECURITY.md",
     "docs/keel/badges.md",
+    "docs/keel/cli.md",
+    "docs/keel/comparison.md",
     "docs/keel/editors.md",
     "docs/keel/overview.md",
+    "docs/keel/parameter-reference.md",
+    "docs/keel/swarm.md",
     "editors/vscode/README.md",
     "editors/vscode/extension.js",
     "src/keel/adapters/commands/swarm.md",
@@ -1269,6 +1296,7 @@ _SWARM_STATUS_SURFACES = (
     "website/index.html",
     "website/integrations.js",
     "website/params.js",
+    "website/scenes.js",
     "website/swarm-simulator.js",
 )
 
@@ -1279,10 +1307,15 @@ _STALE_SWARM_STATUS = tuple(
         r"live (run|swarm) lands nothing",
         r"lands nothing yet",
         r"does not land work",
+        r"does not land anything",
+        r"live path does not land",
         r"has never worked end to end|live path has never worked",
         r"plans and dry-runs",
         r"swarm cannot do it",
         r"produces no commits",
+        # #1281's closing comment: a live landing has run once, on a sandbox repository.
+        r"no real landing (has been|was) exercised",
+        r"no (swarm|live) landing has (merged|run)",
     )
 )
 

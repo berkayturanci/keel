@@ -3343,8 +3343,9 @@ worktrees or branches (`--json`: `{"error_code": "git-failed", "error"}`) or a r
 > **Experimental.** A live run implements each cluster and opens its pull request, but that pull
 > request carries no review evidence; `swarm-land` merges it through `keel merge` once its review
 > is recorded ([#1400](https://github.com/berkayturanci/keel/issues/1400),
-> [#1287](https://github.com/berkayturanci/keel/issues/1287)). Audit epic:
-> [#1281](https://github.com/berkayturanci/keel/issues/1281).
+> [#1287](https://github.com/berkayturanci/keel/issues/1287)); whether the swarm should review
+> its own pull requests is open ([#1423](https://github.com/berkayturanci/keel/issues/1423)). A live landing has run once, on a sandbox
+> repository, with the reviews done outside the swarm ([#1281](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)).
 
 Without `--live` (a dry run) each cluster's worker is a `keel ship --dry-run --json` assessment,
 run one at a time in this checkout; it dispatches no agent and commits nothing:
