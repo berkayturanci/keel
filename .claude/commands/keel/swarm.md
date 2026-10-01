@@ -18,7 +18,10 @@ one pull request per cluster. It needs the **operator's** consent — `--approve
 filesystem,git,github --operator <name>` — which you ask the user for and never supply on your own,
 and its pull requests carry **no review evidence**: nothing in the swarm reviews them, and
 `swarm-land` merges each one through `keel merge` (#1287), so it holds every cluster until that
-pull request's review verdicts and a gates-pass for its head are recorded.
+pull request's review verdicts are posted. The worker leaves the rest `keel merge` asks for
+itself (#1420): the seat's attribution labels on the pull request and a gates-pass for its head
+in the run ledger — when its result says `labels_applied: false` or `gates_recorded: false`, the
+run's warning names the hold and how to clear it.
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N
@@ -252,4 +255,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=claude command=swarm keel_version=1.26.0 source_sha256=7f491f651f6602e51b6b39a13c9e942d28fc091bdd1e4e32830abbb5021dfcea generated_sha256=7f491f651f6602e51b6b39a13c9e942d28fc091bdd1e4e32830abbb5021dfcea -->
+<!-- keel-generated: surface=claude command=swarm keel_version=1.26.0 source_sha256=9611be58c883ef9aca2aded8fde83df4bc972a2abefc102719a3fbf57e2b1d66 generated_sha256=9611be58c883ef9aca2aded8fde83df4bc972a2abefc102719a3fbf57e2b1d66 -->

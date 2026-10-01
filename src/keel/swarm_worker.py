@@ -22,7 +22,9 @@ This module holds every *decision* in that flow, and nothing else:
   seat keel cannot run as a worker: a host subagent, and a transport that cannot edit a
   worktree.
 - **What is written.** The brief, the commit message, the pull request's title and body,
-  and the ship-provenance comment that arms ``keel merge``'s evidence gate on it.
+  the ship-provenance comment that arms ``keel merge``'s evidence gate on it, the attribution
+  labels it carries, and the ``ship_run`` record of the gates the worker ran for its head
+  (#1420) — the two things besides review evidence that ``keel merge`` asks of it.
 - **What is left behind** (#1278). :func:`worktree_disposal` decides what becomes of a
   worker's worktree and branch when it ends, and :func:`classify_leftovers` which of a run's
   worktrees, directories and branches ``keel swarm-status --clean`` may remove.
@@ -33,19 +35,30 @@ Pure and deterministic: no subprocess, no filesystem, no clock. The runtime
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from . import artifacts, consent, delegate
+from . import artifacts, consent, delegate, ledger, ship
+from . import findings as fnd
 from . import providers as providers_mod
+from .gates import GateOutcome, collect_findings
 
 #: Every mutation a live worker performs, in the order it performs them. The parent's
 #: consent contract is built over exactly these, so the scopes the operator approves are
 #: the scopes a worker needs — ``filesystem``, ``git`` and ``github`` — and no more.
-WORKER_SIDE_EFFECTS = ("git_worktree", "file_edit", "git_commit", "git_push", "pull_request")
+#: ``labels`` is the attribution pair the worker applies to its pull request (#1420).
+WORKER_SIDE_EFFECTS = (
+    "git_worktree",
+    "file_edit",
+    "git_commit",
+    "git_push",
+    "pull_request",
+    "labels",
+)
 
 #: Where a live worker can stop, in order. A worker reports the stage it failed at; the
 #: branch is pushed only past ``gates`` and the pull request opened only past ``push``.
@@ -609,6 +622,255 @@ def provenance_warning(pull_request: str, why: str) -> str:
         f"the ship-provenance comment was not posted on {pull_request} ({why}); keel merge "
         'will hold it as "evidence gate is not enforced" until the comment is posted '
         "(`keel post-comment --artifact ship-provenance`) or its review verdicts are"
+    )
+
+
+def attribution_labels(plan: delegate.RunPlan) -> tuple[str, ...]:
+    """The labels a cluster pull request carries for the seat that implemented it (#1420).
+
+    ``agent_label`` and ``model_label`` verbatim from ``plan.attribution`` — the record
+    :mod:`keel.agents` computed for the seat, the one ``keel attribution`` prints — never
+    composed here. A seat with no model has no ``model_label``, and only what exists is
+    applied.
+    """
+    return tuple(
+        label
+        for label in (plan.attribution.get("agent_label"), plan.attribution.get("model_label"))
+        if isinstance(label, str) and label.strip()
+    )
+
+
+def label_names(listing: str) -> tuple[str, ...]:
+    """The label names in a ``gh label list --json name`` answer; ``()`` when unreadable."""
+    try:
+        rows = json.loads(listing)
+    except ValueError:
+        return ()
+    if not isinstance(rows, list):
+        return ()
+    return tuple(
+        row["name"] for row in rows if isinstance(row, dict) and isinstance(row.get("name"), str)
+    )
+
+
+def labels_warning(pull_request: str, labels: Iterable[str], why: str) -> str:
+    """What a worker reports when its pull request is open but not labelled (#1420)."""
+    wanted = ", ".join(labels) or "agent:<vendor>"
+    return (
+        f"the attribution labels ({wanted}) were not applied to {pull_request} ({why}); keel "
+        "merge will hold it on attribution-label until its agent:<vendor> label is applied — "
+        "apply the labels `keel attribution` prints for the implementer seat"
+    )
+
+
+#: What a live worker's ``ship_run`` record says about the merge (#1420). The worker never
+#: assesses one: it opened the pull request, and its review evidence, CI and ``keel merge``
+#: decide whether it lands. ``defer`` is the one merge action no reader takes as a merge
+#: (:func:`keel.closeorder.record_attests_merge` reads ``merge`` as one, and ``keel status``
+#: reads anything but ``defer``/``block``/``skip`` as shipped).
+WORKER_MERGE_REASON = (
+    "recorded by a swarm worker when it opened the pull request: the gates it ran, no "
+    "merge assessment; review evidence and keel merge decide whether it lands"
+)
+
+#: The ``schema_version`` of the report ``keel run-gates --json`` prints.
+RUN_GATES_SCHEMA = "keel.run-gates.v1"
+
+
+def parse_gate_report(output: str) -> tuple[GateOutcome, ...] | None:
+    """The gate outcomes in ``keel run-gates --json`` output, or ``None`` when it has none.
+
+    The worker's runner folds the child's stderr into its stdout, so the report may follow
+    an extension or capability notice: it is read from the first line that opens a JSON
+    object and decodes to a ``keel.run-gates.v1`` report. Each outcome is restored with the
+    fields :func:`keel.ledger.build_ship_run_record` records and
+    :func:`keel.ledger.record_gates_passed` judges. Anything unreadable — a missing gate id,
+    a finding with no known severity — makes the whole report unreadable, never a partial
+    one: a gate dropped from the record would be a gate the record silently passed.
+    """
+    decoder = json.JSONDecoder()
+    lines = output.splitlines(keepends=True)
+    offset = 0
+    for line in lines:
+        start, offset = offset, offset + len(line)
+        if line.rstrip() != "{":
+            continue
+        try:
+            report, _end = decoder.raw_decode(output, start)
+        except ValueError:
+            continue
+        if isinstance(report, dict) and report.get("schema_version") == RUN_GATES_SCHEMA:
+            return _gate_outcomes(report.get("gate_outcomes"))
+    return None
+
+
+def _gate_outcomes(entries: Any) -> tuple[GateOutcome, ...] | None:
+    if not isinstance(entries, list):
+        return None
+    outcomes: list[GateOutcome] = []
+    for entry in entries:
+        outcome = _gate_outcome(entry)
+        if outcome is None:
+            return None
+        outcomes.append(outcome)
+    return tuple(outcomes)
+
+
+def _gate_outcome(entry: Any) -> GateOutcome | None:
+    """One ``run-gates`` outcome as a :class:`keel.gates.GateOutcome`, or ``None``."""
+    if not isinstance(entry, dict) or not isinstance(entry.get("gate"), str):
+        return None
+    found: list[fnd.Finding] = []
+    for raw in entry.get("findings") or ():
+        severity = raw.get("severity") if isinstance(raw, dict) else None
+        if severity not in fnd.SEVERITIES:
+            return None
+        source = raw.get("source")
+        found.append(
+            fnd.Finding(
+                severity,
+                str(raw.get("message") or ""),
+                source if isinstance(source, str) and source else entry["gate"],
+            )
+        )
+    error = entry.get("error")
+    on_fail = entry.get("on_fail")
+    return GateOutcome(
+        entry["gate"],
+        entry.get("ok") is True,
+        tuple(found),
+        error=error if isinstance(error, str) else None,
+        skipped=entry.get("skipped") is True,
+        timed_out=entry.get("timed_out") is True,
+        not_run=entry.get("not_run") is True,
+        # Strict when absent, as `record_gates_passed` reads it.
+        on_fail=on_fail if isinstance(on_fail, str) else "block",
+        unconfigured=entry.get("unconfigured") is True,
+    )
+
+
+def gate_report_summary(outcomes: Iterable[GateOutcome]) -> str:
+    """The gates a red run judged, one line each, then the findings — as ``run-gates``
+    prints them without ``--json``, for the reason a worker stopped at ``gates``."""
+    lines: list[str] = []
+    found: list[fnd.Finding] = []
+    for outcome in outcomes:
+        lines.append(f"  {_gate_word(outcome):>7}  {outcome.gate}")
+        found.extend(outcome.findings)
+    lines += [f"    [{f.severity}] {f.source}: {f.message}" for f in found]
+    return "\n".join(lines)
+
+
+def _gate_word(outcome: GateOutcome) -> str:
+    if outcome.not_run:
+        return "NOT-RUN"
+    if outcome.skipped:
+        return "SKIPPED"
+    if outcome.ok:
+        return "ok"
+    return "TIMEOUT" if outcome.timed_out else "FAIL"
+
+
+def gates_record(
+    cluster: Any,
+    *,
+    swarm_id: str,
+    plan: delegate.RunPlan,
+    branch: str,
+    base_branch: str,
+    head: str,
+    pull_request: int,
+    outcomes: Iterable[GateOutcome],
+    changed_files: list[str] | None,
+    config: Any = None,
+) -> dict[str, Any]:
+    """The ``ship_run`` record of the gates a worker ran on the head it pushed (#1420).
+
+    ``keel merge`` lands a pull request only with a ``ship_run`` record whose gates passed
+    for its current head (:func:`keel.ledger.gates_pass_for_head`). The worker knows all of
+    it once ``gh pr create`` returns: the gates it just judged, the pull request, the head.
+    Built by :func:`keel.ledger.build_ship_run_record`, as ``keel ship --live
+    --append-ledger`` builds its own, from the outcomes exactly as the worker's run reported
+    them — so a blocking gate that run did not execute (the deferred jury, a ``pre-merge``
+    gate outside ``--phases``) is recorded ``not_run``, and the record is not a pass.
+
+    What it says and does not say:
+
+    - ``capture.not_run``: the run never reached capture, so no capture reader counts the
+      record as a merged pull request (``--capture-status not-run``).
+    - ``assessment.merge.action: defer`` (:data:`WORKER_MERGE_REASON`), and no tier, review
+      count, window or CI: the worker assessed none of them.
+    - ``actors.implementer``: the seat's ``system``, the string its attribution labels are
+      derived from, so the evidence gate's cross-check agrees with the labels applied.
+    - No consent: a live worker's consent is the run's delegation, which the
+      ``consent_delegation`` record carries pinned to the pushed head. A consent status here
+      would win over it in ``keel consent-verify`` without that pin.
+    - The cluster's first issue, as the provenance comment names it: the record has one.
+    """
+    listed = list(outcomes)
+    return ledger.build_ship_run_record(
+        command="swarm-run",
+        base_branch=base_branch,
+        changed_files=changed_files,
+        outcomes=listed,
+        verdict=fnd.summarize(collect_findings(listed)),
+        assessment=ship.ShipAssessment(
+            tier=None,  # type: ignore[arg-type]
+            reviewers=None,  # type: ignore[arg-type]
+            window_open=None,  # type: ignore[arg-type]
+            ci_ok=None,
+            merge=ship.MergeDecision("defer", WORKER_MERGE_REASON),
+        ),
+        target=f"PR #{pull_request}",
+        run_id=provenance_run_id(swarm_id, cluster.cluster_id),
+        issue_number=cluster.issues[0] if cluster.issues else None,
+        pr_number=pull_request,
+        branch=branch,
+        head_sha=head,
+        capture_status=None,
+        capture_not_run=True,
+        config=config,
+        implementer=plan.attribution.get("system") or plan.provider,
+    )
+
+
+def gates_not_a_pass(record: Mapping[str, Any]) -> tuple[str, ...]:
+    """The gates that keep a worker's recorded run from counting as a pass, by name.
+
+    Empty when :func:`keel.ledger.record_gates_passed` accepts the record. A gate is named
+    when it did not run clean or skipped, or when it is a blocking gate the run did not
+    execute; a record with no gate at all names ``(no gate)``.
+    """
+    if ledger.record_gates_passed(dict(record)):
+        return ()
+    gates = [g for g in record.get("gates") or () if isinstance(g, dict)]
+    named = tuple(
+        str(g.get("gate"))
+        for g in gates
+        if g.get("error")
+        or not (g.get("ok") is True or g.get("skipped") is True)
+        or (g.get("not_run") is True and g.get("on_fail") not in ("warn", "suggest"))
+    )
+    return named or ("(no gate)",)
+
+
+def gates_not_a_pass_warning(pull_request: str, gates: Iterable[str]) -> str:
+    """What a worker reports when the gates it recorded do not count as a pass."""
+    return (
+        f"the gates recorded for {pull_request} do not count as a gates-pass "
+        f"({', '.join(gates)} did not pass or did not run in the worker); keel merge will hold "
+        "it on no gates-pass until a run of every blocking gate passes on its head (`keel "
+        "ship --live --append-ledger --capture-status not-run --pull-request <n> --head-sha "
+        "<sha>`)"
+    )
+
+
+def gates_record_warning(pull_request: str, why: str) -> str:
+    """What a worker reports when it could not record its gates-pass (#1420)."""
+    return (
+        f"the gates-pass for {pull_request} is not in the run ledger ({why}); keel merge will "
+        "hold it on no gates-pass until one is recorded for its head (`keel ship --live "
+        "--append-ledger --capture-status not-run --pull-request <n> --head-sha <sha>`)"
     )
 
 

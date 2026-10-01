@@ -18,10 +18,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from keel import ledger, swarm_worker
+from keel import agents, contracts, ledger, swarm_worker
 from keel import swarm_runtime as swarm_runtime_module
 from keel.cli import build_parser, main
 from keel.delegate import RunPlan
+from keel.findings import Finding
+from keel.gates import GateOutcome
 from keel.runner import CommandResult
 from keel.swarm import (
     CHILD_OUTPUT_TAIL_CHARS,
@@ -63,6 +65,21 @@ def setUpModule():
 FULL_SCOPES = ("filesystem", "git", "github")
 
 
+def _gates_output(*outcomes: GateOutcome, notice: str = "") -> str:
+    """What ``keel run-gates --json`` prints for ``outcomes`` (a clean ``build`` by
+    default), after ``notice`` — the stderr a worker's runner folds into its output."""
+    listed = outcomes or (GateOutcome("build", True),)
+    report = {
+        "schema_version": "keel.run-gates.v1",
+        "phase": "s8",
+        "jury_run": False,
+        "gates": [],
+        "gate_outcomes": [contracts.gate_outcome_as_dict(o) for o in listed],
+        "blocked": False,
+    }
+    return notice + json.dumps(report, indent=2, sort_keys=True) + "\n"
+
+
 def _clusters(plan):
     return [c for wave in plan.waves for c in wave.clusters]
 
@@ -76,10 +93,19 @@ class _LiveIo:
     """
 
     def __init__(
-        self, *, implement_ok=True, raise_for=None, push_ok=True, pr_ok=True, comment_ok=True
+        self,
+        *,
+        implement_ok=True,
+        raise_for=None,
+        push_ok=True,
+        pr_ok=True,
+        comment_ok=True,
+        label_ok=True,
     ):
         self.implement_ok, self.raise_for = implement_ok, raise_for
         self.push_ok, self.pr_ok, self.comment_ok = push_ok, pr_ok, comment_ok
+        self.label_ok = label_ok
+        self.labels: list[tuple[str, int, list[str]]] = []
         self.implemented: list[tuple[RunPlan, dict, str]] = []
         self.pushes: list[tuple[str, str, str]] = []
         self.push_argvs: list[list[str]] = []
@@ -118,6 +144,13 @@ class _LiveIo:
             return CommandResult(False, 1, "HTTP 403: Resource not accessible")
         return CommandResult(True, 0, '{"id": 1}')
 
+    def label_pr(self, owner_repo, number, labels, cwd):
+        self.events.append("label_pr")
+        self.labels.append((owner_repo, number, list(labels)))
+        if not self.label_ok:
+            return CommandResult(False, 1, "HTTP 403: Resource not accessible")
+        return CommandResult(True, 0, "[]")
+
 
 def _live(plan, root, io, *, scopes=FULL_SCOPES, clusters=None, ledger_path=None) -> LiveRun:
     root = Path(root).resolve()
@@ -139,7 +172,8 @@ def _live(plan, root, io, *, scopes=FULL_SCOPES, clusters=None, ledger_path=None
             transport="cli",
             prompt_path=str(build_brief_path(plan.swarm_id, c.cluster_id, root)),
             cwd=str(build_worktree_path(plan.swarm_id, c.cluster_id, root)),
-            attribution={"system": "codex:gpt-5"},
+            # What `keel attribution --vendor codex --model gpt-5` prints, from keel.agents.
+            attribution=agents.attribution("codex", "gpt-5"),
         )
         for c in _clusters(plan)
     }
@@ -153,6 +187,7 @@ def _live(plan, root, io, *, scopes=FULL_SCOPES, clusters=None, ledger_path=None
         push=io.push,
         open_pr=io.open_pr,
         post_comment=io.post_comment,
+        label_pr=io.label_pr,
     )
 
 
@@ -191,7 +226,9 @@ class _Git:
         if cmd[:3] == ["git", "worktree", "add"]:
             Path(cmd[5]).mkdir(parents=True, exist_ok=True)
         if "run-gates" in cmd:
-            return CommandResult(self.gates_ok, 0 if self.gates_ok else 1, "BLOCKED - build")
+            if self.gates_ok:
+                return CommandResult(True, 0, _gates_output())
+            return CommandResult(False, 1, "BLOCKED - build")
         if cmd[:2] == ["git", "status"]:
             return CommandResult(True, 0, "" if self.clean else " M src/a.py\n")
         if cmd[:2] == ["git", "commit"]:
@@ -1195,7 +1232,7 @@ class ALiveWorkerImplementsItsCluster(unittest.TestCase):
         gates = git.ran("run-gates")
         self.assertEqual(len(gates), 2)
         self.assertEqual(gates[0][4], "projects/x.yaml")
-        self.assertEqual(gates[0][-3:], ["--phases", "guard,test", "--defer-jury"])
+        self.assertEqual(gates[0][-4:], ["--phases", "guard,test", "--defer-jury", "--json"])
         # To the URL `origin` had before the implementer ran, never to the remote's name.
         self.assertEqual(
             sorted(io_.pushes),
@@ -1520,7 +1557,7 @@ class AClusterPullRequestArmsTheEvidenceGate(unittest.TestCase):
             run_id=run_id,
             issue=741,
             head_sha=f"head-{cid}",
-            implementer_attribution={"system": "codex:gpt-5"},
+            implementer_attribution=agents.attribution("codex", "gpt-5"),
         )
         self.assertEqual(io_.comments, [("o/r", 1, expected)])
         (_repo, _number, body) = io_.comments[0]
@@ -1551,7 +1588,7 @@ class AClusterPullRequestArmsTheEvidenceGate(unittest.TestCase):
         io_ = Watching()
         _cluster, _result, res, state = self._run(io_)
 
-        self.assertEqual(io_.events, ["open_pr", "post_comment"])
+        self.assertEqual(io_.events, ["open_pr", "label_pr", "post_comment"])
         (during,) = io_.during.workers
         self.assertEqual((during.status, during.stage), ("running", "pull_request"))
         (after,) = state.workers
@@ -1589,10 +1626,13 @@ class AClusterPullRequestArmsTheEvidenceGate(unittest.TestCase):
 
         io_ = Unreadable()
         _cluster, result, res, _state = self._run(io_)
-        self.assertEqual(io_.comments, [])
+        self.assertEqual((io_.comments, io_.labels), ([], []))
         self.assertEqual((result.status, res["provenance_posted"]), ("success", False))
-        (warning,) = res["warnings"]
-        self.assertIn("not posted on the pull request (gh pr create printed no", warning)
+        self.assertEqual((res["labels_applied"], res["gates_recorded"]), (False, False))
+        unlabelled, unstamped, unrecorded = res["warnings"]
+        self.assertIn("not posted on the pull request (gh pr create printed no", unstamped)
+        self.assertIn("not applied to the pull request (gh pr create printed no", unlabelled)
+        self.assertIn("the gates-pass for the pull request is not in the run ledger", unrecorded)
 
     def test_the_settles_warnings_join_the_workers_rather_than_replace_them(self):
         merged = swarm_runtime_module._with_settlement(
@@ -1738,7 +1778,7 @@ class KeelsOwnGitStepsAgainstARealRepository(unittest.TestCase):
         if "run-gates" in cmd:
             if self.during_gates is not None:
                 self.during_gates(Path(cwd))
-            return CommandResult(True, 0, "gates passed")
+            return CommandResult(True, 0, _gates_output())
         return default_runner(cmd, cwd, env=swarm_worker.worker_env(os.environ))
 
     def _run(self):
@@ -2216,7 +2256,10 @@ class EachClusterPullRequestIsInTheRunLedger(unittest.TestCase):
         self.assertEqual(result.warnings, ())
         self.assertTrue(text.startswith(first_line), "the delegated line is never rewritten")
         self.assertEqual(records[0], delegated)
-        opened = sorted(records[1:], key=lambda r: r["pull_request"]["cluster"])
+        # Each worker's gates-pass (a `ship_run`, #1420) sits beside its consent event.
+        events = [r for r in records[1:] if r["record_type"] == "consent_delegation"]
+        self.assertEqual(len(records), 1 + 2 * len(events))
+        opened = sorted(events, key=lambda r: r["pull_request"]["cluster"])
         clusters = sorted(c.cluster_id for c in _clusters(plan))
         self.assertEqual([r["event"] for r in opened], ["pull_request", "pull_request"])
         self.assertEqual([r["pull_request"]["cluster"] for r in opened], clusters)
@@ -2254,7 +2297,7 @@ class EachClusterPullRequestIsInTheRunLedger(unittest.TestCase):
             written = path.exists()
         self.assertEqual(result.status, "success")
         self.assertFalse(written)
-        ledger_warnings = [w for w in result.warnings if "not in the run ledger" in w]
+        ledger_warnings = [w for w in result.warnings if "consent delegation" in w]
         self.assertEqual(len(ledger_warnings), 1, result.warnings)
         self.assertIn("printed no pull request number", ledger_warnings[0])
         self.assertIn("will report no delegated consent for it", ledger_warnings[0])
@@ -2267,9 +2310,11 @@ class EachClusterPullRequestIsInTheRunLedger(unittest.TestCase):
             path.mkdir()
             result = self._run(plan, tmpdir, _LiveIo(), ledger_path=path)
         self.assertEqual(result.status, "success")
-        self.assertEqual(len(result.warnings), 1, result.warnings)
-        self.assertIn("https://github.com/o/r/pull/1 is not in the run ledger", result.warnings[0])
-        self.assertIn("Error", result.warnings[0])
+        # The gates-pass (#1420) and the consent event: each one warns, neither stops it.
+        self.assertEqual(len(result.warnings), 2, result.warnings)
+        for warning in result.warnings:
+            self.assertIn("https://github.com/o/r/pull/1 is not in the run ledger", warning)
+            self.assertIn("Error", warning)
 
     def test_a_record_the_ledger_refuses_is_a_warning_not_a_failure(self):
         plan = self._plan(841)
@@ -2283,8 +2328,9 @@ class EachClusterPullRequestIsInTheRunLedger(unittest.TestCase):
         ):
             path = Path(tmpdir) / "run-ledger.jsonl"
             result = self._run(plan, tmpdir, _LiveIo(), ledger_path=path)
-            written = path.exists()
-        self.assertFalse(written)
+            written = ledger.read_records(path, kinds=ledger.KNOWN_RECORD_TYPES)
+        # Only the worker's gates-pass (#1420); the refused consent event is not there.
+        self.assertEqual([r["record_type"] for r in written], ["ship_run"])
         self.assertEqual(result.status, "success")
         self.assertEqual(len(result.warnings), 1, result.warnings)
         self.assertIn("LedgerError: pull_request.head_sha must be", result.warnings[0])
@@ -2505,7 +2551,9 @@ class WorktreesAreSettledAgainstARealRepository(unittest.TestCase):
 
     def _runner(self, cmd, cwd):
         if "run-gates" in cmd:
-            return CommandResult(self.gates_ok, 0 if self.gates_ok else 1, "gates")
+            if self.gates_ok:
+                return CommandResult(True, 0, _gates_output())
+            return CommandResult(False, 1, "gates")
         return default_runner(cmd, cwd, env=swarm_worker.worker_env(os.environ))
 
     def _plan(self, swarm_id, issue=751):
@@ -3022,6 +3070,257 @@ class NoParameterIsReachableOnlyFromTestsWithoutSayingSo(unittest.TestCase):
         for fn in (run_swarm_orchestration, land_wave_clusters):
             self.assertIn("runner", inspect.signature(fn).parameters)
             self.assertIn("``runner`` is an injection seam for tests", fn.__doc__ or "")
+
+
+class ALiveWorkerLeavesWhatLandingNeeds(unittest.TestCase):
+    """#1420, found on the second end-to-end live run: with verdicts posted and CI green,
+    `swarm-land` still held every cluster — its PR carried no `agent:<vendor>` label, and no
+    `ship_run` recorded the gates the worker ran for its head. The worker now applies the
+    seat's attribution labels and records its gates-pass; neither failing stops it."""
+
+    SWARM = "swarm-land-ready"
+
+    def _run(self, io_, git=None, *, ledger_path=True, **live):
+        plan = build_swarm_plan(
+            [IssueScope(issue=861, title="T861", predicted_files=("src/861.py",))],
+            swarm_id=self.SWARM,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / ".keel" / "state" / "run-ledger.jsonl" if ledger_path else None
+            result = run_swarm_orchestration(
+                plan,
+                "projects/x.yaml",
+                root=tmpdir,
+                dry_run=False,
+                live=replace(_live(plan, tmpdir, io_, ledger_path=path), **live),
+                runner=git or _Git(),
+                base_branch="main",
+            )
+            records = ledger.read_records(path) if path is not None else []
+            state = load_swarm_state(self.SWARM, root=tmpdir)
+        (cluster,) = _clusters(plan)
+        (res,) = result.wave_results[0]["cluster_results"].values()
+        return cluster, result, res, records, state
+
+    def test_its_pull_request_is_labelled_and_its_gates_pass_is_on_record(self):
+        io_ = _LiveIo()
+        cluster, result, res, records, state = self._run(io_)
+        head = f"head-{cluster.cluster_id}"
+
+        attribution = agents.attribution("codex", "gpt-5")
+        expected = [attribution["agent_label"], attribution["model_label"]]
+        self.assertEqual(io_.labels, [("o/r", 1, expected)])
+        self.assertEqual((result.status, result.warnings), ("success", ()))
+        self.assertEqual((res["labels_applied"], res["gates_recorded"]), (True, True))
+        # The record is the run's to write; it is not kept in the worker's result.
+        self.assertNotIn(swarm_runtime_module.GATES_RECORD_KEY, res)
+        # What `keel merge --root <root>` asks of the ledger matches the pushed head.
+        matched, record = ledger.gates_pass_for_head(records, 1, head)
+        self.assertTrue(matched)
+        self.assertEqual(record["actors"]["implementer"], "codex:gpt-5")
+        self.assertEqual(record["git"]["branch"], f"swarm/{self.SWARM}/{cluster.cluster_id}")
+        self.assertEqual(record["run_id"], f"{self.SWARM}/{cluster.cluster_id}")
+        self.assertEqual((record["issue"]["number"], record["capture"]["not_run"]), (861, True))
+        self.assertEqual([g["gate"] for g in record["gates"]], ["build"])
+        self.assertIn("redaction", record)
+        self.assertEqual(state.workers[0].pull_request, 1)
+        # And the evidence gate reads the labels and the record as one attribution.
+        from keel import evidence
+
+        self.assertIsNone(
+            evidence._attribution_finding(pr_labels=expected, enforced=True, ledger_record=record)
+        )
+        self.assertIsNone(
+            evidence._attribution_vocabulary_finding(
+                pr_labels=expected, enforced=True, ledger_record=record
+            )
+        )
+
+    def test_a_failed_label_post_warns_and_stops_nothing(self):
+        io_ = _LiveIo(label_ok=False)
+        cluster, result, res, records, _state = self._run(io_)
+        self.assertEqual((result.status, res["stage"], res["ok"]), ("success", "done", True))
+        self.assertEqual((res["labels_applied"], res["provenance_posted"]), (False, True))
+        self.assertEqual(io_.events, ["open_pr", "label_pr", "post_comment"])
+        (warning,) = res["warnings"]
+        self.assertIn("(agent:codex, model:gpt-5) were not applied", warning)
+        self.assertIn("HTTP 403: Resource not accessible", warning)
+        self.assertIn("hold it on attribution-label", warning)
+        self.assertEqual(result.warnings, (f"{cluster.cluster_id}: {warning}",))
+        self.assertIn(warning, res["output"])
+        # The gates-pass is still recorded.
+        self.assertTrue(res["gates_recorded"])
+        self.assertTrue(ledger.gates_pass_for_head(records, 1, res["commit"])[0])
+
+    def test_an_empty_label_post_failure_still_says_why(self):
+        class Silent(_LiveIo):
+            def label_pr(self, owner_repo, number, labels, cwd):
+                super().label_pr(owner_repo, number, labels, cwd)
+                return CommandResult(False, 1, "  ")
+
+        _cluster, _result, res, _records, _state = self._run(Silent())
+        (warning,) = res["warnings"]
+        self.assertIn("(the label post failed: no output)", warning)
+
+    def test_a_seat_whose_attribution_names_no_label_is_not_labelled_by_hand(self):
+        io_ = _LiveIo()
+        plan = build_swarm_plan([IssueScope(issue=861, title="T")], swarm_id=self.SWARM)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            live = _live(plan, tmpdir, io_)
+            bare = {
+                cid: replace(seat, attribution={"system": "codex:gpt-5"})
+                for cid, seat in live.dispatches.items()
+            }
+            result = run_swarm_orchestration(
+                plan,
+                "projects/x.yaml",
+                root=tmpdir,
+                dry_run=False,
+                live=replace(live, dispatches=bare),
+                runner=_Git(),
+                base_branch="main",
+            )
+        (res,) = result.wave_results[0]["cluster_results"].values()
+        self.assertEqual(io_.labels, [])
+        self.assertFalse(res["labels_applied"])
+        (warning,) = res["warnings"]
+        self.assertIn("names no agent label", warning)
+
+    def test_a_blocking_gate_the_worker_did_not_run_is_recorded_but_not_as_a_pass(self):
+        class DeferredJury(_Git):
+            def __call__(self, cmd, cwd):
+                if "run-gates" in cmd:
+                    self.calls.append(list(cmd))
+                    return CommandResult(
+                        True,
+                        0,
+                        _gates_output(
+                            GateOutcome("build", True),
+                            GateOutcome("jury", True, not_run=True, on_fail="block"),
+                        ),
+                    )
+                return super().__call__(cmd, cwd)
+
+        _cluster, result, res, records, _state = self._run(_LiveIo(), DeferredJury())
+        self.assertEqual((result.status, res["gates_recorded"]), ("success", True))
+        (record,) = records
+        self.assertEqual(
+            [(g["gate"], g["not_run"]) for g in record["gates"]], [("build", False), ("jury", True)]
+        )
+        self.assertEqual(ledger.gates_pass_for_head(records, 1, res["commit"]), (False, None))
+        (warning,) = res["warnings"]
+        self.assertIn("do not count as a gates-pass (jury did not pass", warning)
+
+    def test_a_gate_report_keel_cannot_read_records_nothing_and_says_so(self):
+        class Plain(_Git):
+            def __call__(self, cmd, cwd):
+                if "run-gates" in cmd:
+                    return CommandResult(True, 0, "  ok  build\n")
+                return super().__call__(cmd, cwd)
+
+        _cluster, result, res, records, _state = self._run(_LiveIo(), Plain())
+        self.assertEqual((result.status, res["gates_recorded"], records), ("success", False, []))
+        (warning,) = res["warnings"]
+        self.assertIn("keel run-gates printed no report keel can read", warning)
+        self.assertIn("hold it on no gates-pass", warning)
+
+    def test_a_red_report_is_named_gate_by_gate(self):
+        class Red(_Git):
+            def __call__(self, cmd, cwd):
+                if "run-gates" in cmd:
+                    red = GateOutcome(
+                        "build", False, (Finding("major", "2 tests failed", "build"),)
+                    )
+                    return CommandResult(False, 1, _gates_output(red, notice="  ! notice\n"))
+                return super().__call__(cmd, cwd)
+
+        io_ = _LiveIo()
+        _cluster, result, res, records, _state = self._run(io_, Red())
+        self.assertEqual((result.status, res["stage"], records), ("failed", "gates", []))
+        self.assertIn("     FAIL  build\n    [major] build: 2 tests failed", res["output"])
+        self.assertEqual((io_.pushes, io_.labels), ([], []))
+
+    def test_a_redaction_policy_keel_cannot_apply_records_nothing_and_says_so(self):
+        with patch.object(
+            swarm_runtime_module.ledger,
+            "sanitize_record",
+            side_effect=swarm_runtime_module.redaction.RedactionError("bad pattern"),
+        ):
+            _cluster, result, res, records, _state = self._run(_LiveIo())
+        self.assertEqual((result.status, res["gates_recorded"], records), ("success", False, []))
+        (warning,) = res["warnings"]
+        self.assertIn("the capture redaction policy is invalid: bad pattern", warning)
+
+    def test_an_unreadable_diff_is_recorded_as_unreadable_not_empty(self):
+        _cluster, _result, res, records, _state = self._run(_LiveIo(), _Git(fail="--no-ext-diff"))
+        (record,) = records
+        self.assertTrue(res["gates_recorded"])
+        self.assertEqual(
+            (record["changes"]["files"], record["changes"]["unreadable"]), (None, True)
+        )
+
+    def test_the_diff_is_what_the_pushed_head_changes_since_the_worktree_was_cut(self):
+        git = _Git()
+        _cluster, _result, res, records, _state = self._run(_LiveIo(), git)
+        (diff,) = git.ran("--no-ext-diff")
+        self.assertEqual(diff[-4:], ["--name-only", "base", res["commit"], "--"])
+        self.assertEqual(records[0]["changes"]["files"], ["ok"])
+
+    def test_no_ledger_records_nothing_and_warns_nothing(self):
+        _cluster, result, res, records, _state = self._run(_LiveIo(), ledger_path=False)
+        self.assertEqual((result.warnings, res["gates_recorded"], records), ((), False, []))
+        self.assertNotIn(swarm_runtime_module.GATES_RECORD_KEY, res)
+
+    def test_the_default_labeller_creates_what_the_repository_lacks_then_applies(self):
+        from keel import github
+
+        calls: list[tuple] = []
+
+        def listed(*, repo, cwd):
+            calls.append(("list", repo))
+            return CommandResult(True, 0, json.dumps([{"name": "Agent:Codex"}]))
+
+        def created(name, *, repo, cwd):
+            calls.append(("create", name, repo))
+            # A sibling worker created it first: not the answer.
+            return CommandResult(False, 1, "already exists")
+
+        def added(owner_repo, number, labels, *, cwd):
+            calls.append(("add", owner_repo, number, tuple(labels), cwd))
+            return CommandResult(True, 0, "[]")
+
+        with (
+            patch.object(github, "list_labels", side_effect=listed),
+            patch.object(github, "create_label", side_effect=created),
+            patch.object(github, "add_issue_labels", side_effect=added),
+        ):
+            res = swarm_runtime_module._default_label_pr(
+                "o/r", 5, ["agent:codex", "model:gpt-5"], Path("/w")
+            )
+        self.assertTrue(res.ok)
+        self.assertEqual(
+            calls,
+            [
+                ("list", "o/r"),
+                ("create", "model:gpt-5", "o/r"),
+                ("add", "o/r", 5, ("agent:codex", "model:gpt-5"), str(Path("/w"))),
+            ],
+        )
+
+    def test_the_default_labeller_creates_every_label_when_the_list_fails(self):
+        from keel import github
+
+        with (
+            patch.object(github, "list_labels", return_value=CommandResult(False, 1, "403")),
+            patch.object(github, "create_label", return_value=CommandResult(True, 0, "")) as made,
+            patch.object(
+                github, "add_issue_labels", return_value=CommandResult(False, 1, "422")
+            ) as add,
+        ):
+            res = swarm_runtime_module._default_label_pr("o/r", 5, ["agent:codex"], Path("/w"))
+        self.assertEqual((res.ok, res.output), (False, "422"))
+        self.assertEqual([c.args[0] for c in made.call_args_list], ["agent:codex"])
+        add.assert_called_once()
 
 
 if __name__ == "__main__":

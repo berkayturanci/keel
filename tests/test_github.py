@@ -155,6 +155,29 @@ class TestGithubComments(unittest.TestCase):
             ["gh", "label", "create", "status:done", "--repo", "owner/repo"],
         )
 
+    def test_add_issue_labels_posts_each_label_over_rest(self):
+        # #1420: the worker labels the pull request it opened; `-f`, so a name is never a file.
+        mock_runner = MagicMock(return_value=_proc("[]"))
+        res = github.add_issue_labels(
+            "owner/repo", 7, ["agent:codex", "@model:x"], cwd="/w", _run=mock_runner
+        )
+        self.assertTrue(res.ok)
+        self.assertEqual(
+            mock_runner.call_args[0][0],
+            [
+                "gh",
+                "api",
+                "repos/owner/repo/issues/7/labels",
+                "-X",
+                "POST",
+                "-f",
+                "labels[]=agent:codex",
+                "-f",
+                "labels[]=@model:x",
+            ],
+        )
+        self.assertEqual(mock_runner.call_args.kwargs["cwd"], "/w")
+
     def test_create_label_without_a_repo(self):
         self.assertEqual(
             github.label_create_argv("role:core"), ["gh", "label", "create", "role:core"]

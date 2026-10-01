@@ -183,6 +183,13 @@ refuses with *the pull request's head changed while it was being checked* — ru
 The merge is then pinned to that head on both transports, so GitHub refuses it if the branch
 moves after the checks (#1219).
 
+**An evidence refusal names every cause.** When `evidence-verify` is not a pass, the reason
+lists each missing item (`missing evidence: review-verdict-1, …`) and each blocking finding
+with its message (`blocking finding(s): attribution-label: PR is missing a mandatory
+agent:<vendor> attribution label.`). It used to list the missing items alone, so a pull
+request held on a finding with every verdict posted was refused with `missing evidence: ` and
+nothing after it (#1420).
+
 The gates-SHA check reads the run ledger and requires a `ship_run` record whose
 `pull_request.number` matches the PR, whose `git.head_sha` equals the PR's current head
 (from the live merge snapshot) — or a head that head **covers**: one it descends from by
@@ -3361,16 +3368,25 @@ keel swarm-run .keel/project.yaml --root . --issues 714,715 --live \
 
 A live worker is the cluster's **implementer seat**, dispatched by keel through the machinery
 `keel delegate run` uses (`--role implement`, the worktree as its working directory), followed by
-a commit on `swarm/<swarm_id>/<cluster_id>`, `keel run-gates --phases guard,test --defer-jury` in
-the worktree, a push of that branch to `origin`, and one pull request per cluster against
-`base_branch` whose body says `Refs #N`. The seat is `assignment.implementer`: `--delegate`, else
+a commit on `swarm/<swarm_id>/<cluster_id>`, `keel run-gates --phases guard,test --defer-jury
+--json` in the worktree, a push of that branch to `origin`, and one pull request per cluster
+against `base_branch` whose body says `Refs #N`. keel then stamps the pull request with the
+ship-provenance comment, applies the seat's attribution labels (`agent_label` and, when the seat
+names a model, `model_label`, as `keel attribution` prints them; a label the repository lacks is
+created first), and appends a `ship_run` record of the gates the worker ran for the pushed head
+to the run ledger — the gates-pass `keel merge` requires — with `capture.not_run: true` and
+`assessment.merge.action: defer`, so no reader counts it as a merged pull request (#1420). A
+blocking gate the worker did not run (the deferred jury, a `pre-merge` gate) is recorded
+`not_run`, and that record is not a pass. The seat is `assignment.implementer`: `--delegate`, else
 a `--team` or difficulty bench, else `knobs.team.implement`. Every cluster's seat is planned before
 any worker starts; a `subagent:` seat or a transport that cannot edit a worktree (`api`,
 `ollama`, a generic profile) refuses the run with the cluster and the reason. A worker stops at
 the first stage that fails and reports it as `stage` in its `cluster_results` entry (`consent`,
 `worktree`, `implement`, `tamper`, `commit`, `gates`, `push`, `pull_request`); a failed implementer
 or a red gate pushes nothing and opens nothing. A successful one reports `pr_url` and `stage:
-done`. The same stage is written to the worker's record in the run state as the worker enters
+done`, with `provenance_posted`, `labels_applied` and `gates_recorded` saying whether each of
+those three landed; one that did not stops nothing and is a `warnings` entry naming the hold
+it will cause at landing and how to clear it. The same stage is written to the worker's record in the run state as the worker enters
 it, which is what `keel swarm-status` shows while the run is in flight. Each live cluster
 result also says what became of its worktree — `worktree_state` (`removed`, `kept`,
 `remove-failed`, `none`), `worktree` (its path while it is still on disk) and `branch_deleted`:
@@ -3442,7 +3458,8 @@ keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live
 
 **Prerequisites.** A cluster lands only where `keel merge` would merge its pull request: CI must
 run on it, and the PR needs its review verdicts. The live worker arms keel merge's evidence gate
-when it opens the PR, with the ship-provenance comment a live `keel ship` run posts. Without CI
+when it opens the PR, with the ship-provenance comment a live `keel ship` run posts, applies the
+seat's attribution labels and records the gates-pass for the head it pushed (#1420). Without CI
 or the verdicts every cluster is held with `keel merge`'s reason (for example *CI did not run on
 a non-docs PR (empty check set)* or *missing evidence: …*) and the command exits 1 — see
 [swarm.md](swarm.md#4-landing-keel-swarm-land).

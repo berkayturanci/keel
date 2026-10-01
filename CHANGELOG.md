@@ -36,6 +36,21 @@ All notable changes to keel are documented here. The format follows
   (#1407) — upgrade every keel that runs on a checkout before running `swarm-run --live` there.
 
 ### Fixed
+- **A live swarm worker's pull request can land without a hand step after its review
+  verdicts** (#1420). On the second end-to-end live run, with verdicts posted and CI green,
+  `swarm-land` still held every cluster: the worker opened its pull request without the
+  `agent:<vendor>` label `/keel:ship` applies to every pull request, and recorded no `ship_run`
+  for the gates it ran, so `keel merge` found neither the attribution label nor a gates-pass for
+  the head. The worker now applies the seat's attribution labels — `agent_label` and
+  `model_label` from the record `keel attribution` prints, creating a label the repository
+  lacks — and the run appends a `ship_run` record of the gates the worker ran (`run-gates
+  --json`, gate by gate) for the pushed head, with `capture.not_run: true` and a `defer` merge
+  action, so no reader counts it as a merged or shipped pull request; a blocking gate the
+  worker deferred is recorded `not_run`, and that record is not a pass. The worker result says
+  `labels_applied` and `gates_recorded`, and a failure of either warns with the hold it causes
+  and stops nothing. `keel merge` also named only missing items when evidence failed, so a
+  refusal on a blocking finding read `missing evidence: ` with nothing after it; it now names
+  every missing item and every blocking finding with its message.
 - **The revert-check article says what the gate excludes** (#1408). `website/revert-check.html` now says a pytest `Failed: Timeout` reason is not counted as an assertion (`revertcheck._ASSERTION_REASON`) and that the missing-name exception also needs every failure the run counts to be explained by those names (`missing_names_only`); `tests/test_revert_check_article.py` checks both sentences against the gate.
 
 ## [1.26.0] - 2026-10-01
