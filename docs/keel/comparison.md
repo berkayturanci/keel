@@ -427,7 +427,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | Tool | Agent-agnostic | Merge queue | Merge window/freeze | AI review | Multi-agent debate | Policy/gate aggregation | Project config | Open source |
 |---|---|---|---|---|---|---|---|---|
 | **keel** | ✅ (CLI adapters) | ❌ (one-at-a-time + lock) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (review→debate→verify→synth) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
-| **keel-swarm** (experimental — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | ✅ (CLI adapters) | ✅ (sequential batch under one lock) | ❌ (`swarm-land` never consults the window; `keel merge` is what enforces it) | ✅ (via ai-jury) | ✅ (per cluster, via ai-jury) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
+| **keel-swarm** (experimental — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | ✅ (CLI adapters) | ✅ (sequential batch under one lock) | ✅ (each cluster lands through `keel merge`, which enforces it) | ❌ (nothing in the swarm reviews its PRs; verdicts are posted from outside — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | ❌ (none inside the swarm) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
 | **Mergify** | ❌ | ✅ | ✅ (schedule + pause/freeze) | ❌ | ❌ | ◑ (conditions) | ◑ (config.yml) | Prop. (OSS repo exists) |
 | **GitHub merge queue** | ❌ | ✅ | ❌ (workarounds only) | ❌ | ❌ | ◑ (required checks) | ◑ | Prop. |
 | **bors-ng** | ❌ | ✅ (batch+bisect) | ❌ | ❌ | ❌ | ◑ | ◑ | OSS (Apache-2.0, deprecated) |

@@ -19,7 +19,10 @@ All notable changes to keel are documented here. The format follows
   the swarm. Swarm stays **experimental** everywhere, and "nothing in the swarm reviews the pull
   requests it opens" stays: where a surface cited the closed epic #1281 as the reason, it now
   cites #1423 (whether swarm should dispatch its own reviewers), and the swarm guide adds #1422
-  (a landed cluster leaves its issues open). `tests/test_adapter_accuracy.py` and
+  (a landed cluster leaves its issues open). The `comparison.md` row for keel-swarm also stops
+  crediting it with AI review and multi-agent debate "via ai-jury" — nothing in the swarm
+  convenes a review — and its merge-window cell is ✅ again, since each cluster now lands
+  through `keel merge`, which enforces the window (#1409). `tests/test_adapter_accuracy.py` and
   `tests/test_docs_claims.py` pin the new wording and fail on the old one.
 
 ### Added
