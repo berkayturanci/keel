@@ -535,7 +535,7 @@
         },
         "swarm_review_evidence": {
           "type": "boolean",
-          "description": "No effect since #1287: swarm-land lands each cluster's pull request through keel merge, whose review-evidence gate (#828) has no opt-out. Accepted for compatibility; false is announced on stderr as ignored."
+          "description": "Deprecated: no effect since #1287. swarm-land lands each cluster's pull request through keel merge, whose review-evidence gate (#828) has no opt-out. Accepted for compatibility; false is announced on stderr as ignored. Remove it from your config."
         },
         "gate_timeout_s": {
           "type": "integer",

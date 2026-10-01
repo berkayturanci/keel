@@ -286,10 +286,11 @@ class Knobs:
     #: kept so an explicit ``false`` stays distinguishable from silence for the wizard and
     #: for anything that reports what a project actually said.
     evidence_require_distinct_vendors: bool | None = None
-    #: Swarm landings enforce the same per-PR review-evidence contract as ship
-    #: s10. Turning this off is the explicit, logged opt-out #828 requires: the
-    #: exception lives in config where a reviewer can see it, never in a
-    #: driver's judgement call under time pressure.
+    #: **Deprecated — no effect since #1287.** It used to let ``swarm-land`` skip the
+    #: per-PR review-evidence check (#828) before a local merge. ``swarm-land`` now lands
+    #: each cluster's pull request through ``keel merge``, whose evidence gate has no
+    #: opt-out, so ``false`` changes nothing; it is still parsed (a config that sets it
+    #: keeps validating) and ``swarm-land`` announces it as ignored on stderr (#1410).
     swarm_review_evidence: bool = True
     #: The s4 implement profile: ``default`` (one pass) or ``tdd`` (test-first, two
     #: phases, with the pure ``tdd-order`` gate at s8). See :mod:`keel.tdd`.
