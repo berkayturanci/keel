@@ -52,6 +52,24 @@ All notable changes to keel are documented here. The format follows
   (#1407) — upgrade every keel that runs on a checkout before running `swarm-run --live` there.
 
 ### Fixed
+- **A cluster `swarm-land --live` merges has its issues closed, as `/keel:ship` closes one**
+  (#1422). The first live landing merged both cluster pull requests and left both issues open
+  with nothing on them: a worker's pull request says `Refs #N`, never `Closes`, and
+  `swarm-land` stopped at the merge, so a landed cluster also failed `evidence-verify --phase
+  all` on both closure items. After each merge it now does s11–s12 by the code paths `/keel:ship`
+  uses: the `ship_run` record whose gates-pass `keel merge` accepted for the merged head is
+  appended again as the landing's (`command: swarm-land`, merge action `merge`, the merged head,
+  the reviewers whose verdicts counted, this run's consent and transport), the
+  `keel.closure-comment.v1` comment `keel.closure.render_closure_comment` renders from it is
+  posted through `keel post-comment`'s code to the pull request and each of the cluster's
+  issues, and each issue is closed as completed. It runs under the operator's consent for the
+  merge plus `comments` and `issue_close` (`github`). `--json` reports it per cluster under
+  `closures`, the text report under `closure :`. A failure there is a warning — the merge is
+  never undone and the next cluster lands; a held or failed cluster and a dry run close nothing;
+  a re-run reuses the landing record, edits its closure comment in place and leaves a closed
+  issue alone. `keel evidence-verify --phase all --pr <n> --issue <issue>` then passes both
+  closure items. The swarm guide, the `/keel:swarm` adapter (and its generated copies),
+  `docs/keel/cli.md` and the website stop saying a landed cluster leaves its issues open.
 - **A live swarm worker's pull request can land without a hand step after its review
   verdicts** (#1420). On the second end-to-end live run, with verdicts posted and CI green,
   `swarm-land` still held every cluster: the worker opened its pull request without the

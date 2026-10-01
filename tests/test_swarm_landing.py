@@ -6,16 +6,20 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from keel import artifacts, closeorder, closure, evidence, ledger, runtime, ship, swarm_worker
 from keel import cli as cli_mod
-from keel import runtime
+from keel import findings as fnd
 from keel.cli import main
+from keel.gates import GateOutcome
 from keel.runner import CommandResult
 from keel.swarm import (
+    ClusterClosure,
     IssueScope,
     SwarmCluster,
     SwarmLandingResult,
@@ -26,6 +30,7 @@ from keel.swarm import (
     build_swarm_plan,
     evaluate_wave_landing_mode,
     load_swarm_state,
+    render_cluster_closure,
     render_swarm_landing_result,
     save_swarm_plan,
     save_swarm_state,
@@ -34,9 +39,13 @@ from keel.swarm_landing import (
     FAILED,
     HELD,
     LANDED,
+    LANDING_COMMAND,
+    LANDING_MERGE_REASON,
     ClusterMerge,
     PullRequestLookup,
+    is_landing_record,
     land_wave_clusters,
+    landing_record,
     merge_outcome,
     pull_request_from_list,
     pull_request_from_view,
@@ -420,6 +429,227 @@ class TheWaveLandsEachPullRequestInOrder(unittest.TestCase):
         self.assertEqual((rec.lookups, rec.merges), ([], []))
 
 
+def _worker_record(pr: int, issue: int, head: str) -> dict:
+    """The ``ship_run`` record a live worker appends when it opens its pull request (#1420)."""
+    return ledger.build_ship_run_record(
+        command="swarm-run",
+        base_branch="main",
+        changed_files=["src/a.py"],
+        outcomes=[GateOutcome("build", True, ())],
+        verdict=fnd.summarize([]),
+        assessment=ship.ShipAssessment(
+            tier=None,  # type: ignore[arg-type]
+            reviewers=None,  # type: ignore[arg-type]
+            window_open=None,  # type: ignore[arg-type]
+            ci_ok=None,
+            merge=ship.MergeDecision("defer", swarm_worker.WORKER_MERGE_REASON),
+        ),
+        target=f"PR #{pr}",
+        run_id=f"swarm-e2e/cluster-1-{issue}",
+        issue_number=issue,
+        pr_number=pr,
+        branch=f"swarm/swarm-e2e/cluster-1-{issue}",
+        head_sha=head,
+        capture_status=None,
+        capture_not_run=True,
+        implementer="agy",
+    )
+
+
+def _verdict(head: str, reviewer: str = "agy-gate") -> dict:
+    body = artifacts.render_review_verdict(
+        reviewer=reviewer,
+        head_sha=head,
+        scope="Checked `src/a.py` and `swarm_landing.landing_record()`",
+        vendor="agy",
+    )
+    return {"id": 1, "body": body, "author_association": "OWNER"}
+
+
+class ALandedClusterIsRecordedAsMerged(unittest.TestCase):
+    """The landing record and the merge's head (#1422) — pure."""
+
+    def test_keel_merges_head_is_carried_when_the_cluster_lands(self):
+        payload = {"reason": "merged", "evidence": {"head_sha": "sha-1", "covered_heads": ["c"]}}
+        self.assertEqual(
+            (merge_outcome(0, payload).head_sha, merge_outcome(0, payload).covered_heads),
+            ("sha-1", ("c",)),
+        )
+        self.assertEqual(merge_outcome(3, payload).head_sha, "sha-1")
+        bare = merge_outcome(0, {"reason": "merged", "evidence": None})
+        self.assertEqual((bare.head_sha, bare.covered_heads), ("", ()))
+        junk = merge_outcome(0, {"evidence": {"head_sha": 7, "covered_heads": "c"}})
+        self.assertEqual((junk.head_sha, junk.covered_heads), ("", ()))
+
+    def test_the_landing_record_says_merged_and_keeps_what_the_worker_recorded(self):
+        prior = _worker_record(10, 101, "sha-10")
+        context = ledger.build_run_context(
+            host_agent="claude", transport="gh", consent_status="approved", consent_scopes=["git"]
+        )
+        record = landing_record(
+            prior, head_sha="sha-10", reviewers=("agy-gate",), run_context=context
+        )
+        self.assertEqual(record["command"], LANDING_COMMAND)
+        self.assertEqual(
+            record["assessment"]["merge"], {"action": "merge", "reason": LANDING_MERGE_REASON}
+        )
+        self.assertTrue(closeorder.record_attests_merge(record))
+        self.assertFalse(closeorder.record_attests_merge(prior))
+        self.assertEqual(record["git"]["head_sha"], "sha-10")
+        self.assertEqual(record["actors"]["reviewers"], ["agy-gate"])
+        self.assertEqual(record["actors"]["implementer"], "agy")
+        self.assertEqual(record["run_context"], context)
+        self.assertEqual(
+            (record["gates"], record["changes"], record["capture"], record["run_id"]),
+            (prior["gates"], prior["changes"], prior["capture"], prior["run_id"]),
+        )
+        self.assertTrue(ledger.record_gates_passed(record), "the head's gates-pass still holds")
+        self.assertEqual(prior["command"], "swarm-run", "the prior record is not changed")
+        self.assertEqual(prior["actors"]["reviewers"], [])
+        self.assertTrue(is_landing_record(record))
+        self.assertFalse(is_landing_record(prior))
+
+    def test_no_reviewer_named_keeps_the_recorded_ones_and_junk_blocks_become_objects(self):
+        record = landing_record(
+            {"actors": {"reviewers": ["lead"]}, "git": "junk", "assessment": None},
+            head_sha="h",
+            reviewers=(),
+            run_context={},
+        )
+        self.assertEqual(record["actors"], {"reviewers": ["lead"]})
+        self.assertEqual(record["git"], {"head_sha": "h"})
+        self.assertEqual(record["assessment"]["merge"]["action"], "merge")
+        junk_actors = landing_record({"actors": "x"}, head_sha="h", reviewers=["r"], run_context={})
+        self.assertEqual(junk_actors["actors"], {"reviewers": ["r"]})
+
+
+class ALandedClusterIsClosed(unittest.TestCase):
+    """The loop closes each cluster it merged, and only those (#1422)."""
+
+    def _land(self, closer, *, merged=None, dry_run=False, found=None):
+        both = {
+            "swarm/swarm-t/cluster-1-101": PullRequestLookup(1),
+            "swarm/swarm-t/cluster-1-102": PullRequestLookup(2),
+        }
+        rec = _Recorder(found={**both, **(found or {})}, merged=merged or {})
+        with tempfile.TemporaryDirectory() as tmp:
+            result = land_wave_clusters(
+                _two_cluster_plan(),
+                wave_index=1,
+                root=tmp,
+                dry_run=dry_run,
+                find_pull_request=rec.find,
+                merge_pull_request=rec.merge,
+                runner=_Checkout(),
+                close_cluster=closer,
+            )
+        return result
+
+    def test_each_landed_cluster_is_closed_and_a_held_or_failed_one_is_not(self):
+        calls = []
+
+        def closer(cluster, number, merged):
+            calls.append((cluster.cluster_id, number, merged.head_sha))
+            return ClusterClosure(
+                cluster.cluster_id, number, cluster.issues, closed_issues=cluster.issues
+            )
+
+        result = self._land(closer, merged={1: ClusterMerge(LANDED, "merged", head_sha="sha-1")})
+        self.assertEqual(calls, [("cluster-1-101", 1, "sha-1"), ("cluster-1-102", 2, "")])
+        self.assertEqual([c.closed_issues for c in result.closures], [(101,), (102,)])
+        held = self._land(
+            closer,
+            merged={2: ClusterMerge(FAILED, "boom")},
+            found={"swarm/swarm-t/cluster-1-101": PullRequestLookup(None, "no PR")},
+        )
+        self.assertEqual(held.closures, (), "a held and a failed cluster close nothing")
+
+    def test_what_the_closer_could_not_do_or_raised_is_a_warning_and_the_wave_goes_on(self):
+        def closer(cluster, number, merged):
+            if cluster.cluster_id == "cluster-1-101":
+                raise RuntimeError("gh exploded")
+            return ClusterClosure(cluster.cluster_id, number, cluster.issues, warnings=("w",))
+
+        result = self._land(closer)
+        self.assertEqual(result.status, "success", "the merges stand")
+        self.assertEqual(
+            list(result.warnings),
+            [
+                "cluster-1-101: closing the issues raised RuntimeError: gh exploded",
+                "cluster-1-102: w",
+            ],
+        )
+        self.assertEqual(
+            result.closures[0].warnings, ("closing the issues raised RuntimeError: gh exploded",)
+        )
+
+    def test_a_dry_run_closes_nothing_and_says_what_it_would(self):
+        def closer(*_):
+            raise AssertionError("a dry run closed something")
+
+        result = self._land(closer, dry_run=True)
+        self.assertEqual(
+            [(c.cluster_id, c.issues, c.dry_run) for c in result.closures],
+            [("cluster-1-101", (101,), True), ("cluster-1-102", (102,), True)],
+        )
+        self.assertEqual(result.closures[0].closure_posted, ())
+
+    def test_without_a_closer_nothing_is_closed_or_reported(self):
+        self.assertEqual(self._land(None).closures, ())
+
+    def test_the_closure_reports_itself_as_json_and_text(self):
+        live = ClusterClosure(
+            "c1",
+            10,
+            (101, 103),
+            closure_posted=(("pr", 10, "posted"), ("issue", 101, "edited")),
+            closed_issues=(101,),
+            already_closed=(103,),
+            warnings=("w",),
+        )
+        self.assertEqual(
+            live.to_dict(),
+            {
+                "pull_request": 10,
+                "issues": [101, 103],
+                "dry_run": False,
+                "closure_posted": [
+                    {"kind": "pr", "number": 10, "action": "posted"},
+                    {"kind": "issue", "number": 101, "action": "edited"},
+                ],
+                "closed_issues": [101],
+                "already_closed": [103],
+                "warnings": ["w"],
+            },
+        )
+        self.assertEqual(
+            render_cluster_closure(live),
+            "c1: closure PR #10 posted, issue #101 edited; closed #101; already closed #103",
+        )
+        self.assertEqual(
+            render_cluster_closure(ClusterClosure("c2", 11, (102,))),
+            "c2: no closure comment posted; closed none",
+        )
+        self.assertEqual(
+            render_cluster_closure(ClusterClosure("c3", 12, (), dry_run=True)),
+            "c3: would post the closure comment on PR #12 and each issue, then close none",
+        )
+        result = SwarmLandingResult(
+            swarm_id="s",
+            wave_index=1,
+            mode="direct_batch",
+            landed_clusters=("c1",),
+            failed_clusters=(),
+            status="success",
+            closures=(live,),
+        )
+        self.assertEqual(result.to_dict()["closures"], {"c1": live.to_dict()})
+        text = render_swarm_landing_result(result)
+        self.assertIn("closure : the landed clusters' issues", text)
+        self.assertIn("    c1: closure PR #10 posted", text)
+        self.assertNotIn("closure :", render_swarm_landing_result(replace(result, closures=())))
+
+
 class TheCheckoutIsLeftWhereItStarted(unittest.TestCase):
     """#1279's promise holds without a guard doing anything: landing merges on the host
     and checks nothing out. The postcondition is still checked after every wave."""
@@ -535,10 +765,22 @@ def _json(payload) -> CommandResult:
 
 
 class _Host:
-    """GitHub as keel merge and the lookup see it, per pull request."""
+    """GitHub as keel merge, the lookup and the closure see it, per pull request and issue."""
 
     def __init__(
-        self, *, heads=None, merge_state=None, evidence_missing=(), merge_ok=True, lookup=None
+        self,
+        *,
+        heads=None,
+        merge_state=None,
+        evidence_missing=(),
+        merge_ok=True,
+        lookup=None,
+        comments=None,
+        closed=(),
+        unreadable_comments=(),
+        unreadable_issues=(),
+        post_ok=True,
+        close_output=None,
     ):
         self.lookup = lookup
         self.heads = heads or {10: "sha-10", 11: "sha-11"}
@@ -547,6 +789,16 @@ class _Host:
         self.merge_ok = merge_ok
         self.cli_calls: list[list[str]] = []
         self.merges: list[tuple[int, str | None, str]] = []
+        #: Every comment thread, keyed by issue or pull request number (#1422).
+        self.comments: dict[int, list[dict]] = {k: list(v) for k, v in (comments or {}).items()}
+        self.closed = set(closed)
+        self.unreadable_comments = set(unreadable_comments)
+        self.unreadable_issues = set(unreadable_issues)
+        self.post_ok = post_ok
+        #: ``None`` closes; a string is the failing ``gh issue close``'s output.
+        self.close_output = close_output
+        self.posts: list[tuple[str, int, str]] = []
+        self.closes: list[tuple[int, str | None, str | None]] = []
 
     def run_argv(self, argv, cwd=None, **_kw):
         self.cli_calls.append(list(argv))
@@ -565,6 +817,16 @@ class _Host:
         if argv[:3] == ["gh", "pr", "list"]:
             number = int(argv[4].rsplit("-", 1)[1]) - 91
             return _json([{"number": number, "state": "OPEN"}])
+        if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
+            number = int(argv[4].split("/")[4])
+            if number in self.unreadable_comments:
+                return CommandResult(False, 1, "HTTP 502")
+            return _json([self.comments.get(number, [])])
+        if argv[:2] == ["gh", "api"] and argv[2].count("/") == 4:
+            number = int(argv[2].rsplit("/", 1)[1])
+            if number in self.unreadable_issues:
+                return CommandResult(False, 1, "HTTP 404")
+            return _json({"number": number, "state": "closed" if number in self.closed else "open"})
         return CommandResult(False, 1, "unexpected command")
 
     def snapshot(self, pr, *, cwd=None, _run=None):
@@ -590,6 +852,47 @@ class _Host:
             self.merge_ok, 0 if self.merge_ok else 1, "merged" if self.merge_ok else "409"
         )
 
+    def post_comment(self, owner_repo, number, body, *, cwd=None, _run=None):
+        self.posts.append(("post", int(number), body))
+        if not self.post_ok:
+            return CommandResult(False, 1, "HTTP 403")
+        thread = self.comments.setdefault(int(number), [])
+        comment = {"id": 1000 + len(self.posts), "body": body, "author_association": "OWNER"}
+        thread.append(comment)
+        return _json({"id": comment["id"], "html_url": f"https://x/{number}#{comment['id']}"})
+
+    def edit_comment(self, owner_repo, comment_id, body, *, cwd=None, _run=None):
+        self.posts.append(("edit", int(comment_id), body))
+        for thread in self.comments.values():
+            for comment in thread:
+                if comment.get("id") == comment_id:
+                    comment["body"] = body
+        return _json({"id": comment_id})
+
+    def close_issue(self, issue, *, cwd=None, repo=None, reason=None, _run=None):
+        self.closes.append((int(issue), repo, reason))
+        if self.close_output is not None:
+            return CommandResult(False, 1, self.close_output)
+        self.closed.add(int(issue))
+        return CommandResult(True, 0, "")
+
+
+def _host_patches(host: _Host, *, window_open=True):
+    """Every seam ``swarm-land`` reaches GitHub, the clock and the merge through."""
+    return [
+        ("keel.cli.runtime.detect", {"return_value": _capabilities()}),
+        ("keel.cli.window.is_merge_open", {"return_value": window_open}),
+        ("keel.cli.run_argv", {"side_effect": host.run_argv}),
+        ("keel.cli.github.pr_merge_snapshot", {"side_effect": host.snapshot}),
+        ("keel.cli._verify_merge_evidence", {"side_effect": host.evidence}),
+        ("keel.cli._merge_drift_report", {"return_value": {"status": "clean"}}),
+        ("keel.cli.github.merge_pr", {"side_effect": host.merge_pr}),
+        ("keel.cli.github.rest_merge_pr", {"side_effect": AssertionError("REST")}),
+        ("keel.cli.github.post_issue_comment", {"side_effect": host.post_comment}),
+        ("keel.cli.github.edit_issue_comment", {"side_effect": host.edit_comment}),
+        ("keel.cli.github.close_issue", {"side_effect": host.close_issue}),
+    ]
+
 
 class SwarmLandMergesThroughKeelMerge(unittest.TestCase):
     """#1287, the owner's decision: every cluster's pull request goes through `keel merge`'s
@@ -599,32 +902,37 @@ class SwarmLandMergesThroughKeelMerge(unittest.TestCase):
     SWARM = "swarm-e2e"
     CONSENT = ("--approve-scope", "filesystem,git,github", "--operator", "tester")
 
-    def _run(self, host: _Host, *extra, window_open=True, record=True, gates=True):
+    def _run(
+        self, host: _Host, *extra, window_open=True, record=True, gates=True, ledger_records=None
+    ):
+        """Run ``swarm-land`` against ``host``. ``ledger_records`` writes a real run ledger
+        for keel merge and the closure to read; without it the ledger is faked empty and
+        ``gates`` decides the gates-pass."""
         plan = _two_cluster_plan(self.SWARM)
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             save_swarm_plan(plan, root=tmp)
             prs = {"cluster-1-101": 10, "cluster-1-102": 11} if record else {}
             save_swarm_state(
                 _state(self.SWARM, prs or {"cluster-1-101": None, "cluster-1-102": None}), tmp
             )
+            ledger_path = Path(tmp) / ".keel" / "state" / "run-ledger.jsonl"
+            if ledger_records is None:
+                stack.enter_context(patch("keel.cli.ledger.read_records", return_value=[]))
+                stack.enter_context(
+                    patch(
+                        "keel.cli.ledger.gates_pass_for_head",
+                        return_value=(gates, {"run_id": "RUN-1"} if gates else None),
+                    )
+                )
+            else:
+                ledger_path.parent.mkdir(parents=True, exist_ok=True)
+                ledger_path.write_text(
+                    "".join(ledger.encode_record(r) for r in ledger_records), encoding="utf-8"
+                )
             out, err = io.StringIO(), io.StringIO()
-            with (
-                patch("keel.cli.runtime.detect", return_value=_capabilities()),
-                patch("keel.cli.window.is_merge_open", return_value=window_open),
-                patch("keel.cli.run_argv", side_effect=host.run_argv),
-                patch("keel.cli.github.pr_merge_snapshot", side_effect=host.snapshot),
-                patch("keel.cli._verify_merge_evidence", side_effect=host.evidence),
-                patch("keel.cli.ledger.read_records", return_value=[]),
-                patch(
-                    "keel.cli.ledger.gates_pass_for_head",
-                    return_value=(gates, {"run_id": "RUN-1"} if gates else None),
-                ),
-                patch("keel.cli._merge_drift_report", return_value={"status": "clean"}),
-                patch("keel.cli.github.merge_pr", side_effect=host.merge_pr),
-                patch("keel.cli.github.rest_merge_pr", side_effect=AssertionError("REST")),
-                redirect_stdout(out),
-                redirect_stderr(err),
-            ):
+            for target, kwargs in _host_patches(host, window_open=window_open):
+                stack.enter_context(patch(target, **kwargs))
+            with redirect_stdout(out), redirect_stderr(err):
                 code = main(
                     [
                         "swarm-land",
@@ -638,6 +946,9 @@ class SwarmLandMergesThroughKeelMerge(unittest.TestCase):
                     ]
                 )
             state = load_swarm_state(self.SWARM, root=tmp)
+            self.ledger_text = (
+                ledger_path.read_text(encoding="utf-8") if ledger_path.exists() else ""
+            )
         for own in ("keel.merge.v1", "keel merge — "):
             self.assertNotIn(own, out.getvalue(), "keel merge printed its own report")
         return code, json.loads(out.getvalue()), err.getvalue(), state
@@ -656,14 +967,14 @@ class SwarmLandMergesThroughKeelMerge(unittest.TestCase):
         host = _Host()
         self._run(host, "--live", *self.CONSENT)
         self.assertEqual(
-            [c[:4] for c in host.cli_calls],
+            [c[:4] for c in host.cli_calls if c[:2] == ["gh", "pr"]],
             [["gh", "pr", "view", "10"], ["gh", "pr", "view", "11"]],
         )
         fallback = _Host()
         code, _, err, _ = self._run(fallback, "--live", *self.CONSENT, record=False)
         self.assertEqual(code, 0, err)
         self.assertEqual(
-            [c[:5] for c in fallback.cli_calls],
+            [c[:5] for c in fallback.cli_calls if c[:2] == ["gh", "pr"]],
             [
                 ["gh", "pr", "list", "--head", "swarm/swarm-e2e/cluster-1-101"],
                 ["gh", "pr", "list", "--head", "swarm/swarm-e2e/cluster-1-102"],
@@ -823,6 +1134,149 @@ class SwarmLandMergesThroughKeelMerge(unittest.TestCase):
             (first.method, first.owner), ("squash", "swarm-land-swarm-e2e-cluster-1-101")
         )
 
+    def _landed(self, host: _Host, *extra):
+        records = [_worker_record(10, 101, "sha-10"), _worker_record(11, 102, "sha-11")]
+        return self._run(host, *extra, *self.CONSENT, ledger_records=records)
+
+    def test_a_landed_cluster_gets_ships_closure_and_its_issue_is_closed(self):
+        # #1422: both pull requests merged and both issues stayed open, with nothing on them.
+        host = _Host(comments={10: [_verdict("sha-10")], 11: [_verdict("sha-11", "lead")]})
+        code, payload, err, _ = self._landed(host, "--live")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(payload["warnings"], [])
+        self.assertEqual(
+            payload["closures"]["cluster-1-101"],
+            {
+                "pull_request": 10,
+                "issues": [101],
+                "dry_run": False,
+                "closure_posted": [
+                    {"kind": "pr", "number": 10, "action": "posted"},
+                    {"kind": "issue", "number": 101, "action": "posted"},
+                ],
+                "closed_issues": [101],
+                "already_closed": [],
+                "warnings": [],
+            },
+        )
+        self.assertEqual(
+            host.closes,
+            [(101, "berkayturanci/keel", "completed"), (102, "berkayturanci/keel", "completed")],
+        )
+        landings = [
+            r for r in ledger.parse_records(self.ledger_text) if r["command"] == LANDING_COMMAND
+        ]
+        self.assertEqual([r["pull_request"]["number"] for r in landings], [10, 11])
+        first = landings[0]
+        self.assertEqual(first["git"]["head_sha"], "sha-10")
+        self.assertEqual(first["actors"]["reviewers"], ["agy-gate"])
+        self.assertEqual(landings[1]["actors"]["reviewers"], ["lead"])
+        self.assertEqual(
+            first["run_context"]["consent"],
+            {"status": "approved", "scopes": ["filesystem", "git", "github"]},
+        )
+        self.assertEqual(first["run_context"]["transport"], "gh")
+        self.assertTrue(closeorder.record_attests_merge(first))
+        pr_body, issue_body = host.comments[10][-1]["body"], host.comments[101][-1]["body"]
+        self.assertEqual(pr_body, issue_body)
+        self.assertTrue(evidence.closure_body_matches_record(pr_body, first))
+        self.assertTrue(pr_body.startswith(closure.COMMENT_MARKER))
+        self.assertIn("<!-- keel.run-id: swarm-e2e/cluster-1-101:closure -->", pr_body)
+        for line in ("- **PR:** #10", "- **Reviewers:** agy-gate", "- **Implementer:** agy"):
+            self.assertIn(line, pr_body)
+
+    def test_evidence_verify_passes_the_two_closure_items_once_the_closure_is_posted(self):
+        host = _Host(comments={10: [_verdict("sha-10")], 11: [_verdict("sha-11")]})
+        before = self._evidence_verify(
+            host, ledger.encode_record(_worker_record(10, 101, "sha-10"))
+        )
+        code, _, err, _ = self._landed(host, "--live")
+        self.assertEqual(code, 0, err)
+        after = self._evidence_verify(host, self.ledger_text)
+        closure_items = ("closure-comment-pr", "closure-comment-issue")
+        self.assertEqual(
+            [item["ok"] for item in before["results"] if item["id"] in closure_items],
+            [False, False],
+            "fixture: a cluster that only merged fails both",
+        )
+        self.assertEqual(
+            [(item["id"], item["ok"]) for item in after["results"] if item["id"] in closure_items],
+            [("closure-comment-pr", True), ("closure-comment-issue", True)],
+        )
+        self.assertEqual(after["status"], "pass", after)
+
+    def _evidence_verify(self, host: _Host, ledger_text: str) -> dict:
+        """``keel evidence-verify --phase all`` on PR #10 offline, from what the host holds.
+
+        The pull request says ``Refs #101`` (the worker never writes ``Closes``), so the
+        issue is named with ``--issue``, as it has to be for any cluster pull request.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = {
+                "pr.json": json.dumps(host.comments.get(10, [])),
+                "issue.json": json.dumps(host.comments.get(101, [])),
+                "reviews.json": "[]",
+                "body.md": "Implements cluster `cluster-1-101`.\n\nRefs #101\n",
+                "ledger.jsonl": ledger_text,
+            }
+            for name, text in files.items():
+                (root / name).write_text(text, encoding="utf-8")
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                main(
+                    [
+                        "evidence-verify",
+                        KEEL_YAML,
+                        "--root",
+                        tmp,
+                        "--pr",
+                        "10",
+                        "--issue",
+                        "101",
+                        "--phase",
+                        "all",
+                        "--head-sha",
+                        "sha-10",
+                        "--pr-label",
+                        "keel:ship",
+                        "--pr-label",
+                        "agent:agy",
+                        "--reviewers",
+                        "1",
+                        "--pr-comments-json",
+                        str(root / "pr.json"),
+                        "--issue-comments-json",
+                        str(root / "issue.json"),
+                        "--pr-reviews-json",
+                        str(root / "reviews.json"),
+                        "--pr-body-file",
+                        str(root / "body.md"),
+                        "--ledger-jsonl",
+                        str(root / "ledger.jsonl"),
+                        "--json",
+                    ]
+                )
+        return json.loads(out.getvalue())["verification"]
+
+    def test_a_held_cluster_posts_and_closes_nothing(self):
+        host = _Host(evidence_missing={10})
+        code, payload, _, _ = self._landed(host, "--live")
+        self.assertEqual(code, 1)
+        self.assertEqual(list(payload["closures"]), ["cluster-1-102"])
+        self.assertEqual({number for _, number, _ in host.posts}, {11, 102})
+        self.assertEqual([issue for issue, _, _ in host.closes], [102])
+
+    def test_a_dry_run_posts_and_closes_nothing_and_says_what_it_would(self):
+        host = _Host()
+        code, payload, err, _ = self._landed(host)
+        self.assertEqual(code, 0, err)
+        self.assertEqual((host.posts, host.closes), ([], []))
+        self.assertEqual(
+            payload["closures"]["cluster-1-101"]["dry_run"], True, "the preview names the closure"
+        )
+        self.assertNotIn(LANDING_COMMAND, self.ledger_text)
+
     def test_without_a_persisted_plan_or_issues_there_is_nothing_to_land(self):
         err = io.StringIO()
         with (
@@ -833,6 +1287,122 @@ class SwarmLandMergesThroughKeelMerge(unittest.TestCase):
             code = main(["swarm-land", KEEL_YAML, "--root", tmp, "--swarm-id", "nothing"])
         self.assertEqual(code, 1)
         self.assertIn("swarm-land needs the wave's issues", err.getvalue())
+
+
+class TheClosureIsIdempotentAndNeverUndoesTheMerge(unittest.TestCase):
+    """``swarm-land``'s closer on its own, against the host (#1422): every way it can fall
+    short is a warning, and a second call for the same merge posts nothing twice."""
+
+    CONSENT = ("--approve-scope", "filesystem,git,github", "--operator", "tester")
+    CLUSTER = SwarmCluster("cluster-1-101", (101, 103), "core", ("src/a.py",))
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.ledger_path = Path(self.tmp.name) / ".keel" / "state" / "run-ledger.jsonl"
+        self.ledger_path.parent.mkdir(parents=True)
+        self.ledger_path.write_text(
+            ledger.encode_record(_worker_record(10, 101, "sha-10")), encoding="utf-8"
+        )
+
+    def _close(self, host, *extra, head="sha-10", consent=True, patches=()):
+        argv = ["swarm-land", KEEL_YAML, "--root", self.tmp.name, "--live", *extra]
+        args = cli_mod.build_parser().parse_args([*argv, *(self.CONSENT if consent else ())])
+        config = cli_mod.cfg.load_config(KEEL_YAML)
+        with ExitStack() as stack:
+            env = stack.enter_context(patch.dict("os.environ", {}, clear=False))
+            for name in ("KEEL_APPROVE_SCOPE", "KEEL_OPERATOR", "KEEL_CONSENT_MODE"):
+                env.pop(name, None)
+            for target, kwargs in [*_host_patches(host), *patches]:
+                stack.enter_context(patch(target, **kwargs))
+            close = cli_mod._swarm_land_close(args, config, "swarm-e2e")
+            return close(self.CLUSTER, 10, ClusterMerge(LANDED, "merged", head_sha=head))
+
+    def _landings(self) -> int:
+        records = ledger.parse_records(self.ledger_path.read_text(encoding="utf-8"))
+        return sum(r["command"] == LANDING_COMMAND for r in records)
+
+    def test_a_second_closure_for_the_same_merge_edits_and_closes_nothing_twice(self):
+        host = _Host(closed={103})
+        first = self._close(host)
+        self.assertEqual(
+            first.closure_posted,
+            (("pr", 10, "posted"), ("issue", 101, "posted"), ("issue", 103, "posted")),
+        )
+        self.assertEqual((first.closed_issues, first.already_closed), ((101,), (103,)))
+        self.assertEqual(first.warnings, ())
+        second = self._close(host)
+        self.assertEqual(
+            second.closure_posted,
+            (("pr", 10, "edited"), ("issue", 101, "edited"), ("issue", 103, "edited")),
+        )
+        self.assertEqual((second.closed_issues, second.already_closed), ((), (101, 103)))
+        self.assertEqual(self._landings(), 1, "the landing record is appended once")
+        self.assertEqual([len(host.comments[n]) for n in (10, 101, 103)], [1, 1, 1])
+        self.assertEqual([issue for issue, _, _ in host.closes], [101])
+
+    def _left_open(self, closure, why: str):
+        self.assertEqual((closure.closure_posted, closure.closed_issues), ((), ()))
+        self.assertEqual(len(closure.warnings), 1)
+        self.assertIn(
+            "PR #10 merged, but no closure was posted and its issues are open", closure.warnings[0]
+        )
+        self.assertIn(why, closure.warnings[0])
+
+    def test_without_the_operators_consent_nothing_is_posted_or_closed(self):
+        host = _Host()
+        self._left_open(self._close(host, consent=False), "operator consent required")
+        self.assertEqual((host.posts, host.closes, self._landings()), ([], [], 0))
+
+    def test_a_consent_that_cannot_be_resolved_is_a_warning(self):
+        bad = ("keel.cli._approved_consent", {"side_effect": ValueError("bad consent mode")})
+        self._left_open(self._close(_Host(), patches=[bad]), "bad consent mode")
+
+    def test_a_transport_that_cannot_comment_is_a_warning(self):
+        mute = SimpleNamespace(name="mcp", supports=lambda _op: False)
+        resolve = ("keel.cli.github_transport.resolve", {"return_value": mute})
+        self._left_open(self._close(_Host(), patches=[resolve]), "mcp transport cannot post")
+
+    def test_an_unreadable_pull_request_is_a_warning_and_nothing_is_recorded(self):
+        self._left_open(self._close(_Host(unreadable_comments={10})), "HTTP 502")
+        self.assertEqual(self._landings(), 0)
+
+    def test_no_gates_pass_record_for_the_merged_head_is_a_warning(self):
+        self._left_open(self._close(_Host(), head="sha-other"), "merged head sha-other")
+        self._left_open(self._close(_Host(), head=""), "merged head (unknown)")
+
+    def test_a_ledger_that_cannot_be_written_is_a_warning(self):
+        full = ("keel.cli.ledger.append_record", {"side_effect": OSError("disk full")})
+        self._left_open(self._close(_Host(), patches=[full]), "could not be recorded")
+
+    def test_a_comment_that_cannot_be_posted_is_a_warning_and_the_issues_still_close(self):
+        closure_ = self._close(_Host(post_ok=False, unreadable_comments={103}))
+        self.assertEqual(closure_.closure_posted, ())
+        self.assertEqual(closure_.closed_issues, (101, 103))
+        self.assertEqual(
+            list(closure_.warnings),
+            [
+                "the closure comment on PR #10 was not posted: HTTP 403",
+                "the closure comment on issue #101 was not posted: HTTP 403",
+                (
+                    "the closure comment on issue #103 was not posted: gh api "
+                    "repos/berkayturanci/keel/issues/103/comments failed: HTTP 502"
+                ),
+            ],
+        )
+
+    def test_an_issue_that_cannot_be_closed_is_a_warning(self):
+        for output, why in (("", "exit 1"), ("HTTP 403: forbidden\n", "HTTP 403: forbidden")):
+            with self.subTest(why=why):
+                closure_ = self._close(_Host(close_output=output, unreadable_issues={101}))
+                self.assertEqual(closure_.closed_issues, ())
+                self.assertEqual(
+                    list(closure_.warnings),
+                    [
+                        f"issue #101 could not be closed: {why}",
+                        f"issue #103 could not be closed: {why}",
+                    ],
+                )
 
 
 class SwarmLandRefusesADependentWave(unittest.TestCase):

@@ -103,6 +103,16 @@ class TestGithubComments(unittest.TestCase):
         self.assertTrue(res.ok)
         self.assertEqual(mock_runner.call_args[0][0], ["gh", "issue", "close", "42"])
 
+    def test_close_issue_names_the_repository_and_the_reason(self):
+        # swarm-land closes a landed cluster's issue as completed in the configured
+        # repository, not whichever the checkout's remote names (#1422).
+        mock_runner = MagicMock(return_value=_proc(""))
+        github.close_issue(42, repo="o/r", reason="completed", _run=mock_runner)
+        self.assertEqual(
+            mock_runner.call_args[0][0],
+            ["gh", "issue", "close", "42", "--repo", "o/r", "--reason", "completed"],
+        )
+
     def test_issue_facts(self):
         mock_runner = MagicMock(return_value=_proc('{"title":"T","labels":[]}'))
         res = github.issue_facts(42, _run=mock_runner)

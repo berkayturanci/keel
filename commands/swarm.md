@@ -55,16 +55,17 @@ cluster; `swarm-land` merges each through `keel merge` once its review verdicts 
 nothing in the swarm posts them. Swarm stays experimental. One live landing has run end to end,
 once, on a sandbox repository (#1281): `swarm-run --live` implemented, gated, pushed and opened
 the pull requests, their review verdicts were posted from outside the swarm, and `swarm-land`
-merged them through `keel merge` — and left the landed issues open (#1422). Whether the swarm
-should review its own pull requests is still open (#1423). For an issue the user needs **merged** today,
+merged them through `keel merge`. A landing now also closes what it merged as `/keel:ship` does
+at s11–s12: the closure comment on the pull request and each issue, then the issues closed
+(#1422). Whether the swarm should review its own pull requests is still open (#1423). For an issue the user needs **merged** today,
 say so and run `/keel:ship` per issue — it is still the proven path.
 
 Do not hand-drive the children to work around this. `swarm-land` lands a cluster only through
 `keel merge`, which holds any pull request without an armed gate, its review verdicts pinned to
 its head, or a gates-pass for that head — and `knobs.swarm_review_evidence: false` no longer turns
 that off (#1287). Driving the children by hand would skip the per-issue ledger and the backbone
-that `/keel:ship` gives you. What is left is tracked in #1423 (review inside the swarm) and
-#1422 (closing the landed issues); the audit epic #1281 is closed.
+that `/keel:ship` gives you. What is left is tracked in #1423 (review inside the swarm); the
+audit epic #1281 is closed.
 
 ## Live progress — stamp this run (required)
 
@@ -216,6 +217,14 @@ keel swarm-land .keel/project.yaml --root . --swarm-id <swarm_id> --wave <n> --l
   one, the window, missing evidence, no gates-pass for the head, the lock), or `failed` (the
   merge call itself). A held or failed cluster does not stop the next; the exit code is 0 only
   when every cluster landed. Nothing is checked out or merged in the local checkout.
+- **A landed cluster is closed** (#1422), as `/keel:ship` closes an issue at s11–s12: keel
+  appends the landing's `ship_run` record, posts the `keel.closure-comment.v1` comment rendered
+  from it to the pull request and to each of the cluster's issues, and closes each issue as
+  completed — under the same consent (`github` covers it). Do not post closure comments or close
+  the issues by hand on top of it. Report each cluster's `closures` entry: `closure_posted`,
+  `closed_issues`, `already_closed`, and any `warnings` — a warning means that part did not
+  happen (the merge stands); tell the user what is left. A held or failed cluster, and the
+  preview, close nothing.
 - **A dependent wave is refused.** A `sequential_dependent` wave — in a fresh plan, every wave after the first — had its branches cut before the earlier wave it depends on landed, so `swarm-land --wave N` refuses it, dry run or live: no pull request looked up, no `keel merge`, exit 1, `"mode": "refused"` with the reason in `refused`. Land the earlier wave, then re-plan the remaining issues (`keel swarm-plan` / `swarm-run` without the landed ones) and land again.
 
 ## Step 4 — Visual tracking & terminal dashboard
@@ -258,4 +267,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=plugin command=swarm keel_version=1.26.0 source_sha256=baf51184a9b02b181b50becb3a575dda32cf4b58efe49790310fc7e95bc385bc generated_sha256=baf51184a9b02b181b50becb3a575dda32cf4b58efe49790310fc7e95bc385bc -->
+<!-- keel-generated: surface=plugin command=swarm keel_version=1.26.0 source_sha256=a28bea948047766668403ff00f20ce605d693fe7bdf6129729c812854d6cb8a1 generated_sha256=a28bea948047766668403ff00f20ce605d693fe7bdf6129729c812854d6cb8a1 -->

@@ -390,7 +390,10 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
         self.assertNotIn("no real landing has been exercised yet", prose)
         self.assertIn("One live landing has run end to end, once, on a sandbox repository", prose)
         self.assertIn("their review verdicts were posted from outside the swarm", prose)
-        self.assertIn("left the landed issues open (#1422)", prose)
+        # #1422: the landing closes what it merged; the adapter said it left the issues open.
+        self.assertNotIn("left the landed issues open", prose)
+        self.assertIn("closes what it merged as `/keel:ship` does", prose)
+        self.assertIn("then the issues closed (#1422)", prose)
         self.assertIn("Whether the swarm should review its own pull requests is still open", prose)
         self.assertIn("Swarm stays experimental", prose)
         self.assertIn("nothing in the swarm reviews the work it opens", prose)

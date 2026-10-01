@@ -309,6 +309,29 @@ def declared_files_for_record(record: dict[str, Any]) -> list[str] | None:
     return [str(path) for path in files]
 
 
+def build_run_context(
+    *,
+    host_agent: str | None,
+    transport: str | None,
+    consent_status: str | None,
+    consent_scopes: list[str] | tuple[str, ...] | None,
+) -> dict[str, Any]:
+    """The ``run_context`` block :func:`build_ship_run_record` writes, for a writer that
+    builds its record another way — ``swarm-land``'s landing record (#1422).
+
+    The profile, the jury and the s4 fields are left unset: a landing knows none of them.
+    """
+    return _run_context(
+        host_agent=host_agent,
+        transport=transport,
+        profile=None,
+        jury_mode=None,
+        jury_panel=None,
+        consent_status=consent_status,
+        consent_scopes=consent_scopes,
+    )
+
+
 def _run_context(
     *,
     host_agent: str | None,
