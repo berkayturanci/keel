@@ -8,7 +8,7 @@ All notable changes to keel are documented here. The format follows
 
 ## [1.26.0] - 2026-10-01
 
-- The experimental swarm's live path runs end to end for the first time: `swarm-run --live` has each cluster's implementer seat write the change under consent the operator delegates, and keel commits, gates, pushes and opens one pull request per cluster; `swarm-land` merges those pull requests through `keel merge` itself.
+- The experimental swarm has a live path: `swarm-run --live` has each cluster's implementer seat write the change under consent the operator delegates, and keel commits, gates, pushes and opens one pull request per cluster; `swarm-land` merges those pull requests through `keel merge` itself once each has its review verdicts.
 - The implementer cannot reach the remote or tamper with keel's own git steps, the run persists the plan it executes, each issue's scope comes from the issue, and a dependent wave is refused rather than rebased.
 - Run-ledger readers skip a record kind they do not know instead of refusing the ledger, and keel-ship.dev explains what 100 % coverage cannot tell you.
 
