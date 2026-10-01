@@ -1,12 +1,12 @@
 ---
-description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. Planning runs; a live run lands nothing yet (#1281). Use /keel:ship for work that must merge.
+description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. A live run implements each cluster and opens one PR per cluster; swarm-land merges each through keel merge once its review verdicts are posted — nothing in the swarm reviews them, and no real landing has been exercised yet (#1281). Use /keel:ship for an issue that must merge today.
 argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
 # /keel:swarm
 
-## ⚠️ Experimental — do not use this to land work
+## ⚠️ Experimental — nothing in the swarm reviews the work it opens
 
 `keel swarm-plan`, `--plan-only` and `--tree` run and render a plan. A dry `swarm-run`'s worker is
 `keel ship` the CLI subcommand — a *dry ship assessment* that reports tier, window, gates and a
@@ -45,11 +45,14 @@ different matter twice over: it is read at Step 4, *after* Step 2, so on its own
 `/keel:swarm <issues> --visual` walks straight into `swarm-run` and `swarm-land`; and
 with `--plan-only` it never runs at all — and could not show anything if it did, because
 `keel-visual swarm` reads the state file only `swarm-run` writes and falls back to an empty
-board without it. That runs the N child gate suites above, one at a time in your checkout —
-for a run that lands nothing. Read the plan it renders as "what I passed", not
-"per-issue scope". For anything
-the user expects to be **merged**, say plainly that swarm cannot do it and run `/keel:ship` per
-issue instead.
+board without it. A dry run of that kind runs the N child gate suites above, one at a time in
+your checkout — for a run that implements and lands nothing. Read the plan it renders as "what I
+passed", not "per-issue scope". A live run implements each cluster and opens one pull request per
+cluster; `swarm-land` merges each through `keel merge` once its review verdicts are posted, and
+nothing in the swarm posts them. Swarm stays experimental — the first end-to-end run implemented,
+gated, pushed and opened its pull requests, and `swarm-land` held them with `keel merge`'s own
+reasons; no real landing has been exercised yet. For an issue the user needs **merged** today,
+say so and run `/keel:ship` per issue — it is still the proven path.
 
 Do not hand-drive the children to work around this. `swarm-land` lands a cluster only through
 `keel merge`, which holds any pull request without an armed gate, its review verdicts pinned to

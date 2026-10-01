@@ -443,8 +443,10 @@ or the reference it points at.
   ([models](docs/keel/models.md)).
 - **Project Lego, policy packs and security presets** — add-only hooks, `policy_pack` data,
   and `bandit` / `gitleaks` / `semgrep` / `trivy` presets ([extensions](docs/keel/extensions.md)).
-- **Swarm (experimental)** — backlog waves in isolated worktrees; it does not land work yet
-  ([guide](docs/keel/swarm.md)).
+- **Swarm (experimental)** — backlog waves in isolated worktrees; a live run implements each
+  cluster and opens one pull request per cluster, which `swarm-land` merges through `keel merge`
+  once its review verdicts are posted — nothing in the swarm reviews them, and no real landing
+  has been exercised yet ([guide](docs/keel/swarm.md)).
 
 How keel compares with coding agents, PR reviewers and merge queues:
 [overview](docs/keel/overview.md#how-keel-compares) and

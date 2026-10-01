@@ -244,13 +244,17 @@ class TheSwarmSimulatorShowsWhatThePlannerWouldPlan(unittest.TestCase):
 
     def test_the_backbone_map_does_not_draw_swarm_to_the_merge(self):
         """UNCONFIRMED → confirmed: the coverage map drew `/keel:swarm` s0→s12, as long
-        as `/keel:ship`'s full traversal, for a subsystem whose live run lands nothing."""
+        as `/keel:ship`'s full traversal. A live run now opens one pull request per cluster
+        and lands it only through `keel merge` once reviewed (#1400, #1287), so the row says
+        that — not the "lands nothing" it said before the live path was built."""
         row = re.search(r'\{ name: "/keel:swarm[^"]*"[^}]*\}', _read("website/home.js"))
         self.assertIsNotNone(row)
         end = int(re.search(r"\bb: (\d+)", row.group(0)).group(1))
         merge = next(i for i, s in enumerate(model.BACKBONE) if s.name == "merge")
         self.assertLess(end, merge)
-        self.assertIn("lands nothing", row.group(0))
+        self.assertIn("experimental", row.group(0))
+        self.assertIn("opens one PR per cluster, landed through keel merge", row.group(0))
+        self.assertNotIn("lands nothing", row.group(0))
 
 
 class TheIntegrationCardsClaimOnlyWhatKeelDoes(unittest.TestCase):

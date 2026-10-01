@@ -86,6 +86,18 @@ All notable changes to keel are documented here. The format follows
   flag — so the operator sizes it to their quota and machine. No config key was added.
 
 ### Fixed
+- **docs: every surface says what a live swarm does now.** After the live path landed (#1402,
+  #1406, #1405, #1409, #1412, #1413, #1414), the `/keel:swarm` description and body, the
+  README, `docs/keel/overview.md`, `badges.md`, `editors.md`, the VS Code extension's README
+  and comment, and the site's hero, feature, integration, coverage-map and simulator copy still
+  said a live run "lands nothing", "does not land work" or "plans and dry-runs", and told the
+  host "swarm cannot do it". They now say a live run implements each cluster and opens one pull
+  request per cluster, and `swarm-land` merges each through `keel merge` once its review verdicts
+  are posted — nothing in the swarm reviews them, swarm stays experimental, no real landing has
+  been exercised yet, and `/keel:ship` is still the proven path for an issue that must merge
+  today. `SECURITY.md` and the site's audit rows keep the fact that the 2026-08-15 audit
+  predates the live path and add that it does not cover it. A test fails if any of these
+  surfaces says it again.
 - **A swarm cluster's pull request arms keel merge's evidence gate at creation.** Found on the
   first end-to-end `swarm-run --live` run (a sandbox repository, agy as the implementer): the
   cluster pull request carried no keel signal the evidence gate arms on — its branch

@@ -139,7 +139,7 @@ window.KEEL_ARGS = {
   ]
  },
  "swarm": {
-  "desc": "EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. Planning runs; a live run lands nothing yet (#1281). Use /keel:ship for work that must merge.",
+  "desc": "EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. A live run implements each cluster and opens one PR per cluster; swarm-land merges each through keel merge once its review verdicts are posted — nothing in the swarm reviews them, and no real landing has been exercised yet (#1281). Use /keel:ship for an issue that must merge today.",
   "hint": "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]",
   "flags": [
    "issue numbers...",

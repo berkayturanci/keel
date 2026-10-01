@@ -180,8 +180,8 @@ function activate(context) {
       if (issues) {
         const terminal = vscode.window.createTerminal("Keel Swarm");
         terminal.show();
-        // Swarm is experimental: a live run produces no commits and no PRs (see #1281), so the
-        // palette stops at the planning half rather than starting workers that land nothing.
+        // Swarm is experimental (#1281): a live run needs the operator's consent and opens one
+        // pull request per cluster, so the palette stops at the planning half.
         terminal.sendText(`keel swarm-plan .keel/project.yaml --issues ${issues.trim()} --tree`);
       }
     })
