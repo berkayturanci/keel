@@ -579,6 +579,11 @@ must not build morning/wrap/capture reports from corrupted history. A record who
 with one `warning:` line on stderr per kind, so a later keel may add record kinds (see
 [forward compatibility](command-contracts.md#run-ledger-block)).
 
+`keel ledger` lists every kind it knows — `ship_run` and a live swarm run's
+`consent_delegation` records — in the order written, with `record_types` counting each kind
+(the text output's `by type` line). `capture_health` reads the ship runs alone. Every other
+reader is handed ship runs only.
+
 `ship` (in either profile) can append one `ship_run` record with:
 
 ```bash
@@ -1252,6 +1257,32 @@ The verdict has three states, fail-closed only on a real boundary breach:
 A consent record is considered to exist only when the ledger's
 `run_context.consent.status` is a non-blank string; the approved scopes come from
 `run_context.consent.scopes`.
+
+**A swarm cluster's pull request** ([#1400](https://github.com/berkayturanci/keel/issues/1400))
+has no ship run: it was opened by a live `swarm-run` worker under the consent its run
+delegated, which the run ledger records as `consent_delegation` lines (see
+[swarm.md — Consent delegation](swarm.md#consent-delegation)). When the PR's ship run carries
+no consent status, `consent-verify` reads, in order:
+
+1. the `consent_delegation` record of event `pull_request` that names the PR's number
+   (`matched_by: pull_request`);
+2. else, when the PR's head branch is `swarm/<swarm_id>/<cluster>`, the latest delegation of
+   that run naming that cluster (`matched_by: head_branch`). The branch is read from the host
+   (`head.ref`), or given offline with `--head-ref BRANCH`.
+
+The delegated scopes are then reconciled exactly as a ship run's are. The JSON payload adds
+`consent_source` (`ship_run`, `consent_delegation`, or `null` on the advisory path) and
+`delegation` — `swarm_id`, `cluster`, `operator`, `scopes`, `source`, `mode`,
+`delegated_at`, `event`, `matched_by`, `pull_request` and `pushed_head` — and the text output
+adds a `delegated by` line. A ship run with a consent status still wins: it is the record of
+the run that made the PR. Matching by the ship-provenance comment's run id
+(`<swarm_id>/<cluster>`) is not implemented; the branch carries the same two ids.
+
+```bash
+# A swarm cluster's PR, offline: its consent is the one its run delegated.
+keel consent-verify .keel/project.yaml --root . --pr 512 --offline --pr-exists \
+  --head-ref swarm/swarm-20261001-0900/c1 --json
+```
 
 ```bash
 # A merged PR whose consent record only approved git → fails, naming the uncovered merge.
@@ -3345,8 +3376,10 @@ as every live command obtains it: `--approve-scope` with `--operator`, or `KEEL_
 `swarm-run --live` exits 1 before any issue is read. The parent delegates the consent to each
 worker explicitly — exactly its own scopes, never wider — and records who, which scopes, which
 clusters and when as `consent` in the run's state file and in `--json`; the workers' children run
-without the `KEEL_*` consent variables. See
-[Consent delegation](swarm.md#consent-delegation).
+without the `KEEL_*` consent variables. It also appends the delegation to the run ledger as a
+`consent_delegation` record before any worker starts — a run whose delegation cannot be written
+is refused — and one more per cluster pull request a worker opens, which `keel consent-verify`
+reads (#1400). See [Consent delegation](swarm.md#consent-delegation).
 
 A dry run's worker runs the standard `keel ship` backbone machine, launched
 with its cluster's resolved team: the implementer seat becomes `--delegate`, each staffed

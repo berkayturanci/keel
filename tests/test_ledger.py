@@ -95,6 +95,11 @@ class TestLedgerContract(unittest.TestCase):
         self.assertIn("ship", contract["append_owner"])
         self.assertIn("morning", contract["readers"])
         self.assertEqual(contract["unknown_record_types"], "skip-with-warning")
+        # #1400: a live swarm run writes its consent delegation; consent-verify reads it.
+        self.assertEqual(contract["record_types"], ["ship_run", "consent_delegation"])
+        self.assertEqual(contract["default_read_record_types"], ["ship_run"])
+        self.assertIn("swarm-run", contract["append_owner"])
+        self.assertIn("consent-verify", contract["readers"])
 
     def test_reports_override_changes_path_only(self):
         config = _config(run_ledger="state/runs.jsonl")
@@ -680,6 +685,272 @@ class TestForwardCompatibleLedger(unittest.TestCase):
         for name, reader in readers.items():
             with self.subTest(reader=name):
                 self.assertEqual(reader(mixed_records), reader(known_records))
+
+
+_DELEGATION = {
+    "swarm_id": "swarm-1",
+    "clusters": ["c1", "c2"],
+    "scopes": ["filesystem", "git", "github"],
+    "operator": "alice",
+    "source": "flag",
+    "mode": "explicit",
+    "delegated_at": "2026-10-01T09:00:00Z",
+    "consent_record": {"operator": "alice", "timestamp": "2026-10-01T09:00:00Z"},
+}
+
+
+def _delegated(**overrides) -> dict:
+    return ledger.build_consent_delegation_record(
+        {**_DELEGATION, **overrides}, recorded_at="2026-10-01T09:00:01Z"
+    )
+
+
+def _opened(*, cluster="c1", number=7, head_sha="abc", **overrides) -> dict:
+    return ledger.build_consent_delegation_record(
+        {**_DELEGATION, **overrides},
+        recorded_at="2026-10-01T09:30:00Z",
+        pull_request={
+            "cluster": cluster,
+            "number": number,
+            "branch": f"swarm/swarm-1/{cluster}",
+            "head_sha": head_sha,
+            "url": f"https://github.com/o/r/pull/{number}",
+        },
+    )
+
+
+ALL_KINDS = ledger.KNOWN_RECORD_TYPES
+
+
+def _read_all(text: str):
+    """Every known kind read from ``text``, or the refusal as a value (an assertion, then)."""
+    try:
+        return ledger.parse_records(text, kinds=ALL_KINDS)
+    except ledger.LedgerError as exc:
+        return f"refused: {exc}"
+
+
+class TestConsentDelegationRecords(unittest.TestCase):
+    """#1400: the consent a live swarm run delegates is a run-ledger record kind."""
+
+    def test_both_events_round_trip_and_carry_the_whole_delegation(self):
+        delegated, opened = _delegated(), _opened()
+        text = ledger.encode_record(delegated) + ledger.encode_record(opened)
+
+        self.assertEqual(ledger.parse_records(text, kinds=ALL_KINDS), [delegated, opened])
+        self.assertEqual(delegated["record_type"], "consent_delegation")
+        self.assertEqual((delegated["event"], delegated["pull_request"]), ("delegated", None))
+        self.assertEqual(opened["event"], "pull_request")
+        self.assertEqual(
+            opened["pull_request"],
+            {
+                "cluster": "c1",
+                "number": 7,
+                "branch": "swarm/swarm-1/c1",
+                "head_sha": "abc",
+                "url": "https://github.com/o/r/pull/7",
+            },
+        )
+        for record in (delegated, opened):
+            with self.subTest(event=record["event"]):
+                self.assertEqual(
+                    {k: record[k] for k in ("swarm_id", "clusters", "scopes", "operator")},
+                    {k: _DELEGATION[k] for k in ("swarm_id", "clusters", "scopes", "operator")},
+                )
+                self.assertEqual(
+                    (record["source"], record["mode"], record["delegated_at"]),
+                    ("flag", "explicit", "2026-10-01T09:00:00Z"),
+                )
+                # The verbatim parent record is not copied into the audit ledger.
+                self.assertNotIn("consent_record", record)
+
+    def test_a_reader_gets_ship_runs_unless_it_asks_for_more(self):
+        ship = _record()
+        text = (
+            ledger.encode_record(ship)
+            + ledger.encode_record(_delegated())
+            + ledger.encode_record(_opened())
+        )
+        warnings: list[str] = []
+        self.assertEqual(ledger.parse_records(text, warn=warnings.append), [ship])
+        self.assertEqual(warnings, [], "a known kind is never reported as skipped")
+        self.assertEqual(
+            [r["record_type"] for r in ledger.parse_records(text, kinds=ALL_KINDS)],
+            ["ship_run", "consent_delegation", "consent_delegation"],
+        )
+        self.assertEqual(
+            ledger.parse_records(text, kinds=("consent_delegation",)),
+            [_delegated(), _opened()],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run-ledger.jsonl"
+            path.write_text(text, encoding="utf-8")
+            self.assertEqual(ledger.read_records(path), [ship])
+            self.assertEqual(len(ledger.read_records(path, kinds=ALL_KINDS)), 3)
+
+    def test_a_malformed_delegation_refuses_the_ledger_for_every_reader(self):
+        bad = dict(_delegated(), operator="")
+        text = ledger.encode_record(_record()) + json.dumps(bad) + "\n"
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "line 2: invalid consent_delegation record: operator"
+        ):
+            ledger.parse_records(text)
+
+    def test_the_validator_is_strict_about_every_field_a_reader_uses(self):
+        opened = _opened()
+        pr = opened["pull_request"]
+        cases = {
+            "event must be one of": dict(opened, event="updated"),
+            "swarm_id must be a non-blank string": dict(opened, swarm_id=" "),
+            "operator must be a non-blank string": dict(opened, operator=None),
+            "source must be": dict(opened, source=""),
+            "mode must be": dict(opened, mode=3),
+            "delegated_at must be": dict(opened, delegated_at=""),
+            "recorded_at must be": dict(opened, recorded_at=None),
+            "clusters must be a non-empty list": dict(opened, clusters=[]),
+            "clusters must be a non-empty list of distinct": dict(opened, clusters=["c1", "c1"]),
+            "clusters must be a non-empty list of distinct non-blank": dict(
+                opened, clusters=["c1", ""]
+            ),
+            "clusters must be a": dict(opened, clusters="c1"),
+            "scopes must be a non-empty list": dict(opened, scopes=[]),
+            "scopes must be a non-empty list of non-blank": dict(opened, scopes=["git", " "]),
+            "scopes must be a non-empty": dict(opened, scopes="git"),
+            "unknown consent scope 'root'": dict(opened, scopes=["git", "root"]),
+            "scopes must be normalised": dict(opened, scopes=["github", "git"]),
+            "a delegated event names no pull request": dict(_delegated(), pull_request=pr),
+            "a pull_request event names its pull request": dict(opened, pull_request=None),
+            "pull_request.cluster must be one of": dict(
+                opened, pull_request={**pr, "cluster": "c9"}
+            ),
+            "pull_request.number must be a positive integer": dict(
+                opened, pull_request={**pr, "number": 0}
+            ),
+            "pull_request.number must be a positive": dict(
+                opened, pull_request={**pr, "number": True}
+            ),
+            "pull_request.number must": dict(opened, pull_request={**pr, "number": "7"}),
+            "pull_request.branch must be": dict(opened, pull_request={**pr, "branch": ""}),
+            "pull_request.head_sha must be": dict(opened, pull_request={**pr, "head_sha": None}),
+            "pull_request.url must be a string": dict(opened, pull_request={**pr, "url": 7}),
+        }
+        for said, record in cases.items():
+            with self.subTest(said=said):
+                with self.assertRaisesRegex(ledger.LedgerError, f"consent_delegation.*{said}"):
+                    ledger.encode_record(record)
+
+    def test_a_field_this_keel_does_not_name_is_tolerated_and_url_is_optional(self):
+        pr = {k: v for k, v in _opened()["pull_request"].items() if k != "url"}
+        record = dict(_opened(), later_field={"x": 1}, pull_request=pr)
+        line = json.dumps(record) + "\n"
+        self.assertEqual(_read_all(line), [record])
+
+    def test_the_builder_refuses_a_delegation_it_cannot_record(self):
+        with self.assertRaisesRegex(ledger.LedgerError, "operator must be"):
+            _delegated(operator=None)
+        with self.assertRaisesRegex(ledger.LedgerError, "clusters must be"):
+            ledger.build_consent_delegation_record(
+                {k: v for k, v in _DELEGATION.items() if k != "clusters"}, recorded_at="t"
+            )
+        with self.assertRaisesRegex(ledger.LedgerError, "scopes must be"):
+            ledger.build_consent_delegation_record(
+                {k: v for k, v in _DELEGATION.items() if k != "scopes"}, recorded_at="t"
+            )
+
+    def test_append_writes_one_line_per_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state" / "run-ledger.jsonl"
+            ledger.append_record(path, _delegated())
+            ledger.append_record(path, _opened())
+            lines = path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(
+            [json.loads(line)["event"] for line in lines], ["delegated", "pull_request"]
+        )
+
+
+class TestFindingAConsentDelegation(unittest.TestCase):
+    def test_by_pull_request_latest_wins_and_ship_runs_are_not_delegations(self):
+        ship = dict(_record(), pull_request={"number": 7})
+        first, again = _opened(number=7, head_sha="one"), _opened(number=7, head_sha="two")
+        records = [ship, _delegated(), first, _opened(cluster="c2", number=8), again]
+        self.assertIs(ledger.consent_delegation_for_pr(records, 7), again)
+        self.assertEqual(
+            ledger.consent_delegation_for_pr(records, 8)["pull_request"]["cluster"], "c2"
+        )
+        # The delegated event names no pull request, and a ship run is not a delegation.
+        self.assertIsNone(ledger.consent_delegation_for_pr([ship, _delegated()], 7))
+
+    def test_by_cluster_names_the_run_and_the_cluster(self):
+        delegated = _delegated()
+        opened = _opened(cluster="c2", number=8)
+        other_run = _delegated(swarm_id="swarm-2")
+        ship = dict(_record(), swarm_id="swarm-1", clusters=["c1"])
+        records = [delegated, opened, other_run, ship]
+        self.assertIs(ledger.consent_delegation_for_cluster(records, "swarm-1", "c1"), delegated)
+        self.assertIs(ledger.consent_delegation_for_cluster(records, "swarm-1", "c2"), opened)
+        self.assertIs(ledger.consent_delegation_for_cluster(records, "swarm-2", "c1"), other_run)
+        self.assertIsNone(ledger.consent_delegation_for_cluster(records, "swarm-1", "c9"))
+        self.assertIsNone(ledger.consent_delegation_for_cluster([ship], "swarm-1", "c1"))
+        # Another cluster's pull_request event names that cluster's pull request, so it
+        # never answers for this one; this cluster's own does, as the latest.
+        own = _opened(cluster="c1", number=9)
+        self.assertIs(ledger.consent_delegation_for_cluster([*records, own], "swarm-1", "c1"), own)
+
+
+class TestShipRunReadersIgnoreConsentDelegations(unittest.TestCase):
+    """Every ship-run reader answers the same with a delegation line between ship runs —
+    even handed it directly, past the read-time filter, and even when the delegation
+    names the same pull request and head and is shaped to look like a failure."""
+
+    def _mixed(self):
+        first = dict(_record(), run_id="RUN-1", pull_request={"number": 7}, git={"head_sha": "abc"})
+        second = dict(
+            _record(), run_id="RUN-2", pull_request={"number": 8}, git={"head_sha": "def"}
+        )
+        delegation = dict(
+            _opened(number=7, head_sha="abc"),
+            git={"head_sha": "abc"},
+            verdict={"blocked": True},
+            gates=[{"gate": "build", "ok": False}],
+            assessment={"merge": {"action": "merge"}},
+            capture={"status": "deferred", "marker": "m"},
+            run_context={"consent": {"status": "denied", "scopes": []}},
+        )
+        known = ledger.encode_record(first) + ledger.encode_record(second)
+        mixed = (
+            ledger.encode_record(first)
+            + ledger.encode_record(delegation)
+            + ledger.encode_record(second)
+        )
+        return known, mixed
+
+    def test_each_reader(self):
+        known, mixed = self._mixed()
+        readers = {
+            "latest_ship_run_for_pr": lambda rs: ledger.latest_ship_run_for_pr(rs, 7),
+            "gates_pass_for_head": lambda rs: ledger.gates_pass_for_head(rs, 7, "abc"),
+            "capture_health_summary": ledger.capture_health_summary,
+            "capture_marker_for_head": lambda rs: ledger.capture_marker_for_head(
+                rs, pr_number=7, head_sha="abc"
+            ),
+            "existing_capture_marker": lambda rs: ledger.existing_capture_marker(
+                rs,
+                dict(
+                    _record(),
+                    pull_request={"number": 7},
+                    git={"head_sha": "abc"},
+                    capture={"marker": "keel-capture:7"},
+                ),
+            ),
+        }
+        self.assertEqual(ledger.parse_records(mixed), ledger.parse_records(known))
+        known_records = ledger.parse_records(known)
+        unfiltered = ledger.parse_records(mixed, kinds=ALL_KINDS)
+        self.assertEqual(len(unfiltered), 3)
+        for name, reader in readers.items():
+            with self.subTest(reader=name):
+                self.assertEqual(reader(unfiltered), reader(known_records))
 
 
 class TestLatestShipRunForPr(unittest.TestCase):

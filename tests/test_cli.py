@@ -5701,6 +5701,42 @@ def _consent_ledger(*, status="approved", scopes, pr=300):
     return ledger.encode_record(record)
 
 
+def _delegation_line(
+    *,
+    pr: int | None = None,
+    cluster: str = "c1",
+    scopes=("filesystem", "git", "github"),
+    head_sha: str | None = None,
+    **extra,
+) -> str:
+    """A live swarm run's consent_delegation record (#1400): its ``delegated`` event, or
+    with ``pr`` the ``pull_request`` event of ``cluster``'s pull request."""
+    delegation = {
+        "swarm_id": "swarm-1",
+        "clusters": ["c1", "c2"],
+        "scopes": list(scopes),
+        "operator": "alice",
+        "source": "flag",
+        "mode": "explicit",
+        "delegated_at": "2026-10-01T09:00:00Z",
+    }
+    pull_request = (
+        None
+        if pr is None
+        else {
+            "cluster": cluster,
+            "number": pr,
+            "branch": f"swarm/swarm-1/{cluster}",
+            "head_sha": head_sha or f"head-{cluster}",
+            "url": f"https://github.com/o/r/pull/{pr}",
+        }
+    )
+    record = ledger.build_consent_delegation_record(
+        delegation, recorded_at="2026-10-01T09:30:00Z", pull_request=pull_request
+    )
+    return ledger.encode_record({**record, **extra})
+
+
 class TestConsentVerify(unittest.TestCase):
     def _run_offline(self, *, ledger_text, effects, json_out=True):
         with tempfile.TemporaryDirectory() as d:
@@ -5875,6 +5911,134 @@ class TestConsentVerify(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(data["reconcile"]["verdict"], "pass")
         self.assertEqual(data["reconcile"]["observed_effects"], ["pr_exists"])
+
+    # #1400: a swarm cluster's pull request has the consent its live run delegated.
+
+    def test_a_swarm_cluster_pr_reads_the_consent_its_run_delegated(self):
+        text = (
+            _delegation_line() + _delegation_line(pr=301, cluster="c2") + _delegation_line(pr=300)
+        )
+        rc, out, _ = self._run_offline(ledger_text=text, effects=["--pr-exists"])
+        data = json.loads(out)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(data["consent_source"], "consent_delegation")
+        self.assertEqual(data["reconcile"]["verdict"], "pass")
+        self.assertEqual(data["reconcile"]["approved_scopes"], ["filesystem", "git", "github"])
+        delegation = data["delegation"]
+        self.assertEqual(
+            {k: delegation[k] for k in ("operator", "swarm_id", "cluster", "matched_by")},
+            {
+                "operator": "alice",
+                "swarm_id": "swarm-1",
+                "cluster": "c1",
+                "matched_by": "pull_request",
+            },
+        )
+        self.assertEqual((delegation["pull_request"], delegation["pushed_head"]), (300, "head-c1"))
+
+    def test_the_delegated_scopes_are_reconciled_like_a_ship_runs(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_delegation_line(pr=300, scopes=["git"]), effects=["--pr-exists"]
+        )
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(data["reconcile"]["verdict"], "fail")
+        self.assertEqual(data["reconcile"]["uncovered"][0]["missing_scopes"], ["github"])
+
+    def test_the_head_branch_finds_the_runs_delegation(self):
+        for head_ref, source, verdict in (
+            ("swarm/swarm-1/c2", "consent_delegation", "pass"),
+            ("swarm/swarm-9/c2", None, "advisory"),
+            ("feature/x", None, "advisory"),
+        ):
+            with self.subTest(head_ref=head_ref):
+                rc, out, _ = self._run_offline(
+                    ledger_text=_delegation_line(),
+                    effects=["--pr-exists", "--head-ref", head_ref],
+                )
+                data = json.loads(out)
+                self.assertEqual(rc, 0)
+                self.assertEqual(data["consent_source"], source)
+                self.assertEqual(data["reconcile"]["verdict"], verdict)
+                self.assertEqual(data["delegation"] is None, source is None)
+
+    def test_human_output_says_who_delegated_and_how_the_pr_was_matched(self):
+        rc, out, _ = self._run_offline(
+            ledger_text=_delegation_line(),
+            effects=["--pr-exists", "--head-ref", "swarm/swarm-1/c1"],
+            json_out=False,
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("consent record : present", out)
+        self.assertIn(
+            "delegated by   : alice (flag, 2026-10-01T09:00:00Z) to swarm swarm-1 cluster c1, "
+            "matched by head_branch",
+            out,
+        )
+        rc, out, _ = self._run_offline(
+            ledger_text=_consent_ledger(scopes=["git", "github"]),
+            effects=["--pr-exists"],
+            json_out=False,
+        )
+        self.assertNotIn("delegated by", out)
+
+    def test_the_configured_ledger_is_read_for_delegations_too(self):
+        config_path = str(PROJECTS / "example-android.yaml")
+        with tempfile.TemporaryDirectory() as d:
+            path = ledger.resolve_path(d, cli.cfg.load_config(config_path))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_delegation_line(pr=300), encoding="utf-8")
+            rc, out, _ = run(
+                [
+                    "consent-verify",
+                    config_path,
+                    "--root",
+                    d,
+                    "--pr",
+                    "300",
+                    "--offline",
+                    "--pr-exists",
+                    "--json",
+                ]
+            )
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(out)["consent_source"], "consent_delegation")
+
+    def test_live_reads_the_pull_requests_head_branch(self):
+        for head, source in (
+            ({"ref": "swarm/swarm-1/c2"}, "consent_delegation"),
+            ({"ref": "  "}, None),
+            ("swarm/swarm-1/c2", None),
+        ):
+            pull = {"merged": False, "labels": [], "head": head}
+
+            def fake_run(argv, pull=pull, **kwargs):
+                endpoint = argv[-1]
+                if endpoint.endswith("/pulls/300"):
+                    return _proc(json.dumps(pull))
+                if endpoint.endswith("/issues/300/comments"):
+                    return _proc(json.dumps([[]]))
+                return _proc("unexpected endpoint", ok=False)
+
+            with self.subTest(head=head), tempfile.TemporaryDirectory() as d:
+                ledger_jsonl = Path(d) / "ledger.jsonl"
+                ledger_jsonl.write_text(_delegation_line(), encoding="utf-8")
+                with patch("keel.cli.run_argv", side_effect=fake_run):
+                    rc, out, _ = run(
+                        [
+                            "consent-verify",
+                            str(PROJECTS / "example-android.yaml"),
+                            "--root",
+                            d,
+                            "--pr",
+                            "300",
+                            "--ledger-jsonl",
+                            str(ledger_jsonl),
+                            "--json",
+                        ]
+                    )
+                self.assertEqual(rc, 0, out)
+                self.assertEqual(json.loads(out)["consent_source"], source)
 
     def test_live_transport_failure_surfaces_error(self):
         with tempfile.TemporaryDirectory() as d:
@@ -17937,13 +18101,20 @@ class TestLedgerReadersSkipUnknownKinds(unittest.TestCase):
 
     WARNING = "warning: run ledger line 2: skipped record_type 'future_kind'"
 
-    def _same_result(self, known: str, invoke, *, pr: int, head_sha: str | None = None):
-        self.assertEqual(len(known.splitlines()), 2, "the future line must sit between two")
-        rc_known, out_known, err_known = invoke(known)
-        rc_mixed, out_mixed, err_mixed = invoke(_with_future_kind(known, pr, head_sha=head_sha))
-        self.assertEqual((rc_mixed, out_mixed), (rc_known, out_known))
+    def _mixed(self, known: str, pr: int, head_sha: str | None) -> str:
+        """``known`` with the other kind's line between its two records."""
+        return _with_future_kind(known, pr, head_sha=head_sha)
+
+    def _check_stderr(self, err_known: str, err_mixed: str) -> None:
         self.assertNotIn("future_kind", err_known)
         self.assertIn(self.WARNING, err_mixed)
+
+    def _same_result(self, known: str, invoke, *, pr: int, head_sha: str | None = None):
+        self.assertEqual(len(known.splitlines()), 2, "the other line must sit between two")
+        rc_known, out_known, err_known = invoke(known)
+        rc_mixed, out_mixed, err_mixed = invoke(self._mixed(known, pr, head_sha))
+        self.assertEqual((rc_mixed, out_mixed), (rc_known, out_known))
+        self._check_stderr(err_known, err_mixed)
         return rc_known, out_known
 
     def _ship_applied(self, config: str, root: str, pr: int, *, artifact: str = "") -> None:
@@ -18273,6 +18444,61 @@ class TestLedgerReadersSkipUnknownKinds(unittest.TestCase):
         rc, out = self._same_result(known, invoke, pr=123, head_sha="head-new")
         self.assertEqual(rc, 0, out)
         self.assertTrue(json.loads(out)["gates_sha"]["matched"])
+
+
+def _misleading_delegation_line(pr: int, *, head_sha: str | None = None) -> str:
+    """A consent_delegation record naming ``pr`` and ``head_sha``, carrying every field a
+    ship-run reader looks at with the answer that would change its result (#1400)."""
+    return _delegation_line(
+        pr=pr,
+        head_sha=head_sha,
+        run_id="DELEGATION-1",
+        issue={"number": 8},
+        git={"head_sha": head_sha, "branch": "feature/issue-8"},
+        verdict={"blocked": True},
+        gates=[{"gate": "build", "ok": False, "skipped": False, "error": "delegation"}],
+        assessment={"merge": {"action": "defer", "reason": "delegation"}},
+        capture={"status": "deferred", "marker": "delegation-marker", "artifact": "d.md"},
+        declared={"file_count": 0, "files": []},
+        run_context={"consent": {"status": "denied", "scopes": []}},
+    )
+
+
+class TestLedgerReadersIgnoreConsentDelegations(TestLedgerReadersSkipUnknownKinds):
+    """Every run-ledger reader answers the same with a consent_delegation line between
+    two ship runs (#1400) — a kind this keel knows, so nothing is skipped or warned about,
+    and only consent-verify and ``keel ledger`` read it."""
+
+    def _mixed(self, known: str, pr: int, head_sha: str | None) -> str:
+        lines = known.splitlines(keepends=True)
+        delegation = _misleading_delegation_line(pr, head_sha=head_sha)
+        return "".join([*lines[:1], delegation, *lines[1:]])
+
+    def _check_stderr(self, err_known: str, err_mixed: str) -> None:
+        self.assertNotIn("skipped record_type", err_mixed)
+        self.assertEqual(err_mixed, err_known)
+
+    def test_ledger_command(self):
+        # `keel ledger` lists the ledger as written: the delegation is a record, counted
+        # by type, and the capture health is the ship runs' alone.
+        with tempfile.TemporaryDirectory() as d:
+            config, path, known = self._shipped(d, 160, 161)
+            argv = ["ledger", config, "--root", d, "--json"]
+            invoke = self._file_invoker(path, argv)
+            rc_known, out_known, _ = invoke(known)
+            rc, out, err = invoke(self._mixed(known, 160, None))
+            text_rc, text, _ = run(argv[:-1])
+        self.assertEqual((rc, rc_known, text_rc), (0, 0, 0), err)
+        mixed, plain = json.loads(out), json.loads(out_known)
+        self.assertEqual(
+            [r["record_type"] for r in mixed["records"]],
+            ["ship_run", "consent_delegation", "ship_run"],
+        )
+        self.assertEqual(mixed["record_count"], 3)
+        self.assertEqual(mixed["record_types"], {"ship_run": 2, "consent_delegation": 1})
+        self.assertEqual(plain["record_types"], {"ship_run": 2, "consent_delegation": 0})
+        self.assertEqual(mixed["capture_health"], plain["capture_health"])
+        self.assertIn("by type       : ship_run 2, consent_delegation 1", text)
 
 
 if __name__ == "__main__":

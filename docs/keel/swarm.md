@@ -525,13 +525,26 @@ record carries the `scopes` it was handed, and each pull request body names the 
   permission system; `swarm-run` dispatches its workers itself, so a live swarm under `agent`
   mode is refused and asks for explicit scopes. A delegation also names its operator: approving
   scopes without `--operator` is refused.
-- The run ledger is not written yet. Its only record type is a ship run, and every reader —
-  `keel ledger`, `status`, `merge`, `ship`, `consent-verify`, `evidence-verify`, the capture
-  commands — refuses the **whole** ledger on a record type it does not know. A new record type
-  written by this version would make an older `keel` on the same checkout refuse to ship or
-  merge, so recording the delegation there is a ledger-contract decision
-  ([#1400](https://github.com/berkayturanci/keel/issues/1400)). Until then the delegation lives
-  in the swarm state file and in each pull request body.
+- **On the record in the run ledger too** ([#1400](https://github.com/berkayturanci/keel/issues/1400)).
+  Before any worker starts, `swarm-run --live` appends a `consent_delegation` record — event
+  `delegated` — to the run ledger: run, clusters, scopes, operator, source, mode and when. A run
+  whose delegation cannot be written (the ledger path escapes the root, or the file cannot be
+  appended to) is refused and starts nothing. Each worker that opens its pull request adds one
+  more line — event `pull_request` — naming the cluster, the pull request's number and URL, its
+  branch and the head it pushed. The ledger is append-only, so the delegation is never rewritten:
+  the pull request is a second event, written by the run's collecting thread, never by two
+  workers at once. A pull request line that cannot be written is a warning in the run result,
+  not a failed worker — the pull request is open either way. The record's fields are in
+  [command-contracts.md — Run ledger block](command-contracts.md#run-ledger-block).
+- **`keel consent-verify` reads it.** For a cluster's pull request, which has no ship run,
+  consent-verify takes the scopes from the `pull_request` event naming it, or — when none does —
+  from the run's delegation found by the pull request's branch, `swarm/<swarm_id>/<cluster>`
+  (read from the host, or `--head-ref` offline). Its output names who delegated what, and how the
+  pull request was matched. The state file and each pull request body still carry the delegation
+  as before.
+- **keel older than 1.26.0 refuses a ledger holding these lines**: those readers refused any
+  record kind but a ship run. Since 1.26.0 a reader skips a kind it does not know, so a 1.26.x
+  keel on the same checkout still ships and merges; an older one has to be upgraded.
 
 ### Worktree Lifecycle & Isolation
 

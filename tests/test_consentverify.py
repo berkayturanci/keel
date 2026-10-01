@@ -2,7 +2,7 @@
 
 import unittest
 
-from keel import consentverify
+from keel import consentverify, ledger
 
 
 def _ledger_record(*, status="approved", scopes=None):
@@ -176,6 +176,110 @@ class TestConsentRecordFromLedger(unittest.TestCase):
         )
         self.assertTrue(has_record)
         self.assertEqual(scopes, ("git",))
+
+
+_DELEGATION = {
+    "swarm_id": "swarm-1",
+    "clusters": ["c1", "c2"],
+    "scopes": ["filesystem", "git", "github"],
+    "operator": "alice",
+    "source": "flag",
+    "mode": "explicit",
+    "delegated_at": "2026-10-01T09:00:00Z",
+}
+
+
+def _delegated(**overrides):
+    return ledger.build_consent_delegation_record(
+        {**_DELEGATION, **overrides}, recorded_at="2026-10-01T09:00:01Z"
+    )
+
+
+def _opened(*, cluster="c1", number=7, **overrides):
+    return ledger.build_consent_delegation_record(
+        {**_DELEGATION, **overrides},
+        recorded_at="2026-10-01T09:30:00Z",
+        pull_request={
+            "cluster": cluster,
+            "number": number,
+            "branch": f"swarm/swarm-1/{cluster}",
+            "head_sha": f"head-{cluster}",
+        },
+    )
+
+
+class TestConsentForPr(unittest.TestCase):
+    """#1400: a swarm cluster's pull request has the consent its run delegated."""
+
+    def test_the_ship_run_is_read_first_unchanged(self):
+        records = [_ledger_record(scopes=["git"]), _opened(number=7)]
+        found = consentverify.consent_for_pr(records, 7, head_ref="swarm/swarm-1/c1")
+        self.assertEqual(
+            found,
+            {"source": "ship_run", "has_record": True, "scopes": ["git"], "delegation": None},
+        )
+
+    def test_a_pull_request_record_names_the_delegation(self):
+        records = [_delegated(), _opened(cluster="c2", number=8), _opened(number=7)]
+        found = consentverify.consent_for_pr(records, 7)
+        self.assertEqual(found["source"], "consent_delegation")
+        self.assertTrue(found["has_record"])
+        self.assertEqual(found["scopes"], ["filesystem", "git", "github"])
+        self.assertEqual(
+            found["delegation"],
+            {
+                "swarm_id": "swarm-1",
+                "cluster": "c1",
+                "operator": "alice",
+                "scopes": ["filesystem", "git", "github"],
+                "source": "flag",
+                "mode": "explicit",
+                "delegated_at": "2026-10-01T09:00:00Z",
+                "event": "pull_request",
+                "matched_by": "pull_request",
+                "pull_request": 7,
+                "pushed_head": "head-c1",
+            },
+        )
+
+    def test_a_ship_run_without_a_consent_status_gives_way_to_the_delegation(self):
+        records = [_ledger_record(status="", scopes=["git"]), _opened(number=7)]
+        found = consentverify.consent_for_pr(records, 7)
+        self.assertEqual(found["source"], "consent_delegation")
+        self.assertEqual(found["delegation"]["operator"], "alice")
+
+    def test_the_head_branch_finds_the_runs_delegation_when_no_record_names_the_pr(self):
+        records = [_delegated(), _opened(cluster="c1", number=7)]
+        found = consentverify.consent_for_pr(records, 9, head_ref="refs/heads/swarm/swarm-1/c2")
+        self.assertEqual(found["source"], "consent_delegation")
+        self.assertEqual(
+            {k: found["delegation"][k] for k in ("cluster", "matched_by", "event", "pull_request")},
+            {
+                "cluster": "c2",
+                "matched_by": "head_branch",
+                "event": "delegated",
+                "pull_request": None,
+            },
+        )
+
+    def test_nothing_recorded_is_the_advisory_path(self):
+        records = [_delegated(), _ledger_record(status="", scopes=["git"])]
+        for head_ref in (None, "", "feature/x", "swarm/other-run/c1", "swarm/swarm-1/c9"):
+            with self.subTest(head_ref=head_ref):
+                self.assertEqual(
+                    consentverify.consent_for_pr(records, 7, head_ref=head_ref),
+                    {"source": None, "has_record": False, "scopes": ["git"], "delegation": None},
+                )
+
+    def test_the_delegated_scopes_are_what_reconcile_checks(self):
+        found = consentverify.consent_for_pr([_opened(number=7, scopes=["git"])], 7)
+        report = consentverify.reconcile(
+            consentverify.ObservedEffects(pr_exists=True),
+            found["scopes"],
+            has_consent_record=found["has_record"],
+        )
+        self.assertEqual(report["verdict"], "fail")
+        self.assertEqual(report["uncovered"][0]["missing_scopes"], ["github"])
 
 
 if __name__ == "__main__":

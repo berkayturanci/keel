@@ -29,7 +29,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import delegaterun, github, runner, swarm_worker
+from . import delegaterun, github, ledger, runner, swarm_worker
 from .delegate import RunPlan
 from .runner import CommandResult
 from .swarm import (
@@ -192,6 +192,10 @@ class LiveRun:
     #: ``cluster_id`` -> where its implementer seat came from (``assignment`` source).
     seat_sources: Mapping[str, str] = field(default_factory=dict)
     remote: str = "origin"
+    #: The run ledger the parent recorded the delegation in (``swarm-run --live`` writes
+    #: its ``delegated`` event before any worker starts); each cluster pull request a
+    #: worker opens is recorded there too (#1400). ``None`` records nothing.
+    ledger_path: Path | None = None
     implement: Implementer = _default_implement
     push: Pusher = _default_push
     open_pr: PullRequestOpener = _default_open_pr
@@ -722,6 +726,47 @@ def _post_provenance(live: LiveRun, url: str, body: str, cwd: Path) -> str:
     return swarm_worker.provenance_warning(url or "the pull request", why)
 
 
+def record_pull_request_consent(live: LiveRun, cluster_id: str, outcome: Mapping[str, Any]) -> str:
+    """Append the ``pull_request`` delegation event for a worker's open pull request (#1400).
+
+    Returns ``""`` once it is in the run ledger (or when the run records nothing), else a
+    warning. Never a failed worker: the pull request is open either way, and ``keel
+    consent-verify`` still finds the run's ``delegated`` record by the pull request's
+    branch.
+    """
+    if live.ledger_path is None:
+        return ""
+    url = str(outcome.get("pr_url") or "")
+    number = pull_request_number(url)
+    why = "gh pr create printed no pull request number keel can read"
+    if number is not None:
+        why = ""
+        try:
+            ledger.append_record(
+                live.ledger_path,
+                ledger.build_consent_delegation_record(
+                    live.consent.to_dict(),
+                    recorded_at=_now(),
+                    pull_request={
+                        "cluster": cluster_id,
+                        "number": number,
+                        "branch": outcome.get("branch"),
+                        "head_sha": outcome.get("commit"),
+                        "url": url,
+                    },
+                ),
+            )
+        except (OSError, ledger.LedgerError) as exc:
+            why = f"{type(exc).__name__}: {exc}"
+    if not why:
+        return ""
+    return (
+        f"the consent delegation for {url or 'its pull request'} is not in the run ledger "
+        f"({why}); keel consent-verify finds the run's delegation by the pull request's "
+        "branch instead"
+    )
+
+
 def _swarm_ids_under(base: Path, path: str) -> tuple[str, str] | None:
     """``(swarm_id, cluster_id)`` of a worktree path exactly two levels under ``base``."""
     try:
@@ -1123,6 +1168,12 @@ def run_swarm_orchestration(
                 ended = {"stage": worker_res.get("stage") or None, "finished_at": _now()}
                 if worker_res.get("ok", False):
                     passed_count += 1
+                    # Recorded here, on the one thread that collects results, so no two
+                    # workers append to the ledger at once (#1400).
+                    if live is not None and (
+                        missed := record_pull_request_consent(live, c_id, worker_res)
+                    ):
+                        warnings.append(f"{c_id}: {missed}")
                     # A live worker stops at an open pull request, which CI (s6) and review
                     # take from there; a dry assessment ran the whole backbone.
                     report(
