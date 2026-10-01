@@ -730,9 +730,10 @@ def record_pull_request_consent(live: LiveRun, cluster_id: str, outcome: Mapping
     """Append the ``pull_request`` delegation event for a worker's open pull request (#1400).
 
     Returns ``""`` once it is in the run ledger (or when the run records nothing), else a
-    warning. Never a failed worker: the pull request is open either way, and ``keel
-    consent-verify`` still finds the run's ``delegated`` record by the pull request's
-    branch.
+    warning. Never a failed worker: the pull request is open either way. Without this
+    event ``keel consent-verify`` reports no delegated consent for that pull request — it
+    matches a delegation only by the pull request's number and pushed head, never by its
+    branch name (a fork can name a branch anything).
     """
     if live.ledger_path is None:
         return ""
@@ -762,8 +763,8 @@ def record_pull_request_consent(live: LiveRun, cluster_id: str, outcome: Mapping
         return ""
     return (
         f"the consent delegation for {url or 'its pull request'} is not in the run ledger "
-        f"({why}); keel consent-verify finds the run's delegation by the pull request's "
-        "branch instead"
+        f"({why}); keel consent-verify will report no delegated consent for it — record the "
+        "consent by hand or re-run the cluster"
     )
 
 

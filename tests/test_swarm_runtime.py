@@ -2257,7 +2257,8 @@ class EachClusterPullRequestIsInTheRunLedger(unittest.TestCase):
         ledger_warnings = [w for w in result.warnings if "not in the run ledger" in w]
         self.assertEqual(len(ledger_warnings), 1, result.warnings)
         self.assertIn("printed no pull request number", ledger_warnings[0])
-        self.assertIn("finds the run's delegation by the pull request's branch", ledger_warnings[0])
+        self.assertIn("will report no delegated consent for it", ledger_warnings[0])
+        self.assertNotIn("branch", ledger_warnings[0])
 
     def test_a_ledger_that_cannot_be_written_is_a_warning_not_a_failure(self):
         plan = self._plan(831)
