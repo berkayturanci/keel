@@ -16,7 +16,7 @@ Turn coding agents into work owners directly inside **VS Code** and **Cursor**.
   - `Keel: Plan a Swarm over the Backlog (experimental)` — runs `swarm-plan --tree` only: the
     extension plans. A live swarm needs the operator's consent and opens one pull request per
     cluster, so it is started from a terminal or `/keel:swarm`
-    ([#1281](https://github.com/berkayturanci/keel/issues/1281))
+    ([#1423](https://github.com/berkayturanci/keel/issues/1423))
   - `Keel: Check Merge Window Status`
   - `Keel: Run Command Gates (Test & Lint)`
   - `Keel: View Token Counts & Estimated USD Cost`

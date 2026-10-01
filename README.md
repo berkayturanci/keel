@@ -445,8 +445,9 @@ or the reference it points at.
   and `bandit` / `gitleaks` / `semgrep` / `trivy` presets ([extensions](docs/keel/extensions.md)).
 - **Swarm (experimental)** — backlog waves in isolated worktrees; a live run implements each
   cluster and opens one pull request per cluster, which `swarm-land` merges through `keel merge`
-  once its review verdicts are posted — nothing in the swarm reviews them, and no real landing
-  has been exercised yet ([guide](docs/keel/swarm.md)).
+  once its review verdicts are posted — nothing in the swarm reviews them. A live landing has
+  run once, on a sandbox repository, with the reviews done outside the swarm
+  ([the run](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055), [guide](docs/keel/swarm.md)).
 
 How keel compares with coding agents, PR reviewers and merge queues:
 [overview](docs/keel/overview.md#how-keel-compares) and

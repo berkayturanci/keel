@@ -377,8 +377,27 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
         self.assertIn("once its review verdicts are posted", description)
         self.assertNotIn("swarm cannot do it", prose)
         self.assertNotIn("do not use this to land work", prose)
-        self.assertIn("no real landing has been exercised yet", prose)
         self.assertIn("it is still the proven path", prose)
+
+    def test_the_one_live_landing_is_stated_without_overclaiming(self):
+        """#1281's closing comment: one live landing has run, on a sandbox repository, with
+        each pull request reviewed outside the swarm. The adapter said "no real landing has
+        been exercised yet" after that ran. It may say the landing happened, but not that
+        the swarm reviews its own pull requests (#1423) or that it stopped being
+        experimental."""
+        prose = _prose("swarm")
+        description = re.search(r"^description: (.*)$", _source("swarm"), re.M).group(1)
+        self.assertNotIn("no real landing has been exercised yet", prose)
+        self.assertIn("One live landing has run end to end, once, on a sandbox repository", prose)
+        self.assertIn("their review verdicts were posted from outside the swarm", prose)
+        self.assertIn("left the landed issues open (#1422)", prose)
+        self.assertIn("Whether the swarm should review its own pull requests is still open", prose)
+        self.assertIn("Swarm stays experimental", prose)
+        self.assertIn("nothing in the swarm reviews the work it opens", prose)
+        self.assertTrue(description.startswith("EXPERIMENTAL"))
+        self.assertIn("nothing in the swarm reviews them", description)
+        self.assertIn("one live landing has run, on a sandbox repository", description)
+        self.assertIsNone(re.search(r"(?i)(?<!nothing in )the swarm (reviews|dispatches)", prose))
 
 
 if __name__ == "__main__":

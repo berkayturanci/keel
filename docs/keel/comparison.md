@@ -57,8 +57,8 @@ and optional project-owned learning decisions.
 | Owns merge window + lock | yes | no | no | partial queue controls | ❌ |
 | Closes the issue / PR loop | yes | partial | no | partial | no |
 | Supports multi-issue work blocks | yes | partial | no | queue-only | yes (unconstrained) |
-| Conflict-free DAG clustering | experimental (Keel Swarm, [#1281](https://github.com/berkayturanci/keel/issues/1281)) | no | no | no | ❌ |
-| Single-writer batch landing | experimental (Keel Swarm, [#1281](https://github.com/berkayturanci/keel/issues/1281)) | no | no | partial | ❌ |
+| Conflict-free DAG clustering | experimental (Keel Swarm, [#1423](https://github.com/berkayturanci/keel/issues/1423)) | no | no | no | ❌ |
+| Single-writer batch landing | experimental (Keel Swarm, [#1423](https://github.com/berkayturanci/keel/issues/1423)) | no | no | partial | ❌ |
 | Supports resume/checkpoint/reconcile | yes | partial | no | partial queue state | partial |
 | Captures post-merge learning | yes, policy-gated | no | partial repo memory | no | no |
 | Project policy extensibility | yes | partial | partial | yes | partial |
@@ -221,7 +221,7 @@ job is to connect those proven pieces into one deterministic, project-neutral li
 | **AutoGen / Magentic-One** | conversational group chat | OSS | GroupChat / Lead orchestrator | ❌ None | ❌ None |
 | **OpenAI Swarm** | lightweight client-side handoffs | MIT | Stateless agent routines + handoffs | ❌ None | ❌ None |
 | **MetaGPT / ChatDev** | simulated software company | MIT | SOP-driven conversational roles | ❌ None | ❌ None |
-| **Keel Swarm** (experimental — [#1281](https://github.com/berkayturanci/keel/issues/1281)) | **deterministic backbone swarm** | Apache-2.0 | **DAG conflict clustering + git worktree fan-out** | ✅ **Physical worktree isolation** | ✅ **100% test gates + single-writer batch landing** |
+| **Keel Swarm** (experimental — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | **deterministic backbone swarm** | Apache-2.0 | **DAG conflict clustering + git worktree fan-out** | ✅ **Physical worktree isolation** | ✅ **100% test gates + single-writer batch landing** |
 
 Sources: [gurusup.com/blog/best-multi-agent-frameworks-2026](https://gurusup.com/blog/best-multi-agent-frameworks-2026), [medium.com/.../magentic-one-autogen-langgraph-crewai-or-openai-swarm](https://medium.com/data-science-in-your-pocket/magentic-one-autogen-langgraph-crewai-or-openai-swarm-which-multi-ai-agent-framework-is-best-6629d8bd9509)
 
@@ -427,7 +427,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | Tool | Agent-agnostic | Merge queue | Merge window/freeze | AI review | Multi-agent debate | Policy/gate aggregation | Project config | Open source |
 |---|---|---|---|---|---|---|---|---|
 | **keel** | ✅ (CLI adapters) | ❌ (one-at-a-time + lock) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (review→debate→verify→synth) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
-| **keel-swarm** (experimental — [#1281](https://github.com/berkayturanci/keel/issues/1281)) | ✅ (CLI adapters) | ✅ (sequential batch under one lock) | ❌ (`swarm-land` never consults the window; `keel merge` is what enforces it) | ✅ (via ai-jury) | ✅ (per cluster, via ai-jury) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
+| **keel-swarm** (experimental — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | ✅ (CLI adapters) | ✅ (sequential batch under one lock) | ❌ (`swarm-land` never consults the window; `keel merge` is what enforces it) | ✅ (via ai-jury) | ✅ (per cluster, via ai-jury) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
 | **Mergify** | ❌ | ✅ | ✅ (schedule + pause/freeze) | ❌ | ❌ | ◑ (conditions) | ◑ (config.yml) | Prop. (OSS repo exists) |
 | **GitHub merge queue** | ❌ | ✅ | ❌ (workarounds only) | ❌ | ❌ | ◑ (required checks) | ◑ | Prop. |
 | **bors-ng** | ❌ | ✅ (batch+bisect) | ❌ | ❌ | ❌ | ◑ | ◑ | OSS (Apache-2.0, deprecated) |
