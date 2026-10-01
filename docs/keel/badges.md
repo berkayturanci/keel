@@ -16,7 +16,7 @@ Highlights that the project's work units are verified on the fixed 13-step backb
 ### 2. Keel Swarm Multi-Agent Orchestrator
 Highlights that parallel backlog waves are clustered and landed via Keel Swarm DAG orchestration.
 
-> **Swarm is experimental** — a live run opens one pull request per cluster, and nothing in the swarm reviews them ([#1423](https://github.com/berkayturanci/keel/issues/1423)); a live landing has run once, on a sandbox repository, with the reviews done outside the swarm ([#1281](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)). This badge describes the
+> **Swarm is experimental** — a live run opens one pull request per cluster, and the swarm reviews them only when you run `swarm-review`, which has not yet run on a real repository ([#1423](https://github.com/berkayturanci/keel/issues/1423)); a live landing has run once, on a sandbox repository, with the reviews done outside the swarm ([#1281](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)). This badge describes the
 > design; do not put it on a repository as a claim that swarm ran there.
 
 ```markdown

@@ -1261,6 +1261,37 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
                 self.assertIn("outside the swarm", text)
         self.assertGreaterEqual(named, 10)
 
+    def test_a_surface_naming_swarm_review_says_it_has_not_run_on_a_real_repository(self):
+        """#1423, the owner's decision: `keel swarm-review` reviews each cluster pull request
+        with the cluster's own seats. Swarm stays experimental on every surface until it has
+        run on a real repository, so a surface that names it must say it has not, must say
+        experimental, and must never claim it ran."""
+        named = 0
+        for rel in _SWARM_STATUS_SURFACES:
+            text = _flat(rel)
+            for claim in _OVERCLAIMED_SWARM_REVIEW:
+                with self.subTest(surface=rel, claim=claim.pattern):
+                    self.assertIsNone(claim.search(text))
+            if "swarm-review" not in text:
+                continue
+            named += 1
+            with self.subTest(surface=rel):
+                self.assertIn("experimental", text.lower())
+                self.assertIn("not yet run on a real repository", text)
+        self.assertGreaterEqual(named, 12)
+
+    def test_the_overclaim_detector_fires_on_the_wording_it_bans(self):
+        for claim in (
+            "swarm-review has now run on keel itself",
+            "Swarm is no longer experimental.",
+            "swarm review is proven",
+        ):
+            with self.subTest(claim=claim):
+                self.assertTrue(any(p.search(claim) for p in _OVERCLAIMED_SWARM_REVIEW))
+        self.assertTrue(
+            any(p.search("nothing in the swarm reviews them") for p in _STALE_SWARM_STATUS)
+        )
+
     def test_the_security_page_says_the_august_audit_predates_the_live_path(self):
         security = re.sub(r"\s+", " ", (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8"))
         self.assertIn("That path was built after it, in the 1.26.0 line", security)
@@ -1320,6 +1351,20 @@ _STALE_SWARM_STATUS = tuple(
         r"leaves its issues\W*open",
         r"left the landed issues open",
         r"stops at the merge",
+        # #1423: `keel swarm-review` dispatches each cluster's reviewer seats (opt-in).
+        r"nothing in (the swarm|this subsystem|it|a swarm|swarm) reviews",
+        r"whether the swarm should review its own pull requests is (still )?open",
+    )
+)
+
+#: What no surface may say about `swarm-review` until it has run on a real repository (#1423).
+_OVERCLAIMED_SWARM_REVIEW = tuple(
+    re.compile(p, re.I)
+    for p in (
+        r"swarm[- ]review (has|have) (now )?(run|ran|landed|been (run|exercised))",
+        r"reviewed (inside|by) the swarm on a real",
+        r"swarm (is|stays) no longer experimental|no longer experimental",
+        r"swarm[- ]review is (proven|stable|production)",
     )
 )
 
@@ -1816,13 +1861,14 @@ class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
         self.assertTrue(self.reaches({"w": worker, "c": after}, "c.h"), "refused too late")
         self.assertTrue(self.reaches({"w": worker, "c": unguarded}, "c.h"))
 
-    def test_the_cli_writes_from_exactly_thirteen_commands(self):
+    def test_the_cli_writes_from_exactly_fourteen_commands(self):
         """The hardening found nothing new. `ship` and `run-gates` joined with the opt-in
         `revert-check` gate, whose scratch worktree is added, reset and removed through git
         (#1289). `swarm-run` joined when `--live` stopped being refused: a live worker
         commits, pushes and opens a pull request under delegated consent (#1400).
         `swarm-status` joined with `--clean`, which removes the worktrees, directories and
-        branches swarm runs left under keel's own paths (#1278)."""
+        branches swarm runs left under keel's own paths (#1278). `swarm-review` joined with
+        #1423: a live review checks the head out per seat and posts the seats' verdicts."""
         self.assertEqual(
             {
                 "ship",
@@ -1833,6 +1879,7 @@ class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
                 "review",
                 "doctor",
                 "swarm-land",
+                "swarm-review",
                 "swarm-run",
                 "swarm-status",
                 "worktree-remove",

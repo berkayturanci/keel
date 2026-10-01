@@ -51,6 +51,8 @@ class PullRequestLookup(NamedTuple):
 
     number: int | None
     reason: str = ""
+    #: The cluster's pull request has merged already: nothing is left to land or review.
+    merged: bool = False
 
 
 class ClusterMerge(NamedTuple):
@@ -90,12 +92,15 @@ LANDING_COMMAND = "swarm-land"
 LANDING_MERGE_REASON = "merged by keel swarm-land through keel merge"
 
 
+_ALREADY_MERGED = "already merged"
+
+
 def _open_pull_request(reply: Mapping[str, Any], *, branch: str, base_branch: str) -> str:
     """Why the pull request in ``reply`` cannot be landed for ``branch``; ``""`` when it can."""
     number = reply.get("number")
     state = reply.get("state")
     if state == "MERGED":
-        return f"PR #{number} is already merged — this cluster landed in an earlier run"
+        return f"PR #{number} is {_ALREADY_MERGED} — this cluster landed in an earlier run"
     if state != "OPEN":
         return (
             f"PR #{number} is {str(state).lower() or 'not open'}; reopen it, or open a new "
@@ -121,7 +126,9 @@ def pull_request_from_view(
     if not isinstance(reply, Mapping) or reply.get("number") != recorded:
         return PullRequestLookup(None, f"PR #{recorded} (recorded by swarm-run) could not be read")
     why = _open_pull_request(reply, branch=branch, base_branch=base_branch)
-    return PullRequestLookup(None, why) if why else PullRequestLookup(recorded)
+    if not why:
+        return PullRequestLookup(recorded)
+    return PullRequestLookup(None, why, merged=reply.get("state") == "MERGED")
 
 
 def pull_request_from_list(reply: object, *, branch: str) -> PullRequestLookup:
@@ -144,7 +151,9 @@ def pull_request_from_list(reply: object, *, branch: str) -> PullRequestLookup:
     merged = [p for p in prs if p.get("state") == "MERGED" and isinstance(p.get("number"), int)]
     if merged:
         return PullRequestLookup(
-            None, f"PR #{merged[0]['number']} is already merged — this cluster landed earlier"
+            None,
+            f"PR #{merged[0]['number']} is {_ALREADY_MERGED} — this cluster landed earlier",
+            merged=True,
         )
     return PullRequestLookup(
         None,

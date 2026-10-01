@@ -26,6 +26,28 @@ All notable changes to keel are documented here. The format follows
   `tests/test_docs_claims.py` pin the new wording and fail on the old one.
 
 ### Added
+- **`keel swarm-review` reviews each cluster pull request with the cluster's own seats**
+  (#1423). The first live swarm landing needed one step outside the swarm: every cluster PR's
+  verdicts were produced by hand and posted with `keel review --live`. The owner chose option
+  (b): `swarm-review <project.yaml> --root . [--wave N] [--live]` reads the plan `swarm-run`
+  persisted and, per cluster, finds its pull request, resolves the tier and contract `keel
+  review` will resolve from its diff, and plans the reviewer seats `swarm-plan` printed (or
+  re-resolved with `--review-delegate` / `--reviewers`) as `keel delegate run --role review`
+  plans them. A host `subagent:` seat, a seat nothing makes read-only (a profile without
+  `review_args`) and a seat from the implementer's vendor are refused, and the cluster is
+  refused when the rest cannot meet the verdict count or `require_distinct_vendors`. Live,
+  each seat runs in its own detached worktree at the head (removed afterwards) under the
+  implementer's lockdown (no forge token, no `gh` login, no credential helper, no network
+  transport for git), briefed with `/keel:ship` s7's refute-not-approve stance, the issue and
+  the diff, and answers with one JSON verdict read through `keel review --reviews`' own parser;
+  an answer that does not parse is a failed review, never an approval. The approvals are posted
+  through `keel review --live`, pinned to the head the seats reviewed — `keel review` now
+  refuses when the head moved since. Nothing is posted when a seat requests changes (the
+  evidence gate counts a posted verdict whatever its `Verdict:` line says), when too few seats
+  approve, or when the head moved. A dry run reads and plans, and runs and posts nothing; a
+  live run needs `filesystem,git,github` consent before the plan is read. Opt-in: neither
+  `swarm-run` nor `swarm-land` calls it, and swarm stays experimental on every surface — it has
+  not yet run on a real repository.
 - **The consent a live swarm run delegates is in the run ledger, and `consent-verify` reads
   it** (#1400). `swarm-run --live` recorded the operator's delegated consent only in the
   swarm state file and the pull request bodies, so `keel consent-verify` — which reads a pull

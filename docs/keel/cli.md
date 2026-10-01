@@ -3343,8 +3343,9 @@ worktrees or branches (`--json`: `{"error_code": "git-failed", "error"}`) or a r
 > **Experimental.** A live run implements each cluster and opens its pull request, but that pull
 > request carries no review evidence; `swarm-land` merges it through `keel merge` once its review
 > is recorded ([#1400](https://github.com/berkayturanci/keel/issues/1400),
-> [#1287](https://github.com/berkayturanci/keel/issues/1287)); whether the swarm should review
-> its own pull requests is open ([#1423](https://github.com/berkayturanci/keel/issues/1423)). A live landing has run once, on a sandbox
+> [#1287](https://github.com/berkayturanci/keel/issues/1287)). The swarm reviews only when you run
+> `keel swarm-review` (below), which has not yet run on a real repository
+> ([#1423](https://github.com/berkayturanci/keel/issues/1423)). A live landing has run once, on a sandbox
 > repository, with the reviews done outside the swarm ([#1281](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)).
 
 Without `--live` (a dry run) each cluster's worker is a `keel ship --dry-run --json` assessment,
@@ -3445,6 +3446,71 @@ the file on stderr and as `plan_file` in `--json`. It is the plan as planned, be
 rebalance; `swarm-land` lands from it (below). A live run refused before its workers start writes
 none.
 
+## `keel swarm-review <project.yaml> [--root DIR] [--wave N] [--swarm-id ID] [--review-delegate PROVIDER] [--reviewers 1|2|3] [--max-workers N] [--seat-timeout SECONDS] [--live] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--json]`
+
+> **Experimental, and not yet run on a real repository**
+> ([#1423](https://github.com/berkayturanci/keel/issues/1423)). Opt-in: neither `swarm-run` nor
+> `swarm-land` calls it.
+
+Review each cluster pull request of one wave with the cluster's own reviewer seats, and post their
+verdicts through `keel review`, pinned to the head they reviewed — the step between
+`swarm-run --live` and `swarm-land --live` that no longer needs a host agent:
+
+```bash
+keel swarm-review .keel/project.yaml --root . --swarm-id swarm-714 --wave 1
+keel swarm-review .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live \
+  --approve-scope filesystem,git,github --operator "$USER"
+```
+
+It reviews the plan `swarm-run` persisted (`.keel/state/swarm/<swarm_id>.plan.json`; the newest
+run without `--swarm-id`); with none, it exits 1. For each cluster of `--wave`:
+
+1. **The pull request** is found as `swarm-land` finds it — the number the worker recorded,
+   confirmed open, else the one open pull request for `swarm/<swarm_id>/<cluster_id>`. A cluster
+   with none is `skipped`, one whose pull request merged is `already-merged`.
+2. **What it must meet.** keel reads the pull request's head and resolves the tier and review
+   contract `keel review` resolves from its diff: the verdict count `keel review` refuses to
+   under-post, and `require_distinct_vendors`.
+3. **Who reviews.** The cluster's reviewer seats — those `swarm-plan` prints as `review X, Y`,
+   or re-resolved through the same resolver with `--review-delegate` (positional per slot) and
+   `--reviewers`, the implementer that ran kept. Each seat is planned as
+   `keel delegate run --provider <seat> --role review` plans it. Refused: a `subagent:` seat
+   (only an agent host spawns one), a seat nothing makes read-only (a `delegate_profiles` entry
+   without `review_args`), and a seat from the implementer's own vendor. The built-in CLIs run
+   with their documented read-only invocation and read the code in their checkout; an `api` or
+   `ollama` seat has no tools, so it reviews the diff and issue text its brief carries. The
+   cluster is `refused`, before anything runs, when the eligible seats are fewer than the count,
+   when `require_distinct_vendors` is on and two share a vendor, or when the tier's review is the
+   jury panel (run it and use `keel review --from-jury`).
+4. **A dry run stops here** (`planned`): it reads, and checks out, runs and posts nothing.
+5. **Live**, each eligible seat runs — up to `--max-workers` at once, each bounded by
+   `--seat-timeout` — in its own detached worktree at the head,
+   `.keel/worktrees/<swarm_id>/<cluster_id>.review-<slot>`, removed when the seat ends whichever
+   way (a crash's leftover is one `keel swarm-status --clean` removes). It runs with no forge
+   token, no `gh` login, no git credential helper and no network transport for git, as a live
+   implementer does, and a change to the repository's git config or hooks while it ran holds the
+   cluster. Its brief is `/keel:ship` s7's: its focus slice, the refute-not-approve stance, no
+   cross-reading, the head pinned, the issue text and the diff keel read with `gh pr diff`, and
+   the one JSON verdict it must end with (`verdict` `APPROVE` or `REQUEST_CHANGES`, `scope`,
+   `findings`, `testing`). keel reads it through `keel review --reviews`' own parser and the
+   evidence gate's substance rule; anything that does not parse is a **failed** review, never an
+   approval, and an approval carrying a critical or major finding is read as `REQUEST_CHANGES`.
+6. **Posting.** keel re-reads the head, then posts every approval with `keel review --live`,
+   which refuses if the head moved in between. Nothing is posted — the cluster is `held` with
+   the reason and each seat's findings — when any seat requested changes, when fewer seats
+   approved than the count, or when the head moved. keel's evidence gate counts a posted verdict
+   whatever its `Verdict:` line says, so posting a `REQUEST_CHANGES` would let `keel merge` land
+   the change it rejected. Each verdict names its reviewer (`swarm-review-<slot>-<vendor>`),
+   vendor and model from the seat's attribution, under the run id `<swarm_id>/<cluster_id>`, so
+   a second run on the same head edits the same comments.
+
+`--live` needs the scopes `filesystem`, `git` and `github`, approved as for `swarm-run`; `agent`
+consent mode and missing scopes exit 1 before the plan is read. The consent flags are passed to
+each `keel review`. `--json` prints `{swarm_id, wave_index, dry_run, status, clusters,
+warnings}`, each cluster with its `status`, `reason`, `pull_request`, `head_sha`, `tier`,
+`required`, `seats` and `verdicts`. Exit `0` only when every cluster is `posted` (live),
+`planned` (dry run) or `already-merged`.
+
 ## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--live] [--transport auto|graphql|rest] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 
 Land a wave by merging each cluster's pull request through `keel merge` — the same code, one
@@ -3463,7 +3529,7 @@ when it opens the PR, with the ship-provenance comment a live `keel ship` run po
 seat's attribution labels and records the gates-pass for the head it pushed (#1420). Without CI
 or the verdicts every cluster is held with `keel merge`'s reason (for example *CI did not run on
 a non-docs PR (empty check set)* or *missing evidence: …*) and the command exits 1 — see
-[swarm.md](swarm.md#4-landing-keel-swarm-land).
+[swarm.md](swarm.md#5-landing-keel-swarm-land).
 
 **Which plan lands ([#1275](https://github.com/berkayturanci/keel/issues/1275)).** The run is
 `--swarm-id`, else the most recently written state file under `.keel/state/swarm/` (a
@@ -3554,7 +3620,7 @@ keel-visual swarm .keel/project.yaml --root . --serve --port 8766
 The DAG is the plan `swarm-run` persisted as `.keel/state/swarm/<swarm_id>.plan.json`; with
 none, or one it cannot read, the page says so instead of drawing one. `--json` prints the
 payload: `swarm_id`, `plan` (or `null`), `plan_status` (`persisted`/`missing`/`unreadable`),
-`plan_detail` and `state`. See [swarm.md §5](swarm.md#5-visual-dashboard-integration-keel-visual-swarm).
+`plan_detail` and `state`. See [swarm.md §6](swarm.md#6-visual-dashboard-integration-keel-visual-swarm).
 
 ## Exit codes
 
