@@ -7,18 +7,34 @@ from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import Any
 
-from . import capture, redaction, workspace
+from . import capture, consent, redaction, workspace
 from . import config as cfg
 
 LEDGER_SCHEMA_VERSION = "keel.run-ledger.v1"
 CAPTURE_HEALTH_SCHEMA_VERSION = "keel.capture-health.v1"
 DEFAULT_LEDGER_PATH = ".keel/state/run-ledger.jsonl"
 RECORD_TYPE_SHIP_RUN = "ship_run"
+#: The operator's live consent as ``swarm-run --live`` delegated it to its workers (#1400):
+#: one record when the run delegates it, and one more per cluster pull request its
+#: workers open. See :func:`build_consent_delegation_record`.
+RECORD_TYPE_CONSENT_DELEGATION = "consent_delegation"
 # The record kinds this keel reads. A reader skips any other kind (#1400): the ledger is
 # append-only and shared by every keel on a checkout, so a kind a newer keel adds must not
 # make an older keel refuse the history it can still read. The writer stays strict —
 # :func:`encode_record` only ever writes a kind named here.
-KNOWN_RECORD_TYPES: frozenset[str] = frozenset({RECORD_TYPE_SHIP_RUN})
+#: :data:`KNOWN_RECORD_TYPES` in its published order (the ledger contract's
+#: ``record_types``). A keel older than 1.26.0 refuses a ledger holding any kind but the
+#: first: those readers did not yet skip a kind they did not know.
+RECORD_TYPES: tuple[str, ...] = (RECORD_TYPE_SHIP_RUN, RECORD_TYPE_CONSENT_DELEGATION)
+KNOWN_RECORD_TYPES: frozenset[str] = frozenset(RECORD_TYPES)
+#: What :func:`parse_records` and :func:`read_records` return unless a reader asks for
+#: more. Every reader keel had before #1400 reads ship runs and nothing else; it gets ship
+#: runs and nothing else, so a delegation record — which names a pull request and a head
+#: — can never be read as a ship run by one that forgot to check the kind.
+SHIP_RUN_RECORDS: tuple[str, ...] = (RECORD_TYPE_SHIP_RUN,)
+#: ``delegated``: written once, before any worker starts. ``pull_request``: written once
+#: per cluster whose worker opened its pull request, naming it and the head it pushed.
+CONSENT_DELEGATION_EVENTS: tuple[str, ...] = ("delegated", "pull_request")
 UNKNOWN_RECORD_TYPE_HANDLING = "skip-with-warning"
 # A skipped kind is named in a warning; a hostile or corrupt line must not flood it.
 _KIND_DISPLAY_LIMIT = 80
@@ -37,13 +53,21 @@ def ledger_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "path": path,
         "path_source": source,
         "missing_handling": "treat-as-empty",
-        "append_owner": ["ship"],
-        "readers": ["morning", "wrap", "overnight", "capture-verification", "ledger"],
+        "append_owner": ["ship", "swarm-run"],
+        "readers": [
+            "morning",
+            "wrap",
+            "overnight",
+            "capture-verification",
+            "consent-verify",
+            "ledger",
+        ],
         "consumer_neutral": True,
         "capture_redaction": redaction.contract_as_dict(config),
         "capture_contract": capture.contract_as_dict(config),
         "capture_health": capture_health_contract_as_dict(),
-        "record_types": [RECORD_TYPE_SHIP_RUN],
+        "record_types": list(RECORD_TYPES),
+        "default_read_record_types": list(SHIP_RUN_RECORDS),
         "unknown_record_types": UNKNOWN_RECORD_TYPE_HANDLING,
     }
 
@@ -350,8 +374,14 @@ def parse_records(
     text: str,
     *,
     warn: Callable[[str], None] | None = None,
+    kinds: Collection[str] = SHIP_RUN_RECORDS,
 ) -> list[dict[str, Any]]:
     """Parse ledger JSONL text into validated records of the kinds this keel knows.
+
+    **Every record of a known kind is validated; only those of ``kinds`` are returned**
+    — ship runs unless the reader asks for more (:data:`SHIP_RUN_RECORDS`). A reader that
+    wants a ``consent_delegation`` record (``consent-verify``) or every kind (``keel
+    ledger``) names it; every other reader is handed ship runs alone, as it always was.
 
     **Forward compatible** (#1400): a well-formed record whose ``record_type`` names a
     kind outside :data:`KNOWN_RECORD_TYPES` is skipped, never returned and never a
@@ -380,7 +410,8 @@ def parse_records(
             skipped.add(kind)
             continue
         _validate_record(record, line_number=line_number)
-        records.append(record)
+        if record["record_type"] in kinds:
+            records.append(record)
     return records
 
 
@@ -398,15 +429,74 @@ def read_records(
     path: str | Path,
     *,
     warn: Callable[[str], None] | None = None,
+    kinds: Collection[str] = SHIP_RUN_RECORDS,
 ) -> list[dict[str, Any]]:
     """Read a ledger file; a missing ledger is a valid empty history.
 
-    Record kinds this keel does not know are skipped as :func:`parse_records` does.
+    Record kinds this keel does not know are skipped, and only ``kinds`` are returned, as
+    :func:`parse_records` does.
     """
     ledger_path = Path(path)
     if not ledger_path.exists():
         return []
-    return parse_records(ledger_path.read_text(encoding="utf-8"), warn=warn)
+    return parse_records(ledger_path.read_text(encoding="utf-8"), warn=warn, kinds=kinds)
+
+
+def build_consent_delegation_record(
+    delegation: Mapping[str, Any],
+    *,
+    recorded_at: str,
+    pull_request: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A ``consent_delegation`` record for ``delegation`` (#1400).
+
+    ``delegation`` is :meth:`keel.swarm_worker.ConsentDelegation.to_dict`: who consented,
+    to which scopes, how, when, and for which run and clusters. Without ``pull_request``
+    the record is the ``delegated`` event, written before any worker starts; with it, the
+    ``pull_request`` event for one cluster — ``{"cluster", "number", "branch",
+    "head_sha", "url"}`` — written once that cluster's worker has opened its pull request.
+
+    Two events, never an update: the ledger is append-only, and the pull request number is
+    known only after ``gh pr create``. Each record carries the whole delegation, so a
+    reader needs one record to answer for a pull request. The parent's verbatim consent
+    record is not copied: every field a reader needs is named here.
+    """
+    record: dict[str, Any] = {
+        "schema_version": LEDGER_SCHEMA_VERSION,
+        "record_type": RECORD_TYPE_CONSENT_DELEGATION,
+        "event": "delegated" if pull_request is None else "pull_request",
+        "swarm_id": delegation.get("swarm_id"),
+        "clusters": list(delegation.get("clusters") or ()),
+        "scopes": list(delegation.get("scopes") or ()),
+        "operator": delegation.get("operator"),
+        "source": delegation.get("source"),
+        "mode": delegation.get("mode"),
+        "delegated_at": delegation.get("delegated_at"),
+        "recorded_at": recorded_at,
+        "pull_request": None if pull_request is None else dict(pull_request),
+    }
+    _validate_record(record)
+    return record
+
+
+def consent_delegation_for_pr(
+    records: list[dict[str, Any]], pr_number: int
+) -> dict[str, Any] | None:
+    """The latest ``pull_request`` delegation record naming ``pr_number``, or ``None``.
+
+    The pull request number is the only key: keel wrote it from ``gh pr create``'s answer,
+    so it names the pull request the worker opened. A branch name is not a key — anyone can
+    open a pull request from a fork with a ``swarm/<id>/<cluster>`` branch — and a reader
+    that gates on the record must still check the pull request's head against the record's
+    ``head_sha`` (:func:`keel.consentverify.consent_for_pr` does).
+    """
+    match: dict[str, Any] | None = None
+    for record in records:
+        if record.get("record_type") != RECORD_TYPE_CONSENT_DELEGATION:
+            continue
+        if (record.get("pull_request") or {}).get("number") == pr_number:
+            match = record
+    return match
 
 
 def latest_ship_run_for_pr(
@@ -766,8 +856,64 @@ def _validate_record(record: Any, *, line_number: int | None = None) -> None:
         raise LedgerError(f"{prefix}record must be an object")
     if record.get("schema_version") != LEDGER_SCHEMA_VERSION:
         raise LedgerError(f"{prefix}unsupported schema_version")
-    if record.get("record_type") != RECORD_TYPE_SHIP_RUN:
+    kind = record.get("record_type")
+    if kind == RECORD_TYPE_CONSENT_DELEGATION:
+        if problem := _consent_delegation_problem(record):
+            raise LedgerError(f"{prefix}invalid consent_delegation record: {problem}")
+    elif kind != RECORD_TYPE_SHIP_RUN:
         raise LedgerError(f"{prefix}unsupported record_type")
+
+
+def _consent_delegation_problem(record: dict[str, Any]) -> str:
+    """What is wrong with a ``consent_delegation`` record, or ``""`` when nothing is.
+
+    Strict about every field a reader relies on; a field this keel does not name is
+    tolerated, so a later keel can add one without making this one refuse the ledger.
+    """
+    event = record.get("event")
+    if event not in CONSENT_DELEGATION_EVENTS:
+        return f"event must be one of {', '.join(CONSENT_DELEGATION_EVENTS)}"
+    for key in ("swarm_id", "operator", "source", "mode", "delegated_at", "recorded_at"):
+        if not _nonblank(record.get(key)):
+            return f"{key} must be a non-blank string"
+    clusters = record.get("clusters")
+    if (
+        not isinstance(clusters, list)
+        or not clusters
+        or not all(_nonblank(c) for c in clusters)
+        or len(set(clusters)) != len(clusters)
+    ):
+        return "clusters must be a non-empty list of distinct non-blank strings"
+    scopes = record.get("scopes")
+    if not isinstance(scopes, list) or not scopes or not all(_nonblank(s) for s in scopes):
+        return "scopes must be a non-empty list of non-blank strings"
+    try:
+        normalized = list(consent.normalize_scopes(scopes))
+    except ValueError as exc:
+        return str(exc)
+    if normalized != scopes:
+        return f"scopes must be normalised: {normalized}"
+    return _delegated_pull_request_problem(event, record.get("pull_request"), clusters)
+
+
+def _delegated_pull_request_problem(event: Any, pull_request: Any, clusters: list[Any]) -> str:
+    """What is wrong with a delegation record's ``pull_request`` for its ``event``."""
+    if event == "delegated":
+        return "" if pull_request is None else "a delegated event names no pull request"
+    if not isinstance(pull_request, dict):
+        return "a pull_request event names its pull request"
+    if pull_request.get("cluster") not in clusters:
+        return "pull_request.cluster must be one of the delegation's clusters"
+    number = pull_request.get("number")
+    if isinstance(number, bool) or not isinstance(number, int) or number < 1:
+        return "pull_request.number must be a positive integer"
+    for key in ("branch", "head_sha"):
+        if not _nonblank(pull_request.get(key)):
+            return f"pull_request.{key} must be a non-blank string"
+    url = pull_request.get("url")
+    if url is not None and not isinstance(url, str):
+        return "pull_request.url must be a string"
+    return ""
 
 
 def _capture_health_item(record: dict[str, Any]) -> dict[str, Any]:

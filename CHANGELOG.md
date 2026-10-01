@@ -6,6 +6,32 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **The consent a live swarm run delegates is in the run ledger, and `consent-verify` reads
+  it** (#1400). `swarm-run --live` recorded the operator's delegated consent only in the
+  swarm state file and the pull request bodies, so `keel consent-verify` — which reads a pull
+  request's consent from its ship run — had nothing to check a cluster's pull request
+  against. The run ledger has a second record kind, `consent_delegation`, written as two
+  append-only events: `delegated`, before any worker starts (run, clusters, normalised scopes,
+  operator, source, mode, `delegated_at`, `recorded_at`; a run whose delegation cannot be
+  written is refused and starts nothing), and `pull_request`, once per cluster whose worker
+  opened its pull request (cluster, number, branch, pushed head, URL; a line that cannot be
+  written is a warning, not a failed worker). The validator is strict about every field a
+  reader uses and tolerates fields it does not name. `consent-verify` falls back from the
+  ship run to the `pull_request` record naming the PR's number, and applies it only while the
+  PR's head is the commit the worker pushed (`head.sha` from the host, or `--head-sha`
+  offline); a moved or unknown head gets no delegated consent and `delegation_refused` says
+  why. Nothing is matched by branch name — a fork can name its branch
+  `swarm/<id>/<cluster>`. It reports `consent_source` and who delegated what. `parse_records`/`read_records` validate
+  every known kind but hand a reader ship runs unless it asks for more (`kinds=`), so `status`,
+  `merge`, `ship`, `evidence-verify`, `scope-verify`, `close-reconcile`, `dryrun-verify`, the
+  capture commands and keel-visual answer exactly as before with delegation lines present;
+  `keel ledger` lists every kind with a `record_types` count. The ledger contract publishes
+  `record_types: [ship_run, consent_delegation]` and `default_read_record_types: [ship_run]`.
+  **keel older than 1.26.0 refuses a ledger containing a `consent_delegation` line**: its
+  readers refused every kind but `ship_run`, and learned to skip an unknown kind in 1.26.0
+  (#1407) — upgrade every keel that runs on a checkout before running `swarm-run --live` there.
+
 ## [1.26.0] - 2026-10-01
 
 - The experimental swarm has a live path: `swarm-run --live` has each cluster's implementer seat write the change under consent the operator delegates, and keel commits, gates, pushes and opens one pull request per cluster; `swarm-land` merges those pull requests through `keel merge` itself once each has its review verdicts.

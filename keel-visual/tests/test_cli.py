@@ -138,6 +138,57 @@ class TestReadersSkipUnknownRecordKinds(unittest.TestCase):
         self.assertEqual(rec, cli._resolve_record(_args(), config))
 
 
+def _sample_with_consent_delegation():
+    """The sample ledger, twice, with a live swarm run's consent_delegation record
+    (keel #1400) for the same PR between the two runs."""
+    from keel import ledger
+
+    record = ledger.build_consent_delegation_record(
+        {
+            "swarm_id": "swarm-1",
+            "clusters": ["c1"],
+            "scopes": ["filesystem", "git", "github"],
+            "operator": "alice",
+            "source": "flag",
+            "mode": "explicit",
+            "delegated_at": "2026-10-01T09:00:00Z",
+        },
+        recorded_at="2026-10-01T09:30:00Z",
+        pull_request={
+            "cluster": "c1",
+            "number": 361,
+            "branch": "swarm/swarm-1/c1",
+            "head_sha": "abc",
+        },
+    )
+    sample = Path(SAMPLE).read_text(encoding="utf-8")
+    return sample + ledger.encode_record(record) + sample
+
+
+class TestReadersIgnoreConsentDelegations(unittest.TestCase):
+    """A consent_delegation record is never taken for the ship run of its PR."""
+
+    def test_resolve_record_and_latest_ship_record(self):
+        import tempfile
+
+        from keel import config as cfg
+        from keel import ledger
+
+        config = cfg.load_config(PROJECT)
+        expected = cli._resolve_record(_args(), config)
+        with tempfile.TemporaryDirectory() as d:
+            mixed = Path(d) / "mixed.jsonl"
+            mixed.write_text(_sample_with_consent_delegation(), encoding="utf-8")
+            resolved = cli._resolve_record(_args(ledger_jsonl=str(mixed)), config)
+            led = ledger.resolve_path(d, config)
+            led.parent.mkdir(parents=True, exist_ok=True)
+            led.write_text(_sample_with_consent_delegation(), encoding="utf-8")
+            latest = cli._latest_ship_record(d, config, 361)
+        self.assertEqual(resolved, expected)
+        self.assertEqual(latest, expected)
+        self.assertEqual(latest["record_type"], "ship_run")
+
+
 class TestRender(unittest.TestCase):
     def test_render_writes_html(self):
         import tempfile

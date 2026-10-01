@@ -239,10 +239,53 @@ The block records:
 - `format: jsonl`
 - `path` and `path_source`
 - `missing_handling: treat-as-empty`
-- append owners (`ship`) and offline readers (`morning`, `wrap`,
-  `overnight`, `capture-verification`, `ledger`)
-- `record_types` — the kinds this keel reads and writes (`ship_run`)
+- append owners (`ship`, `swarm-run`) and offline readers (`morning`, `wrap`,
+  `overnight`, `capture-verification`, `consent-verify`, `ledger`)
+- `record_types` — the kinds this keel reads and writes (`ship_run`,
+  `consent_delegation`)
+- `default_read_record_types` — the kinds a reader is handed unless it asks for more
+  (`ship_run`); see below
 - `unknown_record_types: skip-with-warning` — see below
+
+**Two record kinds.** `ship_run` is what `keel ship --live --append-ledger` writes (below).
+`consent_delegation` is the operator's consent as a live `swarm-run` delegated it to its
+workers ([#1400](https://github.com/berkayturanci/keel/issues/1400)); see
+[swarm.md — Consent delegation](swarm.md#consent-delegation). It is written as two events,
+never as an update of a line already written:
+
+| field | type | meaning |
+| --- | --- | --- |
+| `schema_version` | `keel.run-ledger.v1` | |
+| `record_type` | `consent_delegation` | |
+| `event` | `delegated` \| `pull_request` | `delegated`: once per run, before any worker starts. `pull_request`: once per cluster whose worker opened its pull request |
+| `swarm_id` | non-blank string | the run |
+| `clusters` | non-empty list of distinct non-blank strings | the clusters the consent was delegated to |
+| `scopes` | non-empty list, normalised (known scope names, canonical order) | the scopes each worker was handed |
+| `operator` | non-blank string | who consented |
+| `source` | non-blank string | where the consent came from (`flag`, `env`, `automation`) |
+| `mode` | non-blank string | the consent mode (`explicit`, `standing`) |
+| `delegated_at` | non-blank string | the consent record's timestamp |
+| `recorded_at` | non-blank string | when this line was written |
+| `pull_request` | `null` on `delegated`; on `pull_request` an object | `cluster` (one of `clusters`), `number` (positive integer), `branch` (`swarm/<swarm_id>/<cluster>`), `head_sha` (the commit the worker pushed), and an optional string `url` |
+
+Each record carries the whole delegation, so a reader needs one line to answer for a pull
+request. The validator is strict about every field above and tolerates a field it does not
+name, so a later keel can add one without this one refusing the ledger. A malformed
+`consent_delegation` record is refused like a malformed ship run — by every reader, since
+every record of a known kind is validated.
+
+**A reader is handed ship runs unless it asks for more.** `parse_records`/`read_records`
+validate every known kind and return only the kinds the caller names, `ship_run` by
+default. `consent-verify` asks for both kinds and `keel ledger` for every kind; every other
+reader — `status`, `ship --append-ledger`, `merge`, `evidence-verify`, `scope-verify`,
+`close-reconcile`, `dryrun-verify`, the capture commands, `keel-visual` — reads ship runs
+alone, so a delegation record, which names a pull request and a head, can never be taken
+for a ship run. Those that select by kind themselves (`latest_ship_run_for_pr`,
+`gates_pass_for_head`, `capture_health_summary`, `status` history) do so too.
+
+**keel older than 1.26.0 refuses a ledger holding a `consent_delegation` line**: those
+readers refused any kind but `ship_run`. Since 1.26.0 an unknown kind is skipped with the
+warning below, so a 1.26.x keel on the same checkout still ships and merges.
 
 **Readers skip a record kind they do not know, so a later keel may add kinds.** The
 ledger is append-only and shared by every keel that runs on a checkout, so a newer keel
@@ -272,7 +315,9 @@ intake, and capture outcome. It does not store project labels, domain names, pro
 paths, or stack-specific fields.
 
 `keel ledger <project.yaml> --root <repo> --json` reads the ledger offline and returns an
-empty `records` array when the file is missing. `morning`, `wrap`, overnight session
+empty `records` array when the file is missing. It lists every kind it knows, as written,
+with `record_types` counting each (`{"ship_run": 2, "consent_delegation": 1}`; the text
+output's `by type` line); `capture_health` is computed from the ship runs alone. `morning`, `wrap`, overnight session
 recaps, and capture verification should use this reader or the same contract path instead
 of scraping closure comments.
 

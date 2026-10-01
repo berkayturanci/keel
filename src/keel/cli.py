@@ -2122,18 +2122,24 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
     contract = ledger.ledger_contract_as_dict(config)
     path = ledger.resolve_path(args.root, config)
     try:
-        records = ledger.read_records(path, warn=_ledger_warning)
+        # Every kind this keel knows: the ledger, as written (#1400).
+        records = ledger.read_records(path, warn=_ledger_warning, kinds=ledger.KNOWN_RECORD_TYPES)
     except ledger.LedgerError as exc:
         print(f"invalid ledger {path}: {exc}", file=sys.stderr)
         return 1
     if args.limit is not None:
         records = records[-args.limit :]
+    by_type = {
+        kind: sum(1 for record in records if record["record_type"] == kind)
+        for kind in ledger.RECORD_TYPES
+    }
     payload = {
         "contract": contract,
         "path": str(path),
         "status": "present" if path.exists() else "missing",
         "records": records,
         "record_count": len(records),
+        "record_types": by_type,
         "capture_health": ledger.capture_health_summary(records),
     }
     if args.json:
@@ -2142,6 +2148,7 @@ def _cmd_ledger(args: argparse.Namespace) -> int:
         print(f"keel ledger — {payload['status']}  {path}")
         print(f"  schema        : {contract['schema_version']}")
         print(f"  records       : {payload['record_count']}")
+        print("  by type       : " + ", ".join(f"{k} {n}" for k, n in by_type.items()))
         print(f"  missing       : {contract['missing_handling']}")
         print(f"  capture       : {payload['capture_health']['status']}")
         print(f"  capture gaps  : {payload['capture_health']['counts']['needs_reconcile']}")
@@ -2811,7 +2818,7 @@ def _cmd_consent_verify(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        record = _consent_ledger_record(args, config)
+        records = _consent_ledger_records(args, config)
     except ledger.LedgerError as exc:
         print(f"invalid run ledger: {exc}", file=sys.stderr)
         return 1
@@ -2821,11 +2828,15 @@ def _cmd_consent_verify(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    has_record, approved_scopes = consentverify.consent_record_from_ledger(record)
-    report = consentverify.reconcile(observed, approved_scopes, has_consent_record=has_record)
+    found = consentverify.consent_for_pr(records, args.pr, head_sha=observed.head_sha)
+    has_record = found["has_record"]
+    report = consentverify.reconcile(observed, found["scopes"], has_consent_record=has_record)
     payload = {
         "schema_version": consentverify.SCHEMA_VERSION,
         "pull_request": args.pr,
+        "consent_source": found["source"],
+        "delegation": found["delegation"],
+        "delegation_refused": found["delegation_refused"],
         "scope_effect_table": consentverify.scope_effect_table(),
         "reconcile": report,
     }
@@ -2834,6 +2845,14 @@ def _cmd_consent_verify(args: argparse.Namespace) -> int:
     else:
         print(f"keel consent-verify — {report['verdict']}  PR #{args.pr}")
         print(f"  consent record : {'present' if has_record else 'absent (advisory)'}")
+        if (delegated := found["delegation"]) is not None:
+            print(
+                f"  delegated by   : {delegated['operator']} ({delegated['source']}, "
+                f"{delegated['delegated_at']}) to swarm {delegated['swarm_id']} "
+                f"cluster {delegated['cluster']} at {delegated['pushed_head']}"
+            )
+        if found["delegation_refused"] is not None:
+            print(f"  delegation     : not applied — {found['delegation_refused']}")
         print(f"  approved scopes: {', '.join(report['approved_scopes']) or 'none'}")
         print(f"  observed       : {', '.join(report['observed_effects']) or 'none'}")
         for finding in report["uncovered"]:
@@ -2843,24 +2862,25 @@ def _cmd_consent_verify(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
-def _consent_ledger_record(
+def _consent_ledger_records(
     args: argparse.Namespace,
     config: cfg.ProjectConfig,
-) -> dict[str, object] | None:
-    """Load the latest ship_run ledger record for the PR under consent-verify.
+) -> list[dict[str, Any]]:
+    """The run ledger's ship runs and consent delegations, for consent-verify.
 
-    Reads the run ledger (offline fixture via ``--ledger-jsonl`` or the configured
-    path under ``--root``) and returns the most recent matching ship_run record,
-    or ``None`` when no record matches — the advisory back-compat path.
+    Reads the offline fixture given by ``--ledger-jsonl``, or the configured path under
+    ``--root``. :func:`keel.consentverify.consent_for_pr` picks the PR's consent from
+    them: its ship run's, else the consent a live swarm run delegated to it (#1400).
     """
     fixture = getattr(args, "ledger_jsonl", None)
+    kinds = consentverify.LEDGER_KINDS
     if fixture is not None:
-        records = ledger.parse_records(
-            Path(fixture).read_text(encoding="utf-8"), warn=_ledger_warning
+        return ledger.parse_records(
+            Path(fixture).read_text(encoding="utf-8"), warn=_ledger_warning, kinds=kinds
         )
-    else:
-        records = ledger.read_records(ledger.resolve_path(args.root, config), warn=_ledger_warning)
-    return ledger.latest_ship_run_for_pr(records, args.pr)
+    return ledger.read_records(
+        ledger.resolve_path(args.root, config), warn=_ledger_warning, kinds=kinds
+    )
 
 
 def _consent_observed_effects(
@@ -2881,6 +2901,7 @@ def _consent_observed_effects(
             commented=args.commented,
             merged=args.merged,
             labeled=args.labeled,
+            head_sha=args.head_sha,
         )
     owner_repo = _owner_repo(config)
     pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
@@ -2892,7 +2913,14 @@ def _consent_observed_effects(
         commented=bool(comments),
         merged=pr.get("merged") is True,
         labeled=bool(_label_names(pr.get("labels"))),
+        head_sha=_head_sha(pr.get("head")),
     )
+
+
+def _head_sha(head: Any) -> str | None:
+    """The commit a REST pull request's ``head`` object points at, or ``None``."""
+    sha = head.get("sha") if isinstance(head, dict) else None
+    return sha if isinstance(sha, str) and sha.strip() else None
 
 
 def _cmd_close_reconcile(args: argparse.Namespace) -> int:
@@ -7789,6 +7817,7 @@ def _swarm_run_live(
     config: cfg.ProjectConfig,
     plan: swarm.SwarmPlan,
     delegation: swarm_worker.ConsentDelegation,
+    ledger_path: Path,
 ):
     """``(LiveRun, [])``, or ``(None, refusals)`` naming each cluster keel cannot dispatch.
 
@@ -7824,8 +7853,26 @@ def _swarm_run_live(
         dispatches=dispatches,
         issue_scopes=plan.issue_scopes,
         seat_sources={c.cluster_id: c.assignment["implementer"]["source"] for c in clusters},
+        ledger_path=ledger_path,
     )
     return live, []
+
+
+def _record_swarm_delegation(delegation: swarm_worker.ConsentDelegation, ledger_path: Path) -> str:
+    """Append the run's ``delegated`` consent record (#1400); ``""`` once written, else why.
+
+    Written before any worker starts, and the run is refused when it cannot be: a live run
+    whose delegation is not on the record would leave every cluster pull request with no
+    consent ``keel consent-verify`` can read.
+    """
+    try:
+        ledger.append_record(
+            ledger_path,
+            ledger.build_consent_delegation_record(delegation.to_dict(), recorded_at=_now_iso()),
+        )
+    except (OSError, ledger.LedgerError) as exc:
+        return f"the consent delegation could not be written to the run ledger {ledger_path}: {exc}"
+    return ""
 
 
 def _cmd_swarm_run(args: argparse.Namespace) -> int:
@@ -7873,7 +7920,12 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
 
     live = None
     if delegation is not None:
-        live, refusals = _swarm_run_live(args, config, plan, delegation)
+        try:
+            ledger_path = ledger.resolve_path(args.root, config)
+        except ledger.LedgerError as exc:
+            print(f"swarm-run --live is refused: {exc}", file=sys.stderr)
+            return 1
+        live, refusals = _swarm_run_live(args, config, plan, delegation, ledger_path)
         if live is None:
             print(
                 "swarm-run --live is refused: keel cannot dispatch every cluster's "
@@ -7883,6 +7935,12 @@ def _cmd_swarm_run(args: argparse.Namespace) -> int:
             for refusal in refusals:
                 print(f"  {refusal}", file=sys.stderr)
             return 1
+        # The consent the workers are handed is on the record before any of them starts:
+        # in the run ledger, where consent-verify reads it (#1400), not only in the state.
+        if why := _record_swarm_delegation(live.consent, ledger_path):
+            print(f"swarm-run --live is refused: {why}", file=sys.stderr)
+            return 1
+        print(f"swarm-run: consent delegation recorded in {ledger_path}", file=sys.stderr)
 
     # The plan this run executes, beside its state, so `swarm-land` lands exactly these
     # waves rather than whatever the issues plan into by then (#1275). Written before the
@@ -8719,6 +8777,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_consent.add_argument("--merged", action="store_true", help="offline: the PR was merged")
     p_consent.add_argument(
         "--labeled", action="store_true", help="offline: labels were written on the PR"
+    )
+    p_consent.add_argument(
+        "--head-sha",
+        default=None,
+        help="offline: the PR's current head commit; a swarm cluster's delegated consent "
+        "applies only while it is the commit the worker pushed",
     )
     p_consent.add_argument("--json", action="store_true", help="emit structured JSON")
     p_consent.set_defaults(func=_cmd_consent_verify)

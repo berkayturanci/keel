@@ -15,10 +15,11 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
+from keel import ledger, swarm_worker
 from keel import swarm_runtime as swarm_runtime_module
-from keel import swarm_worker
 from keel.cli import build_parser, main
 from keel.delegate import RunPlan
 from keel.runner import CommandResult
@@ -118,7 +119,7 @@ class _LiveIo:
         return CommandResult(True, 0, '{"id": 1}')
 
 
-def _live(plan, root, io, *, scopes=FULL_SCOPES, clusters=None) -> LiveRun:
+def _live(plan, root, io, *, scopes=FULL_SCOPES, clusters=None, ledger_path=None) -> LiveRun:
     root = Path(root).resolve()
     delegation = swarm_worker.ConsentDelegation(
         swarm_id=plan.swarm_id,
@@ -147,6 +148,7 @@ def _live(plan, root, io, *, scopes=FULL_SCOPES, clusters=None) -> LiveRun:
         dispatches=dispatches,
         issue_scopes=plan.issue_scopes,
         seat_sources={c.cluster_id: "flag:--delegate" for c in _clusters(plan)},
+        ledger_path=ledger_path,
         implement=io.implement,
         push=io.push,
         open_pr=io.open_pr,
@@ -2086,6 +2088,216 @@ class ALiveSwarmRunDelegatesTheOperatorsConsent(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("KEEL_OPERATOR is required", err)
         orchestrate.assert_not_called()
+
+    _CONSENT = ("--approve-scope", "filesystem,git,github", "--operator", "alice")
+
+    def _ledger(self) -> Path:
+        return Path(self.tmp.name).resolve() / ".keel" / "state" / "run-ledger.jsonl"
+
+    def test_the_delegation_is_in_the_run_ledger_before_any_worker_starts(self):
+        seen: list[list[dict]] = []
+
+        def orchestrate(plan, **kwargs):
+            # What the ledger holds at the moment the workers would start.
+            seen.append(ledger.read_records(self._ledger(), kinds=ledger.KNOWN_RECORD_TYPES))
+            return MagicMock(status="success")
+
+        argv = [
+            "swarm-run",
+            self._config(),
+            "--root",
+            self.tmp.name,
+            "--issues",
+            "7,8",
+            "--issue-scope",
+            "7=src/a.py",
+            "--issue-scope",
+            "8=src/b.py",
+            "--swarm-id",
+            "swarm-cli-live",
+            "--live",
+            *self._CONSENT,
+            "--delegate",
+            "codex",
+        ]
+        err = io.StringIO()
+        with (
+            patch("keel.swarm_runtime.run_swarm_orchestration", side_effect=orchestrate) as run,
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(err),
+        ):
+            code = main(argv)
+        self.assertEqual(code, 0, err.getvalue())
+        live = run.call_args.kwargs["live"]
+        self.assertEqual(live.ledger_path, self._ledger())
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(seen[0]), 1, "one delegated record, before any worker starts")
+        record = seen[0][0]
+        self.assertEqual(
+            {k: record[k] for k in ("record_type", "event", "swarm_id", "operator", "scopes")},
+            {
+                "record_type": "consent_delegation",
+                "event": "delegated",
+                "swarm_id": "swarm-cli-live",
+                "operator": "alice",
+                "scopes": list(FULL_SCOPES),
+            },
+        )
+        self.assertEqual(record["clusters"], list(live.consent.clusters))
+        self.assertEqual(record["delegated_at"], live.consent.delegated_at)
+        self.assertIsNone(record["pull_request"])
+        self.assertIn("consent delegation recorded in", err.getvalue())
+
+    def test_a_delegation_that_cannot_be_recorded_starts_nothing(self):
+        # The ledger's path is a directory: the append fails, and no worker starts.
+        self._ledger().mkdir(parents=True)
+        code, err, orchestrate = self._swarm_run(*self._CONSENT, "--delegate", "codex")
+        self.assertEqual(code, 1)
+        self.assertIn("the consent delegation could not be written to the run ledger", err)
+        orchestrate.assert_not_called()
+
+    def test_a_ledger_path_outside_the_root_starts_nothing(self):
+        config = Path(self._config())
+        text = config.read_text(encoding="utf-8")
+        self.assertIn("  reports:\n", text)
+        config.write_text(
+            text.replace("  reports:\n", "  reports:\n    run_ledger: '../escape.jsonl'\n", 1),
+            encoding="utf-8",
+        )
+        code, err, orchestrate = self._swarm_run(
+            *self._CONSENT, "--delegate", "codex", config=str(config)
+        )
+        self.assertEqual(code, 1, err)
+        self.assertIn("swarm-run --live is refused: run ledger path escapes", err)
+        orchestrate.assert_not_called()
+
+
+class EachClusterPullRequestIsInTheRunLedger(unittest.TestCase):
+    """#1400: a worker's open pull request is recorded as the delegation's `pull_request`
+    event — one line per cluster, appended, never a rewrite of the `delegated` line."""
+
+    def _plan(self, *issues):
+        return build_swarm_plan(
+            [IssueScope(issue=n, title=f"T{n}", predicted_files=(f"src/{n}.py",)) for n in issues],
+            swarm_id="swarm-led",
+        )
+
+    def _run(self, plan, tmpdir, io_, *, ledger_path):
+        """The run's result, or a raise out of the run as a value — so a ledger error that
+        escaped would fail these tests as an assertion, not as an error."""
+        try:
+            return run_swarm_orchestration(
+                plan,
+                "projects/x.yaml",
+                root=tmpdir,
+                dry_run=False,
+                live=_live(plan, tmpdir, io_, ledger_path=ledger_path),
+                max_workers=2,
+                runner=_Git(),
+                base_branch="main",
+            )
+        except Exception as exc:  # noqa: BLE001 - reported as the run's result
+            return SimpleNamespace(status=f"raised {type(exc).__name__}: {exc}", warnings=())
+
+    def test_each_open_pull_request_is_appended_with_its_number_branch_and_head(self):
+        plan = self._plan(801, 802)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / ".keel" / "state" / "run-ledger.jsonl"
+            path.parent.mkdir(parents=True)
+            delegated = ledger.build_consent_delegation_record(
+                _live(plan, tmpdir, _LiveIo()).consent.to_dict(), recorded_at="t0"
+            )
+            ledger.append_record(path, delegated)
+            first_line = path.read_text(encoding="utf-8")
+            result = self._run(plan, tmpdir, _LiveIo(), ledger_path=path)
+            text = path.read_text(encoding="utf-8")
+            records = ledger.parse_records(text, kinds=ledger.KNOWN_RECORD_TYPES)
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.warnings, ())
+        self.assertTrue(text.startswith(first_line), "the delegated line is never rewritten")
+        self.assertEqual(records[0], delegated)
+        opened = sorted(records[1:], key=lambda r: r["pull_request"]["cluster"])
+        clusters = sorted(c.cluster_id for c in _clusters(plan))
+        self.assertEqual([r["event"] for r in opened], ["pull_request", "pull_request"])
+        self.assertEqual([r["pull_request"]["cluster"] for r in opened], clusters)
+        cluster_results = result.wave_results[0]["cluster_results"]
+        for record in opened:
+            cid = record["pull_request"]["cluster"]
+            with self.subTest(cluster=cid):
+                pr = record["pull_request"]
+                self.assertEqual(pr["branch"], f"swarm/swarm-led/{cid}")
+                self.assertEqual(pr["head_sha"], f"head-{cid}")
+                self.assertEqual(pr["url"], cluster_results[cid]["pr_url"])
+                self.assertEqual(pr["number"], int(pr["url"].rsplit("/", 1)[1]))
+                self.assertEqual((record["operator"], record["swarm_id"]), ("ops", "swarm-led"))
+                self.assertEqual(record["clusters"], clusters)
+
+    def test_a_worker_that_opened_no_pull_request_records_nothing(self):
+        plan = self._plan(811)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "run-ledger.jsonl"
+            result = self._run(plan, tmpdir, _LiveIo(pr_ok=False), ledger_path=path)
+            written = path.exists()
+        self.assertEqual(result.status, "failed")
+        self.assertFalse(written)
+
+    def test_an_unreadable_pull_request_url_is_a_warning_not_a_failure(self):
+        class _NoUrl(_LiveIo):
+            def open_pr(self, title, body, base, head, cwd):
+                super().open_pr(title, body, base, head, cwd)
+                return CommandResult(True, 0, "created\n")
+
+        plan = self._plan(821)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "run-ledger.jsonl"
+            result = self._run(plan, tmpdir, _NoUrl(), ledger_path=path)
+            written = path.exists()
+        self.assertEqual(result.status, "success")
+        self.assertFalse(written)
+        ledger_warnings = [w for w in result.warnings if "not in the run ledger" in w]
+        self.assertEqual(len(ledger_warnings), 1, result.warnings)
+        self.assertIn("printed no pull request number", ledger_warnings[0])
+        self.assertIn("will report no delegated consent for it", ledger_warnings[0])
+        self.assertNotIn("branch", ledger_warnings[0])
+
+    def test_a_ledger_that_cannot_be_written_is_a_warning_not_a_failure(self):
+        plan = self._plan(831)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "run-ledger.jsonl"
+            path.mkdir()
+            result = self._run(plan, tmpdir, _LiveIo(), ledger_path=path)
+        self.assertEqual(result.status, "success")
+        self.assertEqual(len(result.warnings), 1, result.warnings)
+        self.assertIn("https://github.com/o/r/pull/1 is not in the run ledger", result.warnings[0])
+        self.assertIn("Error", result.warnings[0])
+
+    def test_a_record_the_ledger_refuses_is_a_warning_not_a_failure(self):
+        plan = self._plan(841)
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.object(
+                swarm_runtime_module.ledger,
+                "build_consent_delegation_record",
+                side_effect=ledger.LedgerError("pull_request.head_sha must be a non-blank string"),
+            ),
+        ):
+            path = Path(tmpdir) / "run-ledger.jsonl"
+            result = self._run(plan, tmpdir, _LiveIo(), ledger_path=path)
+            written = path.exists()
+        self.assertFalse(written)
+        self.assertEqual(result.status, "success")
+        self.assertEqual(len(result.warnings), 1, result.warnings)
+        self.assertIn("LedgerError: pull_request.head_sha must be", result.warnings[0])
+
+    def test_no_ledger_path_records_nothing(self):
+        plan = self._plan(851)
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.object(swarm_runtime_module.ledger, "append_record") as append,
+        ):
+            result = self._run(plan, tmpdir, _LiveIo(), ledger_path=None)
+        self.assertEqual((result.status, result.warnings), ("success", ()))
+        append.assert_not_called()
 
 
 # ---------------------------------------------------------------------------------------
