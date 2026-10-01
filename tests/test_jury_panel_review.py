@@ -85,8 +85,21 @@ knobs:
 """
 
 
-def _report(vendors: list[str]) -> dict:
-    """An ai-jury JSON report (schema 1.1) whose panelists carry ``vendors``."""
+#: The panelists' own ballots when every one of them approves.
+_APPROVING_BALLOTS = ("APPROVE", "APPROVE", "APPROVE")
+
+
+def _report(
+    vendors: list[str],
+    ballots: tuple[str, ...] = _APPROVING_BALLOTS,
+    chair: str = "APPROVE",
+) -> dict:
+    """An ai-jury JSON report (schema 1.1) whose panelists carry ``vendors``.
+
+    ``ballots`` are the three panelists' verdicts. They approve by default, because a
+    ballot that requests changes is a review that requests changes, and the evidence
+    gate holds on it (#1426) — which is the subject of one test here, not of all.
+    """
     return {
         "schema_version": "1.1",
         "findings": [
@@ -124,7 +137,7 @@ def _report(vendors: list[str]) -> dict:
             for name, vendor, verdict in zip(
                 ("alpha", "beta", "gamma"),
                 vendors,
-                ("REQUEST_CHANGES", "COMMENT", "APPROVE"),
+                ballots,
                 strict=True,
             )
         ]
@@ -134,7 +147,7 @@ def _report(vendors: list[str]) -> dict:
                 "role": "chair",
                 "vendor": "openai",
                 "model": "gpt-5",
-                "verdict": "REQUEST_CHANGES",
+                "verdict": chair,
             }
         ],
     }
@@ -173,9 +186,9 @@ class TestTheJuryIsTheReviewPanel(unittest.TestCase):
         path.write_text(json.dumps(value), encoding="utf-8")
         return str(path)
 
-    def _map_panel(self, vendors: list[str]) -> dict:
+    def _map_panel(self, vendors: list[str], **shape) -> dict:
         """Run `keel review --from-jury` and return its JSON result."""
-        report = self._write("report.json", _report(vendors))
+        report = self._write("report.json", _report(vendors, **shape))
         with patch("keel.cli.runtime.detect", return_value=_capable()):
             rc, out, err = run(
                 [
@@ -261,6 +274,40 @@ class TestTheJuryIsTheReviewPanel(unittest.TestCase):
         self.assertEqual(
             [item["id"] for item in report["verification"]["results"]],
             ["review-verdict-1", "review-verdict-2", "review-verdict-3", "jury-verdict"],
+        )
+
+    def test_a_ballot_that_requests_changes_holds_the_gate(self):
+        """A panelist's ballot is a review: one requesting changes holds the merge (#1426).
+
+        `keel review --from-jury` still posts every ballot as it was cast — the jury's
+        `REQUEST_CHANGES` and `COMMENT` reach the pull request as `Verdict:` lines — and
+        the gate reads them. Before #1426 all three counted and this panel passed.
+        """
+        result = self._map_panel(
+            ["anthropic", "google", "anthropic"],
+            ballots=("REQUEST_CHANGES", "COMMENT", "APPROVE"),
+            chair="REQUEST_CHANGES",
+        )
+        verdicts = [p for p in result["plan"]["posts"] if p["artifact"] == "review-verdict"]
+        self.assertEqual(
+            [line for post in verdicts for line in post["body"].splitlines() if "Verdict:" in line],
+            ["Verdict: REQUEST_CHANGES", "Verdict: COMMENT", "Verdict: LGTM"],
+        )
+
+        rc, report = self._verify(result["plan"]["posts"])
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(report["verification"]["status"], "fail")
+        self.assertEqual(
+            [
+                f["message"]
+                for f in report["verification"]["findings"]
+                if f["id"] == "review-verdict-not-approved"
+            ],
+            [
+                "alpha requests changes at abc123.",
+                "beta does not approve at abc123 (verdict COMMENT).",
+            ],
         )
 
     def test_a_single_vendor_panel_of_three_fails_distinctness(self):
