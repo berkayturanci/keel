@@ -2727,5 +2727,35 @@ class TheRefusalNamesEveryCause(unittest.TestCase):
         self.assertIn("attribution-label: PR is missing", evidence.refusal_reason(result))
 
 
+class VerdictReviewersNameWhoReviewedTheHead(unittest.TestCase):
+    """``verdict_reviewers`` names the reviewers the gate counted, for a closure (#1422)."""
+
+    @staticmethod
+    def _verdict(reviewer: str, head: str, **extra) -> dict:
+        body = artifacts.render_review_verdict(
+            reviewer=reviewer, head_sha=head, scope="Checked `src/keel/swarm_landing.py`"
+        )
+        return {"body": body, "author_association": "OWNER", **extra}
+
+    def test_the_counted_verdicts_are_named_sorted_and_the_rest_are_not(self):
+        anonymous = self._verdict("x", "sha-1")
+        anonymous["body"] = "\n".join(
+            line for line in anonymous["body"].splitlines() if not line.startswith("reviewer:")
+        )
+        by_login = dict(anonymous, user={"login": "Octo"})
+        items = [
+            self._verdict("Zed", "sha-1"),
+            self._verdict("amy", "sha-1"),
+            self._verdict("old", "sha-0"),  # another head
+            dict(self._verdict("intruder", "sha-1"), author_association="NONE"),
+            anonymous,  # keyed by its body: names nobody
+            by_login,
+        ]
+        self.assertEqual(
+            evidence.verdict_reviewers(items, head_sha="sha-1"), ("amy", "octo", "zed")
+        )
+        self.assertEqual(evidence.verdict_reviewers([], head_sha="sha-1"), ())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1043,6 +1043,32 @@ def _review_evidence_keys(
     return keys
 
 
+def verdict_reviewers(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
+    enforced: bool = True,
+) -> tuple[str, ...]:
+    """The reviewers whose verdicts count for ``head_sha``, by name, sorted (#1422).
+
+    The verdicts :func:`verify` counts toward ``review-verdict-N`` — trusted, head-pinned,
+    with substance — named by their ``reviewer:`` field, else by the commenter's login. A
+    verdict keyed only by its body names nobody and is left out. This is what a closure
+    comment written after the merge says reviewed the change, read off the pull request
+    rather than recalled.
+    """
+    keys = _review_evidence_keys(
+        items, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced
+    )
+    names = []
+    for key in keys:
+        kind, _, name = key.partition(":")
+        if kind in ("reviewer", "user"):
+            names.append(name)
+    return tuple(sorted(names))
+
+
 def _review_evidence_keys_and_rejections(
     items: list[dict[str, Any]],
     *,

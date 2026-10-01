@@ -7,18 +7,28 @@ pull request. Nothing here merges, rebases or checks out a branch locally — th
 advances on the host and each pull request closes as merged — so the operator's
 checkout is left where it was.
 
-This module is the per-wave loop and the reading of the answers it gets. The two things
-it does to the outside world — find a cluster's pull request, and hand one to keel
-merge — are injected by the CLI, so the loop is tested against recorded answers.
+Once a cluster's pull request merges, its issues are closed the way ``/keel:ship`` closes
+them at s11–s12 (#1422): the closure comment, rendered by
+:func:`keel.closure.render_closure_comment` from the run ledger's ``ship_run`` record, on the
+pull request and on each issue, then each issue closed. A failure there is a warning: the
+merge already happened and is never undone, and the next cluster still lands.
+
+This module is the per-wave loop and the reading of the answers it gets. The three things
+it does to the outside world — find a cluster's pull request, hand one to keel merge, and
+close a landed cluster's issues — are injected by the CLI, so the loop is tested against
+recorded answers.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import copy
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from .swarm import (
+    ClusterClosure,
+    SwarmCluster,
     SwarmLandingResult,
     SwarmPlan,
     SwarmWave,
@@ -53,12 +63,31 @@ class ClusterMerge(NamedTuple):
     outcome: str
     reason: str
     warning: str = ""
+    #: The head ``keel merge`` verified and merged — the one every pin was taken against.
+    #: Empty when the payload names none (a dry run that stopped early, a refusal).
+    head_sha: str = ""
+    #: The heads ``head_sha`` descends from by capture commits alone, which the evidence
+    #: gate and the gates-pass counted for it (``keel merge``'s ``covered_heads``).
+    covered_heads: tuple[str, ...] = ()
 
 
 #: ``(branch, recorded pull request)`` -> the pull request to land.
 FindPullRequest = Callable[[str, int | None], PullRequestLookup]
 #: ``(pull request, cluster id, dry run)`` -> what keel merge did with it.
 MergePullRequest = Callable[[int, str, bool], ClusterMerge]
+#: ``(cluster, pull request, merge)`` -> how the landed cluster's issues were closed (#1422).
+CloseCluster = Callable[[SwarmCluster, int, ClusterMerge], ClusterClosure]
+
+#: What a live ``swarm-land`` does, for its operator consent (#1422): ``keel merge``'s own
+#: side effects, then the closure — a comment on the pull request and on each issue, and the
+#: issue closed. The comment and the close need ``github``, which the merge needs already.
+LANDING_SIDE_EFFECTS: tuple[str, ...] = ("git_worktree", "merge", "comments", "issue_close")
+
+#: The ``command`` of the ``ship_run`` record a landing appends after the merge.
+LANDING_COMMAND = "swarm-land"
+#: What that record says about the merge: it happened, through keel merge. Read as a merge
+#: by :func:`keel.closeorder.record_attests_merge`, so closing the issue is not premature.
+LANDING_MERGE_REASON = "merged by keel swarm-land through keel merge"
 
 
 def _open_pull_request(reply: Mapping[str, Any], *, branch: str, base_branch: str) -> str:
@@ -137,17 +166,88 @@ def merge_outcome(code: int, payload: Mapping[str, Any] | None) -> ClusterMerge:
         )
     reason = str(payload.get("reason") or "no reason given")
     if code == 0:
-        return ClusterMerge(LANDED, reason)
+        return ClusterMerge(LANDED, reason, **_merged_head(payload))
     if code == 3:
         return ClusterMerge(
             LANDED,
             reason,
             f"PR #{payload.get('pull_request')} merged, but keel merge detected drift — "
             "run keel verify-merge on it",
+            **_merged_head(payload),
         )
     if "merge_output" in payload:
         return ClusterMerge(FAILED, f"keel merge: {reason}: {payload['merge_output']}"[:300])
     return ClusterMerge(HELD, f"keel merge: {reason}")
+
+
+def _merged_head(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """The head ``keel merge``'s evidence gate verified — the head it merged — and the heads
+    that gate counted for it, as :class:`ClusterMerge` fields."""
+    block = payload.get("evidence")
+    block = block if isinstance(block, Mapping) else {}
+    head = block.get("head_sha")
+    covered = block.get("covered_heads")
+    return {
+        "head_sha": head if isinstance(head, str) else "",
+        "covered_heads": tuple(str(sha) for sha in covered) if isinstance(covered, list) else (),
+    }
+
+
+def landing_record(
+    prior: Mapping[str, Any],
+    *,
+    head_sha: str,
+    reviewers: Sequence[str],
+    run_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    """The ``ship_run`` record of a cluster ``swarm-land`` merged (#1422).
+
+    ``/keel:ship`` renders its closure comment from the ``ship_run`` record it appends at
+    s11, and ``evidence-verify`` holds the posted comment to that record's render. A landing
+    does the same with ``prior`` — the record whose gates-pass ``keel merge`` accepted for
+    ``head_sha``, which a live worker wrote when it opened the pull request (#1420) — and
+    changes only what the landing knows:
+
+    - ``command`` is :data:`LANDING_COMMAND`, and ``assessment.merge`` is ``merge`` with
+      :data:`LANDING_MERGE_REASON`: the pull request merged. Every other assessment field
+      stays as recorded — the landing assessed no tier, window or CI of its own.
+    - ``git.head_sha`` is the head keel merge merged.
+    - ``actors.reviewers`` are the reviewers whose verdicts the evidence gate counted for
+      that head, when any are named; otherwise what the record already said.
+    - ``run_context`` is this landing's: its host agent, transport and operator consent.
+
+    The gates, the changed files, the implementer, the issue and the capture block are
+    carried as recorded, so the record still passes for the head
+    (:func:`keel.ledger.gates_pass_for_head`) and its attribution still matches the
+    labels. Pure: ``prior`` is copied, never changed.
+    """
+    record = copy.deepcopy(dict(prior))
+    record["command"] = LANDING_COMMAND
+    git = record.get("git")
+    record["git"] = {**(git if isinstance(git, dict) else {}), "head_sha": head_sha}
+    assessment = record.get("assessment")
+    record["assessment"] = {
+        **(assessment if isinstance(assessment, dict) else {}),
+        "merge": {"action": "merge", "reason": LANDING_MERGE_REASON},
+    }
+    if reviewers:
+        actors = record.get("actors")
+        record["actors"] = {
+            **(actors if isinstance(actors, dict) else {}),
+            "reviewers": list(reviewers),
+        }
+    record["run_context"] = copy.deepcopy(dict(run_context))
+    return record
+
+
+def is_landing_record(record: Mapping[str, Any]) -> bool:
+    """Whether ``record`` is a landing's own record — one :func:`landing_record` built.
+
+    A landing that finds the record for the merged head is already its own renders from it
+    rather than appending a second one, so a closure retried for the same merge posts the
+    same comment again (edited in place) instead of a new one.
+    """
+    return record.get("command") == LANDING_COMMAND
 
 
 def _output(res: object) -> str:
@@ -190,6 +290,21 @@ def _return_to(
     )
 
 
+def _close_landed(
+    close_cluster: CloseCluster, cluster: SwarmCluster, number: int, merged: ClusterMerge
+) -> ClusterClosure:
+    """``close_cluster`` for one landed cluster; whatever it raises is a warning (#1422)."""
+    try:
+        return close_cluster(cluster, number, merged)
+    except Exception as exc:  # noqa: BLE001 - the merge happened; closing it never undoes it
+        return ClusterClosure(
+            cluster.cluster_id,
+            number,
+            cluster.issues,
+            warnings=(f"closing the issues raised {type(exc).__name__}: {exc}",),
+        )
+
+
 def _target_wave(plan: SwarmPlan, wave_index: int) -> SwarmWave | None:
     return next((w for w in plan.waves if w.wave_index == wave_index), None)
 
@@ -203,6 +318,7 @@ def land_wave_clusters(
     merge_pull_request: MergePullRequest,
     root: str | Path = ".",
     runner: SubprocessRunner | None = None,
+    close_cluster: CloseCluster | None = None,
 ) -> SwarmLandingResult:
     """Land one wave: each cluster's pull request, in order, through ``keel merge``.
 
@@ -218,6 +334,12 @@ def land_wave_clusters(
     ``swarm-land`` never passes it. It runs the git commands that read where the checkout
     is and put it back (:func:`_read_head`, :func:`_return_to`); left out, they run through
     :func:`keel.swarm_runtime.default_runner`.
+
+    ``close_cluster`` closes a landed cluster's issues (#1422): called once per cluster
+    that merged, never for a held or failed one, and never in a dry run — there each cluster
+    that would land reports, with an empty :class:`ClusterClosure`, what would be closed.
+    What it could not do is a warning, as is anything it raises: the merge stands, and the
+    next cluster lands all the same. Left out, nothing is closed and nothing is reported.
 
     The wave's ``mode`` is judged on its clusters' planned scopes. A ``pr_diff_map`` of
     real diffs used to be accepted here and no caller passed one; it could only relabel
@@ -256,6 +378,7 @@ def land_wave_clusters(
     held: list[tuple[str, str]] = []
     warnings: list[str] = []
     prs: list[tuple[str, int]] = []
+    closures: list[ClusterClosure] = []
     state = load_swarm_state(plan.swarm_id, root=root_path)
     recorded = {w.cluster_id: w.pull_request for w in state.workers} if state else {}
     home = _read_head(root_path, runner)
@@ -292,6 +415,14 @@ def land_wave_clusters(
                 record(c.cluster_id, "merged", f"PR #{number}: {merged.reason}", number)
                 if merged.warning:
                     warnings.append(f"{c.cluster_id}: {merged.warning}")
+                if close_cluster is None:
+                    continue
+                if dry_run:
+                    closures.append(ClusterClosure(c.cluster_id, number, c.issues, dry_run=True))
+                    continue
+                closure = _close_landed(close_cluster, c, number, merged)
+                closures.append(closure)
+                warnings.extend(f"{c.cluster_id}: {warning}" for warning in closure.warnings)
             elif merged.outcome == FAILED:
                 failed.append(c.cluster_id)
                 record(c.cluster_id, "failed", f"PR #{number}: {merged.reason}", number)
@@ -326,4 +457,5 @@ def land_wave_clusters(
         held_clusters=tuple(held),
         warnings=tuple(warnings),
         pull_requests=tuple(prs),
+        closures=tuple(closures),
     )

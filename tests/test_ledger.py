@@ -1383,3 +1383,29 @@ class TestImplementLoopRecord(unittest.TestCase):
 
     def test_a_non_mapping_block_degrades_to_none(self):
         self.assertIsNone(_record(implement_loop="loop")["run_context"]["implement_loop"])
+
+
+class TheRunContextIsBuiltForOtherWriters(unittest.TestCase):
+    """``build_run_context`` is the block ``build_ship_run_record`` writes (#1422)."""
+
+    def test_it_is_the_ship_run_block_with_only_what_a_landing_knows(self):
+        block = ledger.build_run_context(
+            host_agent="claude",
+            transport="gh",
+            consent_status="approved",
+            consent_scopes=("git", " ", "github"),
+        )
+        self.assertEqual(
+            block,
+            ledger._run_context(
+                host_agent="claude",
+                transport="gh",
+                profile=None,
+                jury_mode=None,
+                jury_panel=None,
+                consent_status="approved",
+                consent_scopes=["git", "github"],
+            ),
+        )
+        self.assertEqual(block["consent"], {"status": "approved", "scopes": ["git", "github"]})
+        self.assertIsNone(block["profile"])

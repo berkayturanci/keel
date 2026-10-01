@@ -19,8 +19,11 @@
 >   asks of a pull request the worker leaves itself: the seat's attribution labels on it and a
 >   gates-pass for its head in the run ledger
 >   ([#1420](https://github.com/berkayturanci/keel/issues/1420)).
-> - A landed cluster leaves its issues **open** and posts no closure comments: `swarm-land`
->   stops at the merge ([#1422](https://github.com/berkayturanci/keel/issues/1422)).
+> - A landed cluster is closed the way `/keel:ship` closes an issue: after each merge,
+>   `swarm-land --live` posts the closure comment on the pull request and on each of the
+>   cluster's issues, then closes the issues
+>   ([#1422](https://github.com/berkayturanci/keel/issues/1422), see
+>   [What landing actually does](#what-landing-actually-does)).
 > - A **dry** run is unchanged: its worker is `keel ship` — the *CLI subcommand*, registered as
 >   `dry ship assessment (tier, window, gates, decision)` — which never commits, pushes or opens a
 >   pull request. It is not inert: it runs `git diff` and executes the project's planned gates, so
@@ -69,8 +72,7 @@
 > repository, not evidence of maturity.
 >
 > The rest is tracked in [#1423](https://github.com/berkayturanci/keel/issues/1423) (review inside the
-> swarm) and [#1422](https://github.com/berkayturanci/keel/issues/1422) (closing the landed issues); the
-> audit epic [#1281](https://github.com/berkayturanci/keel/issues/1281) is closed. Everything below describes
+> swarm); the audit epic [#1281](https://github.com/berkayturanci/keel/issues/1281) is closed. Everything below describes
 > the design and the code that exists; read it as architecture, not as a supported workflow.
 >
 > **Use [`/keel:ship`](../../src/keel/adapters/commands/ship.md) for work you need landed.**
@@ -416,8 +418,9 @@ issue, so a live swarm depends on no agent host. `swarm-run --live` runs, per cl
    `refs/heads/swarm/<swarm_id>/<cluster_id>` at the URL read before the seat ran — not to the
    remote's name — with no hooks (never forced).
 7. **Open one pull request** for the cluster against `base_branch` (`keel.github.open_pr`). Its
-   body says `Refs #N` for each issue — never `Closes`, since nothing has reviewed it — and records
-   the implementer seat, the commit the gates passed at, and the consent delegation.
+   body says `Refs #N` for each issue — never `Closes`, since nothing has reviewed it; `swarm-land`
+   closes the issues once it merges the pull request ([#1422](https://github.com/berkayturanci/keel/issues/1422))
+   — and records the implementer seat, the commit the gates passed at, and the consent delegation.
 8. **Stamp its provenance.** Right after the pull request opens, keel posts on it the
    `keel.ship-provenance.v1` comment a live `keel ship` run posts on its own
    (`keel.artifacts.render_ship_provenance`: run id `<swarm_id>/<cluster_id>`, the issue, the
@@ -805,6 +808,40 @@ warning's lines as `plan_drift`.
    `PR #12: keel merge: missing evidence: review-verdict-1` or `PR #12: keel merge: blocking
    finding(s): attribution-label: …`. The merge call itself failed:
    `failed`. Drift after a merge: `landed`, with a `warning` to run `keel verify-merge`.
+4. **Close what landed** ([#1422](https://github.com/berkayturanci/keel/issues/1422)). A cluster
+   that merged is closed the way `/keel:ship` closes an issue at s11–s12; a held or failed one
+   posts and closes nothing. The cluster's pull request says `Refs #N`, never `Closes` (see
+   [How a live worker implements a cluster](#how-a-live-worker-implements-a-cluster)), so
+   nothing else closes its issues:
+   - **The record.** The `ship_run` record whose gates-pass `keel merge` accepted for the merged
+     head — the one the live worker appended — is appended again as the landing's:
+     `command: swarm-land`, `assessment.merge.action: merge`, the merged head, the reviewers
+     whose verdicts counted for that head, and this landing's run context (host agent,
+     transport, operator consent). The gates, changed files, implementer, issue and capture
+     block are carried as recorded, so the head's gates-pass and the attribution labels still
+     agree with it, and `keel close-reconcile` finds each close attested by a merge.
+   - **The closure comment.** Rendered from that record by keel's closure renderer — the
+     `keel.closure-comment.v1` artifact `/keel:ship` posts, no other format — and posted through
+     `keel post-comment`'s code, with the run id `<swarm_id>/<cluster_id>:closure`, to the pull
+     request and to each of the cluster's issues.
+   - **The issues**, each closed as completed.
+
+   It runs under the operator's consent: a live landing asks for `keel merge`'s side effects
+   and the closure's (`comments`, `issue_close`), all inside `filesystem,git,github`. `--json`
+   reports each cluster under `closures` — `closure_posted` (`pr`/`issue`, number, `posted` or
+   `edited`), `closed_issues`, `already_closed`, `warnings` — and the text report under
+   `closure :`. Whatever cannot be done is a `warning` and stops nothing: no consent, no
+   gates-pass record for the merged head, a run ledger that cannot be written, a comment or a
+   close that fails. The merge is never undone, and the next cluster still lands. Re-running it
+   posts nothing twice: a landing record already appended for the head is rendered from rather
+   than appended again, this run's closure comment is edited in place where it already is, and
+   an issue already closed is left as it is. A dry run posts and closes nothing; `closures`
+   says what the live landing would close.
+
+   Afterwards `keel evidence-verify --phase all --pr <n> --issue <issue>` passes both closure
+   items for the pull request (name the issue: `Refs` does not link it). A cluster whose merge
+   landed in an earlier run is held at the lookup as already merged, so its closure is not
+   retried; finish one that warned by hand, as `/keel:ship`'s s11–s12 would.
 
 The next cluster is tried whatever happened to the one before, and the wave exits non-zero when
 any cluster did not land. A **dry run** (no `--live`) runs `keel merge --dry-run` for each

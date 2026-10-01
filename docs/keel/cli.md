@@ -3505,11 +3505,26 @@ waves before it and is refused: land wave 1, re-plan the rest, and land again.
    (`PR #12: keel merge: merge window is closed`); the merge call failed → `failed`; drift after
    the merge → `landed` with a `warning`. The run state records each cluster's `merged` / `held` /
    `failed` at `s10` with its pull request.
+4. **A landed cluster is closed** ([#1422](https://github.com/berkayturanci/keel/issues/1422)) as
+   `/keel:ship` closes an issue at s11–s12: the `ship_run` record whose gates-pass `keel merge`
+   accepted for the merged head is appended again as the landing's (`command: swarm-land`,
+   merge action `merge`, the merged head, the reviewers whose verdicts counted, this run's
+   consent), the `keel.closure-comment.v1` comment rendered from it is posted through
+   `keel post-comment`'s code to the pull request and each of the cluster's issues (run id
+   `<swarm_id>/<cluster_id>:closure`), and each issue is closed as completed. It needs the
+   consent the merge needs — `github` covers the comments and the close. Anything that fails is
+   a `warning`; the merge stands and the next cluster lands. Re-running posts nothing twice: the
+   landing record is reused, the closure comment edited in place, a closed issue left alone. A
+   held or failed cluster, and a dry run, post and close nothing. `keel evidence-verify --phase
+   all --pr <n> --issue <issue>` then passes both closure items (the pull request says `Refs
+   #N`, so name the issue).
 
 One cluster's outcome never stops the next, and the command exits `0` only when every cluster
-landed. `--json` adds `pull_requests` (cluster → number). Without `--live` each cluster goes
-through `keel merge --dry-run`: every check, no merge, no state written — and, like
-`keel merge --dry-run`, it needs the operator's consent.
+landed. `--json` adds `pull_requests` (cluster → number) and `closures` (cluster →
+`closure_posted`, `closed_issues`, `already_closed`, `warnings`; `dry_run: true` in a preview).
+Without `--live` each cluster goes through `keel merge --dry-run`: every check, no merge, no
+state written, nothing posted or closed — and, like `keel merge --dry-run`, it needs the
+operator's consent.
 
 - **A dependent wave is refused (#1276)**: a `sequential_dependent` wave — in a freshly built plan,
   every wave after the first — had its branches cut before the earlier wave it depends on landed.

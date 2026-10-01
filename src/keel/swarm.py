@@ -615,6 +615,70 @@ class LandingDecision:
 
 
 @dataclass(frozen=True)
+class ClusterClosure:
+    """How a landed cluster's issues were closed after its merge (#1422).
+
+    ``/keel:ship`` closes the loop at s11–s12: the closure comment on the pull request and on
+    the issue, then the issue closed. ``swarm-land`` does the same for every cluster it
+    merges, and this is its report. ``closure_posted`` is one ``(kind, number, action)``
+    triple per comment — ``kind`` is ``pr`` or ``issue``, ``action`` is ``posted``, or
+    ``edited`` when a closure comment of this run was already there. ``closed_issues`` were
+    closed by this landing; ``already_closed`` were found closed and left alone.
+    ``warnings`` say what did not happen and why — the merge is never undone for any of it.
+
+    A dry run (``dry_run``) posts and closes nothing: the record says what the live landing
+    would close, with every list empty.
+    """
+
+    cluster_id: str
+    pull_request: int
+    issues: tuple[int, ...]
+    dry_run: bool = False
+    closure_posted: tuple[tuple[str, int, str], ...] = ()
+    closed_issues: tuple[int, ...] = ()
+    already_closed: tuple[int, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pull_request": self.pull_request,
+            "issues": list(self.issues),
+            "dry_run": self.dry_run,
+            "closure_posted": [
+                {"kind": kind, "number": number, "action": action}
+                for kind, number, action in self.closure_posted
+            ],
+            "closed_issues": list(self.closed_issues),
+            "already_closed": list(self.already_closed),
+            "warnings": list(self.warnings),
+        }
+
+
+def closure_target(kind: str, number: int) -> str:
+    return f"PR #{number}" if kind == "pr" else f"issue #{number}"
+
+
+def render_cluster_closure(closure: ClusterClosure) -> str:
+    """One line: what a landed cluster's closure did, or — in a dry run — would do."""
+    issues = ", ".join(f"#{n}" for n in closure.issues) or "none"
+    if closure.dry_run:
+        return (
+            f"{closure.cluster_id}: would post the closure comment on PR #{closure.pull_request} "
+            f"and each issue, then close {issues}"
+        )
+    posted = ", ".join(
+        f"{closure_target(kind, number)} {action}"
+        for kind, number, action in closure.closure_posted
+    )
+    parts = [f"closure {posted}" if posted else "no closure comment posted"]
+    closed = ", ".join(f"#{n}" for n in closure.closed_issues)
+    parts.append(f"closed {closed}" if closed else "closed none")
+    if closure.already_closed:
+        parts.append(f"already closed {', '.join(f'#{n}' for n in closure.already_closed)}")
+    return f"{closure.cluster_id}: {'; '.join(parts)}"
+
+
+@dataclass(frozen=True)
 class SwarmLandingResult:
     """Outcome report for landing a swarm wave.
 
@@ -642,6 +706,9 @@ class SwarmLandingResult:
     warnings: tuple[str, ...] = ()
     #: The pull request each cluster was landed through — (cluster_id, number) pairs.
     pull_requests: tuple[tuple[str, int], ...] = ()
+    #: How each landed cluster's issues were closed (#1422), in landing order. Only a
+    #: landed cluster has one: a held or failed cluster posts and closes nothing.
+    closures: tuple[ClusterClosure, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -652,6 +719,7 @@ class SwarmLandingResult:
             "failed_clusters": list(self.failed_clusters),
             "held_clusters": [list(pair) for pair in self.held_clusters],
             "pull_requests": {cluster: number for cluster, number in self.pull_requests},
+            "closures": {closure.cluster_id: closure.to_dict() for closure in self.closures},
             "status": self.status,
             "refused": self.refused,
             "warnings": list(self.warnings),
@@ -2141,6 +2209,10 @@ def render_swarm_landing_result(result: SwarmLandingResult) -> str:
         lines.append("  held    : not landed")
         for cluster_id, reason in result.held_clusters:
             lines.append(f"    {cluster_id}: {reason}")
+    if result.closures:
+        lines.append("  closure : the landed clusters' issues")
+        for closure in result.closures:
+            lines.append(f"    {render_cluster_closure(closure)}")
     if result.refused:
         lines.append(f"  refused : {result.refused}")
     for warning in result.warnings:

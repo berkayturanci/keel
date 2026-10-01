@@ -572,8 +572,25 @@ def edit_issue_comment(
     )
 
 
-def close_issue(issue: int | str, *, cwd: str | None = None, _run=None) -> CommandResult:
-    return run_argv(["gh", "issue", "close", str(issue)], cwd=cwd, **_kw(_run))
+def close_issue(
+    issue: int | str,
+    *,
+    cwd: str | None = None,
+    repo: str | None = None,
+    reason: str | None = None,
+    _run=None,
+) -> CommandResult:
+    """``gh issue close``; ``repo`` names the repository, ``reason`` the state reason.
+
+    ``swarm-land`` closes a landed cluster's issues as ``completed`` in the configured
+    ``owner/repo`` (#1422) rather than whatever repository the checkout's remote names.
+    """
+    argv = ["gh", "issue", "close", str(issue)]
+    if repo:
+        argv += ["--repo", repo]
+    if reason:
+        argv += ["--reason", reason]
+    return run_argv(argv, cwd=cwd, **_kw(_run))
 
 
 def issue_facts(

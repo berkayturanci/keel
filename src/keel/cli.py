@@ -8075,6 +8075,191 @@ def _swarm_land_merge(args: argparse.Namespace, swarm_id: str) -> Callable[[int,
     return merge
 
 
+def _swarm_post_closure(
+    owner_repo: str,
+    *,
+    kind: str,
+    number: int,
+    body: str,
+    run_id: str,
+    transport_name: str,
+    cwd: str,
+) -> tuple[str, str]:
+    """Post one closure comment the way ``keel post-comment`` does; ``(action, error)``.
+
+    ``action`` is ``posted``, or ``edited`` when this run's closure comment is already there
+    (matched by marker and run id), and ``error`` is empty; on a failure ``action`` is empty
+    and ``error`` says why.
+    """
+    try:
+        payload, error = _post_artifact_comment(
+            owner_repo,
+            target_kind=kind,
+            target_number=number,
+            artifact="closure-comment",
+            marker=closure.COMMENT_MARKER,
+            body=body,
+            run_id=run_id,
+            transport_name=transport_name,
+            dry_run=False,
+            cwd=cwd,
+        )
+    except ValueError as exc:
+        return "", str(exc)
+    if error is not None:
+        return "", error
+    return str(payload.get("action")), ""
+
+
+def _swarm_issue_closed(owner_repo: str, number: int, *, cwd: str) -> bool:
+    """Whether issue ``number`` is closed already; ``False`` when it cannot be read.
+
+    An unreadable state is tried as open: closing a closed issue changes nothing, and a
+    reader that guessed "closed" would leave an open one open.
+    """
+    try:
+        issue = _gh_json(["repos", owner_repo, "issues", str(number)], cwd=cwd)
+    except ValueError:
+        return False
+    return issue.get("state") == "closed"
+
+
+def _swarm_land_close(
+    args: argparse.Namespace, config: cfg.ProjectConfig, swarm_id: str
+) -> Callable[[swarm.SwarmCluster, int, Any], swarm.ClusterClosure]:
+    """How ``swarm-land --live`` closes a cluster it merged — ``/keel:ship``'s s11–s12 (#1422).
+
+    The same artifacts by the same code paths: the ``keel.closure-comment.v1`` comment,
+    rendered by :func:`keel.closure.render_closure_comment` from a ``ship_run`` record and
+    posted through ``keel post-comment``'s function — to the pull request, then to each of the
+    cluster's issues — and then each issue closed as completed.
+
+    The record is the one ``keel merge`` accepted the gates-pass from for the merged head,
+    re-recorded as the landing (:func:`keel.swarm_landing.landing_record`) and appended to the
+    run ledger, so ``evidence-verify`` finds the comment equal to its record's render and
+    ``close-order`` finds the close attested by a merge. Under the operator's consent for
+    :data:`keel.swarm_landing.LANDING_SIDE_EFFECTS` — what the merge needed, and ``github``.
+
+    Idempotent: a landing record already appended for the head is rendered from, not
+    appended again; a closure comment of this run already on a target is edited in place;
+    an issue already closed is left as it is. Anything that cannot be done is a warning,
+    and nothing the merge did is undone.
+    """
+    from . import swarm_landing
+
+    def close(cluster: swarm.SwarmCluster, pr: int, merged: Any) -> swarm.ClusterClosure:
+        issues = tuple(cluster.issues)
+
+        def left_open(why: str) -> swarm.ClusterClosure:
+            return swarm.ClusterClosure(
+                cluster.cluster_id,
+                pr,
+                issues,
+                warnings=(
+                    f"PR #{pr} merged, but no closure was posted and its issues are open: {why}",
+                ),
+            )
+
+        try:
+            scopes, source, operator, mode = _approved_consent(args, config, True)
+        except ValueError as exc:
+            return left_open(str(exc))
+        operator_consent = consent.build_consent_contract(
+            command="swarm-land",
+            side_effects=swarm_landing.LANDING_SIDE_EFFECTS,
+            dry_run=False,
+            approved_scopes=scopes,
+            approval_source=source,
+            mode=mode,
+            operator=operator,
+            target=f"PR #{pr}",
+        )
+        consent_ok, consent_message = consent.assert_operator_consent(operator_consent)
+        if not consent_ok:
+            return left_open(consent_message)
+        transport = github_transport.resolve(runtime.detect(args.root))
+        if not transport.supports("comments"):
+            return left_open(f"the {transport.name} transport cannot post comments")
+        try:
+            owner_repo = _owner_repo(config)
+            ledger_path = ledger.resolve_path(args.root, config)
+            records = ledger.read_records(ledger_path, warn=_ledger_warning)
+            pr_comments = _gh_json_list(
+                ["repos", owner_repo, "issues", str(pr), "comments"], cwd=args.root
+            )
+        except (OSError, ValueError) as exc:
+            return left_open(str(exc))
+        _, prior = ledger.gates_pass_for_head(records, pr, merged.head_sha, merged.covered_heads)
+        if prior is None:
+            return left_open(
+                "the run ledger has no gates-pass record for the merged head "
+                f"{merged.head_sha or '(unknown)'} to render the closure comment from"
+            )
+        record = prior
+        if not swarm_landing.is_landing_record(prior):
+            built = swarm_landing.landing_record(
+                prior,
+                head_sha=merged.head_sha,
+                reviewers=evidence.verdict_reviewers(
+                    pr_comments, head_sha=merged.head_sha, covered_heads=merged.covered_heads
+                ),
+                run_context=ledger.build_run_context(
+                    host_agent=_swarm_overrides(args).host_agent,
+                    transport=transport.name,
+                    consent_status=operator_consent["status"],
+                    consent_scopes=operator_consent["effective_approved_scope"],
+                ),
+            )
+            try:
+                record = ledger.sanitize_record(built, config)
+                ledger.append_record(ledger_path, record)
+            except (OSError, ValueError) as exc:
+                return left_open(f"the landing could not be recorded in the run ledger: {exc}")
+
+        body = closure.render_closure_comment(record)
+        run_id = review.closure_run_id(swarm_worker.provenance_run_id(swarm_id, cluster.cluster_id))
+        posted: list[tuple[str, int, str]] = []
+        warnings: list[str] = []
+        for kind, number in (("pr", pr), *(("issue", issue) for issue in issues)):
+            action, error = _swarm_post_closure(
+                owner_repo,
+                kind=kind,
+                number=number,
+                body=body,
+                run_id=run_id,
+                transport_name=transport.name,
+                cwd=args.root,
+            )
+            if error:
+                target = swarm.closure_target(kind, number)
+                warnings.append(f"the closure comment on {target} was not posted: {error}")
+            else:
+                posted.append((kind, number, action))
+        closed: list[int] = []
+        already: list[int] = []
+        for issue in issues:
+            if _swarm_issue_closed(owner_repo, issue, cwd=args.root):
+                already.append(issue)
+                continue
+            res = github.close_issue(issue, cwd=args.root, repo=owner_repo, reason="completed")
+            if res.ok:
+                closed.append(issue)
+            else:
+                why = res.output.strip()[:200] or f"exit {res.code}"
+                warnings.append(f"issue #{issue} could not be closed: {why}")
+        return swarm.ClusterClosure(
+            cluster.cluster_id,
+            pr,
+            issues,
+            closure_posted=tuple(posted),
+            closed_issues=tuple(closed),
+            already_closed=tuple(already),
+            warnings=tuple(warnings),
+        )
+
+    return close
+
+
 def _swarm_land_plan(
     args: argparse.Namespace, config: cfg.ProjectConfig, swarm_id: str | None
 ) -> tuple[swarm.SwarmPlan | None, str, tuple[str, ...]]:
@@ -8190,6 +8375,7 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
         dry_run=not args.live,
         find_pull_request=_swarm_land_find_pull_request(args, config),
         merge_pull_request=_swarm_land_merge(args, plan.swarm_id),
+        close_cluster=_swarm_land_close(args, config, plan.swarm_id),
     )
 
     if args.json:

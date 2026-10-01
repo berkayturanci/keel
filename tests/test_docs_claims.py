@@ -1316,6 +1316,10 @@ _STALE_SWARM_STATUS = tuple(
         # #1281's closing comment: a live landing has run once, on a sandbox repository.
         r"no real landing (has been|was) exercised",
         r"no (swarm|live) landing has (merged|run)",
+        # #1422: a landing closes the issues it merged, with ship's closure comment.
+        r"leaves its issues\W*open",
+        r"left the landed issues open",
+        r"stops at the merge",
     )
 )
 
