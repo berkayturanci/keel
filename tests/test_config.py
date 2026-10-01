@@ -1827,5 +1827,24 @@ class TestLoopKnob(unittest.TestCase):
                     cfg.parse_config(bad)
 
 
+class TheSwarmReviewEvidenceKnobIsDeprecated(unittest.TestCase):
+    """#1410: config.py still called the knob 'the explicit, logged opt-out' after #1287
+    made it a no-op; the source, the schema and the docs now say it is deprecated."""
+
+    def test_every_surface_says_deprecated(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "src" / "keel" / "config.py").read_text(encoding="utf-8")
+        self.assertNotIn("explicit, logged opt-out", source)
+        self.assertIn("Deprecated — no effect since #1287", source)
+        schema = json.loads(
+            (root / "src" / "keel" / "schema" / "project.schema.json").read_text(encoding="utf-8")
+        )
+        knob = schema["properties"]["knobs"]["properties"]["swarm_review_evidence"]
+        self.assertTrue(knob["description"].startswith("Deprecated: no effect since #1287."))
+        docs = (root / "docs" / "keel" / "configuration.md").read_text(encoding="utf-8")
+        self.assertIn("| `swarm_review_evidence` | boolean | | **Deprecated.**", docs)
+        self.assertIn("**Deprecated** — remove it from your config.", docs)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **`knobs.swarm_review_evidence` is marked deprecated** (#1410). Since #1287 `swarm-land` lands each cluster PR through `keel merge`, whose evidence gate has no opt-out, so the knob changes nothing; `src/keel/config.py` still called it "the explicit, logged opt-out". The source comment, the schema description (and the site's parameter page generated from it) and `docs/keel/configuration.md` now say it is deprecated and should be removed; a config that sets it still validates.
+
 ### Added
 - **The consent a live swarm run delegates is in the run ledger, and `consent-verify` reads
   it** (#1400). `swarm-run --live` recorded the operator's delegated consent only in the

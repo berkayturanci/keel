@@ -198,7 +198,7 @@ contracts, but executable project behavior remains in extension files or project
 | `optional_capabilities` | string[] | | runtime capabilities that may degrade explicitly when unavailable |
 | `evidence_gate_label` | string | | Legacy PR label that also arms the required pre-merge evidence gate (default `keel:ship`); ship provenance now arms the gate by default |
 | `evidence_require_distinct_vendors` | boolean | `false` | requires each required review verdict to carry vendor provenance, and no two to share a vendor. **Opt-in: unset is `false` on every risk tier**; set it to `true` on a project whose reviewer bench really spans vendors |
-| `swarm_review_evidence` | boolean | | Default `true`. No effect since #1287: swarm landings are `keel merge`, whose evidence gate has no opt-out; `false` is announced as ignored |
+| `swarm_review_evidence` | boolean | | **Deprecated.** Default `true`. No effect since #1287: swarm landings are `keel merge`, whose evidence gate has no opt-out; `false` is announced as ignored |
 | `implement_mode` | `default` \| `tdd` | | the s4 implement profile: one pass (default), or test-first in two phases with the blocking `tdd-order` gate at s8 |
 | `loop` | object | | the s4 iteration loop: after each implement iteration the command gates run; green ends the loop, red starts the next with the same brief plus the gate output, up to `max_iterations` (1–10, default `3`). The gate run is the judge, never the implementer's text; composes with `implement_mode: tdd` (wraps phase B) |
 | `gate_timeout_s` | integer ≥ 1 | | wall-clock seconds a command gate may run before it is killed (default `600`) |
@@ -1455,7 +1455,7 @@ change undone — not that the test is about that change. These remain reviewer 
 
 #### `swarm_review_evidence`
 
-Default `true`. It decided whether `keel swarm-land` held a cluster whose open PR did not pass
+**Deprecated** — remove it from your config. Default `true`. It decided whether `keel swarm-land` held a cluster whose open PR did not pass
 the pre-merge review-evidence verification `keel merge` enforces at s10 (#828), before a local
 merge. Since #1287 `swarm-land` lands each cluster's pull request *through* `keel merge`, whose
 evidence gate has no opt-out, so the gate always applies and the knob changes nothing:
