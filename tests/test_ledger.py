@@ -881,21 +881,9 @@ class TestFindingAConsentDelegation(unittest.TestCase):
         # The delegated event names no pull request, and a ship run is not a delegation.
         self.assertIsNone(ledger.consent_delegation_for_pr([ship, _delegated()], 7))
 
-    def test_by_cluster_names_the_run_and_the_cluster(self):
-        delegated = _delegated()
-        opened = _opened(cluster="c2", number=8)
-        other_run = _delegated(swarm_id="swarm-2")
-        ship = dict(_record(), swarm_id="swarm-1", clusters=["c1"])
-        records = [delegated, opened, other_run, ship]
-        self.assertIs(ledger.consent_delegation_for_cluster(records, "swarm-1", "c1"), delegated)
-        self.assertIs(ledger.consent_delegation_for_cluster(records, "swarm-1", "c2"), opened)
-        self.assertIs(ledger.consent_delegation_for_cluster(records, "swarm-2", "c1"), other_run)
-        self.assertIsNone(ledger.consent_delegation_for_cluster(records, "swarm-1", "c9"))
-        self.assertIsNone(ledger.consent_delegation_for_cluster([ship], "swarm-1", "c1"))
-        # Another cluster's pull_request event names that cluster's pull request, so it
-        # never answers for this one; this cluster's own does, as the latest.
-        own = _opened(cluster="c1", number=9)
-        self.assertIs(ledger.consent_delegation_for_cluster([*records, own], "swarm-1", "c1"), own)
+    def test_there_is_no_lookup_by_branch_or_cluster(self):
+        # A branch name is not a provenance: a fork can name its branch swarm/<id>/<c>.
+        self.assertFalse(hasattr(ledger, "consent_delegation_for_cluster"))
 
 
 class TestShipRunReadersIgnoreConsentDelegations(unittest.TestCase):

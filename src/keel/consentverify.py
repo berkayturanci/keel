@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from . import consent, ledger, swarm_worker
+from . import consent, ledger
 
 SCHEMA_VERSION = "keel.consent-verify.v1"
 
@@ -82,10 +82,10 @@ class ObservedEffects:
     commented: bool = False
     merged: bool = False
     labeled: bool = False
-    #: The pull request's head branch, when known. Not an effect: it is how a swarm
-    #: cluster's pull request (``swarm/<id>/<cluster>``) is matched to the consent its run
-    #: delegated when no ledger record names the pull request itself (#1400).
-    head_ref: str | None = None
+    #: The pull request's current head commit, when known. Not an effect: a swarm
+    #: cluster's delegated consent covers the commit its worker pushed and nothing else, so
+    #: it applies only while the head is still that commit (#1400).
+    head_sha: str | None = None
 
     def as_kinds(self) -> tuple[str, ...]:
         """Return the observed effect-kind names in a stable order."""
@@ -229,7 +229,7 @@ def consent_for_pr(
     records: list[dict[str, Any]],
     pr_number: int,
     *,
-    head_ref: str | None = None,
+    head_sha: str | None = None,
 ) -> dict[str, Any]:
     """The consent recorded for pull request ``pr_number``, and where it was read from.
 
@@ -237,66 +237,74 @@ def consent_for_pr(
 
     1. The latest ship run for the pull request, when it carries a consent status — the
        path every ``keel ship`` run's pull request takes, unchanged.
-    2. The ``pull_request`` delegation record naming the pull request: the consent a live
-       ``swarm-run`` handed the worker that opened it (#1400).
-    3. With ``head_ref`` a swarm cluster's branch, ``swarm/<id>/<cluster>``, the latest
-       delegation record of that run naming that cluster — for a pull request whose own
-       record did not reach the ledger.
+    2. The latest ``pull_request`` delegation record naming the pull request — the consent
+       a live ``swarm-run`` handed the worker that opened it (#1400) — **only while the
+       pull request's head is still the commit that worker pushed** (``head_sha``, the
+       pull request's current head). A head that moved, or one nobody supplied, is not
+       work the delegation covered, so it gets no delegated consent, and
+       ``delegation_refused`` says why.
 
-    Returns ``{"source", "has_record", "scopes", "delegation"}``: ``source`` is
-    :data:`CONSENT_SOURCE_SHIP_RUN`, :data:`CONSENT_SOURCE_DELEGATION` or ``None`` (no
-    consent recorded — the advisory path); ``delegation`` says who delegated what, and how
-    the pull request was matched to it, when that is the source. Pure.
+    There is no match by branch name: anyone can open a pull request from a fork whose
+    branch is called ``swarm/<id>/<cluster>``, and a name is not a provenance. A cluster
+    pull request whose own record did not reach the ledger gets no delegated consent.
+
+    Returns ``{"source", "has_record", "scopes", "delegation", "delegation_refused"}``:
+    ``source`` is :data:`CONSENT_SOURCE_SHIP_RUN`, :data:`CONSENT_SOURCE_DELEGATION` or
+    ``None`` (no consent recorded — the advisory path); ``delegation`` says who delegated
+    what when that is the source. Pure.
     """
     ship_run = ledger.latest_ship_run_for_pr(records, pr_number)
     has_record, scopes = consent_record_from_ledger(ship_run)
+    refused: str | None = None
     if not has_record:
-        delegation = _delegation_for(records, pr_number, head_ref)
-        if delegation is not None:
+        record = ledger.consent_delegation_for_pr(records, pr_number)
+        refused = None if record is None else _head_refusal(record, head_sha)
+        if record is not None and refused is None:
+            delegation = _delegation_summary(record)
             return {
                 "source": CONSENT_SOURCE_DELEGATION,
                 "has_record": True,
                 "scopes": list(delegation["scopes"]),
                 "delegation": delegation,
+                "delegation_refused": None,
             }
     return {
         "source": CONSENT_SOURCE_SHIP_RUN if has_record else None,
         "has_record": has_record,
         "scopes": list(scopes),
         "delegation": None,
+        "delegation_refused": refused,
     }
 
 
-def _delegation_for(
-    records: list[dict[str, Any]], pr_number: int, head_ref: str | None
-) -> dict[str, Any] | None:
-    """The delegation covering ``pr_number``, summarised, or ``None`` when none does."""
-    record = ledger.consent_delegation_for_pr(records, pr_number)
-    if record is not None:
-        return _delegation_summary(record, record["pull_request"]["cluster"], "pull_request")
-    ids = swarm_worker.swarm_branch_ids(head_ref) if head_ref else None
-    if ids is None:
-        return None
-    swarm_id, cluster_id = ids
-    record = ledger.consent_delegation_for_cluster(records, swarm_id, cluster_id)
-    if record is None:
-        return None
-    return _delegation_summary(record, cluster_id, "head_branch")
+def _head_refusal(record: dict[str, Any], head_sha: str | None) -> str | None:
+    """Why the delegation in ``record`` does not cover a pull request at ``head_sha``."""
+    pushed = record["pull_request"]["head_sha"]
+    current = head_sha.strip() if isinstance(head_sha, str) else ""
+    if not current:
+        return (
+            f"the pull request's current head is unknown, so it cannot be matched to the "
+            f"commit the worker pushed ({pushed}); pass --head-sha offline"
+        )
+    if current != pushed:
+        return (
+            f"the pull request's head moved since the worker pushed it: the delegation "
+            f"covers {pushed}, the head is {current}"
+        )
+    return None
 
 
-def _delegation_summary(record: dict[str, Any], cluster_id: str, matched_by: str) -> dict[str, Any]:
-    """Who delegated what to ``cluster_id``, and how the pull request was matched to it."""
-    pull_request = record.get("pull_request") or {}
+def _delegation_summary(record: dict[str, Any]) -> dict[str, Any]:
+    """Who delegated what, for the cluster pull request ``record`` names."""
+    pull_request = record["pull_request"]
     return {
         "swarm_id": record["swarm_id"],
-        "cluster": cluster_id,
+        "cluster": pull_request["cluster"],
         "operator": record["operator"],
         "scopes": list(record["scopes"]),
         "source": record["source"],
         "mode": record["mode"],
         "delegated_at": record["delegated_at"],
-        "event": record["event"],
-        "matched_by": matched_by,
-        "pull_request": pull_request.get("number"),
-        "pushed_head": pull_request.get("head_sha"),
+        "pull_request": pull_request["number"],
+        "pushed_head": pull_request["head_sha"],
     }

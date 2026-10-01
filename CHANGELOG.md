@@ -18,9 +18,11 @@ All notable changes to keel are documented here. The format follows
   opened its pull request (cluster, number, branch, pushed head, URL; a line that cannot be
   written is a warning, not a failed worker). The validator is strict about every field a
   reader uses and tolerates fields it does not name. `consent-verify` falls back from the
-  ship run to the `pull_request` record naming the PR, then to the run's delegation found by
-  the PR's `swarm/<id>/<cluster>` head branch (from the host, or `--head-ref` offline), and
-  reports `consent_source` and who delegated what. `parse_records`/`read_records` validate
+  ship run to the `pull_request` record naming the PR's number, and applies it only while the
+  PR's head is the commit the worker pushed (`head.sha` from the host, or `--head-sha`
+  offline); a moved or unknown head gets no delegated consent and `delegation_refused` says
+  why. Nothing is matched by branch name — a fork can name its branch
+  `swarm/<id>/<cluster>`. It reports `consent_source` and who delegated what. `parse_records`/`read_records` validate
   every known kind but hand a reader ship runs unless it asks for more (`kinds=`), so `status`,
   `merge`, `ship`, `evidence-verify`, `scope-verify`, `close-reconcile`, `dryrun-verify`, the
   capture commands and keel-visual answer exactly as before with delegation lines present;

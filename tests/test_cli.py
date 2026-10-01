@@ -5918,69 +5918,77 @@ class TestConsentVerify(unittest.TestCase):
         text = (
             _delegation_line() + _delegation_line(pr=301, cluster="c2") + _delegation_line(pr=300)
         )
-        rc, out, _ = self._run_offline(ledger_text=text, effects=["--pr-exists"])
+        rc, out, _ = self._run_offline(
+            ledger_text=text, effects=["--pr-exists", "--head-sha", "head-c1"]
+        )
         data = json.loads(out)
         self.assertEqual(rc, 0, out)
         self.assertEqual(data["consent_source"], "consent_delegation")
+        self.assertIsNone(data["delegation_refused"])
         self.assertEqual(data["reconcile"]["verdict"], "pass")
         self.assertEqual(data["reconcile"]["approved_scopes"], ["filesystem", "git", "github"])
         delegation = data["delegation"]
         self.assertEqual(
-            {k: delegation[k] for k in ("operator", "swarm_id", "cluster", "matched_by")},
-            {
-                "operator": "alice",
-                "swarm_id": "swarm-1",
-                "cluster": "c1",
-                "matched_by": "pull_request",
-            },
+            {k: delegation[k] for k in ("operator", "swarm_id", "cluster")},
+            {"operator": "alice", "swarm_id": "swarm-1", "cluster": "c1"},
         )
         self.assertEqual((delegation["pull_request"], delegation["pushed_head"]), (300, "head-c1"))
 
     def test_the_delegated_scopes_are_reconciled_like_a_ship_runs(self):
         rc, out, _ = self._run_offline(
-            ledger_text=_delegation_line(pr=300, scopes=["git"]), effects=["--pr-exists"]
+            ledger_text=_delegation_line(pr=300, scopes=["git"]),
+            effects=["--pr-exists", "--head-sha", "head-c1"],
         )
         data = json.loads(out)
         self.assertEqual(rc, 1)
         self.assertEqual(data["reconcile"]["verdict"], "fail")
         self.assertEqual(data["reconcile"]["uncovered"][0]["missing_scopes"], ["github"])
 
-    def test_the_head_branch_finds_the_runs_delegation(self):
-        for head_ref, source, verdict in (
-            ("swarm/swarm-1/c2", "consent_delegation", "pass"),
-            ("swarm/swarm-9/c2", None, "advisory"),
-            ("feature/x", None, "advisory"),
+    def test_a_moved_or_unknown_head_gets_no_delegated_consent(self):
+        for extra, said in (
+            (["--head-sha", "force-pushed"], "the pull request's head moved since the worker"),
+            ([], "the pull request's current head is unknown"),
         ):
-            with self.subTest(head_ref=head_ref):
+            with self.subTest(extra=extra):
                 rc, out, _ = self._run_offline(
-                    ledger_text=_delegation_line(),
-                    effects=["--pr-exists", "--head-ref", head_ref],
+                    ledger_text=_delegation_line(pr=300), effects=["--pr-exists", *extra]
                 )
                 data = json.loads(out)
                 self.assertEqual(rc, 0)
-                self.assertEqual(data["consent_source"], source)
-                self.assertEqual(data["reconcile"]["verdict"], verdict)
-                self.assertEqual(data["delegation"] is None, source is None)
+                self.assertIsNone(data["consent_source"])
+                self.assertIsNone(data["delegation"])
+                self.assertEqual(data["reconcile"]["verdict"], "advisory")
+                self.assertIn(said, str(data.get("delegation_refused")))
 
-    def test_human_output_says_who_delegated_and_how_the_pr_was_matched(self):
+    def test_human_output_says_who_delegated_and_why_it_did_not_apply(self):
         rc, out, _ = self._run_offline(
-            ledger_text=_delegation_line(),
-            effects=["--pr-exists", "--head-ref", "swarm/swarm-1/c1"],
+            ledger_text=_delegation_line(pr=300),
+            effects=["--pr-exists", "--head-sha", "head-c1"],
             json_out=False,
         )
         self.assertEqual(rc, 0)
         self.assertIn("consent record : present", out)
         self.assertIn(
-            "delegated by   : alice (flag, 2026-10-01T09:00:00Z) to swarm swarm-1 cluster c1, "
-            "matched by head_branch",
+            "delegated by   : alice (flag, 2026-10-01T09:00:00Z) to swarm swarm-1 cluster c1 "
+            "at head-c1",
             out,
         )
+        self.assertNotIn("not applied", out)
+        rc, out, _ = self._run_offline(
+            ledger_text=_delegation_line(pr=300),
+            effects=["--pr-exists", "--head-sha", "other"],
+            json_out=False,
+        )
+        self.assertIn("consent record : absent (advisory)", out)
+        self.assertIn("delegation     : not applied — the pull request's head moved", out)
+        self.assertNotIn("delegated by", out)
         rc, out, _ = self._run_offline(
             ledger_text=_consent_ledger(scopes=["git", "github"]),
             effects=["--pr-exists"],
             json_out=False,
         )
         self.assertNotIn("delegated by", out)
+        self.assertNotIn("not applied", out)
 
     def test_the_configured_ledger_is_read_for_delegations_too(self):
         config_path = str(PROJECTS / "example-android.yaml")
@@ -5998,31 +6006,41 @@ class TestConsentVerify(unittest.TestCase):
                     "300",
                     "--offline",
                     "--pr-exists",
+                    "--head-sha",
+                    "head-c1",
                     "--json",
                 ]
             )
         self.assertEqual(rc, 0, out)
         self.assertEqual(json.loads(out)["consent_source"], "consent_delegation")
 
-    def test_live_reads_the_pull_requests_head_branch(self):
-        for head, source in (
-            ({"ref": "swarm/swarm-1/c2"}, "consent_delegation"),
-            ({"ref": "  "}, None),
-            ("swarm/swarm-1/c2", None),
+    def test_live_binds_the_delegation_to_the_pull_requests_head(self):
+        fork = {"sha": "head-c1", "ref": "swarm/swarm-1/c1", "repo": {"full_name": "evil/r"}}
+        for number, head, source in (
+            # The honest pull request: the number keel recorded, at the head it pushed.
+            (300, {"sha": "head-c1", "ref": "swarm/swarm-1/c1"}, "consent_delegation"),
+            # The same pull request after a force-push.
+            (300, {"sha": "force-pushed", "ref": "swarm/swarm-1/c1"}, None),
+            # A fork's pull request with a swarm-shaped branch name, even at the same sha.
+            (301, fork, None),
+            (300, {"sha": "  "}, None),
+            (300, "head-c1", None),
         ):
             pull = {"merged": False, "labels": [], "head": head}
 
-            def fake_run(argv, pull=pull, **kwargs):
+            def fake_run(argv, pull=pull, number=number, **kwargs):
                 endpoint = argv[-1]
-                if endpoint.endswith("/pulls/300"):
+                if endpoint.endswith(f"/pulls/{number}"):
                     return _proc(json.dumps(pull))
-                if endpoint.endswith("/issues/300/comments"):
+                if endpoint.endswith(f"/issues/{number}/comments"):
                     return _proc(json.dumps([[]]))
                 return _proc("unexpected endpoint", ok=False)
 
-            with self.subTest(head=head), tempfile.TemporaryDirectory() as d:
+            with self.subTest(number=number, head=head), tempfile.TemporaryDirectory() as d:
                 ledger_jsonl = Path(d) / "ledger.jsonl"
-                ledger_jsonl.write_text(_delegation_line(), encoding="utf-8")
+                ledger_jsonl.write_text(
+                    _delegation_line() + _delegation_line(pr=300), encoding="utf-8"
+                )
                 with patch("keel.cli.run_argv", side_effect=fake_run):
                     rc, out, _ = run(
                         [
@@ -6031,7 +6049,7 @@ class TestConsentVerify(unittest.TestCase):
                             "--root",
                             d,
                             "--pr",
-                            "300",
+                            str(number),
                             "--ledger-jsonl",
                             str(ledger_jsonl),
                             "--json",

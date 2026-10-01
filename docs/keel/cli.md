@@ -1262,26 +1262,35 @@ A consent record is considered to exist only when the ledger's
 has no ship run: it was opened by a live `swarm-run` worker under the consent its run
 delegated, which the run ledger records as `consent_delegation` lines (see
 [swarm.md — Consent delegation](swarm.md#consent-delegation)). When the PR's ship run carries
-no consent status, `consent-verify` reads, in order:
+no consent status, `consent-verify` reads the latest `consent_delegation` record of event
+`pull_request` that names the PR's **number** — keel wrote that number from `gh pr create`'s
+answer, so it is the PR the worker opened — and applies it **only while the PR's current head
+is the commit that worker pushed** (the record's `head_sha`). The head is read from the host
+(`head.sha`), or given offline with `--head-sha SHA`.
 
-1. the `consent_delegation` record of event `pull_request` that names the PR's number
-   (`matched_by: pull_request`);
-2. else, when the PR's head branch is `swarm/<swarm_id>/<cluster>`, the latest delegation of
-   that run naming that cluster (`matched_by: head_branch`). The branch is read from the host
-   (`head.ref`), or given offline with `--head-ref BRANCH`.
+- **A head that moved** (a force-push, a commit added after the worker pushed) is work the
+  delegation never covered: no delegated consent, the verdict is advisory, and
+  `delegation_refused` says "the pull request's head moved since the worker pushed it".
+- **An unknown head** (offline without `--head-sha`) gets the same, with the reason.
+- **There is no match by branch name.** Anyone can open a PR from a fork whose branch is called
+  `swarm/<swarm_id>/<cluster>`, so a branch name is not a provenance — the same reason the
+  evidence gate prefers a trusted marker to a branch pattern. A cluster PR whose own
+  `pull_request` record did not reach the ledger (the run warned about it) therefore gets no
+  delegated consent. Matching by the ship-provenance comment's run id is not implemented
+  either.
 
 The delegated scopes are then reconciled exactly as a ship run's are. The JSON payload adds
-`consent_source` (`ship_run`, `consent_delegation`, or `null` on the advisory path) and
+`consent_source` (`ship_run`, `consent_delegation`, or `null` on the advisory path),
 `delegation` — `swarm_id`, `cluster`, `operator`, `scopes`, `source`, `mode`,
-`delegated_at`, `event`, `matched_by`, `pull_request` and `pushed_head` — and the text output
-adds a `delegated by` line. A ship run with a consent status still wins: it is the record of
-the run that made the PR. Matching by the ship-provenance comment's run id
-(`<swarm_id>/<cluster>`) is not implemented; the branch carries the same two ids.
+`delegated_at`, `pull_request` and `pushed_head` — and `delegation_refused` (the reason a
+delegation naming the PR did not apply, else `null`). The text output adds a `delegated by`
+line, or a `delegation : not applied — <reason>` line. A ship run with a consent status still
+wins: it is the record of the run that made the PR.
 
 ```bash
-# A swarm cluster's PR, offline: its consent is the one its run delegated.
+# A swarm cluster's PR, offline: its consent is the one its run delegated, at the head pushed.
 keel consent-verify .keel/project.yaml --root . --pr 512 --offline --pr-exists \
-  --head-ref swarm/swarm-20261001-0900/c1 --json
+  --head-sha "$(git rev-parse origin/swarm/swarm-20261001-0900/c1)" --json
 ```
 
 ```bash

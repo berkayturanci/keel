@@ -2828,7 +2828,7 @@ def _cmd_consent_verify(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    found = consentverify.consent_for_pr(records, args.pr, head_ref=observed.head_ref)
+    found = consentverify.consent_for_pr(records, args.pr, head_sha=observed.head_sha)
     has_record = found["has_record"]
     report = consentverify.reconcile(observed, found["scopes"], has_consent_record=has_record)
     payload = {
@@ -2836,6 +2836,7 @@ def _cmd_consent_verify(args: argparse.Namespace) -> int:
         "pull_request": args.pr,
         "consent_source": found["source"],
         "delegation": found["delegation"],
+        "delegation_refused": found["delegation_refused"],
         "scope_effect_table": consentverify.scope_effect_table(),
         "reconcile": report,
     }
@@ -2848,8 +2849,10 @@ def _cmd_consent_verify(args: argparse.Namespace) -> int:
             print(
                 f"  delegated by   : {delegated['operator']} ({delegated['source']}, "
                 f"{delegated['delegated_at']}) to swarm {delegated['swarm_id']} "
-                f"cluster {delegated['cluster']}, matched by {delegated['matched_by']}"
+                f"cluster {delegated['cluster']} at {delegated['pushed_head']}"
             )
+        if found["delegation_refused"] is not None:
+            print(f"  delegation     : not applied — {found['delegation_refused']}")
         print(f"  approved scopes: {', '.join(report['approved_scopes']) or 'none'}")
         print(f"  observed       : {', '.join(report['observed_effects']) or 'none'}")
         for finding in report["uncovered"]:
@@ -2898,7 +2901,7 @@ def _consent_observed_effects(
             commented=args.commented,
             merged=args.merged,
             labeled=args.labeled,
-            head_ref=args.head_ref,
+            head_sha=args.head_sha,
         )
     owner_repo = _owner_repo(config)
     pr = _gh_json(["repos", owner_repo, "pulls", str(args.pr)], cwd=args.root)
@@ -2910,14 +2913,14 @@ def _consent_observed_effects(
         commented=bool(comments),
         merged=pr.get("merged") is True,
         labeled=bool(_label_names(pr.get("labels"))),
-        head_ref=_head_ref(pr.get("head")),
+        head_sha=_head_sha(pr.get("head")),
     )
 
 
-def _head_ref(head: Any) -> str | None:
-    """The branch name of a REST pull request's ``head`` object, or ``None``."""
-    ref = head.get("ref") if isinstance(head, dict) else None
-    return ref if isinstance(ref, str) and ref.strip() else None
+def _head_sha(head: Any) -> str | None:
+    """The commit a REST pull request's ``head`` object points at, or ``None``."""
+    sha = head.get("sha") if isinstance(head, dict) else None
+    return sha if isinstance(sha, str) and sha.strip() else None
 
 
 def _cmd_close_reconcile(args: argparse.Namespace) -> int:
@@ -8776,10 +8779,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--labeled", action="store_true", help="offline: labels were written on the PR"
     )
     p_consent.add_argument(
-        "--head-ref",
+        "--head-sha",
         default=None,
-        help="offline: the PR's head branch; a swarm cluster's (swarm/<id>/<cluster>) "
-        "matches the consent its run delegated when no ledger record names the PR",
+        help="offline: the PR's current head commit; a swarm cluster's delegated consent "
+        "applies only while it is the commit the worker pushed",
     )
     p_consent.add_argument("--json", action="store_true", help="emit structured JSON")
     p_consent.set_defaults(func=_cmd_consent_verify)

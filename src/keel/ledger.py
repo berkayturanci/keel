@@ -482,33 +482,19 @@ def build_consent_delegation_record(
 def consent_delegation_for_pr(
     records: list[dict[str, Any]], pr_number: int
 ) -> dict[str, Any] | None:
-    """The latest ``pull_request`` delegation record naming ``pr_number``, or ``None``."""
-    match: dict[str, Any] | None = None
-    for record in records:
-        if record.get("record_type") != RECORD_TYPE_CONSENT_DELEGATION:
-            continue
-        if (record.get("pull_request") or {}).get("number") == pr_number:
-            match = record
-    return match
+    """The latest ``pull_request`` delegation record naming ``pr_number``, or ``None``.
 
-
-def consent_delegation_for_cluster(
-    records: list[dict[str, Any]], swarm_id: str, cluster_id: str
-) -> dict[str, Any] | None:
-    """The latest delegation record of run ``swarm_id`` that names ``cluster_id``.
-
-    The ``delegated`` event counts, and so does this cluster's own ``pull_request`` event —
-    both carry the whole delegation — but not another cluster's, which names that
-    cluster's pull request and head. This is how a cluster's pull request is matched when
-    no ``pull_request`` record names it: by its branch, ``swarm/<swarm_id>/<cluster_id>``.
+    The pull request number is the only key: keel wrote it from ``gh pr create``'s answer,
+    so it names the pull request the worker opened. A branch name is not a key — anyone can
+    open a pull request from a fork with a ``swarm/<id>/<cluster>`` branch — and a reader
+    that gates on the record must still check the pull request's head against the record's
+    ``head_sha`` (:func:`keel.consentverify.consent_for_pr` does).
     """
     match: dict[str, Any] | None = None
     for record in records:
         if record.get("record_type") != RECORD_TYPE_CONSENT_DELEGATION:
             continue
-        if record.get("swarm_id") != swarm_id or cluster_id not in (record.get("clusters") or ()):
-            continue
-        if (record.get("pull_request") or {}).get("cluster", cluster_id) == cluster_id:
+        if (record.get("pull_request") or {}).get("number") == pr_number:
             match = record
     return match
 

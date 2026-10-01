@@ -537,11 +537,12 @@ record carries the `scopes` it was handed, and each pull request body names the 
   not a failed worker — the pull request is open either way. The record's fields are in
   [command-contracts.md — Run ledger block](command-contracts.md#run-ledger-block).
 - **`keel consent-verify` reads it.** For a cluster's pull request, which has no ship run,
-  consent-verify takes the scopes from the `pull_request` event naming it, or — when none does —
-  from the run's delegation found by the pull request's branch, `swarm/<swarm_id>/<cluster>`
-  (read from the host, or `--head-ref` offline). Its output names who delegated what, and how the
-  pull request was matched. The state file and each pull request body still carry the delegation
-  as before.
+  consent-verify takes the scopes from the `pull_request` event naming its number, and only
+  while the pull request's head is still the commit the worker pushed (`head.sha` from the host,
+  or `--head-sha` offline). A head that moved gets no delegated consent, and the output says why.
+  Nothing is matched by branch name: a fork can name its branch `swarm/<swarm_id>/<cluster>`, so
+  a cluster pull request whose own record did not reach the ledger gets no delegated consent.
+  The state file and each pull request body still carry the delegation as before.
 - **keel older than 1.26.0 refuses a ledger holding these lines**: those readers refused any
   record kind but a ship run. Since 1.26.0 a reader skips a kind it does not know, so a 1.26.x
   keel on the same checkout still ships and merges; an older one has to be upgraded.

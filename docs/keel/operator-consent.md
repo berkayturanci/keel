@@ -39,7 +39,8 @@ closes this gap after the fact: it reconciles the side effects actually **observ
 `github`, all mapped through `keel.consent.side_effect_scopes`) against the **approved**
 scopes in the ledger's consent record (`run_context.consent.scopes`; for a live swarm
 cluster's pull request, which has no ship run, the scopes its run delegated — the ledger's
-`consent_delegation` records, #1400). An observed mutation
+`consent_delegation` record naming the PR's number, applied only while the PR's head is the
+commit the worker pushed and never matched by branch name, #1400). An observed mutation
 not covered by an approved scope is flagged `mutation <kind> not covered by approved consent
 scopes` and fails the check. When no consent record exists for the PR the verdict is
 **advisory** (back-compat for pre-consent PRs); when a record exists and an observed effect
