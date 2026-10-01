@@ -2684,5 +2684,48 @@ class TestMarkerInHeader(unittest.TestCase):
         )
 
 
+class TheRefusalNamesEveryCause(unittest.TestCase):
+    """#1420: `keel merge` built its refusal from the missing items alone, so a blocking
+    finding with nothing missing read `missing evidence: ` and named no cause."""
+
+    def test_missing_items_and_blocking_findings_are_both_named(self):
+        verification = {
+            "status": "fail",
+            "missing": ["review-verdict-1", "review-verdict-2"],
+            "findings": [
+                {"id": "attribution-label", "severity": "major", "message": "no agent label"},
+                {"id": "attribution-vocabulary", "severity": "major", "message": "agent:x"},
+                {"id": "advice", "severity": "minor", "message": "advisory only"},
+                "not a finding",
+            ],
+        }
+        self.assertEqual(
+            evidence.refusal_reason(verification),
+            "missing evidence: review-verdict-1, review-verdict-2; blocking finding(s): "
+            "attribution-label: no agent label; attribution-vocabulary: agent:x",
+        )
+
+    def test_missing_items_alone_read_as_they_always_did(self):
+        verification = {"status": "waiting", "missing": ["review-verdict-1"], "findings": []}
+        self.assertEqual(
+            evidence.refusal_reason(verification), "missing evidence: review-verdict-1"
+        )
+
+    def test_a_verification_naming_neither_says_its_status(self):
+        self.assertEqual(
+            evidence.refusal_reason({"status": "fail"}), "evidence verification is fail"
+        )
+
+    def test_a_real_verification_failed_on_a_finding_is_named(self):
+        result = evidence.verify(
+            {"tier": 1, "reviewers": {"count": 0}},
+            pr_labels=[],
+            enforced=True,
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+        self.assertEqual((result["status"], result["missing"]), ("fail", []))
+        self.assertIn("attribution-label: PR is missing", evidence.refusal_reason(result))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -18,7 +18,10 @@ one pull request per cluster. It needs the **operator's** consent — `--approve
 filesystem,git,github --operator <name>` — which you ask the user for and never supply on your own,
 and its pull requests carry **no review evidence**: nothing in the swarm reviews them, and
 `swarm-land` merges each one through `keel merge` (#1287), so it holds every cluster until that
-pull request's review verdicts and a gates-pass for its head are recorded.
+pull request's review verdicts are posted. The worker leaves the rest `keel merge` asks for
+itself (#1420): the seat's attribution labels on the pull request and a gates-pass for its head
+in the run ledger — when its result says `labels_applied: false` or `gates_recorded: false`, the
+run's warning names the hold and how to clear it.
 
 It is not free, though: that CLI runs `git diff` and executes the project's planned gates, and the
 gate run is **not** behind `--live`. A dry `swarm-run` over N issues runs the whole gate suite N

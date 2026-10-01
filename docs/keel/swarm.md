@@ -13,9 +13,12 @@
 > - The pull request carries **no review evidence**, and nothing in swarm reviews it.
 >   `swarm-land` merges it through `keel merge`
 >   ([#1287](https://github.com/berkayturanci/keel/issues/1287)), so it holds the cluster until
->   the pull request's review verdicts and a gates-pass for its head are recorded — today by
->   hand, as for any pull request; reviewing inside the swarm is still open
->   ([#1281](https://github.com/berkayturanci/keel/issues/1281)).
+>   the pull request's review verdicts are posted — today by hand (`keel review --live`), as for
+>   any pull request; reviewing inside the swarm is still open
+>   ([#1281](https://github.com/berkayturanci/keel/issues/1281)). The rest of what `keel merge`
+>   asks of a pull request the worker leaves itself: the seat's attribution labels on it and a
+>   gates-pass for its head in the run ledger
+>   ([#1420](https://github.com/berkayturanci/keel/issues/1420)).
 > - A **dry** run is unchanged: its worker is `keel ship` — the *CLI subcommand*, registered as
 >   `dry ship assessment (tier, window, gates, decision)` — which never commits, pushes or opens a
 >   pull request. It is not inert: it runs `git diff` and executes the project's planned gates, so
@@ -395,9 +398,10 @@ issue, so a live swarm depends on no agent host. `swarm-run --live` runs, per cl
    ran, the worker stops at `tamper` (see the trust notes). A seat that committed its own work is
    kept as it is, as long as it descends from the commit the worktree was cut at; a seat that
    changed nothing stops the worker.
-5. **Gate.** `keel run-gates <project.yaml> --root <worktree> --phases guard,test --defer-jury` —
-   the gates the s4 loop judges an implementation by, bounded by `--worker-timeout`. The jury is
-   a review and is deferred with the rest of review.
+5. **Gate.** `keel run-gates <project.yaml> --root <worktree> --phases guard,test --defer-jury
+   --json` — the gates the s4 loop judges an implementation by, bounded by `--worker-timeout`. The
+   jury is a review and is deferred with the rest of review. The JSON report is kept: it is what
+   the gates-pass record in step 10 is written from, gate by gate.
 6. **Check for tampering again, then push** the commit to
    `refs/heads/swarm/<swarm_id>/<cluster_id>` at the URL read before the seat ran — not to the
    remote's name — with no hooks (never forced).
@@ -411,12 +415,35 @@ issue, so a live swarm depends on no agent host. `swarm-run --live` runs, per cl
    branch matches no ship-branch pattern. The worker record says `provenance_posted`. A post
    that fails stops nothing: the pull request stays open and the run warns that it will be held
    as *evidence gate is not enforced* until the comment or its review verdicts are posted.
+9. **Label it** ([#1420](https://github.com/berkayturanci/keel/issues/1420)). Right after the pull
+   request opens, keel applies the seat's attribution labels — `agent_label` and, when the seat
+   names a model, `model_label`, verbatim from the attribution `keel attribution` prints for that
+   seat, never composed — creating any label the repository lacks first, with the operator's
+   credentials. `/keel:ship` labels every pull request this way, and `keel merge` holds one
+   without its `agent:<vendor>` label (`attribution-label`). The worker record says
+   `labels_applied`; a label post that fails stops nothing, and the run warns that the cluster
+   will be held on *attribution-label* until the labels are applied.
+10. **Record its gates-pass** ([#1420](https://github.com/berkayturanci/keel/issues/1420)). `keel
+    merge` lands a pull request only with a `ship_run` record in the run ledger whose gates passed
+    for its current head. The worker builds one, with the builder `keel ship --live
+    --append-ledger` uses, from the gates its own run reported: `pull_request`, `head_sha` (the
+    pushed head), the cluster's first issue, the branch, `actors.implementer` (the seat's
+    `system`, the string its labels come from), run id `<swarm_id>/<cluster_id>`,
+    `capture.not_run: true` and `assessment.merge.action: defer` — it never reached capture and
+    assessed no merge, so nothing counts it as a merged or shipped pull request. It carries no
+    consent of its own: the cluster's consent is the `consent_delegation` event, pinned to the
+    pushed head. The run appends it to the ledger `keel merge --root <root>` reads, and the worker
+    record says `gates_recorded`. A blocking gate the worker did not run — the deferred jury, a
+    `pre-merge` gate — is recorded as `not_run`, so that record is **not** a pass, and the run
+    says which gate holds it; a record that cannot be written warns, and stops nothing.
 
 **What a worker leaves behind.** On success: a committed, pushed cluster branch and one open pull
 request, reported as the cluster's `pr_url` and recorded as the worker's `pull_request` number in
-the run state, with the worker at step `s6` in `swarm-status`. The pull request does **not**
-carry review evidence yet, so `swarm-land` holds it until its review verdicts and a gates-pass for
-its head are recorded, as `keel merge` requires of any pull request. The worktree itself is
+the run state, with the worker at step `s6` in `swarm-status`. The pull request carries the
+provenance comment and the seat's attribution labels, and the run ledger carries a gates-pass for
+its head (`provenance_posted`, `labels_applied`, `gates_recorded`). It does **not** carry review
+evidence yet, so `swarm-land` holds it until its review verdicts are posted, as `keel merge`
+requires of any pull request. The worktree itself is
 removed when the worker ends; the branch stays, because it heads the pull request. What a
 failed worker leaves is in [Worktree Lifecycle & Isolation](#worktree-lifecycle--isolation).
 
@@ -496,7 +523,7 @@ Two limits remain, by design:
 command does — `--approve-scope` / `--operator`, or `KEEL_APPROVE_SCOPE` + `KEEL_OPERATOR` (or
 `automation.approved_scopes` + `automation.operator`) under `consent_mode: standing` — over the
 mutations a worker makes: `git_worktree`, `file_edit`, `git_commit`, `git_push`, `pull_request`,
-which need the scopes `filesystem`, `git` and `github`. It is checked before any issue is read:
+`labels` (the attribution pair, #1420), which need the scopes `filesystem`, `git` and `github`. It is checked before any issue is read:
 without it the run is refused with the missing scopes and nothing starts.
 
 ```bash
@@ -686,6 +713,22 @@ worker record says `provenance_posted: false`, and the run warns that the cluste
 as *evidence gate is not enforced* until the comment (`keel post-comment --artifact
 ship-provenance`) or its verdicts are posted.
 
+Measured on the second end-to-end run, with verdicts posted and CI green, each cluster was
+still held twice over: its pull request carried no `agent:<vendor>` label, and no gates-pass
+was recorded for its head
+([#1420](https://github.com/berkayturanci/keel/issues/1420)). The worker now leaves both (steps
+9 and 10 above), so the review verdicts are the one thing a cluster still needs from you. When
+either is missing anyway — the worker record says `labels_applied: false` or `gates_recorded:
+false`, and the run warns — the cluster is held as *blocking finding(s): attribution-label: …*
+or *no gates-pass recorded for the current head …* until you apply the labels `keel
+attribution` prints or record the gates (`keel ship --live --append-ledger --capture-status
+not-run --pull-request <n> --head-sha <sha>`). `keel merge` names every missing item and every
+blocking finding when it refuses; it used to name the missing items alone, which left a
+refusal on a finding reading `missing evidence: ` with nothing after it. A project whose
+gates include a blocking gate the worker defers (the jury, a `pre-merge` gate) gets a
+gates-pass record that is not a pass, by design: those gates have to run on the head before
+it lands.
+
 ### Which plan lands
 
 Before any worker starts, `swarm-run` writes the plan it executes to
@@ -748,8 +791,9 @@ warning's lines as `plan_drift`.
    post-merge drift check. `--transport`, `--approve-scope`, `--operator` and `--consent-mode` are
    passed through; the method is `keel merge`'s default, squash.
 3. **Report it.** Merged: `landed`, the worker `merged` at `s10` in the run state. Refused by any of
-   the above: `held` with `keel merge`'s reason, e.g. `PR #12: keel merge: merge window is closed`
-   or `PR #12: keel merge: missing evidence: review-verdict-1`. The merge call itself failed:
+   the above: `held` with `keel merge`'s reason, e.g. `PR #12: keel merge: merge window is closed`,
+   `PR #12: keel merge: missing evidence: review-verdict-1` or `PR #12: keel merge: blocking
+   finding(s): attribution-label: …`. The merge call itself failed:
    `failed`. Drift after a merge: `landed`, with a `warning` to run `keel verify-merge`.
 
 The next cluster is tried whatever happened to the one before, and the wave exits non-zero when

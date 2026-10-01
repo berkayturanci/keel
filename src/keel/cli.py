@@ -1263,8 +1263,10 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         if not evidence_payload["enforced"]:
             return _finish_merge(args, payload, "evidence gate is not enforced", code=1)
         if evidence_payload["verification"]["status"] != "pass":
-            missing = ", ".join(evidence_payload["verification"]["missing"])
-            return _finish_merge(args, payload, f"missing evidence: {missing}", code=1)
+            # Every missing item *and* every blocking finding: a finding alone (an
+            # attribution label) used to leave `missing evidence: ` naming nothing (#1420).
+            reason = evidence.refusal_reason(evidence_payload["verification"])
+            return _finish_merge(args, payload, reason, code=1)
 
         # A string from here on: the evidence load types its head, and the two are equal.
         head_sha: str = evidence_payload["head_sha"]
@@ -7854,6 +7856,7 @@ def _swarm_run_live(
         issue_scopes=plan.issue_scopes,
         seat_sources={c.cluster_id: c.assignment["implementer"]["source"] for c in clusters},
         ledger_path=ledger_path,
+        config=config,
     )
     return live, []
 

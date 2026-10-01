@@ -9,6 +9,7 @@ as a worker is refused with the reason. Writing: brief, commit and pull request 
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -17,7 +18,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 
-from keel import consent, delegate, swarm_worker
+from keel import agents, consent, delegate, swarm_worker
 from keel.swarm import IssueScope, SwarmCluster
 
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=UTC)
@@ -743,6 +744,241 @@ class LeftoversAreOnlyKeelsOwn(unittest.TestCase):
                 "reason": "no running swarm run owns it",
             },
         )
+
+
+def _report(*entries, schema="keel.run-gates.v1"):
+    return json.dumps({"schema_version": schema, "gate_outcomes": list(entries)}, indent=2)
+
+
+class TheAttributionLabelsAreKeels(unittest.TestCase):
+    """#1420: a cluster pull request carries the labels `keel attribution` prints for the
+    seat that ran — read off the seat's attribution record, never composed."""
+
+    def test_the_agent_and_model_labels_of_the_seats_attribution(self):
+        plan = delegate.RunPlan(
+            provider="codex", vendor="codex", role="implement", transport="cli",
+            prompt_path="/b", cwd="/w", attribution=agents.attribution("codex", "gpt-5.5"),
+        )  # fmt: skip
+        expected = agents.attribution("codex", "gpt-5.5")
+        self.assertEqual(
+            swarm_worker.attribution_labels(plan),
+            (expected["agent_label"], expected["model_label"]),
+        )
+
+    def test_a_seat_with_no_model_carries_the_agent_label_alone(self):
+        self.assertEqual(swarm_worker.attribution_labels(_plan()), ("agent:codex",))
+
+    def test_an_attribution_with_no_label_gives_none(self):
+        plan = delegate.RunPlan(
+            provider="x", vendor="x", role="implement", transport="cli",
+            prompt_path="/b", cwd="/w", attribution={"system": "x", "agent_label": " "},
+        )  # fmt: skip
+        self.assertEqual(swarm_worker.attribution_labels(plan), ())
+
+    def test_label_names_are_read_off_gh_label_list(self):
+        listing = json.dumps([{"name": "agent:codex"}, {"name": 3}, "x", {"other": 1}])
+        self.assertEqual(swarm_worker.label_names(listing), ("agent:codex",))
+        self.assertEqual(swarm_worker.label_names("not json"), ())
+        self.assertEqual(swarm_worker.label_names('{"name": "a"}'), ())
+
+    def test_the_warning_names_the_labels_and_the_hold(self):
+        warning = swarm_worker.labels_warning("PR 1", ("agent:codex",), "HTTP 403")
+        self.assertIn("(agent:codex) were not applied to PR 1 (HTTP 403)", warning)
+        self.assertIn("hold it on attribution-label", warning)
+        self.assertIn("`keel attribution`", warning)
+        self.assertIn("(agent:<vendor>) were not", swarm_worker.labels_warning("p", (), "w"))
+
+
+class TheGateReportIsReadWhole(unittest.TestCase):
+    """#1420: the gates-pass a worker records is the gates its run reported, gate by gate —
+    an unreadable report is no report, never a partial one."""
+
+    def test_each_outcome_is_restored_with_what_the_record_judges(self):
+        build = {
+            "gate": "build", "ok": False, "skipped": False, "timed_out": True,
+            "not_run": False, "on_fail": "block", "unconfigured": False, "error": "boom",
+            "findings": [
+                {"severity": "major", "message": "red", "source": "build"},
+                {"severity": "nit", "message": "n"},
+            ],
+        }  # fmt: skip
+        jury = {"gate": "jury", "ok": True, "not_run": True, "skipped": True}
+        (b, j) = swarm_worker.parse_gate_report(_report(build, jury))
+        self.assertEqual(
+            (b.gate, b.ok, b.timed_out, b.error, b.on_fail), ("build", False, True, "boom", "block")
+        )
+        self.assertEqual(
+            [(f.severity, f.message, f.source) for f in b.findings],
+            [("major", "red", "build"), ("nit", "n", "build")],
+        )
+        # A missing severity is the strict one, as `record_gates_passed` reads it.
+        self.assertEqual(
+            (j.not_run, j.skipped, j.on_fail, j.error, j.findings), (True, True, "block", None, ())
+        )
+
+    def test_the_report_is_found_after_what_the_runner_folded_in(self):
+        notice = '  ! extension not loaded: x\n{\nnot json\n{\n  "other": 1\n}\n'
+        report = _report({"gate": "build", "ok": True})
+        (outcome,) = swarm_worker.parse_gate_report(notice + report + "\ntrailing\n")
+        self.assertEqual((outcome.gate, outcome.ok), ("build", True))
+
+    def test_anything_unreadable_is_no_report(self):
+        for output in (
+            "BLOCKED - build",
+            "",
+            _report({"gate": "build"}, schema="keel.other.v1"),
+            json.dumps({"schema_version": "keel.run-gates.v1", "gate_outcomes": {}}, indent=2),
+            _report({"ok": True}),
+            _report("build"),
+            _report({"gate": "build", "findings": [{"severity": "fatal", "message": "m"}]}),
+            _report({"gate": "build", "findings": ["red"]}),
+        ):
+            with self.subTest(output=output):
+                self.assertIsNone(swarm_worker.parse_gate_report(output))
+
+    def test_a_red_run_is_summarised_as_run_gates_prints_it(self):
+        from keel.findings import Finding
+        from keel.gates import GateOutcome
+
+        summary = swarm_worker.gate_report_summary(
+            (
+                GateOutcome("build", False, (Finding("major", "tests failed", "build"),)),
+                GateOutcome("lint", False, timed_out=True),
+                GateOutcome("jury", True, not_run=True),
+                GateOutcome("docs", True, skipped=True),
+                GateOutcome("guard", True),
+            )
+        )
+        self.assertEqual(
+            summary.splitlines(),
+            [
+                "     FAIL  build",
+                "  TIMEOUT  lint",
+                "  NOT-RUN  jury",
+                "  SKIPPED  docs",
+                "       ok  guard",
+                "    [major] build: tests failed",
+            ],
+        )
+
+
+class TheGatesRecordIsAShipRunThatNeverMerged(unittest.TestCase):
+    """#1420: the record a worker appends is a real `ship_run` that `keel merge`'s
+    gates-pass lookup matches, and that no reader takes for a completed ship."""
+
+    def _record(self, *outcomes, changed=("src/a.py",)):
+        from keel.gates import GateOutcome
+
+        plan = delegate.RunPlan(
+            provider="codex", vendor="codex", role="implement", transport="cli",
+            prompt_path="/b", cwd="/w", attribution=agents.attribution("codex", "gpt-5"),
+        )  # fmt: skip
+        return swarm_worker.gates_record(
+            _cluster(41, 42),
+            swarm_id="s",
+            plan=plan,
+            branch="swarm/s/c1",
+            base_branch="main",
+            head="abc123",
+            pull_request=7,
+            outcomes=outcomes or (GateOutcome("build", True),),
+            changed_files=None if changed is None else list(changed),
+        )
+
+    def test_its_gates_pass_for_the_pull_request_and_the_pushed_head(self):
+        from keel import closeorder, ledger, status
+
+        record = self._record()
+        self.assertEqual(ledger.gates_pass_for_head([record], 7, "abc123"), (True, record))
+        self.assertEqual(ledger.gates_pass_for_head([record], 7, "other"), (False, None))
+        self.assertEqual((record["record_type"], record["command"]), ("ship_run", "swarm-run"))
+        self.assertEqual(record["run_id"], swarm_worker.provenance_run_id("s", "c1"))
+        self.assertEqual((record["issue"], record["pull_request"]), ({"number": 41}, {"number": 7}))
+        self.assertEqual(
+            record["git"], {"base_branch": "main", "branch": "swarm/s/c1", "head_sha": "abc123"}
+        )
+        self.assertEqual(record["changes"]["files"], ["src/a.py"])
+        self.assertEqual(record["actors"]["implementer"], "codex:gpt-5")
+        self.assertEqual(record["verdict"]["blocked"], False)
+        # Never reached capture, and never assessed a merge.
+        self.assertEqual((record["capture"]["not_run"], record["capture"]["marker"]), (True, None))
+        self.assertEqual(
+            record["assessment"]["merge"],
+            {"action": "defer", "reason": swarm_worker.WORKER_MERGE_REASON},
+        )
+        self.assertEqual(
+            [record["assessment"][k] for k in ("tier", "reviewers", "window_open", "ci_ok")],
+            [None] * 4,
+        )
+        # So no reader counts it as a merge or a ship...
+        self.assertFalse(ledger._is_merged_ship_run(record))
+        self.assertFalse(closeorder.record_attests_merge(record))
+        self.assertEqual(ledger.capture_health_summary([record])["record_count"], 0)
+        self.assertEqual(status._item_state(record), "deferred")
+        # ...and its consent is the run's delegation, not a status of its own.
+        self.assertIsNone(record["run_context"]["consent"]["status"])
+        self.assertEqual(ledger.parse_records(ledger.encode_record(record)), [record])
+
+    def test_its_implementer_agrees_with_the_labels_the_worker_applies(self):
+        from keel import evidence
+
+        record = self._record()
+        labels = list(swarm_worker.attribution_labels(
+            delegate.RunPlan(
+                provider="codex", vendor="codex", role="implement", transport="cli",
+                prompt_path="/b", cwd="/w", attribution=agents.attribution("codex", "gpt-5"),
+            )
+        ))  # fmt: skip
+        vendor = evidence.ledger_implementer_vendor(record)
+        self.assertTrue(evidence.attribution_check(labels, implementer_vendor=vendor)["ok"])
+        vocabulary = evidence.attribution_vocabulary_check(
+            labels, implementer=evidence.ledger_implementer(record)
+        )
+        self.assertEqual((vocabulary["ok"], vocabulary["checked"]), (True, True))
+
+    def test_a_blocking_gate_the_worker_did_not_run_is_not_recorded_as_a_pass(self):
+        from keel import ledger
+        from keel.gates import GateOutcome
+
+        record = self._record(
+            GateOutcome("build", True), GateOutcome("jury", True, not_run=True, on_fail="block")
+        )
+        self.assertEqual([g["not_run"] for g in record["gates"]], [False, True])
+        self.assertEqual(ledger.gates_pass_for_head([record], 7, "abc123"), (False, None))
+        self.assertEqual(swarm_worker.gates_not_a_pass(record), ("jury",))
+        # A soft one is not a reason to hold it.
+        soft = self._record(
+            GateOutcome("build", True), GateOutcome("docs", True, not_run=True, on_fail="warn")
+        )
+        self.assertEqual(swarm_worker.gates_not_a_pass(soft), ())
+
+    def test_a_failed_errored_or_empty_run_names_what_held_it(self):
+        from keel.gates import GateOutcome
+
+        record = self._record(
+            GateOutcome("build", True, error="crashed"),
+            GateOutcome("lint", False, on_fail="warn"),
+            GateOutcome("docs", True, skipped=True),
+        )
+        self.assertEqual(swarm_worker.gates_not_a_pass(record), ("build", "lint"))
+        empty = {**record, "gates": []}
+        self.assertEqual(swarm_worker.gates_not_a_pass(empty), ("(no gate)",))
+        self.assertEqual(swarm_worker.gates_not_a_pass({**record, "gates": None}), ("(no gate)",))
+
+    def test_an_unreadable_diff_is_recorded_as_unreadable(self):
+        record = self._record(changed=None)
+        self.assertEqual(
+            (record["changes"]["files"], record["changes"]["unreadable"]), (None, True)
+        )
+
+    def test_the_warnings_name_the_hold_and_the_way_out(self):
+        not_a_pass = swarm_worker.gates_not_a_pass_warning("PR 7", ("jury", "lint"))
+        self.assertIn("(jury, lint did not pass or did not run in the worker)", not_a_pass)
+        missing = swarm_worker.gates_record_warning("PR 7", "disk full")
+        self.assertIn("gates-pass for PR 7 is not in the run ledger (disk full)", missing)
+        for warning in (not_a_pass, missing):
+            self.assertIn("hold it on no gates-pass", warning)
+            self.assertIn("--capture-status not-run", warning)
 
 
 if __name__ == "__main__":

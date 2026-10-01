@@ -647,6 +647,31 @@ def create_label(
     return run_argv(label_create_argv(name, repo), cwd=cwd, **_kw(_run))
 
 
+def issue_labels_add_argv(owner_repo: str, number: int, labels: Sequence[str]) -> list[str]:
+    """The exact REST call that adds ``labels`` to issue or pull request ``number``.
+
+    ``-f``, never ``-F``: ``-F`` reads a value starting with ``@`` as a file path, and a
+    label is a name, not a file. Over REST, like :func:`post_issue_comment`, so a host that
+    blocks GraphQL can still label the pull request it opened.
+    """
+    argv = ["gh", "api", f"repos/{owner_repo}/issues/{number}/labels", "-X", "POST"]
+    for label in labels:
+        argv += ["-f", f"labels[]={label}"]
+    return argv
+
+
+def add_issue_labels(
+    owner_repo: str,
+    number: int,
+    labels: Sequence[str],
+    *,
+    cwd: str | None = None,
+    _run=None,
+) -> CommandResult:
+    """Add ``labels`` to issue or pull request ``number``. Mutating, and fail-soft."""
+    return run_argv(issue_labels_add_argv(owner_repo, number, labels), cwd=cwd, **_kw(_run))
+
+
 def _kw(_run):
     return {"_run": _run} if _run is not None else {}
 

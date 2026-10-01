@@ -98,6 +98,8 @@ _HTML_COMMENT_OPEN = "<!--"
 _HTML_COMMENT_CLOSE = "-->"
 
 STATUS_PASS = "pass"
+#: The finding severity that fails verification on its own, with nothing missing.
+BLOCKING_FINDING_SEVERITY = "major"
 STATUS_WAITING = "waiting"
 STATUS_FAIL = "fail"
 STATUSES = (STATUS_PASS, STATUS_WAITING, STATUS_FAIL)
@@ -497,7 +499,7 @@ def verify(
     )
     if unarmed is not None:
         findings = [*findings, unarmed]
-    blocking_findings = [finding for finding in findings if finding["severity"] == "major"]
+    blocking_findings = [f for f in findings if f["severity"] == BLOCKING_FINDING_SEVERITY]
     has_mismatch = bool(mismatch)
     if not missing and not blocking_findings:
         status = STATUS_PASS
@@ -517,6 +519,29 @@ def verify(
         "counts": counts,
         "findings": findings,
     }
+
+
+def refusal_reason(verification: dict[str, Any]) -> str:
+    """Why a verification that is not a pass refuses the merge, naming everything (#1420).
+
+    Every missing item, then every blocking finding's message. A finding can fail the
+    verification with nothing missing — ``attribution-label`` on a pull request whose
+    review verdicts are all there — and a reason built from ``missing`` alone then read
+    ``missing evidence: `` with nothing after it, which names no cause at all. Never empty:
+    a verification that names neither says its status.
+    """
+    missing = [str(item) for item in verification.get("missing") or ()]
+    blocking = [
+        f"{finding.get('id')}: {finding.get('message')}"
+        for finding in verification.get("findings") or ()
+        if isinstance(finding, dict) and finding.get("severity") == BLOCKING_FINDING_SEVERITY
+    ]
+    parts: list[str] = []
+    if missing:
+        parts.append(f"missing evidence: {', '.join(missing)}")
+    if blocking:
+        parts.append(f"blocking finding(s): {'; '.join(blocking)}")
+    return "; ".join(parts) or f"evidence verification is {verification.get('status')}"
 
 
 def _require_distinct_vendors(review_contract: dict[str, Any]) -> bool:

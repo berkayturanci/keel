@@ -6,9 +6,10 @@ handling worker state persistence, and managing fail-soft rebalancing across wav
 A dry run's worker is a ``keel ship --dry-run`` assessment per cluster. A live run's worker
 (#1400) is the cluster's implementer seat, dispatched through :mod:`keel.delegaterun` in
 the cluster's own worktree, followed by a commit, the project's gates, a push and one pull
-request, stamped with the ship-provenance comment a live ``keel ship`` run posts on its own
-— every mutation behind the consent scopes the parent delegated
-(:mod:`keel.swarm_worker`, where each of those decisions is made).
+request, stamped with the ship-provenance comment a live ``keel ship`` run posts on its own,
+labelled with the seat's attribution, and with the gates it ran recorded in the run ledger
+for the head it pushed (#1420) — every mutation behind the consent scopes the parent
+delegated (:mod:`keel.swarm_worker`, where each of those decisions is made).
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from . import delegaterun, github, ledger, runner, swarm_worker
+from . import delegaterun, doctor, github, ledger, redaction, runner, swarm_worker
 from .delegate import RunPlan
 from .runner import CommandResult
 from .swarm import (
@@ -60,6 +61,9 @@ Pusher = Callable[[list[str], Path], CommandResult]
 PullRequestOpener = Callable[[str, str, str, str, Path], CommandResult]
 #: ``(owner_repo, number, body, cwd)`` -> the result of posting ``body`` on that pull request.
 CommentPoster = Callable[[str, int, str, Path], CommandResult]
+#: ``(owner_repo, number, labels, cwd)`` -> the result of applying ``labels`` to that pull
+#: request, creating any the repository lacks first (#1420).
+PullRequestLabeler = Callable[[str, int, list[str], Path], CommandResult]
 
 #: The runner's own wall-clock limit, for the short git commands swarm and canary run
 #: through it (worktree add/remove, checkout, merge). A worker's child ``keel ship`` is
@@ -179,10 +183,30 @@ def _default_post_comment(owner_repo: str, number: int, body: str, cwd: Path) ->
     return github.post_issue_comment(owner_repo, number, body, cwd=str(cwd))
 
 
+def _default_label_pr(owner_repo: str, number: int, labels: list[str], cwd: Path) -> CommandResult:
+    """Apply ``labels`` to the pull request with the operator's environment, creating each
+    one the repository lacks first, as ``keel doctor --fix`` creates them (#1420).
+
+    The answer is the label post's: a failed listing or create is not, since a sibling
+    worker may have created the same label a moment earlier — the post then still succeeds,
+    and when the label really is missing, the post is what fails and says so.
+    """
+    listed = github.list_labels(repo=owner_repo, cwd=str(cwd))
+    existing = swarm_worker.label_names(listed.stdout or listed.output) if listed.ok else ()
+    for name in doctor.missing_labels(labels, existing):
+        github.create_label(name, repo=owner_repo, cwd=str(cwd))
+    return github.add_issue_labels(owner_repo, number, labels, cwd=str(cwd))
+
+
+#: The key a live worker hands its built ``ship_run`` record to the run under (#1420). The
+#: run appends it on the one thread that collects results, then drops the key.
+GATES_RECORD_KEY = "gates_record"
+
+
 @dataclass(frozen=True)
 class LiveRun:
     """What a live run's parent hands its workers: the operator's consent, delegated, and
-    each cluster's planned implementer seat. The four callables are the I/O seams."""
+    each cluster's planned implementer seat. The five callables are the I/O seams."""
 
     consent: swarm_worker.ConsentDelegation
     #: ``cluster_id`` -> the cluster's implementer :class:`keel.delegate.RunPlan`.
@@ -196,10 +220,14 @@ class LiveRun:
     #: its ``delegated`` event before any worker starts); each cluster pull request a
     #: worker opens is recorded there too (#1400). ``None`` records nothing.
     ledger_path: Path | None = None
+    #: The project config, for the capture redaction a ledger record passes before it is
+    #: written (:func:`keel.ledger.sanitize_record`); ``None`` applies the default policy.
+    config: Any = None
     implement: Implementer = _default_implement
     push: Pusher = _default_push
     open_pr: PullRequestOpener = _default_open_pr
     post_comment: CommentPoster = _default_post_comment
+    label_pr: PullRequestLabeler = _default_label_pr
 
 
 def create_swarm_worktree(
@@ -420,8 +448,8 @@ def execute_live_cluster_worker(
     reaches a worker as the delegation it is handed, never through inheritance. The
     implementer also runs without the forge (:func:`keel.swarm_worker.implementer_env`): no
     ``gh`` login, no git credential helper and no network transport, so only keel's own
-    push, pull request and provenance comment — made here, in keel's process, after the
-    implementer has exited — reach the remote.
+    push, pull request, provenance comment and attribution labels — made here, in keel's
+    process, after the implementer has exited — reach the remote.
 
     The worktree shares the operator's repository, so the implementer could also write its
     config and hooks, which keel's own credentialed steps would then run. The worker reads
@@ -450,6 +478,11 @@ def execute_live_cluster_worker(
         # Whether the pull request carries the ship-provenance comment that arms keel
         # merge's evidence gate; an open pull request without it is held at landing.
         "provenance_posted": False,
+        # Whether it carries the seat's attribution labels, and whether the gates this
+        # worker ran are in the run ledger as a ship run for its head: without either,
+        # keel merge holds it (#1420).
+        "labels_applied": False,
+        "gates_recorded": False,
     }
     progress = {} if progress is None else progress
 
@@ -637,20 +670,30 @@ def _commit_gate_push_open(
             "--phases",
             swarm_worker.GATE_PHASES,
             "--defer-jury",
+            # The per-gate outcome, which the gates-pass record is written from (#1420):
+            # the exit code alone cannot say that a blocking gate did not run.
+            "--json",
         ],
         worktree_dir,
     )
+    printed = gates.stdout or gates.output
+    outcomes = swarm_worker.parse_gate_report(printed)
     if not gates.ok:
+        detail = printed.strip() if outcomes is None else swarm_worker.gate_report_summary(outcomes)
         return stop(
             "gates",
-            f"the project's gates failed at {head}; the branch is not pushed:\n"
-            f"{(gates.stdout or gates.output).strip()}",
+            f"the project's gates failed at {head}; the branch is not pushed:\n{detail}",
             code=gates.code,
         )
 
     # The gates ran the implementer's code, which could have written the git setup too.
     if findings := _tampered(run, worktree_dir, before):
         return stop("tamper", swarm_worker.tamper_reason(findings, during="the gates ran"))
+    # What the pushed head changes against the commit the worktree was cut at, for the
+    # gates-pass record; `None` (unreadable), never `[]`, when git cannot say.
+    diff = run(git(["diff", "--no-ext-diff", "--name-only", start, head, "--"]), worktree_dir)
+    listed = (diff.stdout or diff.output).splitlines() if diff.ok else None
+    changed = None if listed is None else [path for path in listed if path.strip()]
 
     # To the URL read before the implementer ran, never to the remote's name.
     on_stage("push")
@@ -684,6 +727,9 @@ def _commit_gate_push_open(
             f"{branch} is pushed, but gh pr create failed: {opened.output.strip()}",
         )
     url = _last_line(opened)
+    # `/keel:ship` applies the seat's attribution labels to every pull request it opens,
+    # and keel merge holds one without its `agent:<vendor>` label (#1420).
+    unlabelled = _apply_labels(live, url, swarm_worker.attribution_labels(plan), worktree_dir)
     # A keel-made pull request arms keel merge's evidence gate at creation, as a live
     # `keel ship` run's does: its branch matches no ship-branch pattern, and without the
     # stamp `swarm-land` is held on "evidence gate is not enforced" (found on the first
@@ -695,6 +741,18 @@ def _commit_gate_push_open(
         swarm_worker.ship_provenance_body(cluster, swarm_id=swarm_id, commit=head, plan=plan),
         worktree_dir,
     )
+    gates_record, gates_note = _gates_record(
+        cluster,
+        live=live,
+        plan=plan,
+        swarm_id=swarm_id,
+        branch=branch,
+        base_branch=base_branch,
+        head=head,
+        url=url,
+        outcomes=outcomes,
+        changed=changed,
+    )
     done = {
         **record,
         "ok": True,
@@ -702,14 +760,112 @@ def _commit_gate_push_open(
         "stage": "done",
         "pr_url": url,
         "provenance_posted": not missing,
+        "labels_applied": not unlabelled,
         "output": f"pull request opened: {url}",
     }
-    if missing:
-        # Not a failed worker: the pull request is open and stays open. It is held at
-        # landing until the stamp or its review verdicts are posted, so the run says so.
-        done["output"] += f"\n{missing}"
-        done["warnings"] = [missing]
+    if gates_record is not None:
+        # Appended by the run, on the thread that collects results (`record_worker_gates`).
+        done[GATES_RECORD_KEY] = gates_record
+    # Not a failed worker: the pull request is open and stays open. It is held at landing
+    # until what is missing is posted, so the run says what and how.
+    notes = [note for note in (unlabelled, missing, gates_note) if note]
+    if notes:
+        done["output"] += "".join(f"\n{note}" for note in notes)
+        done["warnings"] = notes
     return done
+
+
+def _apply_labels(live: LiveRun, url: str, labels: tuple[str, ...], cwd: Path) -> str:
+    """Apply the seat's attribution ``labels`` to the pull request at ``url`` (#1420);
+    ``""`` once applied, else the warning."""
+    owner_repo = swarm_worker.pull_request_repo(url)
+    number = pull_request_number(url)
+    if not labels:
+        why = "keel's attribution for the implementer seat names no agent label"
+    elif owner_repo is None or number is None:
+        why = "gh pr create printed no pull request URL keel can read"
+    else:
+        applied = live.label_pr(owner_repo, number, list(labels), cwd)
+        if applied.ok:
+            return ""
+        why = f"the label post failed: {applied.output.strip() or 'no output'}"
+    return swarm_worker.labels_warning(url or "the pull request", labels, why)
+
+
+def _gates_record(
+    cluster: SwarmCluster,
+    *,
+    live: LiveRun,
+    plan: RunPlan,
+    swarm_id: str,
+    branch: str,
+    base_branch: str,
+    head: str,
+    url: str,
+    outcomes: tuple[Any, ...] | None,
+    changed: list[str] | None,
+) -> tuple[dict[str, Any] | None, str]:
+    """The worker's gates-pass record, redacted as every ledger record is, and the
+    warning the run gives about it: ``(record, "")``, ``(record, why it is no pass)`` or
+    ``(None, why there is none)`` (#1420)."""
+    number = pull_request_number(url)
+    shown = url or "the pull request"
+    if number is None:
+        why = "gh pr create printed no pull request number keel can read"
+        return None, swarm_worker.gates_record_warning(shown, why)
+    if outcomes is None:
+        why = "keel run-gates printed no report keel can read, so what each gate did is unknown"
+        return None, swarm_worker.gates_record_warning(shown, why)
+    built = swarm_worker.gates_record(
+        cluster,
+        swarm_id=swarm_id,
+        plan=plan,
+        branch=branch,
+        base_branch=base_branch,
+        head=head,
+        pull_request=number,
+        outcomes=outcomes,
+        changed_files=changed,
+        config=live.config,
+    )
+    try:
+        gates_record = ledger.sanitize_record(built, live.config)
+    except redaction.RedactionError as exc:
+        why = f"the capture redaction policy is invalid: {exc}"
+        return None, swarm_worker.gates_record_warning(shown, why)
+    failed = swarm_worker.gates_not_a_pass(gates_record)
+    return gates_record, swarm_worker.gates_not_a_pass_warning(shown, failed) if failed else ""
+
+
+def record_worker_gates(live: LiveRun, outcome: Mapping[str, Any]) -> dict[str, Any]:
+    """Append the gates-pass record a live worker built to the run ledger (#1420).
+
+    Returns the worker's result without the record, saying ``gates_recorded``, and with a
+    warning when the append failed — never a failed worker: the pull request is open either
+    way. Appended here, on the run's one collecting thread, as the consent records are, so
+    no two workers write to the ledger at once. The ledger is the one ``keel merge --root
+    <root>`` and ``swarm-land`` read, so :func:`keel.ledger.gates_pass_for_head` finds the
+    record for the pull request's head. A run that records nothing (no ledger) appends
+    nothing.
+    """
+    result = {key: value for key, value in outcome.items() if key != GATES_RECORD_KEY}
+    gates_record = outcome.get(GATES_RECORD_KEY)
+    if live.ledger_path is None or gates_record is None:
+        return result
+    why = ""
+    try:
+        ledger.append_record(live.ledger_path, gates_record)
+    except (OSError, ledger.LedgerError) as exc:
+        why = f"{type(exc).__name__}: {exc}"
+    if not why:
+        return {**result, "gates_recorded": True}
+    shown = str(outcome.get("pr_url") or "its pull request")
+    warning = swarm_worker.gates_record_warning(shown, why)
+    return {
+        **result,
+        "output": f"{result.get('output', '')}\n{warning}",
+        "warnings": [*result.get("warnings", ()), warning],
+    }
 
 
 def _post_provenance(live: LiveRun, url: str, body: str, cwd: Path) -> str:
@@ -1148,6 +1304,10 @@ def run_swarm_orchestration(
                             f"\nthe worktree is kept for inspection at {kept}; "
                             "`keel swarm-status <project.yaml> --clean` removes it"
                         )
+                # The gates-pass a live worker built goes into the run ledger here, on this
+                # one thread, before its result is kept anywhere (#1420).
+                if live is not None and worker_res.get("ok", False):
+                    worker_res = record_worker_gates(live, worker_res)
                 # Bounded once, here, where every origin of `output` — the child's
                 # stdout, a worktree failure, a raised worker — meets both places it is
                 # kept: this wave record and, on failure, the state file's `details`

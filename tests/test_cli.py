@@ -8985,6 +8985,43 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("missing evidence", json.loads(out)["reason"])
 
+    def test_merge_names_a_blocking_finding_with_nothing_missing(self):
+        """#1420: verdicts all posted, the PR unlabelled — the refusal read
+        `missing evidence: ` and named nothing. It names the finding now."""
+        message = "PR is missing a mandatory agent:<vendor> attribution label."
+        verification = {
+            "status": "fail",
+            "missing": [],
+            "findings": [
+                {"id": "attribution-label", "severity": "major", "message": message},
+                {"id": "advice", "severity": "minor", "message": "not blocking"},
+            ],
+        }
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch(
+                "keel.cli.github.pr_merge_snapshot",
+                return_value=_json_result(
+                    {
+                        "headRefOid": "abc",
+                        "mergeStateStatus": "CLEAN",
+                        "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                    }
+                ),
+            ),
+            patch(
+                "keel.cli._verify_merge_evidence",
+                return_value={"head_sha": "abc", "enforced": True, "verification": verification},
+            ),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(
+            json.loads(out)["reason"], f"blocking finding(s): attribution-label: {message}"
+        )
+
     def test_merge_allows_projects_without_configured_window(self):
         fake_report = _merge_capability_report()
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:

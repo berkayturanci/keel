@@ -309,6 +309,15 @@ class KeelMergesAnswerIsTheClustersOutcome(unittest.TestCase):
         self.assertEqual(held, ClusterMerge(HELD, "keel merge: PR merge state is DIRTY"))
         self.assertEqual(merge_outcome(1, {}).reason, "keel merge: no reason given")
 
+    def test_a_refusal_naming_a_blocking_finding_is_relayed_whole(self):
+        # #1420: keel merge names the finding now, and the hold carries it unchanged.
+        reason = (
+            "blocking finding(s): attribution-label: PR is missing a mandatory "
+            "agent:<vendor> attribution label."
+        )
+        held = merge_outcome(1, {"reason": reason})
+        self.assertEqual(held, ClusterMerge(HELD, f"keel merge: {reason}"))
+
 
 class TheWaveLandsEachPullRequestInOrder(unittest.TestCase):
     def test_each_cluster_goes_to_keel_merge_with_its_recorded_pull_request(self):
