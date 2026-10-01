@@ -35,6 +35,9 @@ All notable changes to keel are documented here. The format follows
   readers refused every kind but `ship_run`, and learned to skip an unknown kind in 1.26.0
   (#1407) — upgrade every keel that runs on a checkout before running `swarm-run --live` there.
 
+### Fixed
+- **The revert-check article says what the gate excludes** (#1408). `website/revert-check.html` now says a pytest `Failed: Timeout` reason is not counted as an assertion (`revertcheck._ASSERTION_REASON`) and that the missing-name exception also needs every failure the run counts to be explained by those names (`missing_names_only`); `tests/test_revert_check_article.py` checks both sentences against the gate.
+
 ## [1.26.0] - 2026-10-01
 
 - The experimental swarm has a live path: `swarm-run --live` has each cluster's implementer seat write the change under consent the operator delegates, and keel commits, gates, pushes and opens one pull request per cluster; `swarm-land` merges those pull requests through `keel merge` itself once each has its review verdicts.

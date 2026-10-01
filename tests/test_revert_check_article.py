@@ -170,6 +170,21 @@ class TheRevertCheckArticleClaimsOnlyWhatKeelDoes(unittest.TestCase):
         self.assertIn("Today all fourteen fail without their fix", self.text)
         self.assertIn("at the time their issues were closed, three had survived", self.text)
 
+    def test_what_counts_as_an_assertion_is_what_the_gate_counts(self):
+        """#1408: the article's assertion list and its missing-name exception, checked
+        against the gate itself."""
+        # pytest-timeout's reason is not an assertion, and the article says so.
+        self.assertIsNone(revertcheck._ASSERTION_REASON.match("Failed: Timeout >30.0s"))
+        self.assertIsNotNone(revertcheck._ASSERTION_REASON.match("Failed: DID NOT RAISE"))
+        self.assertIn("except Failed: Timeout", self.text)
+        # The exception needs every counted failure described, and the article says so.
+        name = "NameError: name 'g' is not defined"
+        one_of_two = f"FAILED tests/t.py::test_a - {name}\n2 failed in 0.10s\n"
+        both = f"FAILED tests/t.py::test_a - {name}\nFAILED tests/t.py::test_b - {name}\n"
+        self.assertFalse(revertcheck.missing_names_only(one_of_two))
+        self.assertTrue(revertcheck.missing_names_only(both + "2 failed in 0.10s\n"))
+        self.assertIn("with every failure the run counts explained by one of them", self.text)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
