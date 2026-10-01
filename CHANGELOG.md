@@ -6,6 +6,12 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-10-01
+
+- The experimental swarm's live path runs end to end for the first time: `swarm-run --live` has each cluster's implementer seat write the change under consent the operator delegates, and keel commits, gates, pushes and opens one pull request per cluster; `swarm-land` merges those pull requests through `keel merge` itself.
+- The implementer cannot reach the remote or tamper with keel's own git steps, the run persists the plan it executes, each issue's scope comes from the issue, and a dependent wave is refused rather than rebased.
+- Run-ledger readers skip a record kind they do not know instead of refusing the ledger, and keel-ship.dev explains what 100 % coverage cannot tell you.
+
 ### Added
 - **A swarm worker reports its wave, stage and elapsed time** (#1280 item 2). A worker record
   had no wave, no progress and no times, so `step` jumped `s0 → s4 → s10`, `keel swarm-status`
@@ -246,6 +252,11 @@ All notable changes to keel are documented here. The format follows
   swarm-land refuses it; land the earlier wave, then re-plan") instead of "sequential merge
   funnel". Comparing each branch against how far the base has actually moved (part 2) is still
   open.
+
+### Companion
+- **keel-visual 0.10.0**, released with this version (core floor unchanged at
+  `keel-workflow>=1.15.0`): the swarm view draws the persisted plan's real waves (#1275, #1280)
+  and a worker card shows its wave and stage (#1280). See `keel-visual/CHANGELOG.md`.
 
 ## [1.25.0] - 2026-09-30
 
