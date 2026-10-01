@@ -236,7 +236,7 @@ Keel Swarm anchors multi-agent parallelism inside deterministic engineering inva
 - **Static DAG Dependency Clustering**: Pre-analyzes issue blast radiuses to schedule orthogonal tasks in parallel waves while serializing dependent tasks.
 - **Physical Git Worktree Isolation**: Workers develop inside dedicated `.keel/worktrees/<swarm_id>/<cluster_id>/` sandboxes.
 - **Single-Writer Batch Landing**: Merges each cluster's pull request through `keel merge`, one at a time under the atomic `merge_lock` — the merge window, the review-evidence gate and the head-pinned squash apply as to any pull request; a pull request `keel merge` refuses (`DIRTY`, no evidence, outside the window) is held with the reason and the next one is tried ([#1287](https://github.com/berkayturanci/keel/issues/1287)).
-- **Commit-Bound Evidence & Multi-Vendor Jury**: Every PR carries an immutable, commit-SHA-locked evidence record — including the cross-vendor panel's verdict when the project configures the panel.
+- **Commit-Bound Evidence**: `keel merge` holds each cluster PR until review verdicts pinned to its head are posted. Those come from outside the swarm — it convenes no reviewer and no jury itself ([#1423](https://github.com/berkayturanci/keel/issues/1423)).
 - **Full-Spectrum Observability**: A terminal ASCII plan tree (`keel swarm-plan --tree`) and a status table (`keel swarm-status`), paired with `keel-visual`'s 2D / pseudo-3D swarm scenes (rendered snapshots).
 
 ---

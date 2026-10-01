@@ -1241,7 +1241,7 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         land work", "plans and dry-runs" or "has never worked end to end" — and, after one
         landing ran (#1281's closing comment), "no real landing has been exercised yet"."""
         for rel in _SWARM_STATUS_SURFACES:
-            text = re.sub(r"\s+", " ", (REPO_ROOT / rel).read_text(encoding="utf-8"))
+            text = _flat(rel)
             for stale in _STALE_SWARM_STATUS:
                 with self.subTest(surface=rel, stale=stale.pattern):
                     self.assertIsNone(stale.search(text))
@@ -1252,7 +1252,7 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         say swarm is experimental and that the review happened outside it."""
         named = 0
         for rel in _SWARM_STATUS_SURFACES:
-            text = re.sub(r"\s+", " ", (REPO_ROOT / rel).read_text(encoding="utf-8"))
+            text = _flat(rel)
             if "sandbox repository" not in text:
                 continue
             named += 1
@@ -1265,6 +1265,13 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         security = re.sub(r"\s+", " ", (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8"))
         self.assertIn("That path was built after it, in the 1.26.0 line", security)
         self.assertIn("this audit does not cover it", security)
+
+
+def _flat(rel: str) -> str:
+    """``rel``'s text on one line: a markdown blockquote's ``>`` line prefixes dropped, then
+    whitespace collapsed — so a sentence wrapped inside ``> …`` reads as it renders."""
+    text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    return re.sub(r"\s+", " ", re.sub(r"(?m)^[ \t]*>[ \t]?", "", text))
 
 
 #: Every surface that states what a live swarm run does today.
@@ -1300,6 +1307,8 @@ _STALE_SWARM_STATUS = tuple(
         r"live (run|swarm) lands nothing",
         r"lands nothing yet",
         r"does not land work",
+        r"does not land anything",
+        r"live path does not land",
         r"has never worked end to end|live path has never worked",
         r"plans and dry-runs",
         r"swarm cannot do it",
