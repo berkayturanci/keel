@@ -26,6 +26,21 @@ export function parseStatus(stdout) {
   return { snapshot, steps }
 }
 
+// `git worktree list --porcelain` → [{ path, label }]; the label is the branch, else the folder.
+export function parseWorktrees(porcelain) {
+  const out = []
+  for (const block of porcelain.split('\n\n')) {
+    let path = null
+    let branch = null
+    for (const line of block.split('\n')) {
+      if (line.startsWith('worktree ')) path = line.slice('worktree '.length)
+      else if (line.startsWith('branch ')) branch = line.slice('branch '.length).replace(/^refs\/heads\//, '')
+    }
+    if (path) out.push({ path, label: branch ?? path.split('/').pop() })
+  }
+  return out
+}
+
 export function isLive(snapshot) {
   return Boolean(snapshot && LIVE_STATES.has(snapshot.status) && snapshot.current)
 }

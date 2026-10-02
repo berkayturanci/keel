@@ -1,20 +1,29 @@
-// keel-progress: a read-only window on the keel run, inside Claude Code.
+// keel-progress: a read-only window on the keel runs of this repository, inside Claude Code.
 //
-// It shells out to `keel status --json` (the consumer-neutral keel.progress-status.v1
-// contract) on a timer and after every Bash call that mentions keel, then draws:
-//   - one line in the band above the prompt while a run is active, waiting or interrupted
-//   - a `/keel-progress` pane with every backbone step, history counts and the next issue
-// It never writes to the checkpoint or ledger and never drives a run.
+// Parallel `keel ship` runs each live in a worktree of their own and write that worktree's
+// checkpoint, so the mod scans `git worktree list` and asks `keel status --json` (the
+// consumer-neutral keel.progress-status.v1 contract) about each worktree whose checkpoint
+// changed recently. It draws:
+//   - one line per live run in the band above the prompt (at most BAND_MAX, then "+N more")
+//   - a `/keel-progress` pane with every live run's steps, history counts and next issue
+// It never writes to a checkpoint or ledger and never drives a run.
 
-import { FALLBACK_STEPS, bandParts, isLive, paneLines, parseStatus } from './view.js'
+import { FALLBACK_STEPS, bandParts, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
+const CHECKPOINT = '.keel/state/checkpoint.json'
 const PANE = 'keel-progress'
 const POLL_MS = 5_000
 // With no live run the timer still ticks every POLL_MS but polls only every IDLE_EVERY ticks (30 s).
 const IDLE_EVERY = 6
 const STATUS_TIMEOUT_MS = 10_000
+// A checkpoint untouched this long belongs to a run that is not moving; it is not scanned.
+const FRESH_MS = 6 * 60 * 60 * 1000
+// `keel merge` used to leave a merged run's checkpoint at s10 (#1448), so a run whose pull
+// request is no longer open is hidden. The open list is read at most this often.
+const PR_CACHE_MS = 60_000
+const BAND_MAX = 3
 
 const TONES = {
   title: { bold: true },
@@ -26,106 +35,173 @@ const TONES = {
 }
 
 let hasProject = false
-let status = null // { snapshot, steps } from the last good `keel status --json`
-let error = null // last line of the last failure, shown in the pane only
-let lastStdout = null
-let inFlight = null // the running refresh; callers share it instead of starting a second `keel status`
-let again = false // a fresh read was asked for while one ran: run once more after it
+let runs = [] // [{ path, label, snapshot, steps }] — live runs, the session's own first
+let failures = [] // [{ label, message }] — worktrees whose `keel status` failed
+let scanned = 0 // worktrees with a fresh checkpoint at the last scan
+let closedPr = 0 // of those, hidden because their pull request is no longer open
+let openPrs = null // Set of open PR numbers, or null when `gh` could not say
+let openPrsAt = -Infinity
+let inFlight = null // the running scan; callers share it instead of starting a second one
+let again = false // a fresh scan was asked for while one ran: run once more after it
 let idleTicks = 0
-let poller = null // the polling timer, so a second session.start replaces it
+let poller = null
 
-// The timer's tick: every time while a run is live, every IDLE_EVERY-th tick otherwise.
+// The timer's tick: every time while a run is live or a worktree is failing (so recovery shows
+// at once), every IDLE_EVERY-th tick otherwise.
 function tick($) {
-  if (!isLive(status?.snapshot)) {
+  if (runs.length === 0 && failures.length === 0) {
     idleTicks = (idleTicks + 1) % IDLE_EVERY
     if (idleTicks !== 0) return undefined
   }
   return refresh($, false)
 }
 
-// One `keel status` at a time. A caller that needs a read taken after something it just did
-// (`fresh`: a keel command, the pane, the button) gets one more run once the current one ends;
-// a timer tick just shares the running one.
+// One scan at a time. A caller that needs a read taken after something it just did
+// (`fresh`: a keel command, the pane, the button) gets one more scan once the current one
+// ends; a timer tick just shares the running one.
 function refresh($, fresh) {
   if (!hasProject) return Promise.resolve()
   if (inFlight !== null) {
     if (fresh) again = true
     return inFlight
   }
-  inFlight = runUntilSettled($)
+  inFlight = scanUntilSettled($)
   return inFlight
 }
 
 // Clears inFlight in the same step as the last `again` check, so a request that lands
-// between them starts a new run instead of joining one that has already finished.
-async function runUntilSettled($) {
+// between them starts a new scan instead of joining one that has already finished.
+async function scanUntilSettled($) {
   try {
     do {
       again = false
-      await runStatus($)
+      await scan($)
     } while (again)
   } catch (err) {
-    error = String(err?.message ?? err) // never leave a rejection for a timer callback
+    failures = [{ label: 'scan', message: String(err?.message ?? err) }]
   } finally {
     inFlight = null
+    $.ui.invalidate('ui.render')
   }
 }
 
 function lastLine(text) {
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
   return lines[lines.length - 1]
 }
 
-async function runStatus($) {
-  let failure = null
+async function loadOpenPrs($, now) {
+  if (now - openPrsAt < PR_CACHE_MS) return openPrs
+  openPrsAt = now
   try {
-    const run = await $.process.run(['keel', 'status', PROJECT, '--json'], { timeoutMs: STATUS_TIMEOUT_MS })
+    const run = await $.process.run(['gh', 'pr', 'list', '--state', 'open', '--limit', '500', '--json', 'number'], {
+      timeoutMs: STATUS_TIMEOUT_MS,
+    })
+    openPrs = run.exitCode === 0 ? new Set(JSON.parse(run.stdout).map((pr) => pr.number)) : null
+  } catch {
+    openPrs = null // no gh, no auth, no network: nothing is hidden on PR grounds
+  }
+  return openPrs
+}
+
+// One worktree's `keel status`: { run } when live, { failure } when it could not be read, {} otherwise.
+async function statusOf($, worktree, own) {
+  const project = own ? PROJECT : `${worktree.path}/${PROJECT}`
+  const argv = own ? ['keel', 'status', project, '--json'] : ['keel', 'status', project, '--root', worktree.path, '--json']
+  const init = own ? { timeoutMs: STATUS_TIMEOUT_MS } : { cwd: worktree.path, timeoutMs: STATUS_TIMEOUT_MS }
+  try {
+    const run = await $.process.run(argv, init)
     if (run.exitCode !== 0) {
       // keel prints warnings before the fatal message, so the last line is the one that matters
-      failure = lastLine(run.stderr || run.stdout || '') ?? `exit ${run.exitCode}`
-    } else if (run.isStdoutTruncated) {
-      failure = 'keel status --json output is too large to read'
-    } else if (run.stdout !== lastStdout) {
-      status = parseStatus(run.stdout)
-      lastStdout = run.stdout
-    } else if (error === null) {
-      return // nothing changed, so skip the redraw
+      return { failure: lastLine(run.stderr || run.stdout || '') ?? `exit ${run.exitCode}` }
     }
+    if (run.isStdoutTruncated) return { failure: 'keel status --json output is too large to read' }
+    const parsed = parseStatus(run.stdout)
+    return isLive(parsed.snapshot) ? { run: parsed } : {}
   } catch (err) {
-    failure = String(err?.message ?? err)
+    return { failure: String(err?.message ?? err) }
   }
-  if (failure !== null && failure === error) return // the same failure again: nothing to redraw
-  error = failure
-  $.ui.invalidate('ui.render')
+}
+
+async function scan($) {
+  const now = await $.clock.now()
+  const listed = await $.process.run(['git', 'worktree', 'list', '--porcelain'], { timeoutMs: STATUS_TIMEOUT_MS })
+  // Outside git, or with git failing, the session's own folder is the only worktree.
+  const worktrees = listed.exitCode === 0 ? parseWorktrees(listed.stdout) : []
+  const cwd = await $.session.cwd()
+  const fresh = []
+  let ownSeen = false
+  for (const w of worktrees) {
+    const own = w.path === cwd
+    ownSeen ||= own
+    try {
+      const st = await $.fs.stat(`${w.path}/${CHECKPOINT}`)
+      if (now - st.mtimeMs < FRESH_MS) fresh.push({ ...w, own })
+    } catch {
+      // no checkpoint: no run in this worktree
+    }
+  }
+  if (!ownSeen) fresh.unshift({ path: cwd, label: 'here', own: true })
+  const prs = await loadOpenPrs($, now)
+  const nextRuns = []
+  const nextFailures = []
+  let hidden = 0
+  for (const w of fresh) {
+    const result = await statusOf($, w, w.own)
+    if (result.failure !== undefined) {
+      nextFailures.push({ label: w.label, message: result.failure })
+      continue
+    }
+    if (result.run === undefined) continue
+    const pr = result.run.snapshot.current.pull_request
+    if (pr != null && prs !== null && !prs.has(pr)) {
+      hidden += 1
+      continue
+    }
+    const entry = { path: w.path, label: w.label, ...result.run }
+    if (w.own) nextRuns.unshift(entry)
+    else nextRuns.push(entry)
+  }
+  runs = nextRuns
+  failures = nextFailures
+  scanned = fresh.length
+  closedPr = hidden
 }
 
 function textProps(part) {
   return { ...TONES[part.tone], wrap: 'truncate', children: [part.text] }
 }
 
+function labelPart(run) {
+  return { text: `${run.label.padEnd(16).slice(0, 16)} `, tone: 'dim' }
+}
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     hasProject = await $.fs.exists(PROJECT)
     if (hasProject) {
-      // Off the start path: the first status lands a moment after the session opens.
+      // Off the start path: the first scan lands a moment after the session opens.
       $.clock.after(0, () => refresh($, true))
       poller?.cancel()
       poller = $.clock.every(POLL_MS, () => tick($))
     }
     await $.command.register({
       name: 'keel-progress',
-      description: 'Show the keel run: every backbone step, history counts and the next issue',
+      description: "Show this repository's live keel runs: every step, history counts and the next issue",
       immediate: true,
     })
     return next(e)
   })
 
-  // A keel command may have just moved the run, so refresh as soon as it returns. A command
-  // run in the background returns at once; the next poll catches what it writes.
+  // A keel command may have just moved a run, so scan as soon as it returns. A command run
+  // in the background returns at once; the next poll catches what it writes.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const result = await next(e)
     // A keel invocation (bare, by path, quoted), not `.keel/` or `keel-visual`. An argument
-    // that happens to be the word keel costs one extra read; a miss would leave the band stale.
+    // that happens to be the word keel costs one extra scan; a miss would leave the band stale.
     if (hasProject && /(^|[\s;&|(/`'"])keel[`'"]?(\s|$)/.test(String(e.command ?? ''))) {
       $.clock.after(0, () => refresh($, true))
     }
@@ -133,33 +209,51 @@ export function register(on) {
   })
 
   on('command.run', { command: 'keel-progress' }, async ($) => {
-    // Open first: a slow `keel status` must not delay the pane; the refresh redraws it.
+    // Open first: a slow scan must not delay the pane; the scan redraws it.
     await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true })
     $.clock.after(0, () => refresh($, true))
     return {}
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    // A failing `keel status` leaves the last good snapshot stale, so the band goes quiet.
-    if (error !== null || !isLive(status?.snapshot)) return next(e)
+    if (runs.length === 0) return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const line = Box({
-      key: 'keel-progress-band',
-      flexDirection: 'row',
-      children: bandParts(status.snapshot, status.steps).map((part) => Text(textProps(part))),
-    })
+    const labelled = runs.length > 1
+    const lines = runs.slice(0, BAND_MAX).map((run) =>
+      Box({
+        key: `keel-progress-${run.path}`,
+        flexDirection: 'row',
+        children: [...(labelled ? [labelPart(run)] : []), ...bandParts(run.snapshot, run.steps)].map((part) =>
+          Text(textProps(part)),
+        ),
+      }),
+    )
+    if (runs.length > BAND_MAX) {
+      lines.push(Text(textProps({ text: `+${runs.length - BAND_MAX} more keel runs · /keel-progress`, tone: 'dim' })))
+    }
     // Keep what the mods after this one draw in the band.
     const theirs = await next(e)
-    return Box({ flexDirection: 'column', children: theirs ? [line, theirs] : [line] })
+    return Box({ flexDirection: 'column', children: theirs ? [...lines, theirs] : lines })
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
-    const lines = hasProject
-      ? paneLines(status?.snapshot, status?.steps ?? FALLBACK_STEPS)
-      : [{ text: `No ${PROJECT} in this directory, so there is no keel run to show.`, tone: 'dim' }]
-    if (error !== null) lines.push({ text: `keel status failed: ${error}`, tone: 'bad' })
+    const lines = []
+    if (!hasProject) {
+      lines.push({ text: `No ${PROJECT} in this directory, so there is no keel run to show.`, tone: 'dim' })
+    } else {
+      const hiddenNote = closedPr > 0 ? ` · ${closedPr} hidden (PR closed)` : ''
+      lines.push({ text: `${runs.length} live keel run(s) · ${scanned} recent checkpoint(s)${hiddenNote}`, tone: 'title' })
+      for (const run of runs) {
+        lines.push({ text: ' ', tone: 'plain' })
+        lines.push({ text: `${run.label}  ${run.path}`, tone: 'dim' })
+        lines.push(...paneLines(run.snapshot, run.steps ?? FALLBACK_STEPS))
+      }
+      for (const failure of failures) {
+        lines.push({ text: `keel status failed (${failure.label}): ${failure.message}`, tone: 'bad' })
+      }
+    }
     return Box({
       flexDirection: 'column',
       children: [
