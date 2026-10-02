@@ -8,6 +8,11 @@
       "name": "keel",
       "source": "./",
       "description": "Turn coding agents into work owners. A vendor-neutral backbone that takes a GitHub issue to a merged PR: readiness check, isolated worktree, multi-agent review, CI and evidence gates, merge window. Claude Code, Codex, Cursor (partial), Antigravity."
+    },
+    {
+      "name": "keel-progress",
+      "source": "./mods/keel-progress",
+      "description": "Optional Claude Code mod: shows the live keel run above the prompt and in a /keel-progress pane, read from `keel status --json`. Read-only; needs Claude Code 2.1.287+ with mods enabled."
     }
   ]
 }

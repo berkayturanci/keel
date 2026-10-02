@@ -22,7 +22,9 @@ from keel import (
     capture,
     cli,
     evidence,
+    gates,
     git,
+    github_transport,
     install,
     juryavail,
     ledger,
@@ -32,6 +34,7 @@ from keel import (
     ship,
     stepverifier,
 )
+from keel import findings as fnd
 from keel.runner import CommandResult
 
 # Module-level scratch directory backing the path-returning helpers below.
@@ -11419,6 +11422,86 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertTrue(data["checkpoint_gate"]["enforced"])
         self.assertEqual(data["checkpoint_gate"]["status"], "covered")
 
+    def _read_checkpoint(self, root, config_path):
+        config = cli.cfg.load_config(config_path)
+        return cli.checkpoint.read_checkpoint(cli.checkpoint.resolve_path(root, config))
+
+    def test_a_landed_merge_is_written_into_the_runs_checkpoint(self):
+        # #1448: the checkpoint the gate required at s10 used to stay at s10 "not-started".
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d)
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            data["checkpoint_update"], {"updated": True, "run_id": "RUN-1", "current_step": "s11"}
+        )
+        self.assertEqual(record["state"]["merge"], "merged")
+        self.assertEqual(record["position"]["current_step"], "s11")
+        self.assertIn("s10", record["position"]["completed_steps"])
+
+    def test_a_dry_run_or_a_refused_merge_leaves_the_checkpoint_alone(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d, extra=["--dry-run"])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("checkpoint_update", json.loads(out))
+            self.assertEqual(self._read_checkpoint(d, config)["state"]["merge"], "not-started")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s6")
+            rc, _, _ = self._run_merge(config=config, root=d)
+            self.assertEqual(rc, 1)
+            self.assertEqual(self._read_checkpoint(d, config)["position"]["current_step"], "s6")
+
+    def test_another_runs_checkpoint_is_not_rewritten(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-OTHER", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d, extra=["--no-checkpoint-gate"])
+            record = self._read_checkpoint(d, config)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(out)["checkpoint_update"],
+            {"updated": False, "reason": "no checkpoint for run RUN-1"},
+        )
+        self.assertEqual(record["state"]["merge"], "not-started")
+
+    def test_a_merge_with_no_run_id_has_no_checkpoint_to_update(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run_merge(config=str(PROJECTS / "keel.yaml"), root=d, run_id=None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(out)["checkpoint_update"], {"updated": False, "reason": "no run-id"}
+        )
+
+    def test_a_checkpoint_that_is_not_utf8_does_not_fail_a_landed_merge(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            path = cli.checkpoint.resolve_path(d, cli.cfg.load_config(config))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\xff\xfe not utf-8")
+            rc, out, _ = self._run_merge(config=config, root=d, extra=["--no-checkpoint-gate"])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertFalse(data["checkpoint_update"]["updated"])
+        self.assertIn("checkpoint not updated", data["checkpoint_update"]["reason"])
+
+    def test_a_checkpoint_that_cannot_be_written_does_not_fail_a_landed_merge(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s10")
+            with patch("keel.cli.checkpoint.write_checkpoint", side_effect=OSError("disk full")):
+                rc, out, _ = self._run_merge(config=config, root=d)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertFalse(data["checkpoint_update"]["updated"])
+        self.assertIn("disk full", data["checkpoint_update"]["reason"])
+
     def test_merge_refused_when_checkpoint_missing(self):
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:
@@ -18712,6 +18795,176 @@ class TestLedgerReadersIgnoreConsentDelegations(TestLedgerReadersSkipUnknownKind
         self.assertEqual(plain["record_types"], {"ship_run": 2, "consent_delegation": 0})
         self.assertEqual(mixed["capture_health"], plain["capture_health"])
         self.assertIn("by type       : ship_run 2, consent_delegation 1", text)
+
+
+class ShipReusesTheHeadsPostedPanel(unittest.TestCase):
+    """#1437: `keel ship`'s jury gate reuses the panel already posted for the head.
+
+    On a jury-panel tier s7 runs the panel once and `keel review --from-jury` posts it; the
+    jury gate used to convene a second paid panel at `ship --append-ledger`, whose result
+    nothing tied to the posted one.
+    """
+
+    HEAD = "abc123"
+
+    def _config(self, root: str) -> str:
+        path = Path(root) / "project.yaml"
+        path.write_text(
+            "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nowner: acme\n"
+            "repo: widget\ngates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n"
+            "policy_pack:\n  name: tmp\n  reports:\n    run_ledger: 'state/runs.jsonl'\n",
+            encoding="utf-8",
+        )
+        return str(path)
+
+    @staticmethod
+    def _jury_comment(verdict, *, head="abc123", findings=(), association="OWNER", **extra):
+        return {
+            "id": 4242,
+            "html_url": "https://github.com/acme/widget/pull/7#issuecomment-4242",
+            "body": artifacts.render_jury_verdict(
+                head_sha=head,
+                participants=("alpha (anthropic)", "beta (google)"),
+                verdict=verdict,
+                findings_summary=list(findings),
+            ),
+            "author_association": association,
+            **extra,
+        }
+
+    def _ship(self, comments, *, pr="7", head="abc123", comments_error=None, panel=None):
+        """Run `keel ship --live --append-ledger`; return (rc, jury gate entry, run_gate spy)."""
+
+        def gh_list(args, *, cwd):
+            if comments_error is not None:
+                raise comments_error
+            return comments
+
+        convened = panel or (True, [], False)
+        with (
+            tempfile.TemporaryDirectory() as root,
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.github.ci_conclusion", return_value=None),
+            patch("keel.cli.github.ci_check_names", return_value=None),
+            patch("keel.cli.github.ci_workflow_names", return_value=None),
+            patch("keel.cli._gh_json_list", side_effect=gh_list),
+            patch(
+                "keel.cli._gh_json",
+                return_value={"head": {"sha": head, "repo": {"full_name": "acme/widget"}}},
+            ),
+            patch("keel.cli._covered_heads", return_value=()),
+            patch("keel.cli.git.diff", return_value="diff --git a/src/x.py b/src/x.py\n"),
+            patch("keel.jury.run_gate", return_value=convened) as run_gate,
+        ):
+            argv = [
+                "ship",
+                self._config(root),
+                "--root",
+                root,
+                "--live",
+                "--json",
+                "--append-ledger",
+                "--run-id",
+                "RUN-1437",
+                "--issue",
+                "1437",
+                "--capture-status",
+                "deferred",
+                "--approve-scope",
+                "filesystem,git,github",
+                "--operator",
+                "tester",
+            ]
+            if pr is not None:
+                argv += ["--pr", pr]
+            if head is not None:
+                argv += ["--head-sha", head]
+            rc, out, err = run(argv)
+        data = json.loads(out)
+        record = data["result"]["run_ledger"]["record"]
+        entry = next(gate for gate in record["gates"] if gate["gate"] == "jury")
+        return rc, entry, run_gate, data
+
+    def test_an_approving_posted_panel_is_reused_and_no_panel_is_convened(self):
+        rc, entry, run_gate, data = self._ship([self._jury_comment("LGTM")])
+
+        run_gate.assert_not_called()
+        self.assertTrue(entry["ok"])
+        self.assertEqual(entry["source"], "reused")
+        self.assertEqual(
+            entry["reused_from"],
+            {
+                "head_sha": "abc123",
+                "comment_id": 4242,
+                "url": "https://github.com/acme/widget/pull/7#issuecomment-4242",
+            },
+        )
+        self.assertTrue(ledger.record_gates_passed(data["result"]["run_ledger"]["record"]))
+
+    def test_a_rejecting_or_abstaining_posted_panel_fails_the_reused_gate(self):
+        for verdict in ("REQUEST_CHANGES", "ABSTAIN"):
+            with self.subTest(verdict=verdict):
+                _rc, entry, run_gate, data = self._ship([self._jury_comment(verdict)])
+                run_gate.assert_not_called()
+                self.assertEqual((entry["ok"], entry["source"]), (False, "reused"))
+                self.assertFalse(ledger.record_gates_passed(data["result"]["run_ledger"]["record"]))
+
+    def test_a_posted_major_finding_fails_an_approving_reused_panel(self):
+        _rc, entry, run_gate, data = self._ship(
+            [self._jury_comment("LGTM", findings=["major: drops the error"])]
+        )
+
+        run_gate.assert_not_called()
+        self.assertEqual((entry["ok"], entry["source"]), (False, "reused"))
+        self.assertFalse(ledger.record_gates_passed(data["result"]["run_ledger"]["record"]))
+
+    def test_a_panel_posted_for_another_head_is_not_reused(self):
+        _rc, entry, run_gate, _data = self._ship([self._jury_comment("LGTM", head="old999")])
+
+        run_gate.assert_called_once()
+        self.assertEqual(entry["source"], "ran")
+        self.assertNotIn("reused_from", entry)
+
+    def test_an_untrusted_posted_panel_is_not_reused(self):
+        _rc, entry, run_gate, _data = self._ship([self._jury_comment("LGTM", association="NONE")])
+
+        run_gate.assert_called_once()
+        self.assertEqual(entry["source"], "ran")
+
+    def test_without_a_pull_request_head_or_readable_comments_the_panel_runs(self):
+        cases = {
+            "no pull request": {"pr": None},
+            "no head": {"head": None},
+            "comments unreadable": {"comments_error": ValueError("gh api failed")},
+        }
+        for name, kwargs in cases.items():
+            with self.subTest(name):
+                # The convened panel rejects: a read failure must never become a pass.
+                _rc, entry, run_gate, _data = self._ship(
+                    [self._jury_comment("LGTM")],
+                    panel=(False, [fnd.Finding("major", "convened", "jury")], False),
+                    **kwargs,
+                )
+                run_gate.assert_called_once()
+                self.assertEqual((entry["ok"], entry["source"]), (False, "ran"))
+
+    def test_a_posted_comment_keel_did_not_render_is_not_reused(self):
+        bare = {
+            "body": "keel.jury-verdict.v1\nhead: abc123\n\nAI Jury verdict: LGTM.\n",
+            "author_association": "OWNER",
+        }
+        _rc, entry, run_gate, _data = self._ship([bare])
+
+        run_gate.assert_called_once()
+        self.assertEqual(entry["source"], "ran")
+
+    def test_a_plan_without_the_jury_gate_reads_no_comments(self):
+        args = Namespace(pr=7, ledger_pr=None, head_sha="abc123", root=".")
+        spec = gates.GateSpec("build", "command", "test", "block")
+        transport = github_transport.resolve(_merge_capability_report())
+        with patch("keel.cli._gh_json_list") as fetch:
+            self.assertIsNone(cli._posted_panel(args, None, [spec], transport, gating=True))
+        fetch.assert_not_called()
 
 
 if __name__ == "__main__":

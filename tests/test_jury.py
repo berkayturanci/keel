@@ -1165,5 +1165,69 @@ class TheJuryGateReadsTheConsensus(unittest.TestCase):
         self.assertTrue(gates_pass(_ballot_report("APPROVE", findings=[_MINOR])))
 
 
+def _posted(verdict, findings=()):
+    from keel import artifacts
+
+    return artifacts.render_jury_verdict(
+        head_sha="abc123", verdict=verdict, findings_summary=list(findings)
+    )
+
+
+class ReusePostedVerdict(unittest.TestCase):
+    """#1437: a reused panel is judged by the rules a panel keel ran is judged by."""
+
+    def test_an_approving_panel_with_no_findings_passes(self):
+        self.assertEqual(jury.reuse_posted_verdict(_posted("LGTM"), gating=True), (True, []))
+
+    def test_the_severity_rule_reads_the_posted_summary(self):
+        ok, found = jury.reuse_posted_verdict(_posted("LGTM", ["minor: naming"]), gating=True)
+        self.assertTrue(ok)
+        self.assertEqual([(f.severity, f.source) for f in found], [("minor", jury.REUSED_SOURCE)])
+        for label in ("major", "critical", "blocker"):
+            with self.subTest(label=label):
+                ok, found = jury.reuse_posted_verdict(
+                    _posted("LGTM", [f"{label}: drops it"]), gating=True
+                )
+                self.assertFalse(ok)
+                self.assertIn("drops it", found[0].message)
+
+    def test_an_unlabelled_item_reads_as_minor(self):
+        ok, found = jury.reuse_posted_verdict(_posted("LGTM", ["no label here"]), gating=True)
+        self.assertTrue(ok)
+        self.assertEqual(found[0].severity, "minor")
+
+    def test_the_consensus_rule_holds_a_rejecting_or_abstaining_panel(self):
+        for verdict in ("REQUEST_CHANGES", "ABSTAIN", "COMMENT"):
+            with self.subTest(verdict=verdict):
+                ok, found = jury.reuse_posted_verdict(_posted(verdict), gating=True)
+                self.assertFalse(ok)
+                self.assertEqual(
+                    [(f.severity, f.source, f.message) for f in found],
+                    [
+                        (
+                            "major",
+                            jury.CONSENSUS_SOURCE,
+                            f"posted jury consensus is {verdict}, not an approval.",
+                        )
+                    ],
+                )
+
+    def test_an_unreadable_consensus_line_is_not_an_approval(self):
+        body = _posted("LGTM").replace("AI Jury verdict: LGTM.\n", "")
+        ok, found = jury.reuse_posted_verdict(body, gating=True)
+        self.assertFalse(ok)
+        self.assertIn("no readable AI Jury verdict line", found[0].message)
+
+    def test_advisory_mode_reports_a_rejection_without_failing(self):
+        ok, found = jury.reuse_posted_verdict(_posted("REQUEST_CHANGES"), gating=False)
+        self.assertTrue(ok)
+        self.assertEqual([f.severity for f in found], ["minor"])
+
+    def test_a_comment_keel_did_not_render_is_not_reused(self):
+        self.assertIsNone(
+            jury.reuse_posted_verdict("keel.jury-verdict.v1\nAI Jury verdict: LGTM.\n", gating=True)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

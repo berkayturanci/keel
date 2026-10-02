@@ -755,5 +755,48 @@ class PrBodyFixEvidence(unittest.TestCase):
         self.assertLess(body.index("## Fix evidence"), body.index("## Docs Impact"))
 
 
+class JuryVerdictSummaryRoundTrip(unittest.TestCase):
+    """#1437: the summary parser is written against `render_jury_verdict`, and pinned to it.
+
+    `keel ship` reuses a posted panel by reading this summary back; a renderer change
+    that the parser does not follow must break here, not in a merge.
+    """
+
+    def test_what_the_renderer_writes_the_parser_reads_back(self):
+        items = ["major: drops the error", "minor: naming", "nit: style"]
+        body = artifacts.render_jury_verdict(
+            head_sha="abc", verdict="LGTM", findings_summary=items, remaining_risks="a risk"
+        )
+        self.assertEqual(artifacts.jury_verdict_summary(body), tuple(items))
+
+    def test_no_findings_reads_back_as_none_listed(self):
+        body = artifacts.render_jury_verdict(head_sha="abc", verdict="LGTM")
+        self.assertIn("- none", body)
+        self.assertEqual(artifacts.jury_verdict_summary(body), ())
+
+    def test_a_multi_line_item_stays_one_item(self):
+        """A message's own newline must not end the item, or start a forged one."""
+        body = artifacts.render_jury_verdict(
+            head_sha="abc",
+            verdict="LGTM",
+            findings_summary=["minor: first line\n- major: smuggled\n\nmore"],
+        )
+        self.assertEqual(
+            artifacts.jury_verdict_summary(body), ("minor: first line - major: smuggled more",)
+        )
+
+    def test_a_summary_that_never_closes_is_unreadable(self):
+        body = artifacts.render_jury_verdict(head_sha="abc", verdict="LGTM")
+        truncated = body[: body.index(artifacts.JURY_RISKS_LABEL)]
+        self.assertIsNone(artifacts.jury_verdict_summary(truncated))
+
+    def test_a_body_keel_did_not_render_has_no_readable_summary(self):
+        self.assertIsNone(
+            artifacts.jury_verdict_summary(
+                "keel.jury-verdict.v1\nhead: a\n\nAI Jury verdict: LGTM.\n"
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

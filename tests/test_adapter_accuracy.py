@@ -437,5 +437,23 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
         self.assertNotIn("would still count as a verdict", prose)
 
 
+class TheShipAdapterRunsOnePanelPerHead(unittest.TestCase):
+    """#1437: the s8 command convened a second panel its own prose said not to run."""
+
+    def setUp(self):
+        self.text = (ADAPTERS / "ship.md").read_text(encoding="utf-8")
+        start = self.text.index("### s8 test (gates + jury)")
+        self.s8 = self.text[start : self.text.index("### s9", start)]
+
+    def test_s8_defers_the_jury_on_a_panel_tier(self):
+        command = self.s8.index("keel run-gates .keel/project.yaml")
+        self.assertIn("--defer-jury", self.s8[command : command + 400])
+        self.assertIn("reviewers.panel` is `jury`", self.s8[command : command + 400])
+
+    def test_s8_says_ship_reuses_the_posted_panel(self):
+        self.assertIn("source: reused", self.s8)
+        self.assertIn("`--pr <PR>` and `--head-sha <head>`", self.s8)
+
+
 if __name__ == "__main__":
     unittest.main()

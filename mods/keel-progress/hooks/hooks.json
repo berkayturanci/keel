@@ -1,0 +1,4 @@
+{
+  "description": "keel-progress: draws the keel run's progress from `keel status --json`",
+  "modules": ["./register.js"]
+}
