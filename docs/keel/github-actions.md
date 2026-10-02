@@ -142,12 +142,12 @@ jobs:
         with:
           # keel diffs against the base branch; a shallow checkout has no such ref.
           fetch-depth: 0
-      - uses: berkayturanci/keel@v1.26.0
+      - uses: berkayturanci/keel@v1.27.0
         with:
           command: ship
           config: .keel/project.yaml
           pr: ${{ github.event.pull_request.number }}
-          keel-version: "1.26.0"
+          keel-version: "1.27.0"
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -190,7 +190,7 @@ composite steps inherit:
 ### Swarm planning
 
 ```yaml
-      - uses: berkayturanci/keel@v1.26.0
+      - uses: berkayturanci/keel@v1.27.0
         with:
           command: swarm-plan
           args: --issues 101,102,103 --json
@@ -205,7 +205,7 @@ merge rights, the operator's consent, and the review evidence on each pull reque
 
 ## Adopting it in a consumer repo
 
-Add `.github/workflows/keel-ship.yml` with `uses: berkayturanci/keel@v1.26.0`, pin
+Add `.github/workflows/keel-ship.yml` with `uses: berkayturanci/keel@v1.27.0`, pin
 `keel-version` to the same release, and set whichever delegate API keys your project
 uses as `env`. Everything else (the runner, git, gh, quality gates, and reviewer panel)
 is handled by keel itself.

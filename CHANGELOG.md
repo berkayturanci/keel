@@ -6,28 +6,6 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
-### Security
-- **A review verdict that requests changes no longer counts toward landing** (#1426). The evidence gate counted a `keel.review-verdict.v1` comment by its marker, trusted author, head and substance, and never read its `Verdict:` line — while `keel review --live` posts whatever verdict a bundle carries. Two `REQUEST_CHANGES` verdicts satisfied a tier of two, and `keel merge` landed a pull request its own reviewers rejected. Only trusted authors could reach it, so it was a fail-open in the gate rather than a hole an outside contributor could use. `evidence.review_verdict_token` now reads the first word of a verdict's `Verdict:` line, and a verdict counts only when that word is in `APPROVING_VERDICTS` — `APPROVE`, `LGTM`, `PASS`, any case: `LGTM` is what `render_review_verdict` and the `--from-jury` mapping write, and `APPROVE` and `pass` are what hosts posted on 799 of keel's own 1,355 verdict comments. A reviewer whose **latest** verdict at the head (or a head a capture landing covers) does not approve — `REQUEST_CHANGES`, `COMMENT`, an unknown word, no `Verdict:` line — is a blocking `review-verdict-not-approved` finding that `keel merge` names (`alice requests changes at <head>`), so a rejection holds rather than being outvoted by another reviewer's approval; requesting changes and then approving counts, approving and then requesting changes holds. `count_review_verdicts` (capture reconcile's reviewer cross-check), `verdict_reviewers` (the swarm landing's closure record) and the vendor-distinctness provenance count the same reviewers. `keel review` keeps posting `REQUEST_CHANGES` verdicts as written, and a `keel.jury-verdict.v1` consensus comment is unchanged. Test fixtures that wrote a bare `LGTM` line instead of a `Verdict:` line were corrected, and a jury-panel test that passed a panel whose ballots requested changes now expects the hold.
-
-### Changed
-- **`knobs.swarm_review_evidence` is marked deprecated** (#1410). Since #1287 `swarm-land` lands each cluster PR through `keel merge`, whose evidence gate has no opt-out, so the knob changes nothing; `src/keel/config.py` still called it "the explicit, logged opt-out". The source comment, the schema description (and the site's parameter page generated from it) and `docs/keel/configuration.md` now say it is deprecated and should be removed; a config that sets it still validates.
-- **The swarm surfaces stop saying no live landing has run** (#1281, #1423, #1422). On
-  2026-10-01 a live swarm landed end to end once, on a throwaway sandbox repository:
-  `swarm-run --live` implemented two issues and opened their pull requests, each pull request's
-  review verdicts were posted from outside the swarm, and `swarm-land --live` merged both
-  through `keel merge` (#1281's closing comment). The README, the `/keel:swarm` adapter (and
-  its generated copies), `docs/keel/` (swarm, overview, badges, cli, parameter-reference,
-  comparison, editors), the VS Code extension README and the website still said no real
-  landing had been exercised. They now say that one landing ran, on a sandbox, reviewed outside
-  the swarm. Swarm stays **experimental** everywhere, and "nothing in the swarm reviews the pull
-  requests it opens" stays: where a surface cited the closed epic #1281 as the reason, it now
-  cites #1423 (whether swarm should dispatch its own reviewers), and the swarm guide adds #1422
-  (a landed cluster leaves its issues open). `comparison.md` also stops crediting keel-swarm
-  with AI review, multi-agent debate "via ai-jury" and a multi-vendor jury — nothing in the
-  swarm convenes a review — and its merge-window cell is ✅ again, since each cluster now lands
-  through `keel merge`, which enforces the window (#1409). `tests/test_adapter_accuracy.py` and
-  `tests/test_docs_claims.py` pin the new wording and fail on the old one.
-
 ### Added
 - **`keel swarm-review` reviews each cluster pull request with the cluster's own seats**
   (#1423). The first live swarm landing needed one step outside the swarm: every cluster PR's
@@ -61,6 +39,36 @@ All notable changes to keel are documented here. The format follows
   live run needs `filesystem,git,github` consent before the plan is read. Opt-in: neither
   `swarm-run` nor `swarm-land` calls it, and swarm stays experimental on every surface — it has
   not yet run on a real repository.
+
+## [1.27.0] - 2026-10-02
+
+- A review verdict now counts toward landing only when it approves: a reviewer's change request at the head holds `keel merge`, and the refusal names who asked for changes.
+- The experimental swarm landed end to end once, on a sandbox repository: a live worker labels its pull request and records its gates-pass itself, and `swarm-land` closes the landed issues as `/keel:ship` does. Review still happens outside the swarm.
+- `knobs.swarm_review_evidence` is deprecated (it has had no effect since swarm landing went through `keel merge`), and the revert-check article says exactly what the gate counts.
+
+### Security
+- **A review verdict that requests changes no longer counts toward landing** (#1426). The evidence gate counted a `keel.review-verdict.v1` comment by its marker, trusted author, head and substance, and never read its `Verdict:` line — while `keel review --live` posts whatever verdict a bundle carries. Two `REQUEST_CHANGES` verdicts satisfied a tier of two, and `keel merge` landed a pull request its own reviewers rejected. Only trusted authors could reach it, so it was a fail-open in the gate rather than a hole an outside contributor could use. `evidence.review_verdict_token` now reads the first word of a verdict's `Verdict:` line, and a verdict counts only when that word is in `APPROVING_VERDICTS` — `APPROVE`, `LGTM`, `PASS`, any case: `LGTM` is what `render_review_verdict` and the `--from-jury` mapping write, and `APPROVE` and `pass` are what hosts posted on 799 of keel's own 1,355 verdict comments. A reviewer whose **latest** verdict at the head (or a head a capture landing covers) does not approve — `REQUEST_CHANGES`, `COMMENT`, an unknown word, no `Verdict:` line — is a blocking `review-verdict-not-approved` finding that `keel merge` names (`alice requests changes at <head>`), so a rejection holds rather than being outvoted by another reviewer's approval; requesting changes and then approving counts, approving and then requesting changes holds. `count_review_verdicts` (capture reconcile's reviewer cross-check), `verdict_reviewers` (the swarm landing's closure record) and the vendor-distinctness provenance count the same reviewers. `keel review` keeps posting `REQUEST_CHANGES` verdicts as written, and a `keel.jury-verdict.v1` consensus comment is unchanged. Test fixtures that wrote a bare `LGTM` line instead of a `Verdict:` line were corrected, and a jury-panel test that passed a panel whose ballots requested changes now expects the hold.
+
+### Changed
+- **`knobs.swarm_review_evidence` is marked deprecated** (#1410). Since #1287 `swarm-land` lands each cluster PR through `keel merge`, whose evidence gate has no opt-out, so the knob changes nothing; `src/keel/config.py` still called it "the explicit, logged opt-out". The source comment, the schema description (and the site's parameter page generated from it) and `docs/keel/configuration.md` now say it is deprecated and should be removed; a config that sets it still validates.
+- **The swarm surfaces stop saying no live landing has run** (#1281, #1423, #1422). On
+  2026-10-01 a live swarm landed end to end once, on a throwaway sandbox repository:
+  `swarm-run --live` implemented two issues and opened their pull requests, each pull request's
+  review verdicts were posted from outside the swarm, and `swarm-land --live` merged both
+  through `keel merge` (#1281's closing comment). The README, the `/keel:swarm` adapter (and
+  its generated copies), `docs/keel/` (swarm, overview, badges, cli, parameter-reference,
+  comparison, editors), the VS Code extension README and the website still said no real
+  landing had been exercised. They now say that one landing ran, on a sandbox, reviewed outside
+  the swarm. Swarm stays **experimental** everywhere, and "nothing in the swarm reviews the pull
+  requests it opens" stays: where a surface cited the closed epic #1281 as the reason, it now
+  cites #1423 (whether swarm should dispatch its own reviewers), and the swarm guide adds #1422
+  (a landed cluster leaves its issues open). `comparison.md` also stops crediting keel-swarm
+  with AI review, multi-agent debate "via ai-jury" and a multi-vendor jury — nothing in the
+  swarm convenes a review — and its merge-window cell is ✅ again, since each cluster now lands
+  through `keel merge`, which enforces the window (#1409). `tests/test_adapter_accuracy.py` and
+  `tests/test_docs_claims.py` pin the new wording and fail on the old one.
+
+### Added
 - **The consent a live swarm run delegates is in the run ledger, and `consent-verify` reads
   it** (#1400). `swarm-run --live` recorded the operator's delegated consent only in the
   swarm state file and the pull request bodies, so `keel consent-verify` — which reads a pull
