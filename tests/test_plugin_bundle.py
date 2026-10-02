@@ -286,9 +286,10 @@ class TheOpenAIZipCarriesSkillsOnly(unittest.TestCase):
                 self.assertFalse(name.endswith((".app.json", ".DS_Store")))
 
     def test_the_root_manifest_is_the_portable_one(self):
-        expected = (REPO_ROOT / plugin_bundle.PORTABLE_MANIFEST).read_bytes()
+        source = (REPO_ROOT / plugin_bundle.PORTABLE_MANIFEST).read_bytes()
 
-        self.assertEqual(expected, self.contents["plugin.json"])
+        # The ZIP stores LF whatever the checkout used (a Windows checkout is CRLF).
+        self.assertEqual(source.replace(b"\r\n", b"\n"), self.contents["plugin.json"])
 
     def test_every_skill_names_itself_and_has_a_string_description(self):
         skill_files = [n for n in self.contents if n.endswith("/SKILL.md")]
@@ -328,7 +329,9 @@ def _fixture_root(root: Path) -> None:
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        # Bytes, not write_text: on Windows text mode would write CRLF, and the CRLF test
+        # below needs a fixture whose line endings it controls.
+        path.write_bytes(text.encode("utf-8"))
 
 
 class SyncCheckAndZipOnAFixtureTree(unittest.TestCase):
