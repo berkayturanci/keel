@@ -478,7 +478,10 @@ reports a failure, as it should.
 The required reviewer count is resolved from the live diff tier using the exact same logic
 `keel evidence-verify` uses (`ship.resolve_review_contract`). If fewer reviews are supplied
 than the tier requires, the command fails rather than silently under-posting evidence; an
-exact count or more is allowed. `--reviewers` overrides the required count.
+exact count or more is allowed. The one exception is a bundle that carries a verdict that does
+not approve (`REQUEST_CHANGES`, `COMMENT`, …): it posts below the count, because that verdict
+holds `keel merge` on its own (#1426) and refusing it would only hide the rejection (#1423).
+`--reviewers` overrides the required count.
 
 ### Jury flags — `keel review` resolves the same contract as every other surface
 
@@ -3516,14 +3519,19 @@ run without `--swarm-id`); with none, it exits 1. For each cluster of `--wave`:
    cross-reading, the head pinned, the issue text and the diff keel read with `gh pr diff`, and
    the one JSON verdict it must end with (`verdict` `APPROVE` or `REQUEST_CHANGES`, `scope`,
    `findings`, `testing`). keel reads it through `keel review --reviews`' own parser and the
-   evidence gate's substance rule; anything that does not parse is a **failed** review, never an
-   approval, and an approval carrying a critical or major finding is read as `REQUEST_CHANGES`.
-6. **Posting.** keel re-reads the head, then posts every approval with `keel review --live`,
-   which refuses if the head moved in between. Nothing is posted — the cluster is `held` with
-   the reason and each seat's findings — when any seat requested changes, when fewer seats
-   approved than the count, or when the head moved. keel's evidence gate counts a posted verdict
-   whatever its `Verdict:` line says, so posting a `REQUEST_CHANGES` would let `keel merge` land
-   the change it rejected. Each verdict names its reviewer (`swarm-review-<slot>-<vendor>`),
+   evidence gate's substance rule, and whether it approves is the gate's own
+   `evidence.verdict_approves`. Anything that does not parse, or neither approves nor requests
+   changes, is a **failed** review — never an approval, never posted; an approval carrying a
+   critical or major finding is posted as `REQUEST_CHANGES`.
+6. **Posting.** keel re-reads the head, then posts every verdict that parsed — approvals and
+   change requests, with their findings — with `keel review --live`, which refuses if the head
+   moved in between. With mixed verdicts all are posted: the evidence gate reads each
+   reviewer's latest verdict at the head (#1426), so one change request holds `keel merge` with
+   `review-verdict-not-approved` and the cluster is `posted-changes-requested`. A change request
+   posts even below the tier's count (`keel review` accepts an under-count bundle only when it
+   carries a verdict that does not approve). Nothing is posted — the cluster is `held` — when
+   the head moved, when a seat changed the git setup, or when no seat requested changes and
+   fewer approved than the count. Each verdict names its reviewer (`swarm-review-<slot>-<vendor>`),
    vendor and model from the seat's attribution, under the run id `<swarm_id>/<cluster_id>`, so
    a second run on the same head edits the same comments.
 
@@ -3531,8 +3539,8 @@ run without `--swarm-id`); with none, it exits 1. For each cluster of `--wave`:
 consent mode and missing scopes exit 1 before the plan is read. The consent flags are passed to
 each `keel review`. `--json` prints `{swarm_id, wave_index, dry_run, status, clusters,
 warnings}`, each cluster with its `status`, `reason`, `pull_request`, `head_sha`, `tier`,
-`required`, `seats` and `verdicts`. Exit `0` only when every cluster is `posted` (live),
-`planned` (dry run) or `already-merged`.
+`required`, `seats` and `verdicts`. Exit `0` only when every cluster is `posted` (live, every
+seat approved), `planned` (dry run) or `already-merged`; `posted-changes-requested` exits 1.
 
 ## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--live] [--transport auto|graphql|rest] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
 

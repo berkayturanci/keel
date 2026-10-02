@@ -833,7 +833,8 @@ function `keel ship`, `keel plan`, `keel step-verify`, `keel evidence-verify` an
 so the surfaces can be checked against each other rather than assumed equal. Supplying
 fewer reviews than the tier requires exits 1
 (`supplied 1 review(s) but tier requires at least 2; refusing to under-post evidence`);
-an exact count or more is allowed. Pass a run's jury flags through to its `keel review`
+an exact count or more is allowed, and so is a short bundle that carries a verdict that does
+not approve — it holds `keel merge` on its own (#1426, #1423). Pass a run's jury flags through to its `keel review`
 call — `keel ship --no-jury` followed by a bare `keel review --verify` asks two halves of
 one run for two different gates.
 
@@ -2226,7 +2227,7 @@ keel swarm-review <project.yaml> [--root DIR] [--wave N] [--swarm-id ID]
 | `--seat-timeout SECONDS` | int | `1800` | Each seat's wall-clock limit, as `keel delegate run --timeout`. |
 | `--live` | flag | off | Run the seats and post. Without it each pull request's head, tier and required count are read and the seats planned; nothing is checked out, run or posted. |
 | `--approve-scope` / `--operator` / `--consent-mode` | consent flags | none | A live run needs `filesystem`, `git` (the checkouts) and `github` (the verdicts) approved, explicitly or as standing consent; `agent` mode is refused. Checked before the plan is read. Passed to each `keel review`. |
-| `--json` | flag | off | Structured result: `status`, and per cluster `status` (`posted`, `planned`, `held`, `refused`, `skipped`, `already-merged`, `failed`), `reason`, `pull_request`, `head_sha`, `tier`, `required`, `seats` (slot, provider, vendor, transport, refusal) and `verdicts` (outcome, reason, findings). |
+| `--json` | flag | off | Structured result: `status`, and per cluster `status` (`posted`, `posted-changes-requested`, `planned`, `held`, `refused`, `skipped`, `already-merged`, `failed`), `reason`, `pull_request`, `head_sha`, `tier`, `required`, `seats` (slot, provider, vendor, transport, refusal) and `verdicts` (outcome, reason, findings). |
 
 Per cluster: its pull request is found as `swarm-land` finds it; `keel review`'s own tier and
 contract are resolved from the pull request's diff, which sets the verdict count and
@@ -2238,12 +2239,14 @@ the jury panel. Live, each seat runs in its own detached worktree at the head
 (`.keel/worktrees/<swarm_id>/<cluster_id>.review-<slot>`, removed afterwards) with no forge
 token, no `gh` login, no git credential helper and no network transport, briefed with the issue
 text, the diff and `/keel:ship` s7's refute-not-approve stance, and answers with one JSON
-verdict. An answer that does not parse is a failed review, never an approval. The approvals are
-posted only when no seat requested changes, enough seats approved, and the head has not moved;
-otherwise nothing is posted and the cluster is **held** with the reason and the findings —
-keel's evidence gate counts a posted verdict whatever it says, so a posted `REQUEST_CHANGES`
-would let `keel merge` land the change. Exit `0` only when every cluster was posted (live),
-planned (dry run) or already merged.
+verdict, judged approving or not by the evidence gate's own `evidence.verdict_approves`. An
+answer that does not parse is a failed review, never an approval, and posts nothing. Every
+verdict that parsed — approvals and change requests, with their findings — is posted, pinned to
+the head; one change request holds `keel merge` with `review-verdict-not-approved` (#1426) and
+the cluster is `posted-changes-requested`. Nothing is posted (**held**) when the head moved, a
+seat changed the git setup, or no seat requested changes and fewer approved than the count.
+Exit `0` only when every cluster was posted with every seat approving (live), planned (dry run)
+or already merged.
 
 ### Examples
 

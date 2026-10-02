@@ -251,6 +251,31 @@ class TestBuildReviewPlan(unittest.TestCase):
         self.assertIn("vendor: codex", plan.posts[1].body)
         self.assertNotIn("model:", plan.posts[1].body)
 
+    def test_an_under_count_bundle_is_posted_only_when_it_carries_a_rejection(self):
+        """#1423: a verdict that does not approve holds keel merge on its own (#1426), so a
+        bundle carrying one posts even below the tier's count; approvals alone do not."""
+
+        def plan(*verdicts):
+            items = review.parse_reviews(
+                [{"reviewer": f"R{i}", "verdict": v} for i, v in enumerate(verdicts)]
+            )
+            return review.build_review_plan(
+                items,
+                required_count=2,
+                head_sha="h",
+                pull_request=1,
+                issue=None,
+                run_id="run",
+                tier=2,
+            )
+
+        rejected = plan("REQUEST_CHANGES")
+        self.assertEqual(rejected.supplied_count, 1)
+        self.assertIn("Verdict: REQUEST_CHANGES", rejected.posts[0].body)
+        self.assertEqual(len(plan("COMMENT").posts), 1)
+        with self.assertRaisesRegex(review.ReviewError, "refusing to under-post"):
+            plan("APPROVE")
+
     def test_over_count_is_allowed(self):
         items = review.parse_reviews([*_two_reviews(), {"reviewer": "C", "verdict": "LGTM"}])
         plan = review.build_review_plan(

@@ -4,8 +4,9 @@ The thin I/O half of ``keel swarm-review``. For each cluster of a wave of the pl
 ``swarm-run`` persisted, it finds the cluster's pull request, reads its head, diff and
 review contract, plans the cluster's reviewer seats (:mod:`keel.swarm_review`, where every
 decision is made), and — live — runs each seat read-only in its own temporary checkout of
-the head, reads each answer, re-reads the head, and hands the approvals to ``keel review``
-to post, pinned to the head the seats reviewed.
+the head, reads each answer, re-reads the head, and hands every verdict that parsed —
+approvals and change requests — to ``keel review`` to post, pinned to the head the seats
+reviewed.
 
 Every seat runs through :mod:`keel.delegaterun` in the read-only ``review`` role, under the
 implementer's lockdown environment (:func:`keel.swarm_worker.implementer_env`: no forge
@@ -296,11 +297,16 @@ def _review_cluster(
         return swarm_review.with_status(
             report, swarm_review.HELD, f"keel review did not post: {why}"
         )
-    return swarm_review.with_status(
-        report,
-        swarm_review.POSTED,
-        f"{len(items)} verdict(s) posted on PR #{number}, pinned to {facts.head_sha}",
-    )
+    status = swarm_review.posted_status(verdicts)
+    reason = f"{len(items)} verdict(s) posted on PR #{number}, pinned to {facts.head_sha}"
+    if status == swarm_review.POSTED_CHANGES_REQUESTED:
+        rejecting = ", ".join(v.slot for v in verdicts if v.outcome == swarm_review.REQUEST_CHANGES)
+        reason += (
+            f"; seat(s) {rejecting} request changes, so keel merge holds it on "
+            "review-verdict-not-approved until the findings are addressed and the head is "
+            "reviewed again"
+        )
+    return swarm_review.with_status(report, status, reason)
 
 
 def review_wave_clusters(

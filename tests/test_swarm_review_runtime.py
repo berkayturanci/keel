@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from keel import cli as cli_mod
-from keel import runtime
+from keel import evidence, runtime, ship
 from keel import swarm_review as sr
 from keel import swarm_review_runtime as rt
 from keel.cli import main
@@ -311,17 +311,33 @@ class ALiveReviewPostsTheApprovals(_Root):
         self.assertEqual(cluster.status, sr.POSTED, cluster.reason)
 
 
-class NothingIsPostedUnlessEverySeatApproves(_Root):
-    def test_a_request_for_changes_holds_the_cluster_with_its_findings(self):
+class WhatParsedIsPostedAndAnythingElseIsNot(_Root):
+    def test_a_change_request_is_posted_beside_the_approval_with_its_findings(self):
         finding = {"severity": "major", "message": "loses data", "path": "a.py"}
         fake = _IO(answers={"codex": _answer("REQUEST_CHANGES", findings=[finding])})
-        (cluster,) = self.review(fake).clusters
-        self.assertEqual(cluster.status, sr.HELD)
-        self.assertIn("seat(s) C requested changes", cluster.reason)
-        self.assertEqual(fake.posts, [])
-        verdicts = {v.slot: v for v in cluster.verdicts}
-        self.assertEqual(verdicts["C"].findings[0]["message"], "loses data")
+        result = self.review(fake)
+        (cluster,) = result.clusters
+        self.assertEqual(cluster.status, sr.POSTED_CHANGES_REQUESTED)
+        self.assertEqual(result.status, "failed")
+        self.assertIn("seat(s) C request changes", cluster.reason)
+        self.assertIn("review-verdict-not-approved", cluster.reason)
+        ((_, head, items, _),) = fake.posts
+        self.assertEqual(head, HEAD)
+        self.assertEqual([i["verdict"] for i in items], ["APPROVE", "REQUEST_CHANGES"])
+        self.assertEqual(items[1]["findings"][0]["message"], "loses data")
         self.assertEqual(self.checkouts(), [])
+
+    def test_a_failed_seat_posts_nothing_and_a_lone_rejection_still_posts(self):
+        fake = _IO(
+            answers={
+                "claude": {"ok": False, "error_code": "timeout", "error": "slow"},
+                "codex": _answer("REQUEST_CHANGES"),
+            }
+        )
+        (cluster,) = self.review(fake).clusters
+        self.assertEqual(cluster.status, sr.POSTED_CHANGES_REQUESTED)
+        ((_, _, items, _),) = fake.posts
+        self.assertEqual([i["reviewer"] for i in items], ["swarm-review-c-codex"])
 
     def test_a_seat_whose_output_does_not_parse_is_failed_never_an_approval(self):
         fake = _IO(answers={"codex": {"ok": True, "text": "LGTM, ship it."}})
@@ -582,6 +598,49 @@ class SwarmReviewCommand(unittest.TestCase):
             self.assertIn(f"head: {HEAD}", body)
             self.assertIn("Verdict: APPROVE", body)
         self.assertIn(["gh", "pr", "diff", "9"], host.argv)
+
+    def _gate(self, host):
+        """The real pre-merge evidence verification over what keel review posted."""
+        contract = ship.resolve_review_contract(tier=2)
+        comments = [{"body": body, "author_association": "OWNER"} for _, body in host.posted]
+        report = evidence.verify(
+            contract,
+            pr_comments=comments,
+            head_sha=HEAD,
+            enforced=True,
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+        return report, evidence.refusal_reason(report)
+
+    def test_a_posted_change_request_holds_keel_merge_with_the_named_reason(self):
+        finding = {"severity": "major", "message": "drops the lock", "path": "src/keel/lock.py"}
+        host = _Host(answers={"codex": _answer("REQUEST_CHANGES", findings=[finding])})
+        code, out, err = self.run_cli(host, "--live", "--json", *CONSENT)
+        cluster = json.loads(out)["clusters"][0]
+        self.assertEqual(code, 1, err)
+        self.assertEqual(cluster["status"], "posted-changes-requested")
+        self.assertTrue(cluster["posted"])
+        bodies = [body for _, body in host.posted]
+        self.assertEqual(len(bodies), 2)
+        self.assertIn("Verdict: REQUEST_CHANGES", bodies[1])
+        self.assertIn("- major: drops the lock", bodies[1])
+        self.assertIn(f"head: {HEAD}", bodies[1])
+        report, reason = self._gate(host)
+        self.assertEqual(report["status"], evidence.STATUS_FAIL)
+        self.assertIn(
+            f"review-verdict-not-approved: swarm-review-c-codex requests changes at {HEAD}.",
+            reason,
+        )
+
+    def test_the_approvals_alone_pass_the_same_gate(self):
+        host = _Host()
+        code, _, err = self.run_cli(host, "--live", *CONSENT)
+        self.assertEqual(code, 0, err)
+        report, _ = self._gate(host)
+        self.assertEqual(report["counts"]["review_verdict"], 2)
+        self.assertFalse(
+            [f for f in report["findings"] if f["id"] == evidence.VERDICT_NOT_APPROVED_FINDING]
+        )
 
     def test_a_head_that_moves_under_keel_review_is_not_posted_to(self):
         host = _Host(heads=(HEAD, "c" * 40))

@@ -43,11 +43,16 @@ All notable changes to keel are documented here. The format follows
   implementer's lockdown (no forge token, no `gh` login, no credential helper, no network
   transport for git), briefed with `/keel:ship` s7's refute-not-approve stance, the issue and
   the diff, and answers with one JSON verdict read through `keel review --reviews`' own parser;
-  an answer that does not parse is a failed review, never an approval. The approvals are posted
-  through `keel review --live`, pinned to the head the seats reviewed — `keel review` now
-  refuses when the head moved since. Nothing is posted when a seat requests changes (the
-  evidence gate counts a posted verdict whatever its `Verdict:` line says), when too few seats
-  approve, or when the head moved. A dry run reads and plans, and runs and posts nothing; a
+  an answer that does not parse is a failed review, never an approval, and posts nothing.
+  Whether a verdict approves is the evidence gate's own `evidence.verdict_approves`. Every
+  verdict that parsed — approvals and change requests with their findings — is posted through
+  `keel review --live`, pinned to the head the seats reviewed (`keel review` now refuses when
+  the head moved since); a change request holds `keel merge` on `review-verdict-not-approved`
+  (#1426), the cluster reports `posted-changes-requested` and the command exits non-zero.
+  `keel review` now accepts a bundle below the tier's count when it carries a verdict that does
+  not approve, so a lone rejection is posted rather than refused; a short bundle of approvals is
+  still refused. Nothing is posted when the head moved, when a seat changed the repository's
+  git setup, or when too few seats approve and none requests changes. A dry run reads and plans, and runs and posts nothing; a
   live run needs `filesystem,git,github` consent before the plan is read. Opt-in: neither
   `swarm-run` nor `swarm-land` calls it, and swarm stays experimental on every surface — it has
   not yet run on a real repository.

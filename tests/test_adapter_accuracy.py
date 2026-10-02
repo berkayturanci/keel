@@ -412,10 +412,11 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
         self.assertIn("keel swarm-review .keel/project.yaml --root . --swarm-id <swarm_id>", prose)
         self.assertIn("has not yet run on a real repository", prose)
         self.assertIn("not yet run on a real repository (#1423)", description)
-        self.assertIn(
-            "a seat whose answer does not parse is `failed`, never an approval",
-            prose.replace("A seat", "a seat"),
-        )
+        self.assertIn("A seat whose answer does not parse is `failed`: never an approval", prose)
+        # #1426 made a change request evidence: swarm-review posts it, and keel merge holds.
+        self.assertIn("`posted-changes-requested`", prose)
+        self.assertIn("review-verdict-not-approved", prose)
+        self.assertNotIn("would still count as a verdict", prose)
         self.assertIsNone(re.search(r"(?i)swarm[- ]review (has|have) (now )?(run|landed)", prose))
         self.assertIsNone(re.search(r"(?i)no longer experimental", prose))
 

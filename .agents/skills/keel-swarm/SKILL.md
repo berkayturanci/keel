@@ -215,13 +215,16 @@ keel swarm-review .keel/project.yaml --root . --swarm-id <swarm_id> --wave <n> -
   --approve-scope filesystem,git,github --operator <name>
 ```
 
-Report each cluster as the command does: `posted`, `held` (a seat requested changes — its
-findings are in the report and nothing was posted, because a posted `REQUEST_CHANGES` would still
-count as a verdict at `keel merge`; fewer approvals than the tier needs; or the head moved),
-`refused` (a `subagent:` seat, a seat from the implementer's vendor, too few eligible seats, the
-distinct-vendor rule — suggest `--review-delegate <provider>` per slot), `skipped` or
-`already-merged`. A seat whose answer does not parse is `failed`, never an approval. Never post a
-verdict yourself on top of it to get a held cluster through; fix the findings and run it again.
+Report each cluster as the command does: `posted` (every seat approved),
+`posted-changes-requested` (every verdict that parsed was posted, and at least one requests
+changes — `keel merge` holds the pull request on `review-verdict-not-approved` with the seat
+named, so relay that seat's findings), `held` (nothing posted: the head moved, a seat changed the
+git setup, or too few approvals with no change request), `refused` (a `subagent:` seat, a seat
+from the implementer's vendor, too few eligible seats, the distinct-vendor rule — suggest
+`--review-delegate <provider>` per slot), `skipped` or `already-merged`. A seat whose answer does
+not parse is `failed`: never an approval, and nothing of it is posted. Never post an approving
+verdict yourself on top of a change request to get a cluster through; fix the findings, push,
+and run it again on the new head.
 
 When an execution wave completes and is reviewed, land it: `keel swarm-land` merges each cluster's pull request
 through `keel merge` against the project's `base_branch` (config — never assume a branch name).
@@ -293,4 +296,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.26.0 source_sha256=c03286fccaff4073fb549f296d9d76907fbbd889e5ccc17385ae4244bb7f589f generated_sha256=2c52b2a503c2760d26a95d40b36a504dc60e1d9249809432094f8eff1c4b4f46 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.26.0 source_sha256=414575d437db15891a6f77aa8a4f69a70e0cebf9b341e5132ae43f6b899afe4a generated_sha256=b8ff9f66f2ce03fff6c8ff77988d6cd41f9a768bcf8c12f288896822a58b3336 -->

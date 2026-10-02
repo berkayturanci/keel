@@ -387,11 +387,26 @@ class ASeatsAnswerIsReadOrFailed(unittest.TestCase):
 
     def test_a_request_for_changes_keeps_its_findings(self):
         finding = {"severity": " Minor ", "message": "naming", "path": "a.py", "line": 3}
-        verdict = _read(_answer(verdict="request changes", findings=[finding]))
+        verdict = _read(_answer(verdict="request-changes", findings=[finding]))
         self.assertEqual(verdict.outcome, sr.REQUEST_CHANGES)
         self.assertEqual(verdict.findings[0]["severity"], "minor")
         self.assertEqual(verdict.to_dict()["findings"][0]["path"], "a.py")
-        self.assertEqual(sr.posted_items([verdict]), [])
+        # A change request is posted beside the approvals (#1426 made it evidence).
+        self.assertEqual(sr.posted_items([verdict])[0]["verdict"], "REQUEST_CHANGES")
+
+    def test_approval_is_the_evidence_gates_own_reading(self):
+        """swarm-review and the gate read a verdict with one function, so they cannot
+        disagree: every token in APPROVING_VERDICTS approves, and is posted as APPROVE."""
+        from keel import evidence
+
+        for token in sorted(evidence.APPROVING_VERDICTS):
+            with self.subTest(token=token):
+                verdict = _read(_answer(verdict=token.lower()))
+                self.assertEqual(verdict.outcome, sr.APPROVE)
+                self.assertTrue(evidence.verdict_approves(f"Verdict: {verdict.item['verdict']}"))
+        for token in sorted(evidence.REQUEST_CHANGES_VERDICTS):
+            with self.subTest(token=token):
+                self.assertEqual(_read(_answer(verdict=token)).outcome, sr.REQUEST_CHANGES)
 
     def test_an_approval_with_a_blocking_finding_is_a_request_for_changes(self):
         verdict = _read(_answer(findings=[{"severity": "major", "message": "data loss"}]))
@@ -404,7 +419,7 @@ class ASeatsAnswerIsReadOrFailed(unittest.TestCase):
             "carries no JSON object": _read("LGTM, ship it! {not json}"),
             "does not parse: review #1 'findings' must be a list": _read(_answer(findings="x")),
             "does not parse: review #1 requires a non-empty 'verdict'": _read(_answer(verdict=1)),
-            "is not APPROVE or REQUEST_CHANGES": _read(_answer(verdict="LGTM")),
+            "neither approves nor requests changes": _read(_answer(verdict="COMMENT")),
             "no scope": _read(_answer(scope="  ")),
             "severity 'blocker'": _read(
                 _answer(findings=[{"severity": "blocker", "message": "m"}])
@@ -430,7 +445,8 @@ class ASeatsAnswerIsReadOrFailed(unittest.TestCase):
 
 class WhatIsPosted(unittest.TestCase):
     def _verdict(self, outcome, slot="A", **kwargs):
-        return sr.SeatVerdict(slot, f"r-{slot}", outcome, item={"r": slot}, **kwargs)
+        kwargs.setdefault("item", {"r": slot})
+        return sr.SeatVerdict(slot, f"r-{slot}", outcome, **kwargs)
 
     def test_enough_approvals_are_posted(self):
         verdicts = [self._verdict(sr.APPROVE), self._verdict(sr.APPROVE, "C")]
@@ -446,11 +462,21 @@ class WhatIsPosted(unittest.TestCase):
         self.assertIn("1 seat(s) approved and the tier requires at least 2", why)
         self.assertIn("at least 1", sr.posting_decision([], required=0))
 
-    def test_a_request_for_changes_holds_the_whole_cluster(self):
-        verdicts = [self._verdict(sr.APPROVE), self._verdict(sr.REQUEST_CHANGES, "C")]
-        why = sr.posting_decision(verdicts, required=1)
-        self.assertIn("seat(s) C requested changes, so nothing is posted", why)
-        self.assertIn("would let keel merge land the pull request", why)
+    def test_mixed_verdicts_are_all_posted_and_the_rejection_names_the_status(self):
+        verdicts = [
+            self._verdict(sr.APPROVE),
+            self._verdict(sr.REQUEST_CHANGES, "C"),
+            self._verdict(sr.FAILED, "B", item=None),
+        ]
+        self.assertEqual(sr.posting_decision(verdicts, required=2), "")
+        self.assertEqual(sr.posted_status(verdicts), sr.POSTED_CHANGES_REQUESTED)
+        # The failed seat is not a verdict: nothing of it is posted.
+        self.assertEqual(sr.posted_items(verdicts), [{"r": "A"}, {"r": "C"}])
+        self.assertEqual(sr.posted_status(verdicts[:1]), sr.POSTED)
+
+    def test_a_lone_change_request_is_posted_below_the_tiers_count(self):
+        verdicts = [self._verdict(sr.REQUEST_CHANGES), self._verdict(sr.FAILED, "C", item=None)]
+        self.assertEqual(sr.posting_decision(verdicts, required=3), "")
 
     def test_a_tampering_seat_holds_the_whole_cluster(self):
         verdicts = [self._verdict(sr.APPROVE), self._verdict(sr.FAILED, "C", tampered=True)]
@@ -478,6 +504,9 @@ class TheReport(unittest.TestCase):
         self.assertEqual(sr.SwarmReviewResult("s", 1, False, (clean, held)).status, "failed")
         self.assertTrue(clean.posted)
         self.assertFalse(held.posted)
+        rejected = sr.ClusterReview("c4", sr.POSTED_CHANGES_REQUESTED)
+        self.assertTrue(rejected.posted)
+        self.assertEqual(sr.SwarmReviewResult("s", 1, False, (clean, rejected)).status, "failed")
 
     def test_it_reports_as_json_and_text(self):
         claude, agy = _seats(_seat("claude"), _seat("agy", slot="C"))

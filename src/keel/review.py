@@ -197,8 +197,12 @@ def build_review_plan(
 ) -> ReviewPlan:
     """Validate the bundle against the required count and build the post plan.
 
-    Fewer supplied reviews than required fails; exact or more is allowed. Each
-    review renders as a head-pinned verdict posted to the PR. A closure record,
+    Fewer supplied reviews than required fails; exact or more is allowed — unless the
+    bundle carries a verdict that does not approve (:func:`keel.evidence.verdict_approves`
+    on the verdict as it renders). Such a verdict holds ``keel merge`` on its own (#1426),
+    so refusing it would hide a rejection without protecting anything; an under-count
+    bundle of approvals is still refused (#1423). Each review renders as a head-pinned
+    verdict posted to the PR. A closure record,
     when supplied, renders once and posts to both the PR and the linked issue.
 
     ``jury_record`` is the panel's consensus record (:func:`keel.jury.jury_verdict`),
@@ -209,7 +213,8 @@ def build_review_plan(
     ballots it summarises is the drift this whole path removes.
     """
     supplied = len(reviews)
-    if supplied < required_count:
+    rejects = any(not evidence.verdict_approves(f"Verdict: {item.verdict}") for item in reviews)
+    if supplied < required_count and not rejects:
         raise ReviewError(
             f"supplied {supplied} review(s) but tier requires at least "
             f"{required_count}; refusing to under-post evidence"

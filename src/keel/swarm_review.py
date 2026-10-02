@@ -23,10 +23,12 @@ This module holds every *decision* in that step, and nothing else:
 - **How a seat's answer is read.** :func:`read_seat_verdict` parses it through the loader
   ``keel review --reviews`` uses (:func:`keel.review.parse_reviews`) and the evidence gate's
   substance rule; anything that does not parse is a failed review, never an approval.
-- **Whether anything is posted.** :func:`posting_decision`. keel's evidence gate counts a
-  posted verdict whatever its ``Verdict:`` line says, so a posted ``REQUEST_CHANGES`` would
-  let ``keel merge`` land the pull request: a cluster whose seats did not all approve posts
-  nothing, and its findings are in the report instead.
+- **Whether anything is posted.** :func:`posting_decision`. Every verdict a seat returned is
+  posted — approvals and change requests alike — because the evidence gate reads each
+  verdict's ``Verdict:`` line (#1426): a reviewer whose latest verdict at the head does not
+  approve holds ``keel merge`` with ``review-verdict-not-approved``, named in its refusal. A
+  seat whose answer did not parse is not a verdict and posts nothing; a moved head, or a
+  seat that changed the repository's git setup, posts nothing for the cluster.
 
 Pure and deterministic: no subprocess, no filesystem, no clock. The runtime
 (:mod:`keel.swarm_review_runtime`) checks the head out, runs the seats and posts.
@@ -51,23 +53,29 @@ REVIEW_SIDE_EFFECTS = ("git_worktree", "comments")
 #: The role every seat runs in: :data:`keel.delegate.READ_ONLY_ROLES`.
 REVIEW_ROLE = "review"
 
-#: The two verdicts a seat may answer with.
+#: The verdict keel posts for a seat whose answer approves, and for one that requests
+#: changes. Whether an answer approves is the evidence gate's own reading of it
+#: (:func:`keel.evidence.verdict_approves`, :data:`keel.evidence.APPROVING_VERDICTS`), so
+#: swarm-review and ``keel merge`` cannot disagree about it.
 APPROVE = "APPROVE"
 REQUEST_CHANGES = "REQUEST_CHANGES"
-VERDICTS = (APPROVE, REQUEST_CHANGES)
 #: A seat that answered nothing keel can read: never an approval.
 FAILED = "failed"
 
-#: What became of one cluster.
+#: What became of one cluster. :data:`POSTED`: every seat approved and the approvals were
+#: posted. :data:`POSTED_CHANGES_REQUESTED`: the verdicts were posted and at least one requests
+#: changes, so ``keel merge`` holds the pull request on it.
 POSTED = "posted"
+POSTED_CHANGES_REQUESTED = "posted-changes-requested"
 PLANNED = "planned"
 HELD = "held"
 REFUSED = "refused"
 SKIPPED = "skipped"
 MERGED = "already-merged"
 ERROR = "failed"
-#: The outcomes a clean run ends with: verdicts posted (live), a plan printed (dry run), or
-#: nothing left to review because the pull request has merged.
+#: The outcomes a clean run ends with: approvals posted (live), a plan printed (dry run), or
+#: nothing left to review because the pull request has merged. A posted change request is
+#: not clean: the pull request will not land until it is addressed.
 CLEAN_STATUSES = (POSTED, PLANNED, MERGED)
 
 #: How much of the diff a brief carries. Past it the brief says the diff was cut, and the
@@ -597,10 +605,6 @@ def extract_verdict_object(text: str) -> dict[str, Any] | None:
     return found
 
 
-def _verdict_word(raw: Any) -> str:
-    return re.sub(r"[\s-]+", "_", raw.strip()).upper() if isinstance(raw, str) else ""
-
-
 def _finding_issue(finding: Mapping[str, Any], index: int) -> str:
     severity = finding.get("severity")
     if not isinstance(severity, str) or severity.strip().lower() not in fnd.SEVERITIES:
@@ -619,9 +623,13 @@ def verdict_from_object(
 
     keel, not the seat, names the reviewer, vendor and model — from the seat's own
     attribution. The entry goes through :func:`keel.review.parse_reviews`, then keel's own
-    rules: a verdict of :data:`VERDICTS`, a non-empty scope, findings in keel's severity
-    vocabulary, and a body :func:`keel.evidence.verdict_substance` would count. An approval
-    that carries a critical or major finding is read as ``REQUEST_CHANGES``.
+    rules: a verdict the evidence gate reads as approving
+    (:data:`keel.evidence.APPROVING_VERDICTS`) or as requesting changes
+    (:data:`keel.evidence.REQUEST_CHANGES_VERDICTS`) — anything else is not a verdict keel can
+    post — a non-empty scope, findings in keel's severity vocabulary, and a body
+    :func:`keel.evidence.verdict_substance` would count. An approval that carries a critical
+    or major finding is posted as ``REQUEST_CHANGES``. The posted verdict is then read back
+    with :func:`keel.evidence.verdict_approves`, the gate's own reading.
     """
     plan = seat.plan
     entry = {
@@ -637,9 +645,15 @@ def verdict_from_object(
         (item,) = review.parse_reviews([entry])
     except review.ReviewError as exc:
         return failed_verdict(seat, f"its verdict does not parse: {exc}")
-    word = _verdict_word(item.verdict)
-    if word not in VERDICTS:
-        return failed_verdict(seat, f"its verdict {item.verdict!r} is not {' or '.join(VERDICTS)}")
+    token = evidence.review_verdict_token(f"Verdict: {item.verdict}")
+    if token in evidence.APPROVING_VERDICTS:
+        word = APPROVE
+    elif token in evidence.REQUEST_CHANGES_VERDICTS:
+        word = REQUEST_CHANGES
+    else:
+        return failed_verdict(
+            seat, f"its verdict {item.verdict!r} neither approves nor requests changes"
+        )
     if not item.scope or not item.scope.strip():
         return failed_verdict(seat, "its verdict says nothing about what it checked (no scope)")
     for index, finding in enumerate(item.findings):
@@ -668,16 +682,17 @@ def verdict_from_object(
         return failed_verdict(
             seat, f"its verdict names nothing concrete, so keel merge would not count it: {why}"
         )
+    outcome = APPROVE if evidence.verdict_approves(body) else REQUEST_CHANGES
     posted = {
         "reviewer": item.reviewer,
-        "verdict": word,
+        "verdict": outcome,
         "scope": item.scope,
         "findings": [dict(f) for f in findings],
         "testing": item.testing,
         "vendor": item.vendor,
         "model": item.model,
     }
-    return SeatVerdict(seat.slot, seat.reviewer, word, reason, findings, posted)
+    return SeatVerdict(seat.slot, seat.reviewer, outcome, reason, findings, posted)
 
 
 def read_seat_verdict(
@@ -697,14 +712,19 @@ def read_seat_verdict(
 
 
 def posting_decision(verdicts: Sequence[SeatVerdict], *, required: int) -> str:
-    """Why nothing of a cluster is posted; ``""`` when its approvals are.
+    """Why nothing of a cluster is posted; ``""`` when every verdict a seat returned is.
 
+    The rule (#1423, after #1426 made the evidence gate read each verdict):
+
+    - Every parsed verdict is posted — approvals and change requests together. When some seats
+      approve and one requests changes, all of them are posted: the gate counts each
+      reviewer's latest verdict at the head, so the rejection holds ``keel merge`` with
+      ``review-verdict-not-approved`` however many others approved.
+    - A failed seat is not a verdict: it posts nothing, is never counted as an approval, and
+      does not hold the others.
     - A seat that changed the repository's git setup holds the whole cluster.
-    - A ``REQUEST_CHANGES`` holds it: keel's evidence gate counts a posted verdict whatever
-      its ``Verdict:`` line says, so posting one would let ``keel merge`` land the change it
-      rejected. The findings are in the report.
-    - Fewer approvals than the tier requires hold it. A failed seat is never an approval,
-      and it does not hold the cluster when enough others approved.
+    - With no change request, fewer approvals than the tier requires post nothing: ``keel
+      review`` refuses an under-count bundle of approvals, and it would not land anyway.
     """
     tampered = [v.slot for v in verdicts if v.tampered]
     if tampered:
@@ -712,14 +732,8 @@ def posting_decision(verdicts: Sequence[SeatVerdict], *, required: int) -> str:
             f"seat(s) {', '.join(tampered)} changed the repository's git setup while they ran; "
             "nothing is posted — inspect the repository's git config and hooks"
         )
-    rejecting = [v.slot for v in verdicts if v.outcome == REQUEST_CHANGES]
-    if rejecting:
-        return (
-            f"seat(s) {', '.join(rejecting)} requested changes, so nothing is posted: keel's "
-            "evidence gate counts a posted verdict whatever it says, and a posted "
-            "REQUEST_CHANGES would let keel merge land the pull request. Address the "
-            "findings, push, and run swarm-review again on the new head"
-        )
+    if any(v.outcome == REQUEST_CHANGES for v in verdicts):
+        return ""
     approving = [v for v in verdicts if v.outcome == APPROVE]
     needed = max(required, 1)
     if len(approving) < needed:
@@ -728,6 +742,14 @@ def posting_decision(verdicts: Sequence[SeatVerdict], *, required: int) -> str:
             "verdict(s), so nothing is posted (a failed seat is never counted as an approval)"
         )
     return ""
+
+
+def posted_status(verdicts: Iterable[SeatVerdict]) -> str:
+    """:data:`POSTED_CHANGES_REQUESTED` when a posted verdict requests changes, else
+    :data:`POSTED`."""
+    if any(v.outcome == REQUEST_CHANGES for v in verdicts):
+        return POSTED_CHANGES_REQUESTED
+    return POSTED
 
 
 def head_moved(reviewed: str, current: str) -> str:
@@ -751,7 +773,8 @@ class ClusterReview:
     """What ``swarm-review`` did, or would do, for one cluster."""
 
     cluster_id: str
-    #: One of :data:`POSTED`, :data:`PLANNED`, :data:`HELD`, :data:`REFUSED`,
+    #: One of :data:`POSTED`, :data:`POSTED_CHANGES_REQUESTED`, :data:`PLANNED`,
+    #: :data:`HELD`, :data:`REFUSED`,
     #: :data:`SKIPPED`, :data:`MERGED` or :data:`ERROR`.
     status: str
     reason: str = ""
@@ -765,7 +788,7 @@ class ClusterReview:
 
     @property
     def posted(self) -> bool:
-        return self.status == POSTED
+        return self.status in (POSTED, POSTED_CHANGES_REQUESTED)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -853,5 +876,6 @@ def with_status(review_: ClusterReview, status: str, reason: str) -> ClusterRevi
 
 
 def posted_items(verdicts: Iterable[SeatVerdict]) -> list[dict[str, Any]]:
-    """The ``keel review --reviews`` bundle: every approval's entry, in seat order."""
-    return [dict(v.item) for v in verdicts if v.outcome == APPROVE and v.item is not None]
+    """The ``keel review --reviews`` bundle: every parsed verdict's entry — approvals and
+    change requests — in seat order. A failed seat has none."""
+    return [dict(v.item) for v in verdicts if v.item is not None]
