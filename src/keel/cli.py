@@ -8963,7 +8963,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument(
         "--hotfix",
         action="store_true",
-        help="bypass the merge window with a recorded justification",
+        help=(
+            "emergency merge with a recorded justification: bypasses the merge window "
+            "and the gates-pass check for the head (CI, evidence and the head pin still apply)"
+        ),
     )
     p_merge.add_argument(
         "--blocker-rule", default=None, help="keel guard rule id justifying a --hotfix bypass"
