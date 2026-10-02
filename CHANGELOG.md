@@ -6,7 +6,24 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`keel-progress`: the live keel run inside Claude Code** (#1444). An opt-in Claude Code mod, published as a second plugin in the keel marketplace (`mods/keel-progress`). It polls `keel status --json` every five seconds while a run is live (every 30 s otherwise, never two at once) and right after any Bash call that runs `keel`, draws one line above the prompt while a run is active, waiting or interrupted (`keel #1022 ▰▰▰▰▰▰▰▰▰▰▶▱▱ s10 merge · waiting: merge-window · PR #1027`), and adds a `/keel-progress` pane listing every backbone step, the history counts and the next queued issue. Step names come from the status contract itself. Like keel-visual it only reads: it never writes the checkpoint or ledger and never drives a run. The `keel` plugin, the Python package and the Codex, Cursor and Antigravity adapters are unchanged.
+
 ### Fixed
+- **`keel swarm-status` shows whether each cluster was reviewed** (#1440). `swarm-review`
+  wrote nothing the status board read, so after a review run the board still stopped at the
+  opened pull request and could not say whether a cluster was posted, held or rejected. A live
+  `swarm-review` now records each cluster's outcome in its worker record of the run state
+  (`.keel/state/swarm/<id>.json`, the file `swarm-run` writes, through the same atomic writer)
+  as `review`: status, reason, pull request, the head the seats reviewed, the tier's count, each
+  seat's slot, reviewer, vendor and outcome (`APPROVE` / `REQUEST_CHANGES` / `failed`, or
+  `refused` / `not-run`), `reviewed_at` and the run id. A re-run replaces it (latest wins); a dry
+  run records nothing. `swarm-status` adds a `Review` column (`posted 2/2 APPROVE @ 596e3d8a`,
+  `changes-requested 1/2 APPROVE, 1 REQUEST_CHANGES @ …`, `not reviewed`), and `--json` carries
+  the record as each worker's `review` plus the cell as `review_summary`. It reads no pull
+  request, so it shows the reviewed head for the reader to compare rather than judging it stale.
+  A state file without the record still loads and reads as not reviewed. `swarm-land` does not
+  read the record: `keel merge`'s evidence gate stays the only authority.
 - **`keel merge --hotfix`'s help names everything it skips** (#1438). It read "bypass the merge window with a recorded justification", but a hotfix merge also skips the gates-pass check for the head (`docs/keel/cli.md` already said so). The help now says both, and that CI, the evidence gate and the head pin still apply.
 - **The `jury` gate reads the panel's consensus, not only its findings' severities** (#1436). `jury.run_gate` passed whenever no finding was critical or major, so a chair `REQUEST_CHANGES` over minor findings alone, or an `ABSTAIN` when the chair produced no synthesis, recorded a gates-pass for a head the evidence gate holds since #1429 (#1429's measurement, scenario C). The consensus is the chair record's `verdict` in the report's `reviewers` array, which ai-jury writes from the synthesis or, under `decision: vote`, from the vote; `jury.panel_consensus` reads it, and a gating jury whose consensus is not in `evidence.APPROVING_VERDICTS` — read by the same `jury_verdict_approves` the evidence gate uses — fails with a `major` `jury:consensus` finding naming it. A report that states no consensus (ai-jury before report schema 1.1, or malformed ballots) fails closed in gating mode, because a gating jury has to conclude. In advisory mode a non-approving consensus is a `minor` finding and a report without one adds nothing. The severity rule is kept: a verified major still blocks a panel that approved.
 - **A review-cycle reviewer who gave no verdict is not read as approving** (#1439). `render_review_cycle_summary` rendered and counted a reviewer entry with no `verdict` as `LGTM`, so its merge recommendation could read "✅ approve" for a reviewer who said nothing. It now renders and counts as `ABSTAIN`, which the recommendation reads as not approving (the summary comment is not merge evidence, so this never landed anything).

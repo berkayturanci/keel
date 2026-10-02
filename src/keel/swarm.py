@@ -454,6 +454,12 @@ class SwarmWorkerStatus:
     #: When the worker started and when it ended, ISO 8601 (#1280). Empty until it does.
     started_at: str = ""
     finished_at: str = ""
+    #: What the last live ``keel swarm-review`` did with this cluster's pull request (#1440):
+    #: :func:`keel.swarm_review.review_record` — its status, the head it reviewed, each
+    #: seat's outcome, when, and the run id. ``None`` until a live review runs, and in a
+    #: record from before #1440. A report, never an input: ``swarm-land`` lands only what
+    #: ``keel merge``'s evidence gate accepts, and does not read this.
+    review: dict[str, Any] | None = None
 
     def elapsed_s(self, now: str = "") -> int | None:
         """Whole seconds the worker has run: to ``finished_at``, else — still running —
@@ -488,6 +494,7 @@ class SwarmWorkerStatus:
             "stage": self.stage,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "review": self.review,
         }
 
 
@@ -1642,6 +1649,38 @@ def _status_counts(workers: Sequence[SwarmWorkerStatus]) -> dict[str, int]:
     return counts
 
 
+#: The width of the board's ``Review`` column (#1440).
+REVIEW_COLUMN = 60
+
+
+def review_summary(record: Mapping[str, Any] | None) -> str:
+    """One cell of the board: what the last live ``swarm-review`` did with the cluster (#1440).
+
+    ``posted 2/2 APPROVE @ 596e3d8a``, ``changes-requested 1/2 APPROVE, 1 REQUEST_CHANGES @
+    …`` (status ``posted-changes-requested``), ``held 2/3 APPROVE, 1 failed @ …``,
+    ``already-merged`` — or ``not reviewed`` with no record. The head is the one the seats
+    reviewed; ``swarm-status`` reads no pull request, so whether it is still the pull
+    request's head is the reader's to check.
+    """
+    if not record:
+        return "not reviewed"
+    seats = [s for s in record.get("seats") or () if isinstance(s, Mapping)]
+    status = str(record.get("status"))
+    # The one status too long for the cell; `--json` carries it whole.
+    parts = ["changes-requested" if status == "posted-changes-requested" else status]
+    if seats:
+        outcomes = [s.get("outcome") for s in seats]
+        tally = f"{outcomes.count('APPROVE')}/{len(seats)} APPROVE"
+        for outcome in ("REQUEST_CHANGES", "failed", "refused", "not-run"):
+            if outcome in outcomes:
+                tally += f", {outcomes.count(outcome)} {outcome}"
+        parts.append(tally)
+    head = record.get("head_sha")
+    if isinstance(head, str) and head:
+        parts.append(f"@ {head[:8]}")
+    return " ".join(parts)
+
+
 def swarm_status_payload(state: SwarmRunState, *, now: str = "") -> dict[str, Any]:
     """What ``keel swarm-status --json`` prints for a run it read (#1280).
 
@@ -1652,7 +1691,14 @@ def swarm_status_payload(state: SwarmRunState, *, now: str = "") -> dict[str, An
     return {
         **state.to_dict(),
         "as_of": now,
-        "workers": [{**w.to_dict(), "elapsed_s": w.elapsed_s(now)} for w in state.workers],
+        "workers": [
+            {
+                **w.to_dict(),
+                "elapsed_s": w.elapsed_s(now),
+                "review_summary": review_summary(w.review),
+            }
+            for w in state.workers
+        ],
         "waves": [
             {
                 "wave": wave,
@@ -1696,7 +1742,7 @@ def render_swarm_status_dashboard(state: SwarmRunState | None, *, now: str = "")
     cols_hdr = (
         f"│ {'Cluster':<16} │ {'Issue':<6} │ {'Role':<8} │ {'Step':<5} │ {'Stage':<12} "
         f"│ {'Elapsed':<7} │ {'Lead':<12} │ {'Band':<8} │ {'Agent / Model':<16} "
-        f"│ {'Status':<10} │"
+        f"│ {'Status':<10} │ {'Review':<{REVIEW_COLUMN}} │"
     )
     width = len(cols_hdr) - 2
     lines = [
@@ -1720,7 +1766,8 @@ def render_swarm_status_dashboard(state: SwarmRunState | None, *, now: str = "")
             lines.append(
                 f"│ {w.cluster_id:<16} │ #{w.issue:<5} │ {w.role:<8} │ {w.step:<5} "
                 f"│ {w.stage or '-':<12} │ {elapsed:<7} │ {w.lead[:12]:<12} "
-                f"│ {w.difficulty[:8]:<8} │ {agent_str:<16} │ {badge:<10} │"
+                f"│ {w.difficulty[:8]:<8} │ {agent_str:<16} │ {badge:<10} "
+                f"│ {review_summary(w.review)[:REVIEW_COLUMN]:<{REVIEW_COLUMN}} │"
             )
 
     lines.append("╰" + "─" * width + "╯")
@@ -1788,6 +1835,8 @@ def load_swarm_state(swarm_id: str, root: str | Path = ".") -> SwarmRunState | N
                 stage=_stored_stage(w.get("stage")),
                 started_at=_stored_text(w.get("started_at")),
                 finished_at=_stored_text(w.get("finished_at")),
+                # A record from before #1440 has none: the cluster reads as not reviewed.
+                review=_stored_review(w.get("review")),
             )
             for w in raw_workers
         )
@@ -1834,6 +1883,23 @@ def _stored_wave(value: Any) -> int:
 def _stored_stage(value: Any) -> str:
     """A worker record's ``stage`` when it is one a live worker has, else ``""`` (#1280)."""
     return value if value in swarm_worker.STAGES else ""
+
+
+def _stored_review(value: Any) -> dict[str, Any] | None:
+    """A worker's ``review`` record as written, or ``None`` (#1440).
+
+    Kept only when it names a status; its seats are kept only as objects. A record of
+    another shape — a hand edit, a future writer — reads as "not reviewed" rather than
+    failing the load of the whole run.
+    """
+    if not isinstance(value, dict):
+        return None
+    status = value.get("status")
+    if not isinstance(status, str) or not status:
+        return None
+    seats = value.get("seats")
+    seats = [s for s in seats if isinstance(s, dict)] if isinstance(seats, list) else []
+    return {**value, "seats": seats}
 
 
 def _stored_text(value: Any) -> str:
@@ -2000,12 +2066,15 @@ def update_worker_state(
     stage: str | None = None,
     started_at: str | None = None,
     finished_at: str | None = None,
+    review: dict[str, Any] | None = None,
 ) -> SwarmRunState:
     """Return a new SwarmRunState with the specified worker's fields updated.
 
     ``pull_request`` is recorded when given and otherwise kept, so a later status update
     never forgets the pull request ``swarm-land`` has to merge (#1287). ``worktree`` and
-    ``pushed`` likewise (#1278), and ``stage``, ``started_at`` and ``finished_at`` (#1280).
+    ``pushed`` likewise (#1278), ``stage``, ``started_at`` and ``finished_at`` (#1280), and
+    ``review`` (#1440) — which, given, replaces the cluster's previous review record whole:
+    the latest review wins.
     """
     # `replace` rather than a field-by-field rebuild: the rebuild had to name every
     # field, so each field added to the record (the lead and difficulty band a worker
@@ -2023,6 +2092,7 @@ def update_worker_state(
             stage=stage if stage is not None else w.stage,
             started_at=started_at if started_at is not None else w.started_at,
             finished_at=finished_at if finished_at is not None else w.finished_at,
+            review=review if review is not None else w.review,
         )
         if w.cluster_id == cluster_id
         else w

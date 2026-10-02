@@ -15,6 +15,10 @@ detached worktree at the head under ``.keel/worktrees/<swarm_id>/<cluster_id>.re
 removed when the seat ends, whichever way; one a crash leaves behind is a leftover
 ``keel swarm-status --clean`` removes.
 
+Each live cluster's outcome is recorded in its worker record of the run state
+(:func:`record_review`, #1440), which ``keel swarm-status`` shows; ``swarm-land`` does not
+read it.
+
 The outside world — the pull-request lookup, the reads, the seat itself and the post — is
 injected (:class:`ReviewIO`), so the loop is tested against recorded answers.
 """
@@ -30,7 +34,13 @@ from typing import Any, cast
 
 from . import swarm_review, swarm_runtime, swarm_worker
 from .delegate import RunPlan
-from .swarm import SwarmCluster, SwarmPlan, load_swarm_state
+from .swarm import (
+    SwarmCluster,
+    SwarmPlan,
+    load_swarm_state,
+    save_swarm_state,
+    update_worker_state,
+)
 from .swarm_landing import FindPullRequest
 from .swarm_review import ClusterReview, PullRequestFacts, ReviewSeat, SeatVerdict
 from .swarm_runtime import Implementer, SubprocessRunner, default_runner
@@ -309,6 +319,30 @@ def _review_cluster(
     return swarm_review.with_status(report, status, reason)
 
 
+def record_review(root: Path, swarm_id: str, review: ClusterReview, *, now: str) -> str:
+    """Write ``review`` into its cluster's worker record in the run state (#1440); ``""``
+    once written, else why it was not.
+
+    The file ``swarm-run`` writes, through the same atomic writer. Re-read just before the
+    write and written once per cluster, as each cluster ends, so a run that stops part-way
+    keeps the clusters it reviewed, and a record replaces the cluster's previous one whole.
+    Like ``swarm-land``, it takes no lock: do not run it beside a ``swarm-run`` of the same
+    swarm, whose writes would race it.
+    """
+    state = load_swarm_state(swarm_id, root=root)
+    if state is None:
+        return f"the run state of {swarm_id} could not be read; the review is not recorded"
+    if not any(w.cluster_id == review.cluster_id for w in state.workers):
+        return f"the run state of {swarm_id} has no worker {review.cluster_id} to record it on"
+    record = swarm_review.review_record(
+        review,
+        run_id=swarm_review.review_run_id(swarm_id, review.cluster_id),
+        reviewed_at=now,
+    )
+    save_swarm_state(update_worker_state(state, review.cluster_id, review=record), root=root)
+    return ""
+
+
 def review_wave_clusters(
     plan: SwarmPlan,
     wave_index: int,
@@ -340,6 +374,7 @@ def review_wave_clusters(
     state = load_swarm_state(plan.swarm_id, root=root_path)
     recorded = {w.cluster_id: w.pull_request for w in state.workers} if state else {}
     reviews: list[ClusterReview] = []
+    warnings: list[str] = []
     for cluster in wave.clusters:
         try:
             reviewed = _review_cluster(
@@ -362,6 +397,13 @@ def review_wave_clusters(
                 f"reviewing it raised {type(exc).__name__}: {exc}",
             )
         reviews.append(reviewed)
+        # A dry run records nothing; a live one records each cluster as it ends.
+        if not dry_run and (
+            why := record_review(root_path, plan.swarm_id, reviewed, now=swarm_runtime._now())
+        ):
+            warnings.append(f"{cluster.cluster_id}: {why}")
     if not dry_run:
         swarm_runtime.remove_empty_swarm_dirs(root_path, plan.swarm_id)
-    return swarm_review.SwarmReviewResult(plan.swarm_id, wave_index, dry_run, tuple(reviews))
+    return swarm_review.SwarmReviewResult(
+        plan.swarm_id, wave_index, dry_run, tuple(reviews), tuple(warnings)
+    )
