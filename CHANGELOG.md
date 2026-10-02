@@ -58,6 +58,9 @@ All notable changes to keel are documented here. The format follows
   on a maturity, production-readiness or multi-vendor-review claim, on a status surface without
   "experimental", and when the set of surfaces naming the run changes size.
 
+### Fixed
+- **`external promises` no longer reads a rate limit or a server error as "does not exist"** (#1433). After the 1.27.0 release the job went red on main twice with two false messages — that `berkayturanci/keel` had no `v1.27.0` ref and that `berkayturanci/homebrew-keel` did not exist — while `git ls-remote` listed the tag and the tap had just been synced: `_reachable` returned `exc.code < 400` for any HTTP error, so a 429 from a throttled runner or a just-pushed tag page's 504 read as an absence. Only 404/410 now mean absent; 429, 403 and 5xx are retried a bounded number of times (honouring `Retry-After`, capped at 10 s) and then fail as "could not check", as a network exception already did (#933); any other 4xx is reported, not guessed. The repository, tag and tap checks ask the GitHub REST API, authenticated with the job's `GITHUB_TOKEN`, instead of anonymous web pages. Hermetic tests pin each status class.
+
 ## [1.27.0] - 2026-10-02
 
 - A review verdict now counts toward landing only when it approves: a reviewer's change request at the head holds `keel merge`, and the refusal names who asked for changes.
