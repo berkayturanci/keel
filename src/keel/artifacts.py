@@ -880,12 +880,24 @@ def _cycle_findings(raw: Any) -> list[dict[str, str]]:
     return findings
 
 
+#: What a review-cycle reviewer entry with no ``verdict`` renders and counts as (#1439). It
+#: used to be ``LGTM``, so a reviewer who said nothing read as approving and the merge
+#: recommendation could come out "approve"; a missing verdict is no verdict, as
+#: :func:`render_jury_verdict` reads one since #1432.
+_CYCLE_NO_VERDICT = "ABSTAIN"
+
+
+def _cycle_verdict(reviewer: dict[str, Any]) -> str:
+    """A review-cycle reviewer's verdict, or :data:`_CYCLE_NO_VERDICT` when it gave none."""
+    return _value(reviewer.get("verdict"), _CYCLE_NO_VERDICT)
+
+
 def _cycle_reviewer_lines(reviewer: dict[str, Any]) -> list[str]:
     lines = [
         f"## Reviewer: {_value(reviewer.get('codename'), 'Reviewer')} "
         f"(Focus: {_value(reviewer.get('focus'), 'general review')})",
         "",
-        f"Verdict: {_value(reviewer.get('verdict'), 'LGTM')}",
+        f"Verdict: {_cycle_verdict(reviewer)}",
         "",
     ]
     findings = _cycle_findings(reviewer.get("findings"))
@@ -926,8 +938,7 @@ def _aggregate_clean_areas(reviewers: list[dict[str, Any]]) -> list[str]:
 
 def _merge_recommendation(reviewers: list[dict[str, Any]], histogram: dict[str, int]) -> str:
     needs_fixes = any(
-        not _value(reviewer.get("verdict"), "LGTM").lower().startswith("lgtm")
-        for reviewer in reviewers
+        not _cycle_verdict(reviewer).lower().startswith("lgtm") for reviewer in reviewers
     )
     if needs_fixes or histogram["blocker"] > 0:
         return "❌ block"
@@ -950,8 +961,7 @@ def _cycle_summary_lines(reviewers: list[dict[str, Any]]) -> list[str]:
     ]
     if reviewers:
         lines.extend(
-            f"- {_value(reviewer.get('codename'), 'Reviewer')}: "
-            f"{_value(reviewer.get('verdict'), 'LGTM')}"
+            f"- {_value(reviewer.get('codename'), 'Reviewer')}: {_cycle_verdict(reviewer)}"
             for reviewer in reviewers
         )
     else:
