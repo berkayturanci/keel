@@ -1086,7 +1086,8 @@ reviewer's **returned findings**, not the comment shape, so it is mode-independe
 
 ### s8 test (gates + jury)
 `keel run-gates .keel/project.yaml --root . --run-id "$RUN_ID" --command ship --phase s8 --issue <N>`
-runs the project gates (`build_gate_cmd`,
+— with **`--defer-jury`** added when `review_merge_contract.reviewers.panel` is `jury`, because
+s7 already ran that tier's panel (see **One panel per head** below) — runs the project gates (`build_gate_cmd`,
 `lint_cmd`, plus the `tester` Lego — the manual-test list, which may loop back to the
 implementer defensively without spending review budget unless it surfaces a blocking fix).
 Under `implement_mode: tdd` (or `--tdd`, which `run-gates` also accepts) this run also
@@ -1107,9 +1108,15 @@ override its own measurement of a gate it ran.
 
 **One panel per head, never two.** When `review_merge_contract.reviewers.panel` is `jury`,
 s7 already ran the panel and `keel review --from-jury` already posted its ballots and its
-`keel.jury-verdict.v1` comment. Do **not** run the jury again here: re-read the saved report
-at `.keel/state/jury/$RUN_ID.json` if you need its findings, run the command gates below,
-and leave the verdict alone. Running it twice buys a second opinion from the first opinion
+`keel.jury-verdict.v1` comment. Do **not** run the jury again here: pass `--defer-jury` to
+`run-gates` (it reports the jury `NOT-RUN` instead of convening it), re-read the saved report
+at `.keel/state/jury/$RUN_ID.json` if you need its findings, and leave the verdict alone.
+`keel ship --live --append-ledger` then records the jury gate from that posted comment
+rather than from a second panel (#1437): pass it `--pr <PR>` and `--head-sha <head>`, and it
+reads the standing `keel.jury-verdict.v1` for that head exactly as `keel merge` will — the
+ledger's jury entry says `source: reused` and names the comment. A rejecting or abstaining
+consensus, or a `critical`/`major` line in its findings summary, fails the reused gate; with
+no posted verdict for the head, or no readable comments, it convenes the panel as before. Running it twice buys a second opinion from the first opinion
 and doubles the bill for it. The rest of this section is the jury as a *gate* — the
 arrangement for a tier whose reviewers are the host bench and whose panel is a second,
 separate reading.

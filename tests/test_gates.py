@@ -625,5 +625,35 @@ class TestScanPresetExclusions(unittest.TestCase):
         return [part for part in raw.split(",") if part]
 
 
+class MarkJuryReused(unittest.TestCase):
+    """#1437: only an executed jury outcome is stamped with the panel it reused."""
+
+    REUSE = gates.PanelReuse(head_sha="abc", comment_id=1, url="https://x")
+
+    def test_nothing_reused_leaves_every_outcome(self):
+        outcomes = [gates.GateOutcome("jury", True)]
+        self.assertEqual(gates.mark_jury_reused(outcomes, None), outcomes)
+
+    def test_only_an_executed_jury_is_stamped(self):
+        outcomes = [
+            gates.GateOutcome("build", True),
+            gates.GateOutcome("jury", True),
+        ]
+        marked = gates.mark_jury_reused(outcomes, self.REUSE)
+        self.assertIsNone(marked[0].reused_from)
+        self.assertEqual(marked[1].reused_from, self.REUSE)
+        for outcome in (
+            gates.GateOutcome("jury", True, not_run=True),
+            gates.GateOutcome("jury", False, unconfigured=True),
+        ):
+            with self.subTest(outcome=outcome):
+                self.assertIsNone(gates.mark_jury_reused([outcome], self.REUSE)[0].reused_from)
+
+    def test_the_reuse_record_is_plain_data(self):
+        self.assertEqual(
+            self.REUSE.as_dict(), {"head_sha": "abc", "comment_id": 1, "url": "https://x"}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

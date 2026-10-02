@@ -23,7 +23,7 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any
 
-from . import evidence
+from . import artifacts, evidence
 from .findings import Finding
 from .model import DEFAULT_JURY_TIMEOUT_S
 from .runner import CommandResult, run_argv
@@ -268,6 +268,66 @@ def _consensus_finding(data: dict | str, *, gating: bool) -> Finding | None:
         line=None,
         anchorable=False,
     )
+
+
+#: The source of the findings a jury gate carries over from a reused panel (#1437).
+REUSED_SOURCE = "jury:reused"
+
+
+def reuse_posted_verdict(body: str, *, gating: bool) -> tuple[bool, list[Finding]] | None:
+    """The jury gate's outcome read off the panel already posted for the head (#1437).
+
+    ``body`` is the standing ``keel.jury-verdict.v1`` comment for the head
+    (:func:`keel.evidence.standing_jury_verdict`). The gate is judged by the two rules a
+    panel keel ran is judged by, so reusing one can never be kinder than running it:
+
+    * **the severity rule** — each ``<severity>: <message>`` item of the comment's findings
+      summary (:func:`keel.artifacts.jury_verdict_summary`, the verified findings
+      :func:`jury_verdict` posts) becomes a finding, and a critical or major one fails;
+    * **the consensus rule** (#1436) — an ``AI Jury verdict:`` line that does not approve,
+      or no readable line at all, is a ``major`` finding in gating mode and a ``minor`` one
+      in advisory mode, the same as :func:`_consensus_finding` for a report.
+
+    ``(ok, findings)``, or ``None`` when the comment's summary cannot be read — a body keel
+    did not render. ``None`` means *do not reuse*: the caller convenes the panel as it
+    always did, so an unreadable comment can never stand in for a run.
+    """
+    summary = artifacts.jury_verdict_summary(body)
+    if summary is None:
+        return None
+    findings: list[Finding] = []
+    for item in summary:
+        label, sep, _message = item.partition(":")
+        findings.append(
+            Finding(
+                # An item with no `<severity>:` label is read as unknown, which
+                # map_severity already maps to `minor`.
+                severity=map_severity(label if sep else ""),
+                message=f"posted jury finding — {item}",
+                source=REUSED_SOURCE,
+                path=None,
+                line=None,
+                anchorable=False,
+            )
+        )
+    if not evidence.jury_verdict_approves(body):
+        token = evidence.jury_verdict_token(body)
+        findings.append(
+            Finding(
+                severity="major" if gating else "minor",
+                message=(
+                    f"posted jury consensus is {token}, not an approval."
+                    if token
+                    else "posted jury verdict has no readable AI Jury verdict line."
+                ),
+                source=CONSENSUS_SOURCE,
+                path=None,
+                line=None,
+                anchorable=False,
+            )
+        )
+    blocked = any(f.severity in ("critical", "major") for f in findings)
+    return (not blocked), findings
 
 
 def could_not_run(findings) -> bool:

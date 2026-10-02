@@ -72,7 +72,9 @@ In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictl
   reported as `minor`. Until #1429 the line was not read, and on the `keel init` scaffold
   (`gates: [build, lint]`, no `jury` gate) nothing else stood between a rejecting panel and
   `keel merge`. Since #1436 the `jury` gate reads the same consensus, so a gating jury whose
-  consensus does not approve also records no gates-pass for the head. The panel-shape readers — the `vendors:` / `panelists:` counts and whether a
+  consensus does not approve also records no gates-pass for the head — and since #1437
+  `keel ship` judges that gate from the same standing comment when one is posted for the head,
+  rather than convening a second panel whose result nothing ties to it. The panel-shape readers — the `vendors:` / `panelists:` counts and whether a
   panel sat — still read the comment's presence: a panel that rejected the change still sat.
   The panelists' ballots that `keel review --from-jury` posts are review verdicts, and are read
   like any other: a ballot that requests changes holds.
