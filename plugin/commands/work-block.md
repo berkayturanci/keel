@@ -1,0 +1,181 @@
+---
+description: Daytime multi-issue work block — process an explicit issue list or queue selector through ship with per-issue isolation and operator-visible stopping points.
+argument-hint: "[issue numbers...] [--queue <selector>] [--max <N>] [--hours <H>] [--review-comments <inline|summary>] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>] [--wizard]"
+allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
+---
+
+# /keel:work-block
+
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
+go**. This command's phases are: `config` → `snapshot` → `loop` → `report`. Pick one stable `--run-id` for the whole run
+(e.g. `work-block-<issue-or-pr>`):
+
+- **Right now, before the work below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command work-block --run-id "$RUN" --phase config`
+- Re-run with the next `--phase` (`snapshot`, …) **as you advance** through the flow.
+- At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
+
+Treat this like any other contractual step — do not skip it. The one allowed exception is a
+core too old to ship `keel activity` (keel < 1.6.0): then skip it silently and never block
+the command.
+
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. Any GitHub
+comment, review, issue label, branch, PR, merge, report, or queue write must be posted or
+written through the selected transport and cited in the final summary.
+Never silently skip a step because the runtime, agent, or prompt feels obvious.
+
+Run a daytime work block: process a prioritized set of issues sequentially through
+`/keel:ship` while the operator may still be present to approve, redirect, or stop between
+items. This is not a second ship implementation and not a copy of `/keel:overnight`; it
+uses the shared `contract.session_contract.work_block` primitive and hands every ready item
+to `ship`.
+
+## Step 0 — Resolve config + work-block contract
+
+```bash
+keel validate .keel/project.yaml --root .
+keel plan     .keel/project.yaml --root . --command work-block --live --json
+keel work-block .keel/project.yaml --root . --live --json
+keel window   .keel/project.yaml
+```
+
+Parse `contract.operator_consent` before selecting work, creating branches/worktrees,
+spawning implementers, opening PRs, merging, writing reports, or touching GitHub labels or
+comments. If `requires_operator_consent` is true, STOP and ask the operator to rerun with
+the required `--approve-scope` values. Pass
+`operator_consent.delegated_agent_scope` into every child `/keel:ship` handoff. Children
+may use only `approved_mutation_scopes`; scope expansion blocks or escalates.
+
+`--wizard` is interactive opt-in only. Pass it through to the same Step 0 command; core
+runs the picker described in `/keel:ship`'s `--wizard` section, from the same provider
+probe, and in any non-interactive context degrades to a logged no-op that leaves the
+parsed flags exactly as they are. Work-block has no jury flag of its own (its implementer
+flag is `--delegate`, Step 0b), so core echoes the picker's choices in the resolved flag set
+— hand them to every child `/keel:ship` verbatim rather than re-deciding them per issue.
+
+Read `contract.session_contract.work_block`. It is the queue primitive shared with
+`/keel:overnight`: queue snapshot, readiness refresh, per-issue worktree isolation, ship
+handoff, checkpoint/resume, run ledger, final report buckets, and stop conditions. Do not
+invent project-specific queue tiers in this adapter; read project policy from
+`.keel/project.yaml` or extension output.
+
+## Step 0b — Staffing: who runs the children
+
+This block accepts `--delegate <provider[:model]>`, `--review-delegate <provider>`
+(repeatable, positional per reviewer slot), `--effort <low|medium|high>`,
+`--team <profile>` and `--reviewers <n>`, and hands **every one of them that was set** to
+**every** child `/keel:ship`. Resolve them once, from the same preflight the rest of this
+command reads:
+
+Build the flag list from the values that were set — never pass an empty one, which the
+parser rejects (`--effort ''` is `invalid choice: ''`) or records as a value
+(`--delegate ''`):
+
+```bash
+STAFF=()
+[ -n "$DELEGATE" ]  && STAFF+=(--delegate "$DELEGATE")
+for r in "${REVIEW_DELEGATES[@]}"; do STAFF+=(--review-delegate "$r"); done  # one per slot, in order
+[ -n "$EFFORT" ]    && STAFF+=(--effort "$EFFORT")
+[ -n "$TEAM" ]      && STAFF+=(--team "$TEAM")
+[ -n "$REVIEWERS" ] && STAFF+=(--reviewers "$REVIEWERS")
+keel work-block .keel/project.yaml --root . --live --json "${STAFF[@]}"
+```
+
+`contract.session_contract.work_block.delegation` comes back with the effective values and
+with `child_args` — the exact flag list to append. Append it verbatim to each handoff:
+
+```
+/keel:ship <issue> [--delegate <provider[:model]>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>] [--reviewers <n>]
+```
+
+A flag the operator did not pass is simply absent; never invent one, and never drop one the
+operator did pass. `contract.assignment` shows what those values resolve to
+(`lead`, `implementer`, `effort`, `reviewers`, `review_panel`) — read it, do not re-derive
+it. Record the effective values, and the `assignment` they produced, in the session report:
+a block whose report does not say which team ran it cannot be audited later.
+
+## Step 1 — Snapshot the queue
+
+Use explicit issue numbers in the order provided. If none are provided, resolve `--queue`
+through the project policy or GitHub query and sort deterministically by configured
+priority, then issue number. Apply `--max` to the snapshot, not to a live re-poll.
+
+**Make the whole queue visible on the board up front (deterministic).** As soon as the
+snapshot is fixed — before any child ship handoff — stamp each child ship's `s0` on the
+`keel-visual` board, so every queued run appears immediately, even one whose child agent
+never reaches its own per-phase `keel activity` calls. For each issue `N` in the snapshot:
+
+```bash
+keel activity .keel/project.yaml --root . --write \
+  --command ship --run-id "ship-$N" --phase s0 --issue "$N"
+```
+
+This is the parent's job, not the child's, and runs once per snapshot. Use the canonical
+`ship-<N>` run id so the child ship's own advances (`keel plan`/`run-gates`/`merge
+--run-id "ship-$N"`) update the **same** board row; a child that never stamps still shows as
+`s0` instead of vanishing. Same fail-soft exception as the run-stamp above (skip silently on
+keel < 1.6.0).
+
+Write or update the checkpoint with `--checkpoint-command overnight` only when resuming an
+overnight run; otherwise use the daytime command name `work-block`. Store the issue queue,
+active issue, current child branch/worktree/PR when known, and stop reason at each safe
+boundary.
+
+## Step 2 — Refresh readiness before each item
+
+Before a child ship handoff, fetch the current issue title/body/labels and run:
+
+```bash
+keel plan .keel/project.yaml --root . --command ship --live --json \
+  --target "issue #<N>" \
+  --issue-title "$ISSUE_TITLE" \
+  --issue-body "$ISSUE_BODY" \
+  --issue-label "$ISSUE_LABELS"
+```
+
+If `contract.issue_intake.status` is `needs-input`, `blocked`, or `out-of-scope`, record the
+reason and questions in the final report. In daytime mode, stop for operator attention on
+`needs-input` or consent gaps; skip only when policy explicitly allows continuing.
+
+## Step 3 — Handoff each ready issue to ship
+
+Run `/keel:ship <N>` for one ready issue at a time. The child ship run owns branch creation,
+worktree isolation, implementation, CI, review, test, merge lock/window, capture, ledger
+append, and closeout. A child failure must never reuse or contaminate the next issue's
+branch/worktree.
+
+Re-check `keel window` before each child merge handoff. Daytime work blocks may merge only
+when the normal ship merge gate allows it; the work-block command cannot weaken the merge
+lock, merge window, review requirements, CI requirements, capture marker, or closeout
+rules.
+
+## Step 4 — Stop or continue by policy
+
+Stop on hard blockers, consent gaps, user cancellation, or ambiguous resume state. Continue
+only when the work-block contract says the outcome can be isolated from the next item.
+Examples: a skipped non-ready issue may be safe to continue; unresolved CI budget exhaustion
+may stop the block or defer according to policy.
+
+## Step 5 — Final report
+
+Write a concise session report to the configured `session` report destination when present.
+If no destination is configured, print the report in the final command summary. The report
+must include the fixed queue snapshot and these buckets:
+
+- Shipped
+- PR-opened-not-merged
+- Deferred
+- Blocked
+- Skipped
+- Needs-input
+
+Also include the effective staffing (`--delegate`, `--review-delegate`, `--effort`,
+`--team`, `--reviewers` as they were passed to the children), open questions, consent gaps,
+and the next 1–3 operator actions.
+
+<!-- keel-generated: surface=plugin command=work-block keel_version=1.28.0 source_sha256=bf24c297b1704cbaaccffa0ce6e71cfee8497dfb31f1c3c94f412067ac405edb generated_sha256=bf24c297b1704cbaaccffa0ce6e71cfee8497dfb31f1c3c94f412067ac405edb -->

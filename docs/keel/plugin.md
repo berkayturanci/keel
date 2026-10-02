@@ -67,3 +67,35 @@ fits: the plugin for a quick install in an agent session — [any of the four](i
 not only Claude Code — or the package when you also want the `keel` CLI on your `PATH` and
 the shared skill surface under `.agents/skills/`. The plugin does not remove the CLI from
 the requirements; the command bodies it ships shell out to `keel`.
+
+## Submitting to the plugin directories
+
+The marketplace plugin above is the whole repository (`"source": "./"`), which is right
+for `/plugin install keel` and too large for a directory review: an installer of the root
+gets the CLI source, the tests and the site's images — over 500 files, dozens of binaries,
+several past 256 KiB. The directories therefore get bundles that hold only what an agent
+loads, built by `scripts/plugin_bundle.py` from the same root sources:
+
+- **`plugin/`** (committed) — the Claude plugin directory bundle: `.claude-plugin/plugin.json`
+  (a byte copy of the root manifest), `commands/`, `skills/keel-onboard/`, `LICENSE` and
+  `assets/logo.svg`, plus a hand-written `README.md` that says what the plugin runs, sends
+  and fetches. No hooks — `hooks/session-start.sh` is this repository's own tooling.
+- **`dist/keel-plugin-<version>.zip`** (built, ignored) — the OpenAI upload. The portable
+  format reads skills from a root `skills/` only and has no commands, so the ZIP carries
+  `packaging/openai-plugin/plugin.json` as its root `plugin.json` and every keel skill:
+  `keel-onboard` plus the seventeen generated `.agents/skills/keel-*`. Those seventeen stay
+  out of `plugin/skills/`, where Claude would list each workflow twice.
+
+`make plugin` re-syncs `plugin/` after regenerating `commands/`, and
+`tests/test_plugin_bundle.py` fails on any drift, on anything a directory would refuse or
+hold (symlinks, binaries, oversized files, a non-string `description`, a short README) and
+on a listing field past its limit. Both new manifests are release surfaces, so
+`make release-bump` moves their version with the rest.
+
+**Claude** (claude.ai/directory/manage): submit a **Plugin bundle** from the GitHub
+repository `berkayturanci/keel` with the path `plugin`.
+
+**OpenAI** (ChatGPT and Codex share one directory): after platform verification, open
+**Plugins → Upload ZIP** and upload the file `make plugin-zip` writes
+(`python3 scripts/plugin_bundle.py zip`). A skills-only plugin needs no privacy, terms or
+support URLs, test cases or demo video.

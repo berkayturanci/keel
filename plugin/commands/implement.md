@@ -1,0 +1,218 @@
+---
+description: Delegate a single issue to the right implementer and drive the s4 implement step standalone. Project-neutral — every project specific is read from .keel/project.yaml via the keel CLI.
+argument-hint: "[issue number] [--delegate <claude|codex|agy|ollama:MODEL|anthropic-api:MODEL|openai-api:MODEL|google-api:MODEL|PROFILE>]"
+allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Read, Write, Agent
+---
+
+# /keel:implement
+
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
+go**. This command's phases are: `config` → `fetch` → `branch` → `resolve` → `codename` → `delegate` → `report`. Pick one stable `--run-id` for the whole run
+(e.g. `implement-<issue-or-pr>`):
+
+- **Right now, before the work below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command implement --run-id "$RUN" --phase config`
+- Re-run with the next `--phase` (`fetch`, …) **as you advance** through the flow.
+- At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
+
+Treat this like any other contractual step — do not skip it. The one allowed exception is a
+core too old to ship `keel activity` (keel < 1.6.0): then skip it silently and never block
+the command.
+
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
+The standalone **implement step (`s4`)** of the keel backbone. This adapter is
+project-neutral: it contains no branch name, build command, agent, path glob, or
+timezone. Read every project-specific value from `.keel/project.yaml` via the
+`keel` CLI.
+
+> **Hard rule.** If you are about to type a literal like a base-branch name, a
+> build/lint command, an implementer agent, or a path glob — **stop** and read it
+> from config (`base_branch`, `build_gate_cmd`, `lint_cmd`, `team.implement`,
+> `tier3_globs`). Hardcoding a project specific here is the exact bug keel exists
+> to kill.
+
+## Language
+
+All committed/published artifacts (commits, branch names, PR/issue titles and
+bodies, comments, file contents) MUST be written in English. Free-form chat with
+the user may stay in any language. (project-specific language policy lives in the
+project's source-of-truth doc — `knobs.sot_doc`.)
+
+## Step 0 — Resolve config
+
+```bash
+keel validate .keel/project.yaml --root .   # abort if config/extensions invalid
+keel plan     .keel/project.yaml --root .    # read base_branch, team, tier3_globs
+keel plan     .keel/project.yaml --root . --command implement --live --json
+```
+
+The live plan is the operator-consent preflight. Before posting comments, creating a
+worktree/branch, delegating, editing files, committing, pushing, opening a PR, using
+secrets, publishing, or calling production-adjacent systems, parse
+`contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values. Store
+`operator_consent.delegated_agent_scope` for Step 5.
+
+Read the knobs you will need: `base_branch`, `team` (whose `implement.by_role` routes the
+implementer; `implementer_agents` is its deprecated spelling), `tier3_globs`,
+`build_gate_cmd`, `lint_cmd`.
+
+## Step 1 — Fetch the issue
+
+Read the issue (title, body, labels) via `gh` (CLI when available) or the GitHub
+MCP read tools (sandbox/web runtime). Capture `number`, `title`, `body`, and the
+`labels` array — the role/platform label drives implementer routing below.
+
+Rerun the live preflight with the selected issue context before branch/worktree
+or delegation:
+
+```bash
+keel plan .keel/project.yaml --root . --command implement --live --json \
+  --target "issue #<N>" \
+  --issue-title "$ISSUE_TITLE" \
+  --issue-body "$ISSUE_BODY" \
+  --issue-label "$ISSUE_LABELS"
+```
+
+Parse `contract.issue_intake`. If `status` is `needs-input`, ask or post the
+generated `questions` and stop before any code mutation. If `status` is
+`blocked` or `out-of-scope`, record the `ledger_record`, report the skip reason,
+and stop. Only `ready` may continue to Step 2.
+
+## Step 2 — Check for an existing branch
+
+Look for a branch already associated with this issue (e.g. matching
+`*issue-<N>*`). If one exists, report it and ask the human whether to continue on
+it or start fresh — do not silently clobber in-flight work.
+
+## Step 3 — Resolve the implementer
+
+Do not resolve the implementer yourself — ask core, which resolves it exactly as
+`/keel:ship` s4 does. Precedence: `--delegate` flag > `team.profiles.<--team>` bench >
+`team.by_difficulty.<band>` bench > `team.implement.by_role` > `team.implement.default` >
+`implementer_agents` (deprecated) > `HOST_AGENT`. This command passes no `--team` and
+`keel plan` scores no band, so neither bench applies here. Core reads no `delegate:*` issue
+label. Pass the issue's
+**role/platform label** as `--role`, and `--delegate` only when this run was given one:
+
+```bash
+PLAN_ARGS=()
+[ -n "$ROLE" ]     && PLAN_ARGS+=(--role "$ROLE")
+[ -n "$DELEGATE" ] && PLAN_ARGS+=(--delegate "$DELEGATE")
+keel plan .keel/project.yaml --root . --command ship "${PLAN_ARGS[@]}" --json
+```
+
+Read `contract.assignment.implementer` (`provider`, `kind`, `name`, `model`, `effort`,
+`source`) and dispatch that seat; never hardcode an agent name — the mapping is config. A
+`kind: subagent` seat runs under the host subagent it names. The same value set as
+`/keel:ship` applies, including the hosted-API delegates
+(`anthropic-api:MODEL` / `openai-api:MODEL` / `google-api:MODEL`), local models
+and configured `knobs.delegate_profiles`.
+
+**Dispatch every non-host implementer with `keel delegate run`** — the one executor
+for every transport — and never hand-build an invocation:
+
+```bash
+keel delegate run --provider "$DELEGATE" --role implement \
+  --prompt-file "$BRIEF" --cwd "$WORKTREE" --timeout 3600 --project .keel/project.yaml
+```
+
+Parse the JSON contract it prints (`ok`, `text`, `error_code`, `attribution`,
+`effort_applied`, `read_only_backed`, `warnings`) rather than re-deriving any of it;
+the ship.md s4 section is the canonical description of that document. For a run that
+will outlive your turn, add `--detach --run-id "$RUN_ID"` and collect it with
+`keel delegate wait "$RUN_ID" --timeout <s>` — never a sleep-and-poll loop. Always
+pass `--timeout` to both: the one on `run` is stamped into the run record as its
+deadline, so a child that is killed outright is reported `lost` rather than left
+`running` forever. The policy around the
+call is unchanged and stays here, not in the command: the no-tools contract for a
+provider that cannot run tools (orchestrator does every git/PR step; the delegate
+produces only a diff), the `secrets` consent scope before any key is read, refusal
+on tier-3, at most two retries on a bad diff, and never retry `rate-limit`.
+
+Project-specific routing nuances (e.g. a particular file-pattern that demands a
+specialized tool or a record-and-validate script for snapshot/baseline tests)
+live in the project, not here: express them as a `.keel/extensions/` Lego
+(an `after-implement` slot) or mark them "(project-specific; stays in the
+project)".
+
+## Step 4 — Agent run codename + start comment
+
+Mint an agent run codename and record attribution. Use a deterministic,
+collision-free form: `<ROLE_PREFIX>-<issue>-<UTC timestamp>` where `ROLE_PREFIX`
+derives from the resolved implementer role and the timestamp is generated at run
+time (UTC, e.g. `YYYYMMDD-HHMMSS`). **Never compose an `agent:` or `model:` label in
+prose** — ask core for the effective implementer's labels and apply them verbatim:
+
+```bash
+keel attribution --vendor <effective-vendor> --model <effective-model> \
+  --config .keel/project.yaml --json
+```
+
+or read the `attribution` block a `keel delegate run` result already carries.
+
+Post a start comment on the issue before delegating (via `gh` or the GitHub MCP
+comment tool), including: codename, chosen agent, implementer system (host agent
+id), and the planned branch name.
+
+## Step 5 — Delegate (with worktree isolation)
+
+Dispatch to the resolved implementer with the issue context. Mandatory steps the
+implementer must follow:
+
+0. Receive and obey the approved `operator_consent.delegated_agent_scope`. If the
+   implementer attempts work outside `approved_mutation_scopes`, the orchestrator blocks or
+   escalates. Secret access requires explicit `secrets` approval for this run.
+1. Read the project's source-of-truth doc (`knobs.sot_doc`) and any platform
+   context it points to.
+2. **Workspace isolation (mandatory):** before any code-modifying work, create a
+   git worktree off `origin/<base_branch>` (config — never assume the branch) and
+   perform every edit, build, and push from inside it. Never mutate the user's
+   primary checkout. Use a repo-nested worktree path (never a sibling), e.g.:
+   ```bash
+   git fetch origin "$BASE_BRANCH" --quiet
+   git worktree add -b feature/issue-<N>-<slug> worktrees/issue-<N> origin/"$BASE_BRANCH"
+   ```
+   Run the gates from inside that path. After the PR merges, clean up with
+   `keel worktree-remove worktrees/issue-<N> --root .`, which checks the path is nested
+   under the repo root and registered in `git worktree list` before removing it (never
+   `git worktree remove --force` on an implementer-supplied path).
+3. Implement all acceptance criteria with focused commits scoped to the issue.
+4. Run the applicable gates from inside the worktree via the keel CLI so the
+   command strings stay config-driven:
+   ```bash
+   keel run-gates .keel/project.yaml --root .
+   ```
+   This executes the built-in `build_gate_cmd` / `lint_cmd` plus any `tester`
+   Lego. Gate selection that depends on which files changed (schema migration,
+   entitlement, or config-specific suites) is project-specific: express it as a
+   Lego or mark it "(project-specific; stays in the project)".
+5. Include the codename in commits / PR body / final summary when practical.
+6. Return the contract: codename, branch/commit, files changed, gate results,
+   docs impact, and anything needing manual/device/infra verification.
+
+## Step 6 — Report back + hand off
+
+After the implementer completes, summarize: codename, branch/commit, what was
+implemented, gate results, and anything needing manual verification. Post a
+completion comment on the issue with the same codename and the gate results if
+the implementer did not already do so.
+
+Do **not** merge here — that is `/keel:ship`'s job (window + lock + review). Hand
+the contract to `/keel:ship` (or `/keel:pr-loop`) to open the PR and drive
+review / CI / merge.
+
+Fail over to the host agent on delegate quota errors; attribute the **effective**
+agent.
+
+<!-- keel-generated: surface=plugin command=implement keel_version=1.28.0 source_sha256=9104c0b91216fc29729a47131bd083ddbc680347e28a9d5b1460fc9fe12a47ca generated_sha256=9104c0b91216fc29729a47131bd083ddbc680347e28a9d5b1460fc9fe12a47ca -->

@@ -94,6 +94,10 @@ Before tagging a release:
     `test_plugin_manifest_version_matches_keel_version` covers the Claude one only. A
     manifest added to the tree without a table entry fails
     `EveryPluginManifestIsARegisteredSurface` (#1139),
+  - the two directory-submission manifests — `plugin/.claude-plugin/plugin.json` (a byte
+    copy of the root one, re-synced by `make plugin`) and the OpenAI portable manifest
+    `packaging/openai-plugin/plugin.json` (the uploaded ZIP's root `plugin.json`; see
+    [Submitting to the plugin directories](plugin.md#submitting-to-the-plugin-directories)),
   - the pinned-install `keel@v<version>` references in `README.md`,
     `.github/workflows/keel-ship.yml` and `docs/keel/cutover.md` (kept in lockstep by
     `test_release_docs.py`),
