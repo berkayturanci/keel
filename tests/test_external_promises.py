@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sys
+import time
 import unittest
 import unittest.mock
 import urllib.error
@@ -126,25 +127,89 @@ def _could_not_look(case, what: str, exc: Exception) -> NoReturn:
     )
 
 
-def _reachable(url: str) -> bool:
-    request = urllib.request.Request(url, method="HEAD")
+#: HTTP statuses that answer "does it exist": anything else in 4xx/5xx is the server
+#: declining to say. 404/410 are the only "no".
+_ABSENT = frozenset({404, 410})
+#: Statuses that say nothing about existence — a rate limit (GitHub throttles
+#: anonymous requests from shared runner IPs with 429, and some limits with 403) or
+#: the server failing (a new tag's first page render returned 504 after the 1.27.0
+#: release, #1433). Retried, then reported as "could not check", never as absent.
+_INCONCLUSIVE = frozenset({403, 429})
+#: Attempts per URL, and the cap on one wait between them, in seconds.
+_ATTEMPTS = 3
+_MAX_WAIT = 10.0
+#: The sleep between attempts; patched in the hermetic tests.
+_pause = time.sleep
+
+
+def _wait_before_retry(exc: urllib.error.HTTPError, attempt: int) -> float:
+    """Seconds to wait after ``exc``: its ``Retry-After`` when it gives one, else a short
+    linear backoff — capped either way, so the job's own ceiling is never the bound."""
+    after = exc.headers.get("Retry-After") if exc.headers is not None else None
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            return 200 <= response.status < 400
-    except urllib.error.HTTPError as exc:
-        return exc.code < 400
-    except OSError as exc:
-        # The subject/instrument distinction #675 turned on is real, but skipping
-        # is the wrong way to record it: a skipped test does not fail CI, so every
-        # caller of this helper fail-opened on any network blip (#933). Raising an
-        # AssertionError keeps the distinction in the message and out of the
-        # verdict — these callers only run under KEEL_CHECK_EXTERNAL=1, so the
-        # operator asked for the check.
-        raise AssertionError(
-            f"could not check whether {url} resolves: {exc}. Reported as a failure "
-            "rather than skipped, because a skipped test does not fail CI and so "
-            "reads as a pass. Re-run when the network is available."
-        ) from exc
+        wanted = float(after) if after is not None else 2.0 * attempt
+    except ValueError:
+        wanted = 2.0 * attempt
+    return max(0.0, min(wanted, _MAX_WAIT))
+
+
+def _could_not_check(url: str, why: object) -> NoReturn:
+    raise AssertionError(
+        f"could not check whether {url} resolves: {why}. Reported as a failure "
+        "rather than skipped, because a skipped test does not fail CI and so "
+        "reads as a pass. Re-run when the network is available."
+    )
+
+
+def _reachable(url: str, *, headers: dict[str, str] | None = None) -> bool:
+    """Whether ``url`` resolves: ``True`` on 2xx/3xx, ``False`` only on 404/410.
+
+    A rate limit or a server error says nothing about existence. It used to read as
+    ``False`` — "the repository does not exist" — which is how a 504 on a just-pushed
+    tag's page and a throttled runner turned `external promises` red with two false
+    messages (#1433). Those are retried a bounded number of times and then fail as
+    "could not check", the same way a network exception does (#933).
+    """
+    request = urllib.request.Request(url, method="HEAD", headers=headers or {})
+    last: object = "no attempt was made"
+    for attempt in range(1, _ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return 200 <= response.status < 400
+        except urllib.error.HTTPError as exc:
+            if exc.code in _ABSENT:
+                return False
+            if exc.code < 400:
+                return True
+            if exc.code not in _INCONCLUSIVE and exc.code < 500:
+                # Any other 4xx (401, 400, …) is a malformed or refused question,
+                # not an absence; say so instead of guessing.
+                _could_not_check(url, f"HTTP {exc.code}")
+            last = f"HTTP {exc.code} after {attempt} attempt(s)"
+            if attempt < _ATTEMPTS:
+                _pause(_wait_before_retry(exc, attempt))
+        except OSError as exc:
+            # The subject/instrument distinction #675 turned on is real, but skipping
+            # is the wrong way to record it: a skipped test does not fail CI, so every
+            # caller of this helper fail-opened on any network blip (#933). Raising an
+            # AssertionError keeps the distinction in the message and out of the
+            # verdict — these callers only run under KEEL_CHECK_EXTERNAL=1, so the
+            # operator asked for the check.
+            _could_not_check(url, exc)
+    _could_not_check(url, last)
+
+
+def _github_resolves(repo: str, ref: str | None = None) -> bool:
+    """Whether GitHub repository ``repo`` (and ``ref`` in it) exists, asked of the REST
+    API — authenticated when ``GITHUB_TOKEN`` is set, so not subject to the anonymous
+    web limits a shared runner hits (#1433). ``/commits/{ref}`` resolves a tag, a
+    branch or a SHA, which is what ``uses: {repo}@{ref}`` resolves."""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "keel-tests"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    path = f"repos/{repo}" if ref is None else f"repos/{repo}/commits/{ref}"
+    return _reachable(f"https://api.github.com/{path}", headers=headers)
 
 
 #: The tarball the stub formula points at, and the url the PyPI check reads, so
@@ -369,6 +434,96 @@ class TestNotLookingIsNotAPass(unittest.TestCase):
                     )
 
 
+class TestAnInconclusiveStatusIsNotAnAbsence(unittest.TestCase):
+    """#1433: only 404/410 say a thing does not exist.
+
+    `_reachable` read every 4xx/5xx as "does not exist", so a rate-limited runner and
+    a just-pushed tag's 504 turned `external promises` red with two false messages
+    about a tag and a tap that both existed. Asserted hermetically.
+    """
+
+    URL = "https://example.test/thing"
+
+    def _run(self, *responses):
+        pauses: list[float] = []
+        with (
+            unittest.mock.patch.object(urllib.request, "urlopen", side_effect=list(responses)),
+            unittest.mock.patch.object(sys.modules[__name__], "_pause", side_effect=pauses.append),
+        ):
+            result = _reachable(self.URL)
+        return result, pauses
+
+    def _ok(self, status=200):
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.status = status
+        return response
+
+    def test_404_and_410_are_absences(self):
+        for code in (404, 410):
+            with self.subTest(code=code):
+                self.assertEqual(self._run(_http_error(self.URL, code)), (False, []))
+
+    def test_a_success_or_a_redirect_is_reachable(self):
+        self.assertEqual(self._run(self._ok(200)), (True, []))
+        self.assertEqual(self._run(_http_error(self.URL, 301)), (True, []))
+
+    def test_a_rate_limit_or_a_server_error_is_retried_then_answered(self):
+        for code in (429, 403, 502, 503, 504):
+            with self.subTest(code=code):
+                result, pauses = self._run(_http_error(self.URL, code), self._ok(200))
+                self.assertTrue(result)
+                self.assertEqual(len(pauses), 1)
+
+    def test_an_inconclusive_status_that_persists_fails_as_could_not_check(self):
+        errors = [_http_error(self.URL, 504) for _ in range(_ATTEMPTS)]
+        with self.assertRaises(AssertionError) as caught:
+            self._run(*errors)
+        message = str(caught.exception)
+        self.assertIn("could not check whether", message)
+        self.assertIn(f"HTTP 504 after {_ATTEMPTS} attempt(s)", message)
+        self.assertNotIn("does not exist", message)
+
+    def test_another_client_error_is_not_read_as_an_absence(self):
+        with self.assertRaises(AssertionError) as caught:
+            self._run(_http_error(self.URL, 401))
+        self.assertIn("could not check whether", str(caught.exception))
+        self.assertIn("HTTP 401", str(caught.exception))
+
+    def test_the_wait_honours_retry_after_up_to_a_cap(self):
+        def limited(after):
+            headers = email.message.Message()
+            if after is not None:
+                headers["Retry-After"] = after
+            return urllib.error.HTTPError(self.URL, 429, "simulated", headers, None)
+
+        self.assertEqual(_wait_before_retry(limited("3"), 1), 3.0)
+        self.assertEqual(_wait_before_retry(limited("3600"), 1), _MAX_WAIT)
+        self.assertEqual(_wait_before_retry(limited("soon"), 2), 4.0)
+        self.assertEqual(_wait_before_retry(limited(None), 1), 2.0)
+        self.assertEqual(_wait_before_retry(limited("-5"), 1), 0.0)
+
+    def test_github_checks_ask_the_api_with_the_token(self):
+        seen = []
+
+        def capture(request, timeout):
+            seen.append((request.full_url, request.get_header("Authorization")))
+            return self._ok(200)
+
+        with (
+            unittest.mock.patch.dict(os.environ, {"GITHUB_TOKEN": "t0ken"}),
+            unittest.mock.patch.object(urllib.request, "urlopen", side_effect=capture),
+        ):
+            self.assertTrue(_github_resolves("o/r"))
+            self.assertTrue(_github_resolves("o/r", "v1.2.3"))
+        self.assertEqual(
+            seen,
+            [
+                ("https://api.github.com/repos/o/r", "Bearer t0ken"),
+                ("https://api.github.com/repos/o/r/commits/v1.2.3", "Bearer t0ken"),
+            ],
+        )
+
+
 class TestActionReferences(unittest.TestCase):
     """A documented `uses:` must resolve, or a reader's first run fails."""
 
@@ -392,11 +547,11 @@ class TestActionReferences(unittest.TestCase):
                 if not ONLINE:
                     self.skipTest("set KEEL_CHECK_EXTERNAL=1 to check reachability")
                 self.assertTrue(
-                    _reachable(f"https://github.com/{repo}"),
+                    _github_resolves(repo),
                     f"{repo} is referenced in the docs but the repository does not exist",
                 )
                 self.assertTrue(
-                    _reachable(f"https://github.com/{repo}/tree/{ref}"),
+                    _github_resolves(repo, ref),
                     f"{repo} exists but has no {ref} ref — `uses: {repo}@{ref}` will fail",
                 )
 
@@ -429,7 +584,7 @@ class TestHomebrewPromise(unittest.TestCase):
         if not ONLINE:
             self.skipTest("set KEEL_CHECK_EXTERNAL=1 to check reachability")
         self.assertTrue(
-            _reachable(f"https://github.com/{HOMEBREW_TAP}"),
+            _github_resolves(HOMEBREW_TAP),
             f"docs promise a tap install but {HOMEBREW_TAP} does not exist",
         )
 
