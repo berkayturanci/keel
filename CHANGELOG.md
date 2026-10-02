@@ -8,7 +8,7 @@ All notable changes to keel are documented here. The format follows
 
 ## [1.29.0] - 2026-10-02
 
-- You can watch keel runs inside Claude Code. The optional `keel-progress` mod shows one line above the prompt for every live `keel ship` across the repository's worktrees, and a `/keel-progress` pane, without a second terminal. Click a run to open it in full, or expand the band to see every run with its whole branch.
+- You can watch keel runs inside Claude Code. The optional `keel-progress` mod (0.2.0) shows the live `keel ship` runs across the repository's worktrees above the prompt, and a `/keel-progress` pane, without a second terminal. Click a run to open it in full, or expand the band to see every run with its whole branch.
 - A merged run no longer reads as "waiting on the merge window" forever: `keel merge` now records the landed merge in the run's checkpoint.
 - The jury gate goes by the panel's consensus and reuses the panel already posted for the head, and a reviewer who gave no verdict no longer counts as approving.
 
