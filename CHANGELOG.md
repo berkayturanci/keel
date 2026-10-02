@@ -7,6 +7,11 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **keel-progress 0.4.0: freshness, details, notifications and settings** (#1462).
+  - Each run in the band shows how long ago keel last wrote for it (`· 4m`), and a live run silent for 45 minutes reads `· quiet 1h`, so a stuck run stands out.
+  - The pane links the PR and the issue on GitHub, says when and where keel last wrote (checkpoint or activity record), and shows the checkpoint's last gate, review and check.
+  - A toast, optionally with a short sound, marks a run that stops, waits for you, or leaves the board.
+  - Settings in `/config`: refresh interval, runs in the band, notifications, sound.
 - **keel-progress 0.3.0 reads keel's activity records as well as its checkpoints** (#1459). keel writes the checkpoint only at its safe boundaries, but stamps `.keel/activity/<run-id>.json` at every phase, and some runs never write a checkpoint at all. So the band could look stuck between boundaries and miss whole runs: on smartinventory, `ship-3289`, blocked at s8, had no checkpoint and never showed. The mod now also runs `keel activity --json` in each worktree whose activity changed lately. For each run it shows whichever of the checkpoint and the activity record was written last, and it lists runs from other commands (`pr-loop`, `review-cycle`) with their phase. A `running` record nobody stamped for six hours counts as stopped, since nothing marks an abandoned run done.
 
 ### Fixed

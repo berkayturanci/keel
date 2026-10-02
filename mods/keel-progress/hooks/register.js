@@ -8,7 +8,7 @@
 //   - a `/keel-progress` pane with every live run's steps, history counts and next issue
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { FALLBACK_STEPS, activityRuns, bandParts, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
+import { FALLBACK_STEPS, activityRuns, ago, bandParts, checkpointDetails, githubBase, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
@@ -37,6 +37,10 @@ const FRESH_MS = 24 * 60 * 60 * 1000
 // in a scan that meets a PR it does not hold (a PR `keel ship` just opened).
 const PR_CACHE_MS = 60_000
 const BAND_MAX = 3
+// A live run nothing has been written for in this long is drawn as quiet, so a stuck run shows.
+const QUIET_MS = 45 * 60 * 1000
+// Wait reasons that mean the run is waiting for a person, worth a notification.
+const NEEDS_YOU = new Set(['needs-input'])
 // Branch labels in the band: at least LABEL_MIN cells, at most LABEL_MAX, else what is left of
 // the band's width after BAND_LINE_COLUMNS for the rest of the line.
 const LABEL_MIN = 12
@@ -70,6 +74,12 @@ let inFlight = null // the running scan; callers share it instead of starting a 
 let again = false // a fresh scan was asked for while one ran: run once more after it
 let idleTicks = 0
 let poller = null
+// The user's settings (plugin userConfig), with the defaults the manifest declares.
+const settings = { pollMs: POLL_MS, bandMax: BAND_MAX, notify: true, sound: false }
+let scanAt = 0 // when the last scan read the runs, for "updated … ago"
+let repoBase = null // https://github.com/<owner>/<repo>, once read from `git remote`
+let repoBaseKnown = false
+let previous = null // runKey -> { issue, step, status, wait } at the last scan; null before the first
 // Set by a fresh request (a keel command, a click): the next scan rechecks PRs `knownClosed` holds,
 // once, in case `gh pr list` lagged right after `gh pr create`.
 let recheckClosed = false
@@ -213,6 +223,8 @@ async function listWorktrees($) {
 
 async function scan($) {
   const now = await $.clock.now()
+  scanAt = now
+  await learnRepoBase($)
   const cwd = await $.session.cwd()
   const here = await realPath($, cwd)
 
@@ -307,6 +319,10 @@ async function scan($) {
     }
     nextRuns.push(run)
   }
+  for (const run of nextRuns) {
+    if (run.snapshot.source !== 'activity' && perWorktree) run.details = await detailsOf($, `${run.path}/${checkpoint}`)
+  }
+  announce($, nextRuns)
   runs = nextRuns
   if (runs.length === 0) expanded = false // the band comes back compact
   failures = nextFailures
@@ -317,6 +333,73 @@ async function scan($) {
 
 function textProps(part) {
   return { ...TONES[part.tone], wrap: 'truncate', children: [part.text] }
+}
+
+// "· 4m" after a run: how long since keel last wrote anything for it. Past QUIET_MS a live run
+// is drawn as quiet, in the waiting colour, so a stuck run stands out.
+function agePart(run) {
+  if (!(run.mtimeMs > 0) || !(scanAt > 0)) return []
+  const since = ago(scanAt - run.mtimeMs)
+  if (since === null) return []
+  return scanAt - run.mtimeMs >= QUIET_MS
+    ? [{ text: ` · quiet ${since}`, tone: 'wait' }]
+    : [{ text: ` · ${since}`, tone: 'dim' }]
+}
+
+async function learnRepoBase($) {
+  if (repoBaseKnown) return
+  repoBaseKnown = true
+  try {
+    const run = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: STATUS_TIMEOUT_MS })
+    if (run.exitCode === 0) repoBase = githubBase(run.stdout)
+  } catch {
+    // no git, no remote: the pane shows numbers without links
+  }
+}
+
+async function detailsOf($, file) {
+  try {
+    return checkpointDetails(await $.fs.read(file))
+  } catch {
+    return []
+  }
+}
+
+// Toasts (and, if the user asked, a sound) for what changed since the last scan: a run that
+// stopped, one that waits for a person, one that left the board. Nothing on the first scan.
+function announce($, nextRuns) {
+  const now = new Map(nextRuns.map((run) => [runKey(run), run]))
+  if (previous !== null) {
+    for (const [key, run] of now) {
+      const c = run.snapshot.current
+      const was = previous.get(key)
+      const label = c.issue != null ? `#${c.issue}` : (c.run_id ?? 'run')
+      if (run.snapshot.status === 'interrupted' && was?.status !== 'interrupted') {
+        notify($, `keel ${label} stopped at ${c.step ?? '?'}${c.wait_reason ? `: ${c.wait_reason}` : ''}`, 'attention')
+      } else if (NEEDS_YOU.has(c.wait_reason) && was?.wait !== c.wait_reason) {
+        notify($, `keel ${label} is waiting for you (${c.wait_reason})`, 'attention')
+      }
+    }
+    for (const [key, was] of previous) {
+      if (!now.has(key)) notify($, `keel ${was.label} is no longer running (merged, closed or finished)`, 'done')
+    }
+  }
+  previous = new Map(
+    [...now].map(([key, run]) => {
+      const c = run.snapshot.current
+      return [key, { label: c.issue != null ? `#${c.issue}` : (c.run_id ?? 'run'), status: run.snapshot.status, wait: c.wait_reason }]
+    }),
+  )
+}
+
+// A notification is a side note: one that fails never costs the scan its runs.
+function notify($, text, sound) {
+  try {
+    if (settings.notify) $.ui.toast(text, { timeoutMs: 8000 })
+    if (settings.sound) $.audio.play({ asset: `fx/${sound}.wav` }).catch(() => {})
+  } catch {
+    // nothing to do: the band still shows the change
+  }
 }
 
 // The branch label takes what the band can spare beside the step bar and its text.
@@ -356,7 +439,11 @@ function toggleExpanded($) {
   $.ui.invalidate('ui.render')
 }
 
-export function register(on) {
+export function register(on, options = {}) {
+  if (Number.isFinite(options.poll_seconds)) settings.pollMs = Math.max(2, options.poll_seconds) * 1000
+  if (Number.isFinite(options.band_rows)) settings.bandMax = Math.max(1, Math.min(9, options.band_rows))
+  if (typeof options.notify === 'boolean') settings.notify = options.notify
+  if (typeof options.sound === 'boolean') settings.sound = options.sound
   on('session.start', async ($, e, next) => {
     hasProject = await $.fs.exists(PROJECT)
     if (hasProject) {
@@ -365,7 +452,7 @@ export function register(on) {
       // session.start fires once per module load and a reload stops the old timer, so this is
       // belt and braces: never two pollers.
       poller?.cancel()
-      poller = $.clock.every(POLL_MS, () => tick($))
+      poller = $.clock.every(settings.pollMs, () => tick($))
     }
     await $.command.register({
       name: 'keel-progress',
@@ -399,7 +486,7 @@ export function register(on) {
     if (runs.length === 0) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const labelled = runs.length > 1
-    const shown = expanded ? runs : runs.slice(0, BAND_MAX)
+    const shown = expanded ? runs : runs.slice(0, settings.bandMax)
     // As wide as the longest label on screen, within what the band can spare.
     const longest = Math.max(...shown.map((run) => cells(run.label) + 2))
     const width = Math.min(labelWidth(e.props.bodyColumns), Math.max(LABEL_MIN, longest))
@@ -436,6 +523,7 @@ export function register(on) {
             Text(textProps({ text: 'keel', tone: 'title' })),
             open,
             ...bandParts(run.snapshot, run.steps).slice(2).map((part) => Text(textProps(part))),
+            ...agePart(run).map((part) => Text(textProps(part))),
             ...toggle,
           ],
         }),
@@ -450,8 +538,8 @@ export function register(on) {
         )
       }
     })
-    if (!expanded && runs.length > BAND_MAX) {
-      lines.push(Text(textProps({ text: `+${runs.length - BAND_MAX} more keel runs · more, or /keel-progress`, tone: 'dim' })))
+    if (!expanded && runs.length > settings.bandMax) {
+      lines.push(Text(textProps({ text: `+${runs.length - settings.bandMax} more keel runs · more, or /keel-progress`, tone: 'dim' })))
     }
     // Keep what the mods after this one draw in the band.
     const theirs = await next(e)
@@ -460,7 +548,7 @@ export function register(on) {
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = $.ui.resolve(e)
     const children = []
     const line = (part) => children.push(Text(textProps(part)))
     if (!hasProject) {
@@ -479,7 +567,30 @@ export function register(on) {
         line({ text: ' ', tone: 'plain' })
         line({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
         line({ text: focus.path, tone: 'dim' })
+        const c = focus.snapshot.current
+        // Links to the PR and the issue, when the repository is on GitHub.
+        if (repoBase !== null && (c.pull_request != null || c.issue != null)) {
+          children.push(
+            Box({
+              key: 'keel-progress-links',
+              flexDirection: 'row',
+              columnGap: 2,
+              children: [
+                ...(c.pull_request != null ? [Link({ href: `${repoBase}/pull/${c.pull_request}`, label: `PR #${c.pull_request}` })] : []),
+                ...(c.issue != null ? [Link({ href: `${repoBase}/issues/${c.issue}`, label: `issue #${c.issue}` })] : []),
+              ],
+            }),
+          )
+        }
         for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) line(part)
+        const since = focus.mtimeMs > 0 && scanAt > 0 ? ago(scanAt - focus.mtimeMs) : null
+        if (since !== null) {
+          const from = focus.snapshot.source === 'activity' ? 'activity record' : 'checkpoint'
+          const quiet = scanAt - focus.mtimeMs >= QUIET_MS
+          line({ text: `last written ${since === 'now' ? 'just now' : `${since} ago`} (${from})${quiet ? ' · quiet' : ''}`, tone: quiet ? 'wait' : 'dim' })
+        }
+        for (const [name, value] of focus.details ?? []) line({ text: `${name}: ${value}`, tone: 'plain' })
+        if (focus.snapshot.note) line({ text: `note: ${focus.snapshot.note}`, tone: 'plain' })
       }
       const others = runs.filter((run) => run !== focus)
       if (others.length > 0) {

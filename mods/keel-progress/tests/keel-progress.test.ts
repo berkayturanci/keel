@@ -58,6 +58,7 @@ type Worktree = {
   exitCode?: () => number
   activity?: Record<string, unknown>[] // keel activity --json records; absent = no .keel/activity
   activityMtime?: number
+  state?: Record<string, unknown> // the checkpoint's `state` block, read for the pane's details
 }
 
 const HOURS = 60 * 60 * 1000
@@ -90,7 +91,29 @@ function stubEngine(
 ) {
   const own: Worktree = { path: '/work', branch: 'main', stdout: opts.stdout, exitCode: opts.exitCode }
   const worktrees = opts.worktrees ?? [own]
-  const calls = { status: 0, byPath: {} as Record<string, number>, gh: 0, running: 0, most: 0, opened: [] as string[], closed: [] as string[] }
+  const calls = {
+    status: 0,
+    byPath: {} as Record<string, number>,
+    gh: 0,
+    running: 0,
+    most: 0,
+    opened: [] as string[],
+    closed: [] as string[],
+    toasts: [] as string[],
+    sounds: [] as string[],
+  }
+  on('ui.toast', ($: unknown, e: { text: string }) => {
+    calls.toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('audio.play', ($: unknown, e: { clip: { asset: string } }) => {
+    calls.sounds.push(e.clip.asset)
+    return { value: undefined }
+  })
+  on('fs.read', ($: unknown, e: { path: string }) => {
+    const w = worktrees.find((x) => e.path === `${x.path}/.keel/state/checkpoint.json`)
+    return w?.state ? { value: JSON.stringify({ state: w.state }) } : { deny: 'ENOENT' }
+  })
   on('fs.exists', () => ({ value: opts.project }))
   on('command.register', () => ({ value: undefined }))
   on('session.start', () => ({ cwd: '/work' }))
@@ -111,6 +134,9 @@ function stubEngine(
     return { value: { kind: 'file', size: 10, mtimeMs: mtime, isLink: false } }
   })
   on('process.run', async ($: unknown, e: { argv: string[]; init?: { cwd?: string } }) => {
+    if (e.argv[0] === 'git' && e.argv[1] === 'remote') {
+      return { value: { exitCode: 0, stdout: 'git@github.com:acme/widgets.git\n', stderr: '' } }
+    }
     if (e.argv[0] === 'git') {
       if (opts.gitRejects) return { deny: 'spawn git ENOENT' }
       expect(e.argv).toEqual(['git', 'worktree', 'list', '--porcelain'])
@@ -1054,4 +1080,99 @@ test('two runs in one worktree get their own lines and keys', async ($, on) => {
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'issue #2473 · PR #2473 · review-cycle' })).toBeDefined()
   expect(await pane.find({ type: 'Button', text: /pr-2473 · #2470 s7/ })).toBeDefined()
+})
+
+const MIN = 60 * 1000
+
+test('each run says how long ago keel last wrote for it, and a long silence reads as quiet', async ($, on) => {
+  const clock = mock.clock(on, { now: 2 * HOURS })
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 2 * HOURS - 4 * MIN },
+      { path: '/wt/slow', branch: 'slow', mtime: 2 * HOURS - 70 * MIN, stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' · 4m' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' · quiet 1h' })).toBeDefined()
+})
+
+test('a run that stops, or leaves the board, raises a toast; the first scan raises none', async ($, on) => {
+  const clock = mock.clock(on)
+  let state = 'waiting'
+  const calls = stubEngine(on, {
+    project: true,
+    stdout: () =>
+      state === 'gone'
+        ? statusJson({ status: 'no-active-run', current: null })
+        : statusJson({ status: state, current: { issue: 1022, pull_request: 1027, step: 's8', wait_reason: state === 'interrupted' ? 'gate-failed' : 'test' } }),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.toasts).toEqual([])
+  state = 'interrupted'
+  await clock.advance(5_000)
+  expect(calls.toasts).toEqual(['keel #1022 stopped at s8: gate-failed'])
+  state = 'gone'
+  await clock.advance(5_000)
+  expect(calls.toasts[1]).toBe('keel #1022 is no longer running (merged, closed or finished)')
+  expect(calls.sounds).toEqual([])
+})
+
+test('with sound on, a stop plays the attention clip; with notifications off, no toast', { options: { sound: true, notify: false } }, async ($, on) => {
+  const clock = mock.clock(on)
+  let interrupted = false
+  const calls = stubEngine(on, {
+    project: true,
+    stdout: () =>
+      statusJson({ status: interrupted ? 'interrupted' : 'waiting', current: { issue: 1022, pull_request: 1027, step: 's8', wait_reason: 'x' } }),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  interrupted = true
+  await clock.advance(5_000)
+  expect(calls.toasts).toEqual([])
+  expect(calls.sounds).toEqual(['fx/attention.wav'])
+})
+
+test('the pane links the PR and the issue and shows the checkpoint’s last gate, review and check', async ($, on) => {
+  const clock = mock.clock(on, { now: 1 * HOURS })
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 1 * HOURS - 3 * MIN, state: { last_gate: 'build ok, lint ok', last_review: '2 APPROVE', last_check: 'CI 62/62 green' } },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const pr = await pane.find({ type: 'Link', text: 'PR #1027' })
+  expect(pr?.props.href).toBe('https://github.com/acme/widgets/pull/1027')
+  expect((await pane.find({ type: 'Link', text: 'issue #1022' }))?.props.href).toBe('https://github.com/acme/widgets/issues/1022')
+  expect(await pane.find({ type: 'Text', text: 'last written 3m ago (checkpoint)' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'last review: 2 APPROVE' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'last check: CI 62/62 green' })).toBeDefined()
+})
+
+test('band_rows sets how many runs the band shows before "+N more"', { options: { band_rows: 1 } }, async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/wt/a', branch: 'a', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#11' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: '+1 more keel runs · more, or /keel-progress' })).toBeDefined()
 })

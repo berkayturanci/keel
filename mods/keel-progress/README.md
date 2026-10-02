@@ -27,6 +27,27 @@ terminal running `keel-visual dash`.
   **Close**. A worktree whose `keel status` fails is listed in the pane with its error and
   left out of the band until a read succeeds again.
 
+- **How fresh it is:** each line ends with how long ago keel last wrote anything for that run
+  (`· 4m`). A live run nothing has been written for in 45 minutes reads `· quiet 1h`, in the
+  waiting colour, so a stuck run stands out.
+- **The pane's details:** links to the pull request and the issue (when the repository is on
+  GitHub), when and where keel last wrote (checkpoint or activity record), and the checkpoint's
+  last gate, review and check.
+- **Notifications:** a toast when a run stops (`interrupted`, gates blocked), waits for you
+  (`needs-input`), or leaves the board (merged, closed or finished). There are none for what
+  was already there when the session opened. A short sound can go with them.
+
+## Settings
+
+Set these in `/config` (or with `/plugin configure keel-progress@keel`):
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Refresh every (seconds) | 5 | How often keel is read while a run is live; six times less often with none |
+| Runs above the prompt | 3 | How many runs the band shows before `+N more` |
+| Notifications | on | Toasts for a stopped run, a run waiting for you, a run that left |
+| Sound | off | A short sound with those toasts |
+
 ## How it reads the runs
 
 Parallel `keel ship` runs each work in a worktree of their own. keel records a run in two
