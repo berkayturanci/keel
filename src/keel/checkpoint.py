@@ -419,7 +419,8 @@ def mark_merged(record: dict[str, Any] | None, run_id: str) -> dict[str, Any] | 
     lands that checkpoint has to say so: left alone it reads ``merge: not-started`` at s10, and
     ``keel status`` calls a merged run *waiting on the merge window* for as long as it exists
     (#1448). The merged record says ``merge: merged``, counts s10 as completed and moves the
-    run to the next step; a run already past s10 keeps its position.
+    run to the next step, and clears the stop that held it; a run already past s10 keeps its
+    position.
     """
     if record is None or record.get("run_id") != run_id:
         return None
@@ -435,7 +436,9 @@ def mark_merged(record: dict[str, Any] | None, run_id: str) -> dict[str, Any] | 
     merged = {
         **record,
         "position": {**position, "current_step": current, "completed_steps": completed},
-        "state": {**record["state"], "merge": "merged"},
+        # The stop that held the run at s10 is over once the merge lands; left in place, it
+        # would keep `keel status` reading the run as interrupted or waiting on it.
+        "state": {**record["state"], "merge": "merged", "stop_reason": None},
         "resume": {
             **record["resume"],
             "safe_boundary": current in _IDEMPOTENT_STEPS,

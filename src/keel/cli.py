@@ -1112,7 +1112,8 @@ def _record_merge_in_checkpoint(
         if merged is None:
             return {"updated": False, "reason": f"no checkpoint for run {run_id}"}
         checkpoint.write_checkpoint(path, merged)
-    except (OSError, checkpoint.CheckpointError) as exc:
+    # ValueError covers CheckpointError and a checkpoint that is not UTF-8 (UnicodeDecodeError).
+    except (OSError, ValueError) as exc:
         return {"updated": False, "reason": f"checkpoint not updated: {exc}"}
     return {
         "updated": True,

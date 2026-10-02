@@ -11474,6 +11474,19 @@ class TestMergeCheckpointGate(unittest.TestCase):
             json.loads(out)["checkpoint_update"], {"updated": False, "reason": "no run-id"}
         )
 
+    def test_a_checkpoint_that_is_not_utf8_does_not_fail_a_landed_merge(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            path = cli.checkpoint.resolve_path(d, cli.cfg.load_config(config))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\xff\xfe not utf-8")
+            rc, out, _ = self._run_merge(config=config, root=d, extra=["--no-checkpoint-gate"])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertFalse(data["checkpoint_update"]["updated"])
+        self.assertIn("checkpoint not updated", data["checkpoint_update"]["reason"])
+
     def test_a_checkpoint_that_cannot_be_written_does_not_fail_a_landed_merge(self):
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:

@@ -376,7 +376,8 @@ class TestMarkMerged(unittest.TestCase):
         self.assertEqual(merged["state"]["merge"], "merged")
         self.assertEqual(merged["position"]["current_step"], "s11")
         self.assertEqual(merged["position"]["completed_steps"], ["s0", "s9", "s10"])
-        self.assertEqual(merged["resume"]["safe_boundary"], "s11" in checkpoint._IDEMPOTENT_STEPS)
+        self.assertTrue(merged["resume"]["safe_boundary"])
+        self.assertEqual(merged["resume"]["action"], checkpoint._IDEMPOTENT_STEPS["s11"])
         # The input is not mutated.
         self.assertEqual(record["state"]["merge"], "not-started")
         self.assertEqual(record["position"]["current_step"], "s10")
@@ -398,11 +399,12 @@ class TestMarkMerged(unittest.TestCase):
         from keel import status
 
         config = cfg.load_config(str(Path(__file__).parent.parent / "projects" / "keel.yaml"))
-        record = _record(current_step="s10", stop_reason=None)
+        # _record carries a stop_reason ("waiting on CI"): the merge clears it.
+        record = _record(current_step="s10")
         before = status.build_status_snapshot(
             config=config, checkpoint_record=record, ledger_records=[]
         )
-        self.assertEqual(before["current"]["wait_reason"], "merge-window")
+        self.assertEqual(before["status"], "interrupted")
         after = status.build_status_snapshot(
             config=config,
             checkpoint_record=checkpoint.mark_merged(record, "RUN-149"),
@@ -411,6 +413,7 @@ class TestMarkMerged(unittest.TestCase):
         self.assertEqual(after["current"]["step"], "s11")
         self.assertEqual(after["current"]["merge_state"], "merged")
         self.assertEqual(after["current"]["wait_reason"], "capture")
+        self.assertEqual(after["status"], "waiting")
 
 
 class TestFindOrphans(unittest.TestCase):
