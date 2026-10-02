@@ -23,6 +23,7 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any
 
+from . import evidence
 from .findings import Finding
 from .model import DEFAULT_JURY_TIMEOUT_S
 from .runner import CommandResult, run_argv
@@ -196,6 +197,79 @@ def _not_run_finding(reason: str) -> Finding:
     )
 
 
+#: The source of the finding a jury gate reports for the panel's **consensus** (#1436).
+CONSENSUS_SOURCE = "jury:consensus"
+
+
+def panel_consensus(data: dict | str) -> str | None:
+    """The panel's consensus in an ai-jury report, in keel's vocabulary, or ``None``.
+
+    The consensus is the **chair record's** ``verdict`` in the report's ``reviewers``
+    array (``role: chair``). ai-jury writes it from the chair's synthesis headline, or
+    from the panel vote when the run is configured with ``decision: vote``
+    (``ai_jury.ballots.chair_verdict``), so one field carries both. It is read through
+    :func:`map_verdict`, so ``APPROVE`` / ``READY`` arrive as ``LGTM``.
+
+    A ballot report with **no chair record** — the synthesis failed — has no consensus, and
+    reads ``ABSTAIN``, which is what :func:`jury_verdict` posts for it too. ``None`` means
+    the report carries **no ballots at all**: an ai-jury from before report schema 1.1,
+    which has no ``reviewers`` array, or one whose ballots are malformed.
+    """
+    try:
+        panel = parse_panel(data)
+    except JuryReportError:
+        return None
+    if panel is None:
+        return None
+    return panel.chair.verdict if panel.chair is not None else "ABSTAIN"
+
+
+def _consensus_finding(data: dict | str, *, gating: bool) -> Finding | None:
+    """The finding a jury gate reports when the panel's consensus does not approve (#1436).
+
+    Read against :data:`keel.evidence.APPROVING_VERDICTS` by the same reader the
+    evidence gate applies to the posted ``AI Jury verdict:`` line
+    (:func:`keel.evidence.jury_verdict_approves`), so the gates-pass and the evidence
+    gate cannot disagree about what the panel said. ``major`` in gating mode — the gate
+    fails — and ``minor`` in advisory mode, which reports a rejection and never gates on
+    one, as the evidence gate does.
+
+    **A report with no consensus fails closed in gating mode, and is silent in advisory
+    mode.** A gating jury's verdict comment has to approve before ``keel merge`` will land
+    the change, and a report that states no consensus cannot truthfully produce one; a
+    gates-pass for it would certify a review that never concluded. Advisory mode keeps
+    today's behaviour: the severity rule alone, with nothing added.
+    """
+    consensus = panel_consensus(data)
+    if consensus is None:
+        if not gating:
+            return None
+        return Finding(
+            severity="major",
+            message=(
+                "jury report states no panel consensus: it carries no readable `reviewers` "
+                "ballots with a chair record (ai-jury before report schema 1.1, or a "
+                "malformed report). A gating jury must conclude; upgrade ai-jury."
+            ),
+            source=CONSENSUS_SOURCE,
+            path=None,
+            line=None,
+            anchorable=False,
+        )
+    line = f"AI Jury verdict: {consensus}."
+    if evidence.jury_verdict_approves(line):
+        return None
+    token = evidence.jury_verdict_token(line) or consensus
+    return Finding(
+        severity="major" if gating else "minor",
+        message=f"jury consensus is {token}, not an approval.",
+        source=CONSENSUS_SOURCE,
+        path=None,
+        line=None,
+        anchorable=False,
+    )
+
+
 def could_not_run(findings) -> bool:
     """Did this jury gate result come back without running (no CLI, or an empty diff)?"""
     return any(f.source == NOT_RUN_SOURCE for f in findings)
@@ -212,7 +286,11 @@ def run_gate(
     """Run ``jury`` on ``diff_text`` and map its findings.
 
     Returns ``(ok, findings, timed_out)``. ``ok`` is False when a finding blocks
-    (critical/major) or when the run produced no verdict at all in gating mode.
+    (critical/major) or when the run produced no verdict at all in gating mode — and, in
+    gating mode, when the panel's **consensus** does not approve or the report states
+    none (#1436, :func:`_consensus_finding`). Both rules hold at once: a verified major
+    still blocks a panel that approved, and a panel that requested changes over minors
+    alone, or abstained, no longer passes because no finding was severe.
     No-op when there is no diff or the ``jury`` CLI is not installed — keel does not
     depend on ai-jury, so an absent CLI is a legitimate no-op *for this run*, distinct
     from a run that started and did not finish. A no-op is not a pass: it returns one
@@ -275,6 +353,9 @@ def run_gate(
         # timed_out rides along so the outcome renders as TIMEOUT rather than FAIL,
         # the distinction #622 established for command gates.
         return (not gating), [incomplete], result.timed_out
+    consensus = _consensus_finding(result.stdout, gating=mode == "gating")
+    if consensus is not None:
+        report = [*report, consensus]
     blocked = any(f.severity in ("critical", "major") for f in report)
     return (not blocked), report, False
 
