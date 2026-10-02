@@ -11466,6 +11466,14 @@ class TestMergeCheckpointGate(unittest.TestCase):
         )
         self.assertEqual(record["state"]["merge"], "not-started")
 
+    def test_a_merge_with_no_run_id_has_no_checkpoint_to_update(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run_merge(config=str(PROJECTS / "keel.yaml"), root=d, run_id=None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(out)["checkpoint_update"], {"updated": False, "reason": "no run-id"}
+        )
+
     def test_a_checkpoint_that_cannot_be_written_does_not_fail_a_landed_merge(self):
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:
