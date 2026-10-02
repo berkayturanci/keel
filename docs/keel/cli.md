@@ -3370,9 +3370,9 @@ worktrees or branches (`--json`: `{"error_code": "git-failed", "error"}`) or a r
 > request carries no review evidence; `swarm-land` merges it through `keel merge` once its review
 > is recorded ([#1400](https://github.com/berkayturanci/keel/issues/1400),
 > [#1287](https://github.com/berkayturanci/keel/issues/1287)). The swarm reviews only when you run
-> `keel swarm-review` (below), which has not yet run on a real repository
-> ([#1423](https://github.com/berkayturanci/keel/issues/1423)). A live landing has run once, on a sandbox
-> repository, with the reviews done outside the swarm ([#1281](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)).
+> `keel swarm-review` (below), which has run once, on a sandbox repository, with single-vendor
+> review seats ([#1423](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)). The live landing before it,
+> on the same sandbox repository, had its reviews done outside the swarm ([#1281](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)).
 
 Without `--live` (a dry run) each cluster's worker is a `keel ship --dry-run --json` assessment,
 run one at a time in this checkout; it dispatches no agent and commits nothing:
@@ -3474,9 +3474,9 @@ none.
 
 ## `keel swarm-review <project.yaml> [--root DIR] [--wave N] [--swarm-id ID] [--review-delegate PROVIDER] [--reviewers 1|2|3] [--max-workers N] [--seat-timeout SECONDS] [--live] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--json]`
 
-> **Experimental, and not yet run on a real repository**
-> ([#1423](https://github.com/berkayturanci/keel/issues/1423)). Opt-in: neither `swarm-run` nor
-> `swarm-land` calls it.
+> **Experimental.** It has run once, on a sandbox repository, with two review seats of a single
+> vendor ([#1423](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)): one run on a toy repository is
+> not a track record. Opt-in: neither `swarm-run` nor `swarm-land` calls it.
 
 Review each cluster pull request of one wave with the cluster's own reviewer seats, and post their
 verdicts through `keel review`, pinned to the head they reviewed — the step between

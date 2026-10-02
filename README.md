@@ -214,13 +214,14 @@ bill.
   as degraded there ([transport](docs/keel/github-transport.md)).
 - **Swarm is experimental.** `/keel:swarm` plans waves, and `swarm-run --live` now has each
   cluster's implementer seat write the change and opens one pull request per cluster, but those
-  pull requests carry no review evidence, and the swarm reviews them only when you run
-  `swarm-review`, which has not yet run on a real repository
-  ([#1423](https://github.com/berkayturanci/keel/issues/1423)); `swarm-land` merges them through
+  pull requests carry no review evidence, and the swarm reviews them only when you run the
+  opt-in `swarm-review`, which has run once, on a sandbox repository, with single-vendor review
+  seats ([the run](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)); `swarm-land` merges them through
   `keel merge` only once their review is recorded
   ([#1400](https://github.com/berkayturanci/keel/issues/1400),
-  [#1287](https://github.com/berkayturanci/keel/issues/1287)). Use `/keel:ship` for work you
-  need merged.
+  [#1287](https://github.com/berkayturanci/keel/issues/1287)). One run on a toy repository,
+  reviewed by a single vendor, with run, review and land as separate opt-in commands, is why it
+  stays experimental. Use `/keel:ship` for work you need merged.
 - **The unit is the issue.** keel has no channel for steering a run in flight: to change
   direction, change the issue. A run that stops resumes from its checkpoint (`keel resume`).
 - **Consent is emit-only in core.** keel emits the consent contract and the gate-review seat;
@@ -447,9 +448,10 @@ or the reference it points at.
   and `bandit` / `gitleaks` / `semgrep` / `trivy` presets ([extensions](docs/keel/extensions.md)).
 - **Swarm (experimental)** — backlog waves in isolated worktrees; a live run implements each
   cluster and opens one pull request per cluster, which `swarm-land` merges through `keel merge`
-  once its review verdicts are posted — the swarm reviews them only when you run `swarm-review`,
-  which has not yet run on a real repository. A live landing has
-  run once, on a sandbox repository, with the reviews done outside the swarm
+  once its review verdicts are posted — the swarm reviews them only when you run the opt-in
+  `swarm-review`, which has run once, on a sandbox repository, with single-vendor review seats
+  ([that run](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)). The live landing before it, on the
+  same sandbox repository, had its reviews done outside the swarm
   ([the run](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055), [guide](docs/keel/swarm.md)).
 
 How keel compares with coding agents, PR reviewers and merge queues:

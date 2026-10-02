@@ -40,6 +40,22 @@ All notable changes to keel are documented here. The format follows
   `swarm-run` nor `swarm-land` calls it, and swarm stays experimental on every surface — it has
   not yet run on a real repository.
 
+### Changed
+
+- **docs(swarm): `swarm-review` has run once, and every surface says so — and still says
+  experimental** ([#1423](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)).
+  On 2026-10-02, on the throwaway sandbox repository, `swarm-plan` → `swarm-run --live` →
+  `swarm-review --live` → `swarm-land --live` merged both cluster pull requests and closed their
+  issues with no hand step; the review seats were two `claude` seats, a single vendor. The
+  README, the swarm guide, the CLI and parameter references, the overview, comparison, commands
+  and badges pages, the `/keel:swarm` adapter (and its generated copies), `SECURITY.md` and the
+  site no longer say `swarm-review` has not run, that a live run "reviews none", or that the
+  2026-10-01 landing (still described, reviewed outside the swarm) is the only one. Swarm stays
+  experimental: one run on a toy repository, single-vendor review seats, and run, review and land
+  are separate opt-in commands. The docs-claims tests now fail on the old "has not run" wording,
+  on a maturity, production-readiness or multi-vendor-review claim, on a status surface without
+  "experimental", and when the set of surfaces naming the run changes size.
+
 ## [1.27.0] - 2026-10-02
 
 - A review verdict now counts toward landing only when it approves: a reviewer's change request at the head holds `keel merge`, and the refusal names who asked for changes.

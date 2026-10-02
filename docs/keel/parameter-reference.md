@@ -2126,9 +2126,9 @@ keel install-legacy-wrappers all --force
 ## `keel swarm-land`
 
 > **Experimental subsystem** — the swarm reviews the pull requests it opens only when you run
-> [`keel swarm-review`](#keel-swarm-review), which has not yet run on a real repository; a
-> cluster lands only once its review verdicts are posted. See
-> [#1423](https://github.com/berkayturanci/keel/issues/1423).
+> [`keel swarm-review`](#keel-swarm-review), which has run once, on a sandbox repository, with
+> single-vendor review seats; a cluster lands only once its review verdicts are posted. See
+> [#1423](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010).
 
 Land a completed execution wave by merging each cluster's pull request through
 [`keel merge`](#keel-merge) — the same code, one cluster at a time (#1287). Documented here —
@@ -2201,7 +2201,8 @@ keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live
 ## `keel swarm-review`
 
 > **Experimental subsystem** — added by [#1423](https://github.com/berkayturanci/keel/issues/1423)
-> and not yet run on a real repository.
+> and run once, on a sandbox repository, with single-vendor review seats
+> ([the run](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)).
 
 Review each cluster pull request of one wave with the cluster's own reviewer seats, and post
 their verdicts with [`keel review`](#keel-review), pinned to the head they reviewed. It is the

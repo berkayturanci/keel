@@ -1246,27 +1246,31 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
                 with self.subTest(surface=rel, stale=stale.pattern):
                     self.assertIsNone(stale.search(text))
 
-    def test_a_surface_naming_the_one_landing_keeps_its_limits(self):
-        """#1281's closing comment: one live landing ran, on a sandbox repository, with each
-        pull request reviewed outside the swarm (#1423). A surface that says so must still
-        say swarm is experimental and that the review happened outside it."""
-        named = 0
+    def test_a_surface_naming_the_reviewed_by_hand_landing_keeps_its_limits(self):
+        """#1281's closing comment: the first live landing ran on a sandbox repository, with
+        each pull request reviewed outside the swarm. That is still true as history, so a
+        surface that names it must still say swarm is experimental and that the review
+        happened outside it. The set is counted: a surface whose sentence stops matching —
+        as one wrapped inside a ``>`` blockquote once did — fails here instead of being
+        skipped."""
+        named = set()
         for rel in _SWARM_STATUS_SURFACES:
             text = _flat(rel)
-            if "sandbox repository" not in text:
+            if not _NAMES_THE_SANDBOX_LANDING.search(text):
                 continue
-            named += 1
+            named.add(rel)
             with self.subTest(surface=rel):
                 self.assertIn("experimental", text.lower())
                 self.assertIn("outside the swarm", text)
-        self.assertGreaterEqual(named, 10)
+        self.assertEqual(named, _SURFACES_NAMING_THE_SANDBOX_LANDING)
 
-    def test_a_surface_naming_swarm_review_says_it_has_not_run_on_a_real_repository(self):
-        """#1423, the owner's decision: `keel swarm-review` reviews each cluster pull request
-        with the cluster's own seats. Swarm stays experimental on every surface until it has
-        run on a real repository, so a surface that names it must say it has not, must say
-        experimental, and must never claim it ran."""
-        named = 0
+    def test_a_surface_naming_swarm_review_states_its_one_run_and_its_limits(self):
+        """#1423's comment of 2026-10-02: `keel swarm-review --live` has run once, on the
+        sandbox repository, with two review seats of a single vendor, and `swarm-land --live`
+        then merged both pull requests. A surface that names `swarm-review` must say that much
+        — experimental, the sandbox repository, single-vendor seats — and nothing more: no
+        maturity, no production readiness, no multi-vendor review. The set is counted."""
+        named = set()
         for rel in _SWARM_STATUS_SURFACES:
             text = _flat(rel)
             for claim in _OVERCLAIMED_SWARM_REVIEW:
@@ -1274,23 +1278,49 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
                     self.assertIsNone(claim.search(text))
             if "swarm-review" not in text:
                 continue
-            named += 1
+            named.add(rel)
             with self.subTest(surface=rel):
                 self.assertIn("experimental", text.lower())
-                self.assertIn("not yet run on a real repository", text)
-        self.assertGreaterEqual(named, 12)
+                self.assertIn("sandbox repository", text)
+                self.assertRegex(text, r"single[- ]vendor")
+        self.assertEqual(named, _SURFACES_NAMING_SWARM_REVIEW)
 
-    def test_the_overclaim_detector_fires_on_the_wording_it_bans(self):
+    def test_every_swarm_status_surface_says_experimental(self):
+        """One run on a toy repository, single-vendor review seats, and run, review and land
+        as separate opt-in commands: swarm stays experimental on every surface (#1423)."""
+        for rel in _SWARM_STATUS_SURFACES:
+            with self.subTest(surface=rel):
+                self.assertIn("experimental", _flat(rel).lower())
+
+    def test_the_claim_detectors_fire_on_the_wording_they_ban(self):
         for claim in (
-            "swarm-review has now run on keel itself",
+            "swarm-review has run on a real repository",
             "Swarm is no longer experimental.",
             "swarm review is proven",
+            "swarm is now mature",
+            "the swarm is production-ready",
+            "reviewed by multi-vendor review seats",
         ):
             with self.subTest(claim=claim):
                 self.assertTrue(any(p.search(claim) for p in _OVERCLAIMED_SWARM_REVIEW))
-        self.assertTrue(
-            any(p.search("nothing in the swarm reviews them") for p in _STALE_SWARM_STATUS)
+        for stale in (
+            "nothing in the swarm reviews them",
+            "`swarm-review`, which has not yet run on a real repository",
+            "opt-in and not yet run on a real repository",
+            "a live run opens one pull request per cluster but reviews none",
+            "the one live landing so far ran on a sandbox repository",
+            "but nothing reviews those pull requests",
+        ):
+            with self.subTest(stale=stale):
+                self.assertTrue(any(p.search(stale) for p in _STALE_SWARM_STATUS))
+        # The true sentence trips neither detector.
+        true = (
+            "`swarm-review` has run once, on a sandbox repository, with single-vendor review "
+            "seats; swarm stays experimental."
         )
+        for pattern in _OVERCLAIMED_SWARM_REVIEW + _STALE_SWARM_STATUS:
+            with self.subTest(pattern=pattern.pattern):
+                self.assertIsNone(pattern.search(true))
 
     def test_the_security_page_says_the_august_audit_predates_the_live_path(self):
         security = re.sub(r"\s+", " ", (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8"))
@@ -1354,17 +1384,58 @@ _STALE_SWARM_STATUS = tuple(
         # #1423: `keel swarm-review` dispatches each cluster's reviewer seats (opt-in).
         r"nothing in (the swarm|this subsystem|it|a swarm|swarm) reviews",
         r"whether the swarm should review its own pull requests is (still )?open",
+        r"reviews none",
+        r"nothing reviews those pull requests",
+        # #1423's comment of 2026-10-02: `swarm-review --live` has run once, on the sandbox
+        # repository, and a second landing followed it.
+        r"not yet run on a real repository",
+        r"swarm[- ]review\W[^.]{0,80}has not (yet )?run",
+        r"has not (yet )?run on a real",
+        r"(the|its) one live landing so far",
     )
 )
 
-#: What no surface may say about `swarm-review` until it has run on a real repository (#1423).
+#: A surface that names the first, reviewed-by-hand landing (#1281's closing comment).
+_NAMES_THE_SANDBOX_LANDING = re.compile(r"landing[^.]{0,200}(sandbox repository|same sandbox)")
+
+#: Every surface that names it today — counted, so a surface cannot drop out unnoticed.
+_SURFACES_NAMING_THE_SANDBOX_LANDING = frozenset(
+    {
+        "README.md",
+        "docs/keel/badges.md",
+        "docs/keel/cli.md",
+        "docs/keel/overview.md",
+        "docs/keel/swarm.md",
+        "src/keel/adapters/commands/swarm.md",
+        "commands/swarm.md",
+        ".claude/commands/keel/swarm.md",
+        ".agents/skills/keel-swarm/SKILL.md",
+        "website/content.js",
+        "website/index.html",
+        "website/params.js",
+        "website/swarm-simulator.js",
+    }
+)
+
+#: Every surface that names `swarm-review` today — counted for the same reason.
+_SURFACES_NAMING_SWARM_REVIEW = _SURFACES_NAMING_THE_SANDBOX_LANDING | {
+    "SECURITY.md",
+    "docs/keel/comparison.md",
+    "docs/keel/parameter-reference.md",
+    "website/integrations.js",
+}
+
+#: What no surface may say about swarm: one run on a toy repository, with single-vendor review
+#: seats, is not maturity, production readiness or multi-vendor review (#1423).
 _OVERCLAIMED_SWARM_REVIEW = tuple(
     re.compile(p, re.I)
     for p in (
-        r"swarm[- ]review (has|have) (now )?(run|ran|landed|been (run|exercised))",
+        r"swarm[- ]review (has|have) (now )?(run|ran|been (run|exercised)) on a real",
         r"reviewed (inside|by) the swarm on a real",
-        r"swarm (is|stays) no longer experimental|no longer experimental",
-        r"swarm[- ]review is (proven|stable|production)",
+        r"no longer experimental",
+        r"\bswarm(-review| review)? is (now )?(proven|stable|mature|production)",
+        r"production[- ](ready|grade)|ready for production|battle[- ]tested",
+        r"multi[- ]vendor (review|reviewers|seats|review seats)",
     )
 )
 
@@ -1374,7 +1445,7 @@ _OVERCLAIMED_SWARM_REVIEW = tuple(
 #: the first end marker after it.
 _SWARM_LANDING_SURFACES = (
     ("README.md", "`keel swarm-land --live`", "`keel worktree-remove`"),
-    ("docs/keel/swarm.md", "> Landing is guarded", "> The rest is tracked"),
+    ("docs/keel/swarm.md", "> Landing is guarded", "> A live landing has run end to end once"),
     ("docs/keel/swarm.md", "### What landing actually does", "### Review Evidence Gate"),
     ("docs/keel/cli.md", "## `keel swarm-land ", "## `keel-visual swarm"),
     ("docs/keel/overview.md", "**High-concurrency Swarm orchestration**", "Audit epic"),
@@ -1454,7 +1525,9 @@ class TestSwarmLandingMergesPullRequestsThroughKeelMerge(unittest.TestCase):
                 )
 
     def test_the_guide_banner_says_landing_goes_through_keel_merge(self):
-        banner = _swarm_landing_excerpt("docs/keel/swarm.md", "> Landing is guarded", "> The rest")
+        banner = _swarm_landing_excerpt(
+            "docs/keel/swarm.md", "> Landing is guarded", "> A live landing has run end to end once"
+        )
         self.assertIn("Landing is guarded, and it goes through **`keel merge`**", banner)
         self.assertIn("`knobs.swarm_review_evidence: false` > no longer skips anything", banner)
 
