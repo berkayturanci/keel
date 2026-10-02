@@ -1123,7 +1123,23 @@ test('a run that stops, or leaves the board, raises a toast; the first scan rais
   expect(calls.sounds).toEqual([])
 })
 
-test('with sound on, a stop plays the attention clip; with notifications off, no toast', { options: { sound: true, notify: false } }, async ($, on) => {
+test('with sound on, a stop plays the attention clip with its toast', { options: { sound: true } }, async ($, on) => {
+  const clock = mock.clock(on)
+  let interrupted = false
+  const calls = stubEngine(on, {
+    project: true,
+    stdout: () =>
+      statusJson({ status: interrupted ? 'interrupted' : 'waiting', current: { issue: 1022, pull_request: 1027, step: 's8', wait_reason: 'x' } }),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  interrupted = true
+  await clock.advance(5_000)
+  expect(calls.toasts).toEqual(['keel #1022 stopped at s8: x'])
+  expect(calls.sounds).toEqual(['fx/attention.wav'])
+})
+
+test('with notifications off there is neither a toast nor a sound', { options: { sound: true, notify: false } }, async ($, on) => {
   const clock = mock.clock(on)
   let interrupted = false
   const calls = stubEngine(on, {
@@ -1136,8 +1152,72 @@ test('with sound on, a stop plays the attention clip; with notifications off, no
   interrupted = true
   await clock.advance(5_000)
   expect(calls.toasts).toEqual([])
-  expect(calls.sounds).toEqual(['fx/attention.wav'])
+  expect(calls.sounds).toEqual([])
 })
+
+test('a worktree that fails one read is not announced as gone', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  let failing = false
+  const calls = stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+      { path: '/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001), exitCode: () => (failing ? 1 : 0) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  failing = true
+  await clock.advance(5_000)
+  failing = false
+  await clock.advance(5_000)
+  expect(calls.toasts).toEqual([])
+})
+
+test('a run whose newer copy moves to another worktree is the same run, not a departure', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  let nestedAt: number | null = null
+  const calls = stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+      { path: '/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001) },
+      {
+        path: '/wt/a/nested',
+        branch: 'a2',
+        get mtime() {
+          return nestedAt
+        },
+        stdout: runAt(11, 2001, 's9', ''),
+      },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  nestedAt = 2.5 * HOURS
+  await clock.advance(5_000)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
+  expect(calls.toasts).toEqual([])
+})
+
+test('a run that starts waiting for you raises a toast', async ($, on) => {
+  const clock = mock.clock(on)
+  let waiting = false
+  const calls = stubEngine(on, {
+    project: true,
+    stdout: () =>
+      statusJson({ current: { issue: 1022, pull_request: 1027, step: waiting ? 's1' : 's2', wait_reason: waiting ? 'needs-input' : '' } }),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  waiting = true
+  await clock.advance(5_000)
+  expect(calls.toasts).toEqual(['keel #1022 is waiting for you (needs-input)'])
+})
+
 
 test('the pane links the PR and the issue and shows the checkpoint’s last gate, review and check', async ($, on) => {
   const clock = mock.clock(on, { now: 1 * HOURS })

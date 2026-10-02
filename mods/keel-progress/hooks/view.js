@@ -166,7 +166,7 @@ export function ago(ms) {
 
 // https://github.com/<owner>/<repo> from a git remote URL (https or ssh), else null.
 export function githubBase(remote) {
-  const m = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(remote).trim())
+  const m = /(?:^|[@/])github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(remote).trim())
   return m ? `https://github.com/${m[1]}/${m[2]}` : null
 }
 

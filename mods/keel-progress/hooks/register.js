@@ -243,7 +243,7 @@ async function scan($) {
     }
     else others.push(w)
   }
-  if (mine.failure !== undefined) nextFailures.push({ label: ownLabel, message: mine.failure })
+  if (mine.failure !== undefined) nextFailures.push({ label: ownLabel, path: cwd, message: mine.failure })
   else candidates.push({ path: cwd, label: ownLabel, branch: ownBranch, own: true, mtimeMs: 0, ...mine.parsed })
   own = mine.parsed ?? own
   ownStale = mine.failure !== undefined
@@ -285,7 +285,7 @@ async function scan($) {
     const fields = { path: w.path, label: w.label, branch: w.branch, own: false }
     if (ckFresh) {
       const result = await statusOf($, w.path)
-      if (result.failure !== undefined) nextFailures.push({ label: w.label, message: result.failure })
+      if (result.failure !== undefined) nextFailures.push({ label: w.label, path: w.path, message: result.failure })
       else candidates.push({ ...fields, mtimeMs: ckM, ...result.parsed })
     }
     if (actFresh) for (const entry of (await activityOf($, w.path, w.path, steps, now)).entries) candidates.push({ ...fields, ...entry })
@@ -322,7 +322,7 @@ async function scan($) {
   for (const run of nextRuns) {
     if (run.snapshot.source !== 'activity' && perWorktree) run.details = await detailsOf($, `${run.path}/${checkpoint}`)
   }
-  announce($, nextRuns)
+  announce($, nextRuns, new Set(nextFailures.map((f) => f.path)))
   runs = nextRuns
   if (runs.length === 0) expanded = false // the band comes back compact
   failures = nextFailures
@@ -367,8 +367,21 @@ async function detailsOf($, file) {
 
 // Toasts (and, if the user asked, a sound) for what changed since the last scan: a run that
 // stopped, one that waits for a person, one that left the board. Nothing on the first scan.
-function announce($, nextRuns) {
-  const now = new Map(nextRuns.map((run) => [runKey(run), run]))
+// A run is followed across scans by what names it, not by where it was read: the issue (stable
+// across checkpoint and activity, and across worktrees), else the run id, else the PR.
+function identity(run) {
+  const c = run.snapshot.current
+  if (c.issue != null) return `issue:${c.issue}`
+  if (c.run_id) return `run:${c.run_id}`
+  if (c.pull_request != null) return `pr:${c.pull_request}`
+  return `path:${run.path}`
+}
+
+// A run whose worktree could not be read this scan has not left: it is carried over, unannounced,
+// until a read says otherwise.
+function announce($, nextRuns, failedPaths) {
+  const now = new Map(nextRuns.map((run) => [identity(run), run]))
+  const carried = new Map()
   if (previous !== null) {
     for (const [key, run] of now) {
       const c = run.snapshot.current
@@ -381,21 +394,29 @@ function announce($, nextRuns) {
       }
     }
     for (const [key, was] of previous) {
-      if (!now.has(key)) notify($, `keel ${was.label} is no longer running (merged, closed or finished)`, 'done')
+      if (now.has(key)) continue
+      if (failedPaths.has(was.path)) carried.set(key, was)
+      else notify($, `keel ${was.label} is no longer running (merged, closed or finished)`, 'done')
     }
   }
-  previous = new Map(
-    [...now].map(([key, run]) => {
+  previous = new Map([
+    ...carried,
+    ...[...now].map(([key, run]) => {
       const c = run.snapshot.current
-      return [key, { label: c.issue != null ? `#${c.issue}` : (c.run_id ?? 'run'), status: run.snapshot.status, wait: c.wait_reason }]
+      return [
+        key,
+        { label: c.issue != null ? `#${c.issue}` : (c.run_id ?? 'run'), path: run.path, status: run.snapshot.status, wait: c.wait_reason },
+      ]
     }),
-  )
+  ])
 }
 
 // A notification is a side note: one that fails never costs the scan its runs.
 function notify($, text, sound) {
+  if (!settings.notify) return
   try {
-    if (settings.notify) $.ui.toast(text, { timeoutMs: 8000 })
+    Promise.resolve($.ui.toast(text, { timeoutMs: 8000 })).catch(() => {})
+    // The sound goes with the toast, never on its own.
     if (settings.sound) $.audio.play({ asset: `fx/${sound}.wav` }).catch(() => {})
   } catch {
     // nothing to do: the band still shows the change
@@ -440,7 +461,7 @@ function toggleExpanded($) {
 }
 
 export function register(on, options = {}) {
-  if (Number.isFinite(options.poll_seconds)) settings.pollMs = Math.max(2, options.poll_seconds) * 1000
+  if (Number.isFinite(options.poll_seconds)) settings.pollMs = Math.max(2, Math.min(60, options.poll_seconds)) * 1000
   if (Number.isFinite(options.band_rows)) settings.bandMax = Math.max(1, Math.min(9, options.band_rows))
   if (typeof options.notify === 'boolean') settings.notify = options.notify
   if (typeof options.sound === 'boolean') settings.sound = options.sound
