@@ -22,8 +22,10 @@ keel #1022 ▰▰▰▰▰▰▰▰▰▰▶▱▱ s10 merge · waiting: merge-w
 The mod runs `keel status .keel/project.yaml --json` from the session's working directory:
 
 - once when the session starts
-- every five seconds after that
+- every five seconds while a run is live, every 30 seconds when there is none
 - right after any Bash call whose command mentions `keel`
+
+Only one `keel status` runs at a time; a refresh asked for meanwhile waits for it.
 
 The step names come from the status contract (`keel.progress-status.v1`), so a renamed or
 added step shows up without a mod release.

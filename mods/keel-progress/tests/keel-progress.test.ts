@@ -130,6 +130,53 @@ test('the status is polled on a timer and refreshed after a keel Bash call only'
   expect(calls.status).toBe(3)
 })
 
+test('with no live run the timer polls every 30 s, not every 5 s', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson({ status: 'no-active-run', current: null }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.status).toBe(1)
+
+  await clock.advance(25_000)
+  expect(calls.status).toBe(1)
+  await clock.advance(5_000)
+  expect(calls.status).toBe(2)
+
+  // A keel command still refreshes at once, so a run that just started shows up.
+  await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 1' })
+  await clock.settle()
+  expect(calls.status).toBe(3)
+})
+
+test('a refresh asked for while one runs shares it instead of starting another keel status', async ($, on) => {
+  const clock = mock.clock(on)
+  let running = 0
+  let most = 0
+  let calls = 0
+  on('fs.exists', () => ({ value: true }))
+  on('command.register', () => ({ value: undefined }))
+  on('session.start', () => ({ cwd: '/work' }))
+  on('tool.call', () => ({ result: 'ok' }))
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
+  on('process.run', async () => {
+    calls += 1
+    running += 1
+    most = Math.max(most, running)
+    // keel status takes 8 s here: longer than the 5 s poll
+    await clock.sleep(8_000)
+    running -= 1
+    return { value: { exitCode: 0, stdout: statusJson(), stderr: '' } }
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.tool.call({ tool: 'Bash', command: 'keel status .keel/project.yaml' })
+  await clock.advance(6_000)
+  expect(most).toBe(1)
+  expect(calls).toBe(1)
+  await clock.advance(10_000)
+  expect(most).toBe(1)
+})
+
 test('/keel-progress opens a pane listing every step, history and the next issue', async ($, on) => {
   const clock = mock.clock(on)
   const calls = stubEngine(on, { project: true })

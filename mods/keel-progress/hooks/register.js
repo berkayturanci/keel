@@ -12,6 +12,8 @@ import { FALLBACK_STEPS, bandParts, isLive, paneLines, parseStatus } from './vie
 const PROJECT = '.keel/project.yaml'
 const PANE = 'keel-progress'
 const POLL_MS = 5_000
+// With no live run the timer still ticks every POLL_MS but polls only every IDLE_EVERY ticks (30 s).
+const IDLE_EVERY = 6
 const STATUS_TIMEOUT_MS = 10_000
 
 const TONES = {
@@ -27,9 +29,29 @@ let hasProject = false
 let status = null // { snapshot, steps } from the last good `keel status --json`
 let error = null // first line of the last failure, shown in the pane only
 let lastStdout = ''
+let inFlight = null // the running refresh; callers share it instead of starting a second `keel status`
+let idleTicks = 0
 
-async function refresh($) {
-  if (!hasProject) return
+// The timer's tick: every time while a run is live, every IDLE_EVERY-th tick otherwise.
+function tick($) {
+  if (!isLive(status?.snapshot)) {
+    idleTicks = (idleTicks + 1) % IDLE_EVERY
+    if (idleTicks !== 0) return undefined
+  }
+  return refresh($)
+}
+
+function refresh($) {
+  if (!hasProject) return Promise.resolve()
+  if (inFlight === null) {
+    inFlight = runStatus($).finally(() => {
+      inFlight = null
+    })
+  }
+  return inFlight
+}
+
+async function runStatus($) {
   let failure = null
   try {
     const run = await $.process.run(['keel', 'status', PROJECT, '--json'], { timeoutMs: STATUS_TIMEOUT_MS })
@@ -58,7 +80,7 @@ export function register(on) {
     if (hasProject) {
       // Off the start path: the first status lands a moment after the session opens.
       $.clock.after(0, () => refresh($))
-      $.clock.every(POLL_MS, () => refresh($))
+      $.clock.every(POLL_MS, () => tick($))
     }
     await $.command.register({
       name: 'keel-progress',
