@@ -428,6 +428,23 @@ class SyncCheckAndZipOnAFixtureTree(unittest.TestCase):
             names,
         )
 
+    def test_a_crlf_checkout_builds_the_same_lf_zip(self):
+        """Windows CI checks out with CRLF; the uploaded ZIP must not depend on that."""
+        with TemporaryDirectory() as tmp:
+            lf_root, crlf_root = Path(tmp) / "lf", Path(tmp) / "crlf"
+            for root in (lf_root, crlf_root):
+                _fixture_root(root)
+            for path in crlf_root.rglob("*"):
+                if path.is_file():
+                    path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+            for root in (lf_root, crlf_root):
+                plugin_bundle.sync(root)
+
+            lf = plugin_bundle.build_zip(lf_root, Path(tmp) / "lf.zip").read_bytes()
+            crlf = plugin_bundle.build_zip(crlf_root, Path(tmp) / "crlf.zip").read_bytes()
+
+        self.assertEqual(lf, crlf)
+
     def test_two_skills_with_one_name_are_refused(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

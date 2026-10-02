@@ -149,8 +149,18 @@ def zip_entries(root: Path) -> dict[str, str]:
     return entries
 
 
+def _lf(data: bytes) -> bytes:
+    """Every entry is text; store it with LF line endings whatever the checkout used.
+
+    A Windows checkout with ``core.autocrlf`` turns every Markdown file into CRLF, and the
+    ZIP would then differ by platform — and carry ``---\r\n`` frontmatter that a strict
+    reader does not recognise. Normalising here keeps the upload one artifact per tree.
+    """
+    return data.replace(b"\r\n", b"\n")
+
+
 def build_zip(root: Path, out: Path | None = None) -> Path:
-    """Write the deterministic OpenAI ZIP and return its path."""
+    """Write the deterministic OpenAI ZIP (LF line endings) and return its path."""
     target = out or root / "dist" / f"keel-plugin-{portable_version(root)}.zip"
     target.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -158,7 +168,7 @@ def build_zip(root: Path, out: Path | None = None) -> Path:
             info = zipfile.ZipInfo(name, date_time=ZIP_EPOCH)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
-            archive.writestr(info, (root / source).read_bytes())
+            archive.writestr(info, _lf((root / source).read_bytes()))
     return target
 
 
