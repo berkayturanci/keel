@@ -184,7 +184,10 @@ one fail-closed path:
    attempts** — so this proves *"some attempt under this run-id reached s10"*, not *"this
    attempt did"*. A checkpoint left by an earlier aborted attempt still covers. The
    freshness that matters is supplied by step 5 instead, which binds to the live head SHA;
-7. call GitHub's merge operation only when every prior gate passes.
+7. call GitHub's merge operation only when every prior gate passes;
+8. once the merge lands, record it in the run's checkpoint (`checkpoint.mark_merged`:
+   `merge: merged`, `s10` completed, `current_step` → `s11`, `stop_reason` cleared). The step is
+   fail-soft and reported as `checkpoint_update` (#1448).
 
 `--hotfix` bypasses both the merge window (step 2) and the gates-SHA requirement (step 5),
 recording the bypass (`gates_sha.bypassed`, `reason: hotfix`). The gates-match decision is a
