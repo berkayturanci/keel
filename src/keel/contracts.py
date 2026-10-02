@@ -939,8 +939,16 @@ def ship_result_as_dict(
     assessment,
     issue_intake: dict[str, Any] | None = None,
     run_ledger: dict[str, Any] | None = None,
+    jury_consensus: str | None = None,
 ) -> dict[str, Any]:
-    """Normalized deterministic result record for ``keel ship --json``."""
+    """Normalized deterministic result record for ``keel ship --json``.
+
+    ``jury_consensus`` is the panel's own verdict (the chair's, as
+    :func:`keel.jury.jury_verdict` reports it) when the caller has one; the
+    ``jury_verdict_template`` renders it, and renders
+    :data:`keel.artifacts.JURY_CONSENSUS_PLACEHOLDER` — which the evidence gate reads as
+    no approval — when it has none (#1429).
+    """
     closure_comment = None
     issue_number = None
     pr_number = None
@@ -992,10 +1000,14 @@ def ship_result_as_dict(
             findings=finding_dicts,
             testing="; ".join(testing) if testing else "See PR Testing section.",
         ),
+        # The consensus is the panel's, never this run's gate verdict (#1429): an unblocked
+        # ship says nothing about what the panel concluded, and a template that wrote
+        # `LGTM` there approved for a panel that may have rejected the change. Without a
+        # consensus it carries a placeholder the evidence gate reads as no approval.
         "jury_verdict_template": artifacts.render_jury_verdict(
             head_sha=head_sha,
             participants=("reviewer-a", "reviewer-b", "reviewer-c", "orchestrator"),
-            verdict="REQUEST_CHANGES" if verdict.blocked else "LGTM",
+            verdict=jury_consensus or artifacts.JURY_CONSENSUS_PLACEHOLDER,
             findings_summary=_finding_summaries(finding_dicts),
             remaining_risks=(
                 ship_decisions.block_reason(verdict) if verdict.blocked else "none identified"

@@ -142,6 +142,21 @@ class TestVerdictRenderers(unittest.TestCase):
         self.assertIn("Participants: Codex, Claude.", body)
         self.assertIn("- No blockers found.", body)
 
+    def test_a_jury_verdict_without_a_consensus_is_not_an_approval(self):
+        """#1429: a missing or blank verdict rendered `LGTM`, an approval nobody gave."""
+        from keel import evidence
+
+        for verdict in ({}, {"verdict": None}, {"verdict": "  "}):
+            with self.subTest(verdict=verdict):
+                body = artifacts.render_jury_verdict(head_sha="abc123", **verdict)
+                self.assertIn("AI Jury verdict: ABSTAIN.", body)
+                self.assertFalse(evidence.jury_verdict_approves(body))
+        placeholder = artifacts.render_jury_verdict(
+            head_sha="abc123", verdict=artifacts.JURY_CONSENSUS_PLACEHOLDER
+        )
+        self.assertEqual(evidence.jury_verdict_token(placeholder), "PANEL_CONSENSUS")
+        self.assertFalse(evidence.jury_verdict_approves(placeholder))
+
 
 class TestReviewCycleSummaryRenderer(unittest.TestCase):
     def _reviewer(self, **overrides):

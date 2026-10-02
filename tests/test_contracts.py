@@ -1322,6 +1322,72 @@ class TestShipResultClosureComment(unittest.TestCase):
             result["artifact_bodies"]["extension_result_template"],
         )
 
+    def _jury_template_gate(self, **result_kwargs):
+        """Post the ship result's jury template verbatim and verify a tier-3 merge (#1429)."""
+        from keel import artifacts, evidence, ship
+
+        result = contracts.ship_result_as_dict(
+            changed_files=[],
+            outcomes=[],
+            verdict=self._verdict(),
+            assessment=self._assessment(),
+            run_ledger={"record": {"head_sha": "abc123"}},
+            **result_kwargs,
+        )
+        template = result["artifact_bodies"]["jury_verdict_template"]
+        reviews = [
+            {
+                "body": artifacts.render_review_verdict(
+                    reviewer=name,
+                    head_sha="abc123",
+                    verdict="LGTM",
+                    scope="Checked `src/app.py` and tests/test_app.py.",
+                ),
+                "author_association": "OWNER",
+            }
+            for name in ("r1", "r2", "r3")
+        ]
+        report = evidence.verify(
+            ship.resolve_review_contract(tier=3, gates=["build", "lint"]),
+            pr_comments=[*reviews, {"body": template, "author_association": "OWNER"}],
+            head_sha="abc123",
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+        return template, report
+
+    def test_the_jury_template_never_approves_for_a_panel_it_did_not_hear(self):
+        """#1429: an unblocked ship rendered `AI Jury verdict: LGTM.` whatever the panel said.
+
+        Without the panel's consensus the template carries a placeholder, and posted
+        verbatim it holds the merge instead of approving.
+        """
+        template, report = self._jury_template_gate()
+
+        self.assertIn(
+            "AI Jury verdict: <PANEL_CONSENSUS \u2014 replace with the panel's "
+            "APPROVE / REQUEST_CHANGES>.",
+            template,
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(
+            [(f["id"], f["message"]) for f in report["findings"]],
+            [
+                (
+                    "jury-verdict-not-approved",
+                    "the jury's consensus at abc123 is PANEL_CONSENSUS, not an approval.",
+                )
+            ],
+        )
+
+    def test_the_jury_template_carries_the_panels_consensus_when_given_one(self):
+        template, report = self._jury_template_gate(jury_consensus="APPROVE")
+        self.assertIn("AI Jury verdict: APPROVE.", template)
+        self.assertEqual(report["status"], "pass")
+
+        template, report = self._jury_template_gate(jury_consensus="REQUEST_CHANGES")
+        self.assertIn("AI Jury verdict: REQUEST_CHANGES.", template)
+        self.assertEqual(report["status"], "fail")
+
     def test_artifact_bodies_summarize_skipped_gates_and_docs(self):
         result = contracts.ship_result_as_dict(
             changed_files=["docs/keel/cli.md"],
