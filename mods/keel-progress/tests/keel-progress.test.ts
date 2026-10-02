@@ -823,12 +823,13 @@ test('emoji, flags and zero-width marks are measured in cells too', async ($, on
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      // 🚀 (2) + "fix" (3) + e + U+0301 combining accent (1) = 6 cells: "  🚀fixé" is 8, padded to 12
-      { path: '/wt/emoji', branch: '🚀fixé', stdout: runAt(11, 2001) },
+      // flag (two regional indicators, 2) + rocket (2) + "fix" (3) + e + U+0301 combining accent (1)
+      // = 8 cells: with the two-space prefix 10, padded to 12
+      { path: '/wt/emoji', branch: '\u{1F1F9}\u{1F1F7}\u{1F680}fixe\u0301', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 70 }, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: '  🚀fixé    ' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: '  \u{1F1F9}\u{1F1F7}\u{1F680}fixe\u0301  ' })).toBeDefined()
 })
