@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **keel-progress 0.3.0 reads keel's activity records as well as its checkpoints** (#1459). keel writes the checkpoint only at its safe boundaries, but stamps `.keel/activity/<run-id>.json` at every phase, and some runs never write a checkpoint at all. So the band could look stuck between boundaries and miss whole runs: on smartinventory, `ship-3289`, blocked at s8, had no checkpoint and never showed. The mod now also runs `keel activity --json` in each worktree whose activity changed lately. For each run it shows whichever of the checkpoint and the activity record was written last, and it lists runs from other commands (`pr-loop`, `review-cycle`) with their phase. A `running` record nobody stamped for six hours counts as stopped, since nothing marks an abandoned run done.
+
 ### Fixed
 - **keel-progress 0.2.1: the follow-ups from its reviews** (#1446).
   - A keel command now rechecks a pull request that an earlier refetch found missing, so a run whose PR `gh pr list` had not listed yet no longer stays hidden for up to a minute.

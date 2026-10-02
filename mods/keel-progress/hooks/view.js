@@ -104,6 +104,41 @@ export function fitCells(text, width) {
   return out
 }
 
+// `keel activity --json` → the runs it says are still running, shaped like a status snapshot so
+// the band and the pane draw them the same way. Activity is written at every phase a command
+// stamps, so it is often newer than the checkpoint, which keel writes only at its safe
+// boundaries; and some flows stamp activity without ever writing a checkpoint. `steps` is the
+// backbone from a status contract, used when the phase is one of its steps (keel ship).
+export function activityRuns(stdout, steps) {
+  const payload = JSON.parse(stdout)
+  const dir = typeof payload?.contract?.dir === 'string' ? payload.contract.dir : '.keel/activity'
+  const records = Array.isArray(payload?.activity) ? payload.activity : []
+  const out = []
+  for (const r of records) {
+    if (!r || r.status !== 'running' || !r.run_id) continue
+    const onBackbone = steps.some((s) => s.id === r.phase)
+    const blocked = r.verdict === 'blocked'
+    out.push({
+      runId: String(r.run_id),
+      file: `${dir}/${r.run_id}.json`,
+      steps: onBackbone ? steps : [{ id: String(r.phase ?? r.command), name: `(${r.command})` }],
+      snapshot: {
+        status: blocked ? 'interrupted' : 'active',
+        current: {
+          run_id: String(r.run_id),
+          command: r.command ?? null,
+          issue: r.issue ?? null,
+          pull_request: r.pr ?? null,
+          step: r.phase ?? null,
+          wait_reason: blocked ? 'gates blocked' : null,
+        },
+        source: 'activity',
+      },
+    })
+  }
+  return out
+}
+
 export function isLive(snapshot) {
   return Boolean(snapshot && LIVE_STATES.has(snapshot.status) && snapshot.current)
 }

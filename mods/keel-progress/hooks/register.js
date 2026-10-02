@@ -8,12 +8,17 @@
 //   - a `/keel-progress` pane with every live run's steps, history counts and next issue
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { bandParts, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
+import { FALLBACK_STEPS, activityRuns, bandParts, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
 // Where a checkpoint lives when the status contract does not say (policy_pack.reports.checkpoint moves it).
 const DEFAULT_CHECKPOINT = '.keel/state/checkpoint.json'
+// Where `keel activity` keeps one file per run (keel.activity.v1 contract `dir`).
+const ACTIVITY_DIR = '.keel/activity'
+// A run stamps its activity at every phase, and nothing marks an abandoned one done: a "running"
+// record untouched this long is a run that stopped, not one that is waiting.
+const ACTIVITY_FRESH_MS = 6 * 60 * 60 * 1000
 const PANE = 'keel-progress'
 const POLL_MS = 5_000
 // With no live run the timer still ticks every POLL_MS but polls only every IDLE_EVERY ticks (30 s).
@@ -152,6 +157,38 @@ async function statusOf($, path) {
   }
 }
 
+// One `keel activity --json`: the still-running records as run entries, each with the time its
+// file was written. Activity only adds detail, so a failure here is silent; the status read
+// reports problems with the worktree.
+async function activityOf($, path, base, steps, now) {
+  const argv =
+    path === null
+      ? ['keel', 'activity', PROJECT, '--root', '.', '--json']
+      : ['keel', 'activity', `${path}/${PROJECT}`, '--root', path, '--json']
+  const init = path === null ? { timeoutMs: STATUS_TIMEOUT_MS } : { cwd: path, timeoutMs: STATUS_TIMEOUT_MS }
+  try {
+    const run = await $.process.run(argv, init)
+    if (run.exitCode !== 0 || run.isStdoutTruncated) return []
+    const entries = activityRuns(run.stdout, steps)
+    const fresh = []
+    for (const entry of entries) {
+      const mtimeMs = await mtimeOf($, `${base}/${entry.file}`)
+      if (mtimeMs !== null && now - mtimeMs < ACTIVITY_FRESH_MS) fresh.push({ ...entry, mtimeMs })
+    }
+    return fresh
+  } catch {
+    return []
+  }
+}
+
+async function mtimeOf($, path) {
+  try {
+    return (await $.fs.stat(path)).mtimeMs
+  } catch {
+    return null
+  }
+}
+
 async function realPath($, path) {
   try {
     return (await $.fs.stat(path, { resolve: true })).realPath ?? path
@@ -201,25 +238,30 @@ async function scan($) {
   // every worktree shares, which the session's own read already covers.
   const perWorktree = !checkpoint.startsWith('/')
   if (perWorktree && candidates.length > 0) {
-    try {
-      candidates[0].mtimeMs = (await $.fs.stat(`${cwd}/${checkpoint}`)).mtimeMs
-    } catch {
-      // no checkpoint here: the own entry can only be a live run if keel says so; it ranks oldest
-    }
+    // no checkpoint here: the own entry can only be a live run if keel says so; it ranks oldest
+    candidates[0].mtimeMs = (await mtimeOf($, `${cwd}/${checkpoint}`)) ?? 0
   }
+  const steps = mine.parsed?.steps ?? own?.steps ?? FALLBACK_STEPS
+  const ownFields = { path: cwd, label: ownLabel, branch: ownBranch, own: true }
+  for (const entry of await activityOf($, null, cwd, steps, now)) candidates.push({ ...ownFields, ...entry })
+
+  // Other worktrees: only those whose checkpoint (where this project keeps it) or activity
+  // changed lately. A failed own read keeps the last known location, so others don't drop out.
   let fresh = 0
   for (const w of perWorktree ? others : []) {
-    let mtimeMs
-    try {
-      mtimeMs = (await $.fs.stat(`${w.path}/${checkpoint}`)).mtimeMs
-      if (now - mtimeMs >= FRESH_MS) continue
-    } catch {
-      continue // no checkpoint: no run in this worktree
-    }
+    const ckM = await mtimeOf($, `${w.path}/${checkpoint}`)
+    const actM = await mtimeOf($, `${w.path}/${ACTIVITY_DIR}`)
+    const ckFresh = ckM !== null && now - ckM < FRESH_MS
+    const actFresh = actM !== null && now - actM < FRESH_MS
+    if (!ckFresh && !actFresh) continue // nothing written lately: no run in this worktree
     fresh += 1
-    const result = await statusOf($, w.path)
-    if (result.failure !== undefined) nextFailures.push({ label: w.label, message: result.failure })
-    else candidates.push({ path: w.path, label: w.label, branch: w.branch, own: false, mtimeMs, ...result.parsed })
+    const fields = { path: w.path, label: w.label, branch: w.branch, own: false }
+    if (ckFresh) {
+      const result = await statusOf($, w.path)
+      if (result.failure !== undefined) nextFailures.push({ label: w.label, message: result.failure })
+      else candidates.push({ ...fields, mtimeMs: ckM, ...result.parsed })
+    }
+    if (actFresh) for (const entry of await activityOf($, w.path, w.path, steps, now)) candidates.push({ ...fields, ...entry })
   }
 
   // `gh` is asked only when a live run has a pull request, so an idle session makes no API calls.

@@ -29,13 +29,25 @@ terminal running `keel-visual dash`.
 
 ## How it reads the runs
 
-Parallel `keel ship` runs each work in a worktree of their own and write that worktree's
-checkpoint. The mod always reads the session's own folder, then lists the repository's
-worktrees with `git worktree list` and runs `keel status --json` in each other worktree whose
-checkpoint (found where the project's status contract says it lives) changed in the last
-24 hours. A run is shown when:
+Parallel `keel ship` runs each work in a worktree of their own. keel records a run in two
+places, and the mod reads both:
 
-- `keel status` calls it live,
+- **the checkpoint** (`.keel/state/checkpoint.json`, or wherever the project's status contract
+  says), written at keel's safe boundaries, read with `keel status --json`
+- **the activity record** (`.keel/activity/<run-id>.json`), stamped at every phase a command
+  passes through, read with `keel activity --json`. It is often newer than the checkpoint, and
+  some runs never write a checkpoint at all.
+
+For each run, whichever of the two was written last is shown. Activity from other commands
+(`pr-loop`, `review-cycle`, …) shows too, with its phase name and command.
+
+The mod always reads the session's own folder, then lists the repository's worktrees with
+`git worktree list` and reads each other worktree whose checkpoint or activity changed in the
+last 24 hours. A run is shown when:
+
+- keel calls it live (`keel status`), or its activity record says `running` and was stamped
+  in the last six hours (nothing marks an abandoned run done, so an older one is a run that
+  stopped),
 - it is the newest copy of its run: one run can leave checkpoints in several worktrees (a
   worktree nested in another), and only the most recently written one is shown; the pane
   counts the stale copies, and
@@ -43,7 +55,7 @@ checkpoint (found where the project's status contract says it lives) changed in 
   once a minute, and once more when a scan meets a PR the list doesn't hold; without `gh`
   nothing is hidden on these grounds)
 
-The last rule exists because `keel merge` used to leave a merged run's checkpoint at s10
+The PR rule exists because `keel merge` used to leave a merged run's checkpoint at s10
 (#1448), so old checkpoints read as waiting on the merge window. Outside a git repository,
 or when `git` can't run, only the session's own folder is read. With no live run, the pane
 still shows the session's project: no active run, its history counts and next issue.
