@@ -411,20 +411,25 @@ class ASeatsAnswerIsReadOrFailed(unittest.TestCase):
     def test_an_approval_with_a_blocking_finding_is_a_request_for_changes(self):
         verdict = _read(_answer(findings=[{"severity": "major", "message": "data loss"}]))
         self.assertEqual(verdict.outcome, sr.REQUEST_CHANGES)
-        self.assertIn("read as REQUEST_CHANGES", verdict.reason)
+        self.assertIn("posted as REQUEST_CHANGES", verdict.reason)
+        self.assertEqual(verdict.item["verdict"], "REQUEST_CHANGES")
+        self.assertEqual(verdict.item["findings"], [{"severity": "major", "message": "data loss"}])
 
-    def test_output_that_does_not_parse_is_failed_never_an_approval(self):
+    def test_an_approval_that_does_not_parse_is_failed_never_an_approval(self):
         cases = {
             "the seat did not answer (timeout): boom": _read("", ok=False),
             "carries no JSON object": _read("LGTM, ship it! {not json}"),
-            "does not parse: review #1 'findings' must be a list": _read(_answer(findings="x")),
-            "does not parse: review #1 requires a non-empty 'verdict'": _read(_answer(verdict=1)),
-            "neither approves nor requests changes": _read(_answer(verdict="COMMENT")),
+            "its verdict 1 names no verdict": _read(_answer(verdict=1)),
+            "its verdict '**' names no verdict": _read(_answer(verdict="**")),
+            "approval does not parse: review #1 'findings' must be a list": _read(
+                _answer(findings="x")
+            ),
             "no scope": _read(_answer(scope="  ")),
             "severity 'blocker'": _read(
                 _answer(findings=[{"severity": "blocker", "message": "m"}])
             ),
             "finding #1 has no message": _read(_answer(findings=[{"severity": "nit"}])),
+            "finding #1 must be a JSON object": _read(_answer(findings=["x"])),
             "names nothing concrete": _read(_answer(scope="Looks good.")),
         }
         for expected, verdict in cases.items():
@@ -433,6 +438,98 @@ class ASeatsAnswerIsReadOrFailed(unittest.TestCase):
                 self.assertIn(expected, verdict.reason)
                 self.assertIsNone(verdict.item)
                 self.assertEqual(sr.posted_items([verdict]), [])
+
+
+def _gate_holds(test, verdict, head="abc123"):
+    """Post ``verdict`` as keel review renders it and run the real pre-merge gate on it."""
+    from keel import artifacts, evidence, ship
+
+    item = verdict.item
+    body = artifacts.render_review_verdict(
+        reviewer=item["reviewer"],
+        head_sha=head,
+        verdict=item["verdict"],
+        scope=item["scope"],
+        findings=item["findings"],
+        testing=item["testing"],
+        vendor=item["vendor"],
+        model=item["model"],
+    )
+    report = evidence.verify(
+        ship.resolve_review_contract(tier=1),
+        pr_comments=[{"body": body, "author_association": "OWNER"}],
+        head_sha=head,
+        enforced=True,
+        phase=evidence.PHASE_PRE_MERGE,
+    )
+    test.assertEqual(report["status"], evidence.STATUS_FAIL)
+    test.assertIn(
+        f"review-verdict-not-approved: {item['reviewer']} requests changes at {head}.",
+        evidence.refusal_reason(report),
+    )
+    return body
+
+
+class ASeatThatRejectsIsNeverDiscarded(unittest.TestCase):
+    """Lead review of #1427: a rejection that failed validation used to become a failed seat,
+    and the other seats' approvals then landed the change it rejected."""
+
+    def test_a_thin_rejection_is_posted_and_the_gate_holds(self):
+        verdict = _read(_answer(verdict="REQUEST_CHANGES", scope="Looks bad."))
+        self.assertEqual(verdict.outcome, sr.REQUEST_CHANGES)
+        self.assertEqual(verdict.item["scope"], "Looks bad.")
+        _gate_holds(self, verdict)
+
+    def test_a_rejection_with_an_invalid_severity_carries_it_as_major(self):
+        bad = {"severity": "high", "message": "drops the lock"}
+        good = {"severity": "minor", "message": "naming"}
+        verdict = _read(_answer(verdict="REQUEST_CHANGES", findings=[bad, good, "loose"]))
+        self.assertEqual(verdict.outcome, sr.REQUEST_CHANGES)
+        carried, kept, loose = verdict.item["findings"]
+        self.assertEqual(carried["severity"], "major")
+        self.assertIn('"severity": "high"', carried["message"])
+        self.assertIn("drops the lock", carried["message"])
+        self.assertEqual(kept, good)
+        self.assertEqual(loose["message"], "the seat's finding, as it wrote it: loose")
+        body = _gate_holds(self, verdict)
+        self.assertIn("- major: the seat's finding, as it wrote it:", body)
+
+    def test_a_rejection_with_no_scope_gets_keels_sentence_and_holds(self):
+        for scope in (None, "  ", 7):
+            with self.subTest(scope=scope):
+                verdict = _read(_answer(verdict="request-changes", scope=scope, testing=3))
+                self.assertEqual(
+                    verdict.item["scope"],
+                    "swarm-review seat A (claude) requested changes at abc123; its answer "
+                    "did not name what it checked",
+                )
+                self.assertIsNone(verdict.item["testing"])
+                _gate_holds(self, verdict)
+
+    def test_a_non_list_findings_value_is_carried_and_a_long_one_is_cut(self):
+        verdict = _read(_answer(verdict="REQUEST_CHANGES", findings={"x": "y" * 900}))
+        (carried,) = verdict.item["findings"]
+        self.assertTrue(carried["message"].endswith("…"))
+        self.assertLess(len(carried["message"]), sr.MAX_QUOTED_CHARS + 60)
+        self.assertEqual(_read(_answer(verdict="REQUEST_CHANGES", findings=None)).findings, ())
+
+    def test_any_word_that_does_not_approve_is_a_change_request(self):
+        for word in ("COMMENT", "abstain", "BLOCK", "Reject — no"):
+            with self.subTest(word=word):
+                verdict = _read(_answer(verdict=word))
+                self.assertEqual(verdict.outcome, sr.REQUEST_CHANGES)
+                self.assertIn(
+                    "does not approve, so it is posted as REQUEST_CHANGES", verdict.reason
+                )
+                self.assertEqual(verdict.item["verdict"], "REQUEST_CHANGES")
+                _gate_holds(self, verdict)
+        self.assertEqual(_read(_answer(verdict="REQUEST_CHANGES")).reason, "")
+
+    def test_a_rejection_on_a_seat_with_no_plan_names_no_vendor(self):
+        seat = _one("subagent:x", kind="subagent")
+        verdict = sr.verdict_from_object(seat, {"verdict": "REQUEST_CHANGES"}, head_sha="h")
+        self.assertIn("(unknown vendor)", verdict.item["scope"])
+        self.assertIsNone(verdict.item["vendor"])
 
     def test_the_last_object_with_a_verdict_is_the_answer(self):
         text = '{"note": 1} first {"verdict": "REQUEST_CHANGES"} then ' + _answer()
@@ -452,31 +549,37 @@ class WhatIsPosted(unittest.TestCase):
         verdicts = [self._verdict(sr.APPROVE), self._verdict(sr.APPROVE, "C")]
         self.assertEqual(sr.posting_decision(verdicts, required=2), "")
 
-    def test_a_failed_seat_beside_enough_approvals_does_not_hold(self):
-        verdicts = [self._verdict(sr.APPROVE), self._verdict(sr.FAILED, "C")]
-        self.assertEqual(sr.posting_decision(verdicts, required=1), "")
-
-    def test_a_failed_seat_is_never_counted_as_an_approval(self):
-        verdicts = [self._verdict(sr.APPROVE), self._verdict(sr.FAILED, "C")]
+    def test_a_failed_seat_holds_the_approvals_fail_closed(self):
+        verdicts = [
+            self._verdict(sr.APPROVE),
+            self._verdict(sr.APPROVE, "B"),
+            self._verdict(sr.FAILED, "C", item=None),
+        ]
         why = sr.posting_decision(verdicts, required=2)
+        self.assertIn("seat(s) C did not return a readable verdict, so nothing is posted", why)
+        self.assertIn("rerun swarm-review", why)
+
+    def test_too_few_approvals_post_nothing(self):
+        why = sr.posting_decision([self._verdict(sr.APPROVE)], required=2)
         self.assertIn("1 seat(s) approved and the tier requires at least 2", why)
         self.assertIn("at least 1", sr.posting_decision([], required=0))
 
     def test_mixed_verdicts_are_all_posted_and_the_rejection_names_the_status(self):
-        verdicts = [
-            self._verdict(sr.APPROVE),
-            self._verdict(sr.REQUEST_CHANGES, "C"),
-            self._verdict(sr.FAILED, "B", item=None),
-        ]
+        verdicts = [self._verdict(sr.APPROVE), self._verdict(sr.REQUEST_CHANGES, "C")]
         self.assertEqual(sr.posting_decision(verdicts, required=2), "")
         self.assertEqual(sr.posted_status(verdicts), sr.POSTED_CHANGES_REQUESTED)
-        # The failed seat is not a verdict: nothing of it is posted.
         self.assertEqual(sr.posted_items(verdicts), [{"r": "A"}, {"r": "C"}])
         self.assertEqual(sr.posted_status(verdicts[:1]), sr.POSTED)
 
-    def test_a_lone_change_request_is_posted_below_the_tiers_count(self):
-        verdicts = [self._verdict(sr.REQUEST_CHANGES), self._verdict(sr.FAILED, "C", item=None)]
+    def test_beside_a_failed_seat_only_the_rejection_is_posted(self):
+        verdicts = [
+            self._verdict(sr.APPROVE),
+            self._verdict(sr.REQUEST_CHANGES, "B"),
+            self._verdict(sr.FAILED, "C", item=None),
+        ]
         self.assertEqual(sr.posting_decision(verdicts, required=3), "")
+        self.assertEqual(sr.posted_items(verdicts), [{"r": "B"}])
+        self.assertEqual(sr.posted_status(verdicts), sr.POSTED_CHANGES_REQUESTED)
 
     def test_a_tampering_seat_holds_the_whole_cluster(self):
         verdicts = [self._verdict(sr.APPROVE), self._verdict(sr.FAILED, "C", tampered=True)]

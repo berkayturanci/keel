@@ -216,13 +216,15 @@ keel swarm-review .keel/project.yaml --root . --swarm-id <swarm_id> --wave <n> -
 ```
 
 Report each cluster as the command does: `posted` (every seat approved),
-`posted-changes-requested` (every verdict that parsed was posted, and at least one requests
+`posted-changes-requested` (the verdicts were posted, and at least one requests
 changes — `keel merge` holds the pull request on `review-verdict-not-approved` with the seat
 named, so relay that seat's findings), `held` (nothing posted: the head moved, a seat changed the
-git setup, or too few approvals with no change request), `refused` (a `subagent:` seat, a seat
+git setup, a seat that did not answer readably, or too few approvals), `refused` (a `subagent:` seat, a seat
 from the implementer's vendor, too few eligible seats, the distinct-vendor rule — suggest
 `--review-delegate <provider>` per slot), `skipped` or `already-merged`. A seat whose answer does
-not parse is `failed`: never an approval, and nothing of it is posted. Never post an approving
+not parse is `failed`: never an approval, and nothing of it is posted — and a failed seat holds
+the cluster's approvals too (only a rejection is posted beside it). A seat that rejected is
+never discarded, however thin its answer. Never post an approving
 verdict yourself on top of a change request to get a cluster through; fix the findings, push,
 and run it again on the new head.
 
@@ -296,4 +298,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.26.0 source_sha256=414575d437db15891a6f77aa8a4f69a70e0cebf9b341e5132ae43f6b899afe4a generated_sha256=b8ff9f66f2ce03fff6c8ff77988d6cd41f9a768bcf8c12f288896822a58b3336 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.26.0 source_sha256=0570657daeba6efbb6cd4a4eee787a5442a6395102f19979a0a49bf449a4d942 generated_sha256=94d57f56e77b4d3d72d51afed94180c6bc34e3141afdfdfa18fd1a40c3d3dff3 -->

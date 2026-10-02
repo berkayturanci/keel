@@ -2239,12 +2239,15 @@ the jury panel. Live, each seat runs in its own detached worktree at the head
 (`.keel/worktrees/<swarm_id>/<cluster_id>.review-<slot>`, removed afterwards) with no forge
 token, no `gh` login, no git credential helper and no network transport, briefed with the issue
 text, the diff and `/keel:ship` s7's refute-not-approve stance, and answers with one JSON
-verdict, judged approving or not by the evidence gate's own `evidence.verdict_approves`. An
-answer that does not parse is a failed review, never an approval, and posts nothing. Every
-verdict that parsed — approvals and change requests, with their findings — is posted, pinned to
+verdict, its word read the evidence gate's own way. A seat that expressed a rejection (any word
+outside `APPROVING_VERDICTS`, or an approval with a critical or major finding) is never
+discarded: it is posted as `REQUEST_CHANGES`, with a keel-written scope or a `major` finding
+quoting a malformed one if need be. An approval that does not parse, and an answer with no
+readable verdict, is a failed seat. With every seat readable all verdicts are posted, pinned to
 the head; one change request holds `keel merge` with `review-verdict-not-approved` (#1426) and
-the cluster is `posted-changes-requested`. Nothing is posted (**held**) when the head moved, a
-seat changed the git setup, or no seat requested changes and fewer approved than the count.
+the cluster is `posted-changes-requested`. A failed seat holds the cluster fail-closed — nothing
+is posted — unless another seat rejected, when only the rejection(s) are posted. Nothing is
+posted (**held**) either when the head moved, a seat changed the git setup, or too few approved.
 Exit `0` only when every cluster was posted with every seat approving (live), planned (dry run)
 or already merged.
 

@@ -750,23 +750,35 @@ It reviews the plan `swarm-run` persisted, wave by wave, cluster by cluster
   the diff keel read with `gh pr diff` — and the one JSON verdict to end with (`verdict`
   `APPROVE` or `REQUEST_CHANGES`, `scope`, `findings`, `testing`).
 - **Reading the answer.** Through the loader `keel review --reviews` uses and the evidence gate's
-  substance rule, and whether it approves is decided by the evidence gate's own reading
-  (`evidence.verdict_approves`, `APPROVING_VERDICTS`), so swarm-review and `keel merge` cannot
-  disagree. An answer that does not parse — or whose verdict neither approves nor requests
-  changes — is a **failed** review: never an approval, and never posted. An approval that
-  carries a critical or major finding is posted as `REQUEST_CHANGES`.
-- **Posting.** keel re-reads the head and posts **every verdict that parsed** — approvals and
-  change requests together — with `keel review --live` (which refuses again if the head moved in
-  between), each naming its seat (`swarm-review-<slot>-<vendor>`, vendor and model from the
-  seat's attribution) and carrying its findings. When some seats approve and one requests
-  changes, all of them are posted: the evidence gate reads each reviewer's latest verdict at the
-  head ([#1426](https://github.com/berkayturanci/keel/issues/1426)), so the rejection holds
-  `keel merge` with `review-verdict-not-approved: swarm-review-<slot>-<vendor> requests changes
-  at <head>` however many others approved. Such a cluster is `posted-changes-requested`, and the
-  exit code is non-zero; fix the findings, push, and run `swarm-review` again on the new head,
-  whose verdicts replace these. **Nothing is posted** — the cluster is **held** — when the head
-  moved, when a seat changed the repository's git setup, or when no seat requested changes and
-  fewer approved than the count. A failed seat posts nothing of its own and is reported.
+  substance rule, after its verdict word is read with the evidence gate's own reading
+  (`evidence.review_verdict_token`, `APPROVING_VERDICTS`), so swarm-review and `keel merge`
+  cannot disagree. **A seat that expressed a rejection is never discarded:** any word outside
+  `APPROVING_VERDICTS` (`REQUEST_CHANGES`, `COMMENT`, `ABSTAIN`, `REJECT` …), or an approval
+  carrying a critical or major finding, is posted as `REQUEST_CHANGES` whatever the rest of the
+  answer looks like — an empty scope falls back to a sentence keel writes naming the seat and
+  head, and a malformed finding is carried as one `major` finding quoting what the seat wrote.
+  Only an approval must pass the parser, the severity vocabulary and the substance rule; one
+  that does not, and an answer with no readable verdict at all (no JSON object, no verdict
+  word, a failed or timed-out run), is a **failed** seat — never an approval, never posted.
+- **Posting.** keel re-reads the head and posts with `keel review --live` (which refuses again
+  if the head moved in between), each verdict naming its seat (`swarm-review-<slot>-<vendor>`,
+  vendor and model from the seat's attribution) and carrying its findings:
+  - **Every seat readable:** all verdicts are posted, approvals and change requests together.
+    The evidence gate reads each reviewer's latest verdict at the head
+    ([#1426](https://github.com/berkayturanci/keel/issues/1426)), so one rejection holds
+    `keel merge` with `review-verdict-not-approved: swarm-review-<slot>-<vendor> requests
+    changes at <head>` however many others approved.
+  - **A seat failed (fail closed):** a seat that did not answer readably may have been about to
+    reject, and landing on the remaining approvals would review the pull request with fewer
+    eyes than the plan staffed. With no rejection, nothing is posted and the cluster is
+    **held** (*seat X did not return a readable verdict; rerun swarm-review*); with a rejection,
+    only the rejection(s) are posted — they hold anyway, and `keel review` posts a rejection
+    even below the tier's count.
+  - **Nothing is posted** (held) either when the head moved, when a seat changed the
+    repository's git setup, or when every seat approved but fewer than the count.
+
+  A cluster with a posted rejection is `posted-changes-requested`, and the exit code is
+  non-zero; fix the findings, push, and run `swarm-review` again on the new head.
 
 A dry run reads each pull request and prints which seats would review it at which head; it checks
 out, runs and posts nothing. A live run needs `filesystem`, `git` and `github` approved, explicitly

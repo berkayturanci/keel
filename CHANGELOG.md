@@ -43,12 +43,17 @@ All notable changes to keel are documented here. The format follows
   implementer's lockdown (no forge token, no `gh` login, no credential helper, no network
   transport for git), briefed with `/keel:ship` s7's refute-not-approve stance, the issue and
   the diff, and answers with one JSON verdict read through `keel review --reviews`' own parser;
-  an answer that does not parse is a failed review, never an approval, and posts nothing.
-  Whether a verdict approves is the evidence gate's own `evidence.verdict_approves`. Every
-  verdict that parsed — approvals and change requests with their findings — is posted through
-  `keel review --live`, pinned to the head the seats reviewed (`keel review` now refuses when
-  the head moved since); a change request holds `keel merge` on `review-verdict-not-approved`
-  (#1426), the cluster reports `posted-changes-requested` and the command exits non-zero.
+  whether a verdict approves is the evidence gate's own reading of its word. A seat that
+  expressed a rejection is never discarded: any non-approving word, or an approval with a
+  critical or major finding, is posted as `REQUEST_CHANGES` even when its scope is empty (keel
+  writes one naming the seat and head), its prose is thin, or a finding is malformed (carried
+  as one `major` finding quoting it). An approval that does not parse, and an answer with no
+  readable verdict, is a failed seat — never an approval. With every seat readable, all
+  verdicts are posted through `keel review --live`, pinned to the head the seats reviewed
+  (`keel review` now refuses when the head moved since); a change request holds `keel merge`
+  on `review-verdict-not-approved` (#1426), the cluster reports `posted-changes-requested` and
+  the command exits non-zero. A failed seat holds the cluster fail-closed — it may have been
+  about to reject — unless another seat rejected, when only the rejection(s) are posted.
   `keel review` now accepts a bundle below the tier's count when it carries a verdict that does
   not approve, so a lone rejection is posted rather than refused; a short bundle of approvals is
   still refused. Nothing is posted when the head moved, when a seat changed the repository's

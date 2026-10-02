@@ -213,13 +213,15 @@ keel swarm-review .keel/project.yaml --root . --swarm-id <swarm_id> --wave <n> -
 ```
 
 Report each cluster as the command does: `posted` (every seat approved),
-`posted-changes-requested` (every verdict that parsed was posted, and at least one requests
+`posted-changes-requested` (the verdicts were posted, and at least one requests
 changes — `keel merge` holds the pull request on `review-verdict-not-approved` with the seat
 named, so relay that seat's findings), `held` (nothing posted: the head moved, a seat changed the
-git setup, or too few approvals with no change request), `refused` (a `subagent:` seat, a seat
+git setup, a seat that did not answer readably, or too few approvals), `refused` (a `subagent:` seat, a seat
 from the implementer's vendor, too few eligible seats, the distinct-vendor rule — suggest
 `--review-delegate <provider>` per slot), `skipped` or `already-merged`. A seat whose answer does
-not parse is `failed`: never an approval, and nothing of it is posted. Never post an approving
+not parse is `failed`: never an approval, and nothing of it is posted — and a failed seat holds
+the cluster's approvals too (only a rejection is posted beside it). A seat that rejected is
+never discarded, however thin its answer. Never post an approving
 verdict yourself on top of a change request to get a cluster through; fix the findings, push,
 and run it again on the new head.
 

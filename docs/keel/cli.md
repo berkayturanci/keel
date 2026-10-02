@@ -3519,19 +3519,23 @@ run without `--swarm-id`); with none, it exits 1. For each cluster of `--wave`:
    cross-reading, the head pinned, the issue text and the diff keel read with `gh pr diff`, and
    the one JSON verdict it must end with (`verdict` `APPROVE` or `REQUEST_CHANGES`, `scope`,
    `findings`, `testing`). keel reads it through `keel review --reviews`' own parser and the
-   evidence gate's substance rule, and whether it approves is the gate's own
-   `evidence.verdict_approves`. Anything that does not parse, or neither approves nor requests
-   changes, is a **failed** review — never an approval, never posted; an approval carrying a
-   critical or major finding is posted as `REQUEST_CHANGES`.
-6. **Posting.** keel re-reads the head, then posts every verdict that parsed — approvals and
-   change requests, with their findings — with `keel review --live`, which refuses if the head
-   moved in between. With mixed verdicts all are posted: the evidence gate reads each
-   reviewer's latest verdict at the head (#1426), so one change request holds `keel merge` with
-   `review-verdict-not-approved` and the cluster is `posted-changes-requested`. A change request
-   posts even below the tier's count (`keel review` accepts an under-count bundle only when it
-   carries a verdict that does not approve). Nothing is posted — the cluster is `held` — when
-   the head moved, when a seat changed the git setup, or when no seat requested changes and
-   fewer approved than the count. Each verdict names its reviewer (`swarm-review-<slot>-<vendor>`),
+   evidence gate's substance rule, after the verdict word is read the gate's own way
+   (`evidence.review_verdict_token`). A seat that expressed a rejection is never discarded:
+   any word outside `APPROVING_VERDICTS`, or an approval carrying a critical or major finding,
+   is posted as `REQUEST_CHANGES` — an empty scope gets a keel-written sentence naming the seat
+   and head, and a malformed finding is carried as one `major` finding quoting it. Only an
+   approval must pass the parser and the substance rule; one that does not, and an answer with
+   no readable verdict (no JSON object, no verdict word, a failed run), is a **failed** seat.
+6. **Posting.** keel re-reads the head, then posts with `keel review --live`, which refuses if
+   the head moved in between. With every seat readable, all verdicts are posted, approvals and
+   change requests with their findings: the evidence gate reads each reviewer's latest verdict
+   at the head (#1426), so one change request holds `keel merge` with
+   `review-verdict-not-approved` and the cluster is `posted-changes-requested`. **Fail closed on
+   a failed seat:** with no rejection nothing is posted (`held`, *seat X did not return a
+   readable verdict; rerun swarm-review*); with a rejection, only the rejection(s) are posted —
+   below the tier's count if need be, which `keel review` accepts for a verdict that does not
+   approve. Nothing is posted either when the head moved, when a seat changed the git setup,
+   or when every seat approved but fewer than the count. Each verdict names its reviewer (`swarm-review-<slot>-<vendor>`),
    vendor and model from the seat's attribution, under the run id `<swarm_id>/<cluster_id>`, so
    a second run on the same head edits the same comments.
 

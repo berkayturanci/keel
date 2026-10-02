@@ -200,7 +200,8 @@ class _IO:
                 "env": env,
             }
         )
-        answer = self.answers.get(plan.provider, _answer())
+        slot = Path(plan.cwd).name.rsplit("-", 1)[1]
+        answer = self.answers.get(slot, self.answers.get(plan.provider, _answer()))
         if isinstance(answer, Exception):
             raise answer
         if self.tamper == plan.provider:
@@ -343,11 +344,41 @@ class WhatParsedIsPostedAndAnythingElseIsNot(_Root):
         fake = _IO(answers={"codex": {"ok": True, "text": "LGTM, ship it."}})
         (cluster,) = self.review(fake).clusters
         self.assertEqual(cluster.status, sr.HELD)
-        self.assertIn("1 seat(s) approved and the tier requires at least 2", cluster.reason)
+        self.assertIn("seat(s) C did not return a readable verdict", cluster.reason)
         self.assertEqual(
             {v.slot: v.outcome for v in cluster.verdicts}, {"A": "APPROVE", "C": "failed"}
         )
         self.assertEqual(fake.posts, [])
+
+    def _three_seats(self):
+        cluster = SwarmCluster(
+            "cluster-1-7", (7,), "core", ("a",), assignment=_assignment("claude", "codex", "claude")
+        )
+        return _plan(cluster)
+
+    def test_two_approvals_beside_an_unreadable_seat_post_nothing(self):
+        fake = _IO(answers={"B": {"ok": True, "text": "no verdict here"}})
+        (cluster,) = self.review(fake, self._three_seats()).clusters
+        self.assertEqual(cluster.status, sr.HELD)
+        self.assertIn("seat(s) B did not return a readable verdict", cluster.reason)
+        self.assertIn("rerun swarm-review", cluster.reason)
+        self.assertEqual(fake.posts, [])
+
+    def test_beside_an_unreadable_seat_only_the_rejection_is_posted(self):
+        fake = _IO(
+            answers={
+                "B": {"ok": False, "error_code": "timeout", "error": "slow"},
+                "C": _answer("REQUEST_CHANGES", scope=""),
+            }
+        )
+        (cluster,) = self.review(fake, self._three_seats()).clusters
+        self.assertEqual(cluster.status, sr.POSTED_CHANGES_REQUESTED)
+        ((_, _, items, _),) = fake.posts
+        self.assertEqual(
+            [(i["reviewer"], i["verdict"]) for i in items],
+            [("swarm-review-c-codex", "REQUEST_CHANGES")],
+        )
+        self.assertIn("did not name what it checked", items[0]["scope"])
 
     def test_a_moved_head_posts_nothing(self):
         fake = _IO(head="b" * 40)
@@ -559,7 +590,8 @@ class _Host:
         return _result(True, json.dumps({"id": len(self.posted)}))
 
     def seat(self, plan, env):
-        return self.answers.get(plan.provider, _answer())
+        slot = Path(plan.cwd).name.rsplit("-", 1)[1]
+        return self.answers.get(slot, self.answers.get(plan.provider, _answer()))
 
 
 class SwarmReviewCommand(unittest.TestCase):
@@ -627,6 +659,39 @@ class SwarmReviewCommand(unittest.TestCase):
         self.assertIn(f"head: {HEAD}", bodies[1])
         report, reason = self._gate(host)
         self.assertEqual(report["status"], evidence.STATUS_FAIL)
+        self.assertIn(
+            f"review-verdict-not-approved: swarm-review-c-codex requests changes at {HEAD}.",
+            reason,
+        )
+
+    def test_a_malformed_rejection_beside_an_unreadable_seat_is_posted_and_holds(self):
+        """Lead review of #1427: one seat approves, one rejects with a thin scope and a finding
+        of an unknown severity, one never answers. Only the rejection is posted — below the
+        tier's count, which keel review accepts for a rejection — and the gate holds."""
+        cluster = SwarmCluster(
+            "cluster-1-7",
+            (7,),
+            "core",
+            ("a",),
+            difficulty=DIFFICULTY,
+            assignment=_assignment("claude", "codex", "claude"),
+        )
+        bad = {"severity": "high", "message": "drops the lock"}
+        host = _Host(
+            answers={
+                "B": {"ok": False, "error_code": "timeout", "error": "slow"},
+                "C": _answer("REQUEST_CHANGES", scope="Bad.", findings=[bad]),
+            }
+        )
+        code, out, err = self.run_cli(host, "--live", "--json", *CONSENT, plan=_plan(cluster))
+        result = json.loads(out)["clusters"][0]
+        self.assertEqual(code, 1, err)
+        self.assertEqual(result["status"], "posted-changes-requested")
+        ((number, body),) = host.posted
+        self.assertEqual(number, 9)
+        self.assertIn("Verdict: REQUEST_CHANGES", body)
+        self.assertIn("- major: the seat's finding, as it wrote it:", body)
+        report, reason = self._gate(host)
         self.assertIn(
             f"review-verdict-not-approved: swarm-review-c-codex requests changes at {HEAD}.",
             reason,
