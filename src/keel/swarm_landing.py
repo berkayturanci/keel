@@ -389,6 +389,10 @@ def land_wave_clusters(
     prs: list[tuple[str, int]] = []
     closures: list[ClusterClosure] = []
     state = load_swarm_state(plan.swarm_id, root=root_path)
+    # Only the pull request each worker opened is read from the run state. The review record
+    # `swarm-review` leaves beside it (#1440) is a report for `swarm-status`, and is not read
+    # here: whether a cluster is reviewed is `keel merge`'s evidence gate's question, asked of
+    # the verdicts on the pull request at its current head — the only authority.
     recorded = {w.cluster_id: w.pull_request for w in state.workers} if state else {}
     home = _read_head(root_path, runner)
 

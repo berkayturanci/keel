@@ -985,3 +985,51 @@ def posted_items(verdicts: Sequence[SeatVerdict]) -> list[dict[str, Any]]:
         for v in verdicts
         if v.item is not None and not (failed and v.outcome == APPROVE)
     ]
+
+
+#: How much of a reason the run state keeps per cluster and per seat (#1440).
+RECORD_REASON_CHARS = 300
+
+
+def _bounded(text: str) -> str:
+    return text if len(text) <= RECORD_REASON_CHARS else text[:RECORD_REASON_CHARS] + "…"
+
+
+def review_record(cluster: ClusterReview, *, run_id: str, reviewed_at: str) -> dict[str, Any]:
+    """What a live review leaves in the cluster's worker record (#1440).
+
+    ``keel swarm-status`` shows it. Its status, the head the seats reviewed, the tier's
+    count, each seat — slot, reviewer, vendor and outcome (``APPROVE``, ``REQUEST_CHANGES``,
+    ``failed``; ``refused`` for a seat keel would not run, ``not-run`` for one the cluster
+    never reached) — when, and the ``keel review`` run id the verdicts were posted under.
+    Reasons are bounded. A record, not evidence: only the comments on the pull request are.
+    """
+    verdicts = {v.slot: v for v in cluster.verdicts}
+    seats = []
+    for seat in cluster.seats:
+        verdict = verdicts.get(seat.slot)
+        if verdict is not None:
+            outcome, reason = verdict.outcome, verdict.reason
+        else:
+            outcome = "not-run" if seat.eligible else "refused"
+            reason = seat.refusal
+        seats.append(
+            {
+                "slot": seat.slot,
+                "reviewer": seat.reviewer,
+                "vendor": seat.vendor or seat.provider,
+                "outcome": outcome,
+                "reason": _bounded(reason),
+            }
+        )
+    return {
+        "status": cluster.status,
+        "reason": _bounded(cluster.reason),
+        "pull_request": cluster.pull_request,
+        "head_sha": cluster.head_sha,
+        "tier": cluster.tier,
+        "required": cluster.required,
+        "run_id": run_id,
+        "reviewed_at": reviewed_at,
+        "seats": seats,
+    }

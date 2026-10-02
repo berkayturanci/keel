@@ -2637,5 +2637,120 @@ class AWorkerRecordCarriesItsWaveStageAndTime(unittest.TestCase):
             self.assertNotIn("│ gates        │ -       │", out.getvalue())
 
 
+def _review(status="posted", head="596e3d8a" + "0" * 32, outcomes=("APPROVE", "APPROVE")):
+    return {
+        "status": status,
+        "reason": "2 verdict(s) posted",
+        "pull_request": 9,
+        "head_sha": head,
+        "tier": 2,
+        "required": 2,
+        "run_id": "swarm-rv/cluster-1-7",
+        "reviewed_at": "2026-10-02T09:30:00+00:00",
+        "seats": [
+            {"slot": "ACBD"[i], "reviewer": f"r{i}", "vendor": "claude", "outcome": o, "reason": ""}
+            for i, o in enumerate(outcomes)
+        ],
+    }
+
+
+class SwarmStatusShowsTheReview(unittest.TestCase):
+    """#1440: `swarm-review` records each cluster's outcome in the run state, and the board
+    shows it. Before, the board stopped at the opened pull request (s6)."""
+
+    def _state(self, *reviews):
+        workers = tuple(
+            swarm_module.SwarmWorkerStatus(
+                f"cluster-1-{7 + i}", 7 + i, "core", step="s6", status="passed", wave=1, review=r
+            )
+            for i, r in enumerate(reviews)
+        )
+        return swarm_module.SwarmRunState("swarm-rv", len(workers), workers=workers)
+
+    def test_the_summary_is_status_tally_and_reviewed_head(self):
+        summary = swarm_module.review_summary
+        self.assertEqual(summary(None), "not reviewed")
+        self.assertEqual(summary({}), "not reviewed")
+        self.assertEqual(summary(_review()), "posted 2/2 APPROVE @ 596e3d8a")
+        self.assertEqual(
+            summary(_review("posted-changes-requested", outcomes=("APPROVE", "REQUEST_CHANGES"))),
+            "changes-requested 1/2 APPROVE, 1 REQUEST_CHANGES @ 596e3d8a",
+        )
+        self.assertEqual(
+            summary(_review("held", outcomes=("APPROVE", "failed", "refused", "not-run"))),
+            "held 1/4 APPROVE, 1 failed, 1 refused, 1 not-run @ 596e3d8a",
+        )
+        self.assertEqual(
+            summary({"status": "already-merged", "head_sha": "", "seats": ["junk"]}),
+            "already-merged",
+        )
+
+    def test_the_board_has_a_review_column(self):
+        board = swarm_module.render_swarm_status_dashboard(self._state(_review(), None))
+        header = next(line for line in board.splitlines() if "│ Cluster" in line)
+        self.assertIn("│ Review ", header)
+        rows = [line for line in board.splitlines() if line.startswith("│ cluster-1-")]
+        self.assertIn("│ posted 2/2 APPROVE @ 596e3d8a ", rows[0])
+        self.assertIn("│ not reviewed ", rows[1])
+        self.assertEqual({len(row) for row in rows}, {len(header)})
+
+    def test_the_json_carries_the_whole_record_and_the_summary(self):
+        payload = swarm_module.swarm_status_payload(self._state(_review(), None))
+        first, second = payload["workers"]
+        self.assertEqual(first["review"], _review())
+        self.assertEqual(first["review_summary"], "posted 2/2 APPROVE @ 596e3d8a")
+        self.assertIsNone(second["review"])
+        self.assertEqual(second["review_summary"], "not reviewed")
+
+    def test_a_review_round_trips_and_the_latest_replaces_the_last(self):
+        state = self._state(None)
+        state = swarm_module.update_worker_state(state, "cluster-1-7", review=_review("held"))
+        state = swarm_module.update_worker_state(state, "cluster-1-7", review=_review())
+        self.assertEqual(state.workers[0].review, _review())
+        # An unrelated update keeps it.
+        state = swarm_module.update_worker_state(state, "cluster-1-7", status="merged")
+        self.assertEqual(state.workers[0].review["status"], "posted")
+        with tempfile.TemporaryDirectory() as tmp:
+            swarm_module.save_swarm_state(state, root=tmp)
+            loaded = swarm_module.load_swarm_state("swarm-rv", root=tmp)
+        self.assertEqual(loaded.workers[0].review, _review())
+
+    def test_an_old_or_malformed_record_reads_as_not_reviewed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / ".keel" / "state" / "swarm"
+            state_dir.mkdir(parents=True)
+            workers = [
+                {"cluster_id": "old", "issue": 1},
+                {"cluster_id": "junk", "issue": 2, "review": "posted"},
+                {"cluster_id": "nostatus", "issue": 3, "review": {"status": ""}},
+                {
+                    "cluster_id": "badseats",
+                    "issue": 4,
+                    "review": {"status": "held", "seats": [1, {"slot": "A"}]},
+                },
+                {
+                    "cluster_id": "noseats",
+                    "issue": 5,
+                    "review": {"status": "skipped", "seats": "x"},
+                },
+            ]
+            (state_dir / "swarm-old.json").write_text(
+                json.dumps({"swarm_id": "swarm-old", "workers": workers}), encoding="utf-8"
+            )
+            loaded = swarm_module.load_swarm_state("swarm-old", root=tmp)
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                code = main(
+                    ["swarm-status", ".keel/project.yaml", "--root", tmp, "--swarm-id", "swarm-old"]
+                )
+        reviews = [w.review for w in loaded.workers]
+        self.assertEqual(reviews[:3], [None, None, None])
+        self.assertEqual(reviews[3], {"status": "held", "seats": [{"slot": "A"}]})
+        self.assertEqual(reviews[4], {"status": "skipped", "seats": []})
+        self.assertEqual(code, 0)
+        self.assertIn("not reviewed", out.getvalue())
+        self.assertIn("held 0/1 APPROVE", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
