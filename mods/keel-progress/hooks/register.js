@@ -8,7 +8,7 @@
 //   - a `/keel-progress` pane with every live run's steps, history counts and next issue
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { bandParts, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
+import { bandParts, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
@@ -61,6 +61,9 @@ let inFlight = null // the running scan; callers share it instead of starting a 
 let again = false // a fresh scan was asked for while one ran: run once more after it
 let idleTicks = 0
 let poller = null
+// Set by a fresh request (a keel command, a click): the next scan rechecks PRs `knownClosed` holds,
+// once, in case `gh pr list` lagged right after `gh pr create`.
+let recheckClosed = false
 let selected = null // the worktree path whose run the pane shows in full
 let expanded = false // the band lists every run, each with a second line
 
@@ -80,6 +83,7 @@ function tick($) {
 // ends; a timer tick just shares the running one.
 function refresh($, fresh) {
   if (!hasProject) return Promise.resolve()
+  if (fresh) recheckClosed = true
   if (inFlight !== null) {
     if (fresh) again = true
     return inFlight
@@ -224,12 +228,14 @@ async function scan($) {
   const { kept: live, superseded: dupes } = latestPerRun(candidates.filter((run) => isLive(run.snapshot)))
   const withPr = live.some((run) => run.snapshot.current.pull_request != null)
   let prs = withPr ? await loadOpenPrs($, now, false) : null
+  const recheck = recheckClosed
+  recheckClosed = false
   let refetched = false
   const nextRuns = []
   let hidden = 0
   for (const run of live) {
     const pr = run.snapshot.current.pull_request
-    if (pr != null && prs !== null && !prs.has(pr) && !refetched && !knownClosed.has(pr)) {
+    if (pr != null && prs !== null && !prs.has(pr) && !refetched && (recheck || !knownClosed.has(pr))) {
       refetched = true
       prs = await loadOpenPrs($, now, true)
       if (prs !== null && !prs.has(pr)) knownClosed.add(pr)
@@ -261,8 +267,8 @@ function labelWidth(bodyColumns) {
 // With several runs on screen, the session's own one is marked `▸` and drawn bright.
 function labelPart(run, width) {
   const name = `${run.own ? '▸ ' : '  '}${run.label}`
-  const label = name.length > width ? `${name.slice(0, width - 1)}…` : name
-  return { text: label.padEnd(width), tone: run.own ? 'title' : 'dim' }
+  const label = cells(name) > width ? `${fitCells(name, width - 1)}…` : name
+  return { text: label + ' '.repeat(Math.max(0, width - cells(label))), tone: run.own ? 'title' : 'dim' }
 }
 
 async function openRun($, path) {
@@ -289,6 +295,8 @@ export function register(on) {
     if (hasProject) {
       // Off the start path: the first scan lands a moment after the session opens.
       $.clock.after(0, () => refresh($, true))
+      // session.start fires once per module load and a reload stops the old timer, so this is
+      // belt and braces: never two pollers.
       poller?.cancel()
       poller = $.clock.every(POLL_MS, () => tick($))
     }
@@ -326,7 +334,7 @@ export function register(on) {
     const labelled = runs.length > 1
     const shown = expanded ? runs : runs.slice(0, BAND_MAX)
     // As wide as the longest label on screen, within what the band can spare.
-    const longest = Math.max(...shown.map((run) => run.label.length + 2))
+    const longest = Math.max(...shown.map((run) => cells(run.label) + 2))
     const width = Math.min(labelWidth(e.props.bodyColumns), Math.max(LABEL_MIN, longest))
     const lines = []
     shown.forEach((run, i) => {

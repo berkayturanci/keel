@@ -75,6 +75,27 @@ export function latestPerRun(entries) {
   return { kept, superseded: entries.length - kept.length }
 }
 
+// Terminal cells a string takes: East Asian wide and fullwidth characters and emoji take two.
+const WIDE = /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{1F300}-\u{1F64F}\u{1F900}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u
+export function cells(text) {
+  let n = 0
+  for (const ch of text) n += WIDE.test(ch) ? 2 : 1
+  return n
+}
+
+// The longest prefix of `text` that fits in `width` cells.
+export function fitCells(text, width) {
+  let out = ''
+  let n = 0
+  for (const ch of text) {
+    const w = WIDE.test(ch) ? 2 : 1
+    if (n + w > width) break
+    out += ch
+    n += w
+  }
+  return out
+}
+
 export function isLive(snapshot) {
   return Boolean(snapshot && LIVE_STATES.has(snapshot.status) && snapshot.current)
 }

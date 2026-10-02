@@ -52,8 +52,7 @@ It scans:
 
 - once when the session starts
 - every five seconds while a run is live (or this session's own `keel status` is failing),
-  every 30 seconds when
-  there is none
+  every 30 seconds when there is none
 - right after any Bash call that runs `keel`
 
 Only one scan runs at a time. A read asked for after a keel command, by the pane or
