@@ -100,6 +100,8 @@ function stubEngine(
     const act = worktrees.find((x) => e.path === `${x.path}/.keel/activity` || e.path.startsWith(`${x.path}/.keel/activity/`))
     if (act) {
       if (!act.activity) return { deny: 'ENOENT' }
+      // keel names the file by run_id_slug: a path with capitals is not a file keel wrote
+      if (/[A-Z]/.test(e.path.slice(`${act.path}/.keel/activity`.length))) return { deny: 'ENOENT' }
       return { value: { kind: 'file', size: 10, mtimeMs: act.activityMtime ?? 0, isLink: false } }
     }
     const rel = opts.checkpointRel ?? '.keel/state/checkpoint.json'
@@ -126,7 +128,11 @@ function stubEngine(
       return {
         value: {
           exitCode: 0,
-          stdout: JSON.stringify({ activity: w?.activity ?? [], contract: { dir: '.keel/activity' } }),
+          stdout: JSON.stringify({
+            activity: w?.activity ?? [],
+            contract: { dir: '.keel/activity' },
+            path: `${w?.path ?? '/work'}/.keel/activity`,
+          }),
           stderr: '',
         },
       }
@@ -921,4 +927,103 @@ test('another command\u2019s activity shows with its own phase name', async ($, 
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: ' review (review-cycle)' })).toBeDefined()
+})
+
+test('a checkpoint newer than the activity keeps the checkpoint\u2019s step', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const ck = () => statusJson({ current: { run_id: 'ship-7', command: 'ship', issue: 7, pull_request: 1027, step: 's10', wait_reason: 'merge-window' } })
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 2 * HOURS, stdout: ck, activityMtime: 1 * HOURS, activity: [act('ship-7', 7, 's8', { pr: 1027 })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' s10 merge' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeUndefined()
+})
+
+test('a newer finished checkpoint hides the run\u2019s older "running" activity', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const done = () => statusJson({ status: 'completed', current: { run_id: 'ship-8', command: 'ship', issue: 8, pull_request: null, step: 's12', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+      { path: '/wt/8', branch: 'fix/8', mtime: 2.5 * HOURS, stdout: done, activityMtime: 2 * HOURS, activity: [act('ship-8', 8, 's9')] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ text: /#8/ })).toBeUndefined()
+})
+
+test('an activity run whose PR closed is hidden like any other', async ($, on) => {
+  const clock = mock.clock(on, { now: 2 * HOURS })
+  stubEngine(on, {
+    project: true,
+    openPrs: [],
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+      { path: '/wt/9', branch: 'fix/9', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-9', 9, 's8', { pr: 3001 })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ text: /#9/ })).toBeUndefined()
+})
+
+test('a checkpoint in one worktree and newer activity in another are one run', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const ck = () => statusJson({ current: { run_id: 'ship-5', command: 'ship', issue: 5, pull_request: 2001, step: 's6', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [2001],
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+      { path: '/wt/parent', branch: 'parent', mtime: 1 * HOURS, stdout: ck },
+      { path: '/wt/parent/nested', branch: 'fix/5', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-5', 5, 's9', { pr: 2001 })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.findAll({ type: 'Button', text: '#5' })).length).toBe(1)
+  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
+})
+
+test('an older checkpoint without a run id and the activity of the same issue are one run', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const ck = () => statusJson({ current: { command: 'ship', issue: 6, pull_request: 1027, step: 's6', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: ck, activityMtime: 2 * HOURS, activity: [act('ship-6', 6, 's8', { pr: 1027 })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.findAll({ type: 'Button', text: '#6' })).length).toBe(1)
+  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeDefined()
+})
+
+test('a run id with capitals is found under keel\u2019s lowercase file name', async ($, on) => {
+  const clock = mock.clock(on, { now: 2 * HOURS })
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/wt/cap', branch: 'cap', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('Ship-ABC', 12, 's4', { pr: 2001 })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#12' })).toBeDefined()
 })
