@@ -181,4 +181,4 @@ Also include the effective staffing (`--delegate`, `--review-delegate`, `--effor
 `--team`, `--reviewers` as they were passed to the children), open questions, consent gaps,
 and the next 1–3 operator actions.
 
-<!-- keel-generated: surface=skills command=work-block keel_version=1.28.0 source_sha256=bf24c297b1704cbaaccffa0ce6e71cfee8497dfb31f1c3c94f412067ac405edb generated_sha256=7efab7ceea6e6e0ba57f8763c6d4609d3f7578bf207a3ae234348b9206044717 -->
+<!-- keel-generated: surface=skills command=work-block keel_version=1.29.0 source_sha256=bf24c297b1704cbaaccffa0ce6e71cfee8497dfb31f1c3c94f412067ac405edb generated_sha256=7efab7ceea6e6e0ba57f8763c6d4609d3f7578bf207a3ae234348b9206044717 -->
