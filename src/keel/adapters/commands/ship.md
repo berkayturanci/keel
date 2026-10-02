@@ -1116,7 +1116,12 @@ separate reading.
 
 When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdict_template`
 is available, use that canonical shape for the posted jury verdict and preserve
-`keel.jury-verdict.v1` plus `head: <sha>`.
+`keel.jury-verdict.v1` plus `head: <sha>`. **Fill its `AI Jury verdict:` line with the
+panel's own consensus** (the chair's verdict in the saved report) — never with this run's
+gate result. Do not post the template unfilled: its placeholder,
+`<PANEL_CONSENSUS — replace with the panel's APPROVE / REQUEST_CHANGES>`, is read as no
+approval, and the evidence gate holds the merge with `jury-verdict-not-approved` (#1429) —
+exactly as it does for a consensus that is not `APPROVE` / `LGTM` / `PASS`.
 The **`jury` gate** runs the ai-jury CLI read-only on the PR diff using the committed panel;
 it never passes `--strict`. Without the `jury` binary the s8 run is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3
 merge still requires a `jury-verdict` unless the run passes `--no-jury`; it relaxes to

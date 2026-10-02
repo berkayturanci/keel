@@ -731,7 +731,7 @@ class TheCanonicalTemplateDoesNotSatisfyTheGateByDefault(unittest.TestCase):
     """
 
     def test_the_defaults_are_refused(self):
-        body = artifacts.render_review_verdict(reviewer="r", head_sha="abc123")
+        body = artifacts.render_review_verdict(verdict="LGTM", reviewer="r", head_sha="abc123")
 
         ok, reason = evidence.verdict_substance(body, pr_title=TITLE)
 
@@ -740,6 +740,7 @@ class TheCanonicalTemplateDoesNotSatisfyTheGateByDefault(unittest.TestCase):
 
     def test_a_named_scope_is_enough(self):
         body = artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer="r",
             head_sha="abc123",
             scope="src/keel/config.py and tests/test_config.py",
@@ -751,6 +752,7 @@ class TheCanonicalTemplateDoesNotSatisfyTheGateByDefault(unittest.TestCase):
 
     def test_a_real_finding_is_enough(self):
         body = artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer="r",
             head_sha="abc123",
             findings=[{"severity": "minor", "message": "`_as_ip` returns None for names"}],
@@ -777,6 +779,7 @@ class AQuotedMarkerDoesNotDeleteTheLineThatQuotesIt(unittest.TestCase):
     def test_a_scope_that_quotes_the_marker_still_counts(self):
         """The regression, at the public surface and through the real renderer."""
         body = artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer="r",
             head_sha="abc123",
             scope=(
@@ -792,6 +795,7 @@ class AQuotedMarkerDoesNotDeleteTheLineThatQuotesIt(unittest.TestCase):
     def test_the_quoting_line_survives_the_prose(self):
         """Pinned on the mechanism, so a future rewrite cannot lose it quietly."""
         body = artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer="r",
             head_sha="abc123",
             scope=f"The {self.MARKER} handling in `src/keel/evidence.py`.",

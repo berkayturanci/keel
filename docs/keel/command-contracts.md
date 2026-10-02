@@ -505,7 +505,11 @@ Markdown verbatim when available.
   optional `vendor: <id>` / `model: <id>` provenance lines for the
   `evidence_require_distinct_vendors` check
 - `jury_verdict_template`: marker-based jury verdict carrying `keel.jury-verdict.v1` and
-  `head: <sha>` when available
+  `head: <sha>` when available. Its `AI Jury verdict:` line is the **panel's** consensus, never
+  the run's gate verdict (#1429): without one it carries the placeholder
+  `<PANEL_CONSENSUS — replace with the panel's APPROVE / REQUEST_CHANGES>`, which the evidence
+  gate reads as no approval, so a template posted unfilled holds the merge with
+  `jury-verdict-not-approved`
 - `extension_result_template`: stable `keel.extension-result.v1` shape for slot/extension
   status, mode, summary, artifacts, and follow-up references
 - `ship_provenance`: the `keel.ship-provenance.v1` stamp a live run posts on its own PR

@@ -293,8 +293,8 @@ class TestEvidenceVerify(unittest.TestCase):
                     "keel.review-verdict.v1\nreviewer: beta\nhead: abc123\nVerdict: LGTM"
                     "\n\nsrc/keel/evidence.py: ok."
                 ),
-                _comment("keel.jury-verdict.v1\nhead: old\nAI Jury LGTM"),
-                _comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
+                _comment("keel.jury-verdict.v1\nhead: old\nAI Jury verdict: LGTM."),
+                _comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury verdict: LGTM."),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
             pr_reviews=[
@@ -446,7 +446,7 @@ class TestEvidenceVerify(unittest.TestCase):
                     "keel.review-verdict.v1\nreviewer: alpha\n"
                     "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                 ),
-                _comment("keel.jury-verdict.v1\nAI Jury LGTM"),
+                _comment("keel.jury-verdict.v1\nAI Jury verdict: LGTM."),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
             head_sha="abc123",
@@ -466,7 +466,7 @@ class TestEvidenceVerify(unittest.TestCase):
                     "keel.review-verdict.v1\nreviewer: forged\nhead: abc123\nVerdict: LGTM"
                     "\n\nsrc/keel/evidence.py: ok."
                 ),
-                _untrusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
+                _untrusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury verdict: LGTM."),
             ],
             issue_comments=[_untrusted_comment(closure.COMMENT_MARKER)],
             head_sha="abc123",
@@ -496,7 +496,7 @@ class TestEvidenceVerify(unittest.TestCase):
                     "keel.review-verdict.v1\nreviewer: alpha\nhead: abc123\nVerdict: LGTM"
                     "\n\nsrc/keel/evidence.py: ok."
                 ),
-                _trusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
+                _trusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury verdict: LGTM."),
             ],
             issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
             head_sha="abc123",
@@ -1083,6 +1083,7 @@ def _verdict(reviewer, *, head="abc123", vendor=None, model=None, scope=None):
 
     return _comment(
         artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer=reviewer,
             head_sha=head,
             vendor=vendor,
@@ -1199,6 +1200,7 @@ class TestJuryPanelDistinctnessInVerify(unittest.TestCase):
                 *(_verdict(f"panelist-{i}", vendor=vendor) for i, vendor in enumerate(vendors)),
                 _comment(
                     f"{evidence.JURY_VERDICT_MARKER}\nhead: abc123\nvendors: 2\npanelists: 3\n"
+                    "\nAI Jury verdict: LGTM.\n"
                 ),
             ],
             issue_comments=[_comment(closure.COMMENT_MARKER)],
@@ -2701,7 +2703,7 @@ class TestMarkerInHeader(unittest.TestCase):
         # The rule is only as good as its agreement with what keel actually posts.
         self.assertEqual(
             evidence.marker_in_header(
-                artifacts.render_review_verdict(reviewer="alpha", head_sha="abc")
+                artifacts.render_review_verdict(verdict="LGTM", reviewer="alpha", head_sha="abc")
             ),
             evidence.REVIEW_VERDICT_MARKER,
         )
@@ -2768,7 +2770,10 @@ class VerdictReviewersNameWhoReviewedTheHead(unittest.TestCase):
     @staticmethod
     def _verdict(reviewer: str, head: str, **extra) -> dict:
         body = artifacts.render_review_verdict(
-            reviewer=reviewer, head_sha=head, scope="Checked `src/keel/swarm_landing.py`"
+            verdict="LGTM",
+            reviewer=reviewer,
+            head_sha=head,
+            scope="Checked `src/keel/swarm_landing.py`",
         )
         return {"body": body, "author_association": "OWNER", **extra}
 
@@ -3057,8 +3062,8 @@ class TheGateReadsTheVerdictLine(unittest.TestCase):
 
         self.assertIn("review-vendor-distinctness", [f["id"] for f in report["findings"]])
 
-    def test_the_jury_verdict_keeps_its_own_semantics(self):
-        """A jury verdict is the consensus record; its presence is what the gate asks for."""
+    def test_a_jury_verdict_that_requests_changes_holds(self):
+        """#1429 flipped this: it pinned that a REQUEST_CHANGES jury verdict passed."""
         jury = {
             "body": artifacts.render_jury_verdict(
                 head_sha="abc123", participants=("a", "b"), verdict="REQUEST_CHANGES"
@@ -3072,9 +3077,233 @@ class TheGateReadsTheVerdictLine(unittest.TestCase):
             phase=evidence.PHASE_PRE_MERGE,
         )
 
-        self.assertEqual(report["counts"]["jury_verdict"], 1)
-        self.assertEqual(report["status"], evidence.STATUS_PASS)
+        self.assertEqual(report["counts"]["jury_verdict"], 0)
+        self.assertEqual(report["status"], evidence.STATUS_FAIL)
         self.assertEqual(self._refusals(report), [])
+        self.assertIn(
+            "jury-verdict-not-approved: the jury's consensus at abc123 is REQUEST_CHANGES, "
+            "not an approval.",
+            evidence.refusal_reason(report),
+        )
+
+
+def _jury(verdict, *, head="abc123", at=None, **extra):
+    """A trusted jury verdict comment whose consensus line carries ``verdict``."""
+    item = {
+        "body": artifacts.render_jury_verdict(
+            head_sha=head, participants=("a (anthropic)", "b (google)"), verdict=verdict
+        ),
+        "author_association": "MEMBER",
+        **extra,
+    }
+    if at is not None:
+        item["created_at"] = at
+    return item
+
+
+class TheGateReadsTheJuryConsensus(unittest.TestCase):
+    """#1429: the ``jury-verdict`` requirement is met only by a consensus that approves.
+
+    The gate checked a jury verdict's marker, author and head and never read its
+    ``AI Jury verdict:`` line, so a panel that rejected the change satisfied the
+    requirement exactly as one that approved it did — and on the ``keel init`` scaffold's
+    ``gates: [build, lint]`` nothing else stood between that panel and ``keel merge``.
+    """
+
+    REVIEWS = (("r1", "LGTM"), ("r2", "LGTM"), ("r3", "LGTM"))
+
+    def _verify(self, jury_comments, *, contract=None, head="abc123", covered=(), **kw):
+        reviews = [_cast(name, verdict, head=head) for name, verdict in self.REVIEWS]
+        return evidence.verify(
+            contract or ship.resolve_review_contract(tier=3, gates=["build", "lint"]),
+            pr_comments=[*reviews, *jury_comments],
+            head_sha=head,
+            covered_heads=covered,
+            phase=evidence.PHASE_PRE_MERGE,
+            **kw,
+        )
+
+    @staticmethod
+    def _jury_findings(report):
+        return [
+            (finding["severity"], finding["message"])
+            for finding in report["findings"]
+            if finding["id"] == evidence.JURY_NOT_APPROVED_FINDING
+        ]
+
+    def test_the_scaffold_tier_three_contract_holds_a_rejecting_jury(self):
+        """Scenario B of the measurement: build/lint gates, tier 3, the jury auto-gating."""
+        contract = ship.resolve_review_contract(tier=3, gates=["build", "lint"])
+        self.assertEqual(contract["jury"]["mode"], "gating")
+
+        report = self._verify([_jury("REQUEST_CHANGES")], contract=contract)
+
+        self.assertEqual(report["status"], evidence.STATUS_FAIL)
+        self.assertEqual(report["counts"]["review_verdict"], 3)
+        # Unsatisfied, and the item says why rather than calling the comment missing.
+        self.assertEqual(report["missing"], ["jury-verdict"])
+        self.assertEqual(
+            next(r["reason"] for r in report["results"] if r["id"] == "jury-verdict"),
+            "the jury's consensus at abc123 is REQUEST_CHANGES, not an approval.",
+        )
+        self.assertEqual(
+            self._jury_findings(report),
+            [("major", "the jury's consensus at abc123 is REQUEST_CHANGES, not an approval.")],
+        )
+        # The control: no jury comment at all is *missing*, not a rejection.
+        report = self._verify([])
+        self.assertEqual(report["status"], evidence.STATUS_WAITING)
+        self.assertEqual(report["missing"], ["jury-verdict"])
+        self.assertEqual(
+            next(r["reason"] for r in report["results"] if r["id"] == "jury-verdict"),
+            "missing required evidence: jury-verdict",
+        )
+        self.assertEqual(self._jury_findings(report), [])
+
+    def test_only_an_approving_consensus_satisfies_the_requirement(self):
+        """Scenario C: ABSTAIN (no chair synthesis) holds; LGTM passes."""
+        self.assertEqual(self._verify([_jury("LGTM")])["status"], evidence.STATUS_PASS)
+        self.assertEqual(self._verify([_jury("APPROVE")])["status"], evidence.STATUS_PASS)
+        for consensus in ("ABSTAIN", "NO_QUORUM", "COMMENT", "NEEDS_INFO", "MAYBE"):
+            with self.subTest(consensus=consensus):
+                report = self._verify([_jury(consensus)])
+                self.assertEqual(report["status"], evidence.STATUS_FAIL)
+                self.assertEqual(
+                    self._jury_findings(report),
+                    [
+                        (
+                            "major",
+                            f"the jury's consensus at abc123 is {consensus}, not an approval.",
+                        )
+                    ],
+                )
+
+    def test_a_jury_verdict_without_its_consensus_line_is_not_an_approval(self):
+        bare = {
+            "body": "keel.jury-verdict.v1\nhead: abc123\nvendors: 2\n\nPanel ran.\n",
+            "author_association": "MEMBER",
+        }
+
+        report = self._verify([bare])
+
+        self.assertEqual(report["status"], evidence.STATUS_FAIL)
+        self.assertEqual(
+            self._jury_findings(report),
+            [("major", "the jury verdict at abc123 has no readable AI Jury verdict line.")],
+        )
+
+    def test_the_latest_jury_verdict_is_the_panels_word(self):
+        rejected_then_approved = [
+            _jury("REQUEST_CHANGES", at="2026-10-02T10:00:00Z"),
+            _jury("LGTM", at="2026-10-02T11:00:00Z"),
+        ]
+        approved_then_rejected = [
+            _jury("LGTM", at="2026-10-02T10:00:00Z"),
+            _jury("REQUEST_CHANGES", at="2026-10-02T11:00:00Z"),
+        ]
+
+        self.assertEqual(self._verify(rejected_then_approved)["status"], evidence.STATUS_PASS)
+        self.assertEqual(self._verify(approved_then_rejected)["status"], evidence.STATUS_FAIL)
+        # Posted order, not list order: the same comments listed the other way round.
+        self.assertEqual(self._verify(rejected_then_approved[::-1])["status"], evidence.STATUS_PASS)
+        self.assertEqual(self._verify(approved_then_rejected[::-1])["status"], evidence.STATUS_FAIL)
+        # Without timestamps the later comment in the list is the later one.
+        self.assertEqual(
+            self._verify([_jury("REQUEST_CHANGES"), _jury("LGTM")])["status"],
+            evidence.STATUS_PASS,
+        )
+        self.assertEqual(
+            self._verify([_jury("LGTM"), _jury("REQUEST_CHANGES")])["status"],
+            evidence.STATUS_FAIL,
+        )
+
+    def test_a_rejection_of_an_older_head_does_not_hold_the_current_one(self):
+        report = self._verify(
+            [_jury("REQUEST_CHANGES", head="old999", at="2026-10-02T12:00:00Z"), _jury("LGTM")]
+        )
+        self.assertEqual(report["status"], evidence.STATUS_PASS)
+        self.assertEqual(self._jury_findings(report), [])
+
+        alone = self._verify([_jury("REQUEST_CHANGES", head="old999")])
+        self.assertEqual(alone["missing"], ["jury-verdict"])
+        self.assertEqual(self._jury_findings(alone), [])
+
+    def test_a_rejection_at_a_covered_head_still_holds(self):
+        report = self._verify(
+            [_jury("REQUEST_CHANGES", head="reviewed")],
+            head="reviewed",
+        )
+        self.assertEqual(report["status"], evidence.STATUS_FAIL)
+        covered = evidence.verify(
+            ship.resolve_review_contract(tier=3, gates=["build", "lint"]),
+            pr_comments=[
+                *(_cast(name, verdict, head="reviewed") for name, verdict in self.REVIEWS),
+                _jury("REQUEST_CHANGES", head="reviewed"),
+            ],
+            head_sha="captured",
+            covered_heads=("reviewed",),
+            phase=evidence.PHASE_PRE_MERGE,
+        )
+        self.assertEqual(
+            self._jury_findings(covered),
+            [("major", "the jury's consensus at reviewed is REQUEST_CHANGES, not an approval.")],
+        )
+
+    def test_an_advisory_or_deferred_jury_is_reported_not_gated_on(self):
+        advisory = ship.resolve_review_contract(tier=3, gates=["build"], jury_advisory=True)
+        report = self._verify([_jury("REQUEST_CHANGES")], contract=advisory)
+        self.assertEqual(report["status"], evidence.STATUS_PASS)
+        self.assertEqual(
+            self._jury_findings(report),
+            [("minor", "the jury's consensus at abc123 is REQUEST_CHANGES, not an approval.")],
+        )
+
+        deferred = self._verify([_jury("REQUEST_CHANGES")], deferrals=("jury",))
+        self.assertEqual(deferred["status"], evidence.STATUS_PASS)
+        self.assertEqual([severity for severity, _ in self._jury_findings(deferred)], ["minor"])
+
+    def test_an_untrusted_rejection_is_not_read(self):
+        report = self._verify([_jury("LGTM"), _jury("REQUEST_CHANGES", author_association="NONE")])
+        self.assertEqual(report["status"], evidence.STATUS_PASS)
+
+    def test_the_panel_shape_readers_still_read_a_rejecting_verdict(self):
+        """The panel sat, with its vendors and ballots, whatever it concluded (#1429)."""
+        body = artifacts.render_jury_verdict(
+            head_sha="abc123",
+            participants=("a (anthropic)", "b (google)", "c (openai)"),
+            verdict="REQUEST_CHANGES",
+        )
+        rejecting = [{"body": body, "author_association": "MEMBER"}]
+
+        self.assertEqual(evidence.jury_participating_vendors(rejecting, head_sha="abc123"), 3)
+        self.assertEqual(evidence.jury_panel_size(rejecting, head_sha="abc123"), 3)
+        self.assertTrue(evidence.panel_verdict_posted(rejecting, head_sha="abc123"))
+
+
+class JuryVerdictToken(unittest.TestCase):
+    """:func:`evidence.jury_verdict_token` reads the ``AI Jury verdict:`` consensus line."""
+
+    def test_the_tokens_it_reads(self):
+        cases = {
+            "AI Jury verdict: REQUEST_CHANGES.\n": "REQUEST_CHANGES",
+            "keel.jury-verdict.v1\nhead: h\n\nAI Jury verdict: LGTM.\n": "LGTM",
+            "ai jury verdict: abstain\n": "ABSTAIN",
+            "AI  Jury verdict : needs-info.\n": "NEEDS_INFO",
+        }
+        for body, token in cases.items():
+            with self.subTest(body=body):
+                self.assertEqual(evidence.jury_verdict_token(body), token)
+
+    def test_what_it_does_not_read(self):
+        for body in ("", "Verdict: LGTM\n", "> AI Jury verdict: LGTM.\n", "AI Jury verdict: .\n"):
+            with self.subTest(body=body):
+                self.assertIsNone(evidence.jury_verdict_token(body))
+
+    def test_the_approving_set_is_the_review_verdicts_set(self):
+        self.assertTrue(evidence.jury_verdict_approves("AI Jury verdict: LGTM."))
+        self.assertTrue(evidence.jury_verdict_approves("AI Jury verdict: pass"))
+        self.assertFalse(evidence.jury_verdict_approves("AI Jury verdict: ABSTAIN."))
+        self.assertFalse(evidence.jury_verdict_approves("Verdict: LGTM"))
 
 
 class ReviewVerdictToken(unittest.TestCase):

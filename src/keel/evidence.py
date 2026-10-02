@@ -57,6 +57,8 @@ APPROVING_VERDICTS = frozenset({"APPROVE", "LGTM", "PASS"})
 REQUEST_CHANGES_VERDICTS = frozenset({"REQUEST_CHANGES", "CHANGES_REQUESTED", "NEEDS_INFO"})
 #: The finding a non-approving review verdict at the current head raises (#1426).
 VERDICT_NOT_APPROVED_FINDING = "review-verdict-not-approved"
+#: The finding a non-approving jury verdict at the current head raises (#1429).
+JURY_NOT_APPROVED_FINDING = "jury-verdict-not-approved"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 #: The comment a live ship run posts on its PR right after creating it (#1013). It is
 #: the *primary* arming signal for the evidence gate: unlike the branch name it is
@@ -114,6 +116,10 @@ _VERDICT_LINE_RE = re.compile(r"^\s*verdict\s*:(?P<value>.*)$", re.IGNORECASE)
 #: ``_`` or ``-`` — so ``APPROVE — minor nits`` and ``APPROVE, minor nits`` both read
 #: ``APPROVE``.
 _VERDICT_TOKEN_RE = re.compile(r"^[\W_]*(?P<token>[A-Za-z][A-Za-z_-]*)")
+#: A jury verdict's consensus line, as :func:`keel.artifacts.render_jury_verdict` writes it:
+#: ``AI Jury verdict: REQUEST_CHANGES.`` — the trailing full stop ends the token like any
+#: other punctuation does (#1429).
+_JURY_VERDICT_LINE_RE = re.compile(r"^\s*AI\s+Jury\s+verdict\s*:(?P<value>.*)$", re.IGNORECASE)
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
 #: The exact wrapper a marker line may wear. Every keel renderer emits its marker as
 #: the whole first line, in one of exactly two shapes: bare
@@ -467,6 +473,23 @@ def verify(
         enforced=enforced,
         ledger_record=ledger_record,
     )
+    # A jury whose standing consensus does not approve (#1429) leaves `jury-verdict`
+    # unsatisfied *and* says why, by name: unsatisfied alone would read as "missing" and
+    # hide a comment that is on the pull request. It blocks only where the jury verdict is
+    # a requirement — an advisory panel's rejection is reported, never gated on, which is
+    # what advisory means.
+    jury_required = any(
+        item.id == "jury-verdict"
+        and not (item.id in deferred or item.kind in deferred or "all" in deferred)
+        for item in items
+    )
+    jury_refusal = _jury_not_approved_finding(
+        pr_comments or [],
+        head_sha=head_sha,
+        covered_heads=covered_heads,
+        enforced=enforced,
+        blocking=jury_required,
+    )
     results = []
     for item in items:
         present = _is_present(item, counts)
@@ -480,7 +503,13 @@ def verify(
                 "present": present,
                 "deferred": is_deferred,
                 "ok": ok,
-                "reason": None if ok else _result_reason(item, mismatch),
+                "reason": None
+                if ok
+                else (
+                    jury_refusal["message"]
+                    if item.id == "jury-verdict" and jury_refusal is not None
+                    else _result_reason(item, mismatch)
+                ),
             }
         )
     missing = [result["id"] for result in results if not result["ok"]]
@@ -516,6 +545,8 @@ def verify(
             enforced=enforced,
         ),
     ]
+    if jury_refusal is not None:
+        findings = [*findings, jury_refusal]
     findings = [
         *findings,
         *_malformed_marker_findings(
@@ -799,11 +830,21 @@ def _evidence_counts(
             for comment in issue_comments
         ),
         "review_verdict": len(review_keys),
-        "jury_verdict": sum(
-            _is_jury_verdict(
-                comment, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced
+        # The jury requirement is met by the *standing* jury verdict at the head, and only
+        # when its consensus approves (#1429); a rejection is reported by
+        # `_jury_not_approved_finding` rather than counted.
+        "jury_verdict": int(
+            jury_verdict_approves(
+                _body(
+                    _standing_jury_verdict(
+                        pr_comments,
+                        head_sha=head_sha,
+                        covered_heads=covered_heads,
+                        enforced=enforced,
+                    )
+                    or {}
+                )
             )
-            for comment in pr_comments
         ),
     }
 
@@ -1163,8 +1204,13 @@ def review_verdict_token(body: str) -> str | None:
     ``REQUEST_CHANGES``. ``None`` when the comment has no such line or the line has no
     word, which :func:`verdict_approves` treats as not an approval.
     """
+    return _line_token(body, _VERDICT_LINE_RE)
+
+
+def _line_token(body: str, line_re: re.Pattern[str]) -> str | None:
+    """The first word of the first line ``line_re`` matches, read as a verdict token."""
     for line in body.splitlines():
-        match = _VERDICT_LINE_RE.match(line)
+        match = line_re.match(line)
         if match is None:
             continue
         token = _VERDICT_TOKEN_RE.match(match.group("value").strip())
@@ -1175,6 +1221,30 @@ def review_verdict_token(body: str) -> str | None:
 def verdict_approves(body: str) -> bool:
     """Whether a review verdict's ``Verdict:`` line approves (:data:`APPROVING_VERDICTS`)."""
     return review_verdict_token(body) in APPROVING_VERDICTS
+
+
+def jury_verdict_token(body: str) -> str | None:
+    """The consensus token on a jury verdict's ``AI Jury verdict:`` line, or ``None`` (#1429).
+
+    Read exactly as :func:`review_verdict_token` reads a review's ``Verdict:`` line — first
+    word, any case, wrapper punctuation skipped, ``-`` spelled ``_`` — off the line
+    :func:`keel.artifacts.render_jury_verdict` writes, ``AI Jury verdict: <verdict>.``, so
+    its trailing full stop is not part of the token. ``None`` when there is no such line or
+    it carries no word.
+    """
+    return _line_token(body, _JURY_VERDICT_LINE_RE)
+
+
+def jury_verdict_approves(body: str) -> bool:
+    """Whether a jury verdict's consensus approves (:data:`APPROVING_VERDICTS`, #1429).
+
+    The same set a review verdict is read against: the chair's ``APPROVE`` / ``READY`` reach
+    the comment as ``LGTM`` through :func:`keel.jury.map_verdict`. ``REQUEST_CHANGES`` (and
+    ``NEEDS_INFO``, which maps onto it), ``COMMENT``, ``ABSTAIN`` — the token
+    :func:`keel.jury.jury_verdict` writes when the panel produced no chair synthesis — and
+    ``NO_QUORUM`` are not approvals, and neither is an unknown word or a missing line.
+    """
+    return jury_verdict_token(body) in APPROVING_VERDICTS
 
 
 def _not_approved_message(key: str, token: str | None, head: str) -> str:
@@ -2374,6 +2444,17 @@ def _is_jury_verdict(
     covered_heads: Collection[str] = (),
     enforced: bool = True,
 ) -> bool:
+    """Whether ``item`` is a trusted jury verdict pinned to ``head_sha`` — presence only.
+
+    **Deliberately blind to the consensus** (#1429). Its readers here are the panel-shape
+    checks — :func:`jury_participating_vendors`, :func:`jury_panel_size` and
+    :func:`panel_verdict_posted` — which size the panel and pin whether it sat. A panel
+    that sat and rejected the change still sat, with that many vendors and ballots, so a
+    rejecting verdict must keep answering them: reading the consensus there would turn a
+    rejection into "no panel", and drop the ballots it owes. Whether the panel *approves*
+    is a separate question, answered by :func:`_standing_jury_verdict` and
+    :func:`jury_verdict_approves` for the ``jury-verdict`` requirement.
+    """
     if not _is_trusted_source(item, enforced=enforced):
         return False
     body = _body(item)
@@ -2382,3 +2463,68 @@ def _is_jury_verdict(
     return marker_in_header(body) == JURY_VERDICT_MARKER and _matches_head(
         item, body, head_sha, covered_heads
     )
+
+
+def _standing_jury_verdict(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
+    enforced: bool = True,
+) -> dict[str, Any] | None:
+    """The latest trusted jury verdict answering for ``head_sha``, or ``None`` (#1429).
+
+    **The latest jury verdict is the panel's word**, ordered as :func:`_review_tally`
+    orders review verdicts: by when it was posted (:func:`_posted_at` — ``created_at``,
+    never ``updated_at``), then by position. A panel re-run on the same head that now
+    approves supersedes the rejection before it, and one that now rejects supersedes the
+    approval. A jury verdict pinned to an older head is not read: the head that moved
+    answers it.
+    """
+    standing: dict[str, Any] | None = None
+    for _, item in sorted(enumerate(items), key=lambda pair: (_posted_at(pair[1]), pair[0])):
+        if _is_jury_verdict(
+            item, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced
+        ):
+            standing = item
+    return standing
+
+
+def _jury_not_approved_finding(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None,
+    covered_heads: Collection[str] = (),
+    enforced: bool,
+    blocking: bool,
+) -> dict[str, Any] | None:
+    """The finding for a standing jury verdict whose consensus does not approve (#1429).
+
+    ``major`` when ``blocking`` — the ``jury-verdict`` item is required and not deferred —
+    so a rejecting panel **holds** the merge with its consensus and head named
+    (``jury-verdict-not-approved: the jury's consensus at <head> is REQUEST_CHANGES, not an
+    approval.`` in :func:`refusal_reason`). Merely leaving it uncounted would read as
+    *missing* and send the operator looking for a comment that is on the pull request.
+    ``minor`` otherwise: an advisory panel's rejection is said, never gated on.
+    """
+    standing = _standing_jury_verdict(
+        items, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced
+    )
+    if standing is None:
+        return None
+    body = _body(standing)
+    token = jury_verdict_token(body)
+    if token in APPROVING_VERDICTS:
+        return None
+    head = _verdict_head(standing, body)
+    message = (
+        f"the jury's consensus at {head} is {token}, not an approval."
+        if token
+        else f"the jury verdict at {head} has no readable AI Jury verdict line."
+    )
+    return {
+        "id": JURY_NOT_APPROVED_FINDING,
+        "severity": "major" if blocking else "minor",
+        "kind": "jury",
+        "message": message,
+    }

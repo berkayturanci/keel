@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **A jury verdict that requests changes no longer satisfies the jury requirement** (#1429). The evidence gate counted a `keel.jury-verdict.v1` comment by its marker, trusted author and head and never read its `AI Jury verdict:` line, so a panel whose consensus rejected the change met the `jury-verdict` requirement as an approving one did. The gates-pass did not cover it: on the `keel init` scaffold (`gates: [build, lint]`) a tier-3 change requires the jury verdict while no `jury` gate runs, and where `jury` is a gate it decides from finding severities alone. `evidence.jury_verdict_token` now reads the consensus line as #1426 reads a review's `Verdict:` line, against the same `APPROVING_VERDICTS`; the **latest** trusted jury verdict at the head (ordered by when it was posted) must approve, and one that does not — `REQUEST_CHANGES`, `ABSTAIN`, `COMMENT`, `NO_QUORUM`, no line — leaves `jury-verdict` unsatisfied and raises a blocking `jury-verdict-not-approved` finding that `keel merge` names (`the jury's consensus at <head> is REQUEST_CHANGES, not an approval.`); an advisory or deferred panel's rejection is reported as `minor`. The panel-shape readers (`jury_participating_vendors`, `jury_panel_size`, `panel_verdict_posted`) keep reading presence, since a panel that rejected still sat. `keel review --from-jury` now posts a panel whose consensus rejects even below the tier's ballot count, as it already did for a rejecting ballot. Two writers could also put an approval on that line that no panel gave: `keel ship --json`'s `jury_verdict_template` took its consensus from the run's whole gate verdict, so an unblocked ship — on the scaffold, one where no jury gate ran — rendered `AI Jury verdict: LGTM.` for a panel it never heard, and the `/keel:ship` adapter tells the host to use that shape; and `artifacts.render_jury_verdict` rendered a missing or blank verdict as `LGTM`. The template now carries the panel's consensus when the caller has it (`ship_result_as_dict(jury_consensus=…)`) and otherwise `artifacts.JURY_CONSENSUS_PLACEHOLDER`, which the gate reads as no approval, so posting it unfilled holds the merge; the adapter says to fill the line from the panel's own verdict. A missing verdict renders `ABSTAIN` — in `render_jury_verdict` and, for the same reason, in `render_review_verdict`, whose default had also been `LGTM`.
+
 ### Added
 - **`keel swarm-review` reviews each cluster pull request with the cluster's own seats**
   (#1423). The first live swarm landing needed one step outside the swarm: every cluster PR's
@@ -41,7 +44,6 @@ All notable changes to keel are documented here. The format follows
   run once, on a sandbox repository, with single-vendor review seats.
 
 ### Changed
-
 - **docs(swarm): `swarm-review` has run once, and every surface says so — and still says
   experimental** ([#1423](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)).
   On 2026-10-02, on the throwaway sandbox repository, `swarm-plan` → `swarm-run --live` →

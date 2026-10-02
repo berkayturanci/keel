@@ -17,6 +17,14 @@ ISSUE_UPDATE_MARKER = "<!-- keel.issue-update.v1 -->"
 STEP_HANDOFF_MARKER = "<!-- keel.step-handoff.v1 -->"
 RUN_CONTROL_HALT_MARKER = "<!-- keel.run-control-halt.v1 -->"
 REVIEW_CYCLE_SUMMARY_MARKER = "keel.review-cycle-summary.v1"
+#: The verdict a jury verdict renders with when nobody supplied the panel's consensus
+#: (#1429). It reads as **not** an approval — :func:`keel.evidence.jury_verdict_token`
+#: takes its first word, ``PANEL_CONSENSUS`` — so a template posted unfilled holds the
+#: merge with ``jury-verdict-not-approved`` instead of approving for a panel that may
+#: have rejected the change.
+JURY_CONSENSUS_PLACEHOLDER = (
+    "<PANEL_CONSENSUS \u2014 replace with the panel's APPROVE / REQUEST_CHANGES>"
+)
 COVERAGE_DELTA_MARKER = "keel.coverage-delta.v1"
 DEPS_AUDIT_MARKER = "keel.deps-audit.v1"
 FLAKE_AUDIT_MARKER = "keel.flake-audit.v1"
@@ -158,7 +166,7 @@ def render_review_verdict(
     *,
     reviewer: str,
     head_sha: str | None,
-    verdict: str = "LGTM",
+    verdict: str = "ABSTAIN",
     scope: str | None = None,
     findings: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     testing: str | None = None,
@@ -221,7 +229,7 @@ def render_review_verdict(
     lines.extend(
         [
             "",
-            f"Verdict: {_value(verdict, 'LGTM')}",
+            f"Verdict: {_value(verdict, 'ABSTAIN')}",
             "",
             f"Scope reviewed: {_value(scope, 'Full changed-file diff and relevant contracts.')}",
             "",
@@ -237,7 +245,7 @@ def render_jury_verdict(
     *,
     head_sha: str | None,
     participants: list[str] | tuple[str, ...] = (),
-    verdict: str = "LGTM",
+    verdict: str | None = "ABSTAIN",
     findings_summary: list[str] | tuple[str, ...] = (),
     remaining_risks: str | None = None,
     participating_vendors: int | None = None,
@@ -259,6 +267,11 @@ def render_jury_verdict(
     An undeclared panel size leaves the gate on its floor (the minimum vendor
     count) rather than requiring nothing, so omitting it fails closed. Omitted,
     it is inferred from ``participants``.
+
+    ``verdict`` is the panel's consensus, written on the ``AI Jury verdict:`` line the
+    evidence gate reads (#1429). Missing or blank, it renders ``ABSTAIN`` — a panel that
+    stated no consensus did not approve — where it used to render ``LGTM``, an approval
+    nobody gave.
     """
     people = [
         person.strip() for person in participants if isinstance(person, str) and person.strip()
@@ -271,7 +284,7 @@ def render_jury_verdict(
         f"vendors: {vendors}",
         f"panelists: {seats}",
         "",
-        f"AI Jury verdict: {_value(verdict, 'LGTM')}.",
+        f"AI Jury verdict: {_value(verdict, 'ABSTAIN')}.",
         "",
         f"Participants: {', '.join(people) if people else 'not recorded'}.",
         "",

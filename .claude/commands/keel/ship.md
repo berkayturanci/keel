@@ -1116,7 +1116,12 @@ separate reading.
 
 When a gating or advisory jury is enabled and `result.artifact_bodies.jury_verdict_template`
 is available, use that canonical shape for the posted jury verdict and preserve
-`keel.jury-verdict.v1` plus `head: <sha>`.
+`keel.jury-verdict.v1` plus `head: <sha>`. **Fill its `AI Jury verdict:` line with the
+panel's own consensus** (the chair's verdict in the saved report) — never with this run's
+gate result. Do not post the template unfilled: its placeholder,
+`<PANEL_CONSENSUS — replace with the panel's APPROVE / REQUEST_CHANGES>`, is read as no
+approval, and the evidence gate holds the merge with `jury-verdict-not-approved` (#1429) —
+exactly as it does for a consensus that is not `APPROVE` / `LGTM` / `PASS`.
 The **`jury` gate** runs the ai-jury CLI read-only on the PR diff using the committed panel;
 it never passes `--strict`. Without the `jury` binary the s8 run is a no-op (reported `SKIPPED`; with no other gate planned it blocks), but a tier-3
 merge still requires a `jury-verdict` unless the run passes `--no-jury`; it relaxes to
@@ -1646,4 +1651,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.27.0 source_sha256=958895950e126d42bf407a6a5f694159cdb50ae5556bca624c1b7a1ec3b0ff08 generated_sha256=958895950e126d42bf407a6a5f694159cdb50ae5556bca624c1b7a1ec3b0ff08 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.27.0 source_sha256=56bb53be7108bcf94538604fc5f4d9b5356d0af54b3fb9daf2b38ee4f691db17 generated_sha256=56bb53be7108bcf94538604fc5f4d9b5356d0af54b3fb9daf2b38ee4f691db17 -->
