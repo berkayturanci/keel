@@ -528,13 +528,13 @@ test('a PR missing from the open list is looked up once more, then on the regula
   await clock.settle()
   // first scan: 3001 is not open yet, looked up once more, still hidden
   expect(calls.gh).toBe(2)
-  // 3001 opens: a refetch already found it closed, so the next regular read (within a minute)
-  // picks it up, without a forced call on every scan in between.
+  // 3001 opens. Timer scans leave it to the regular minute read, but a keel command asks for a
+  // fresh scan, which rechecks a PR marked closed once (gh can lag right after gh pr create).
   open = [1027, 3001]
+  await clock.advance(5_000)
+  expect(calls.gh).toBe(2)
   await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 31' })
   await clock.settle()
-  expect(calls.gh).toBe(2)
-  await clock.advance(60_000)
   expect(calls.gh).toBe(3)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#31' })).toBeDefined()
@@ -748,4 +748,88 @@ test('the session’s run keeps its mark when its own folder held the stale copy
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const labels = await band.findAll({ type: 'Text', text: /^(▸ fix\/9|  other)\s+$/ })
   expect(labels.map((t: any) => String(t.children[0]).trim())).toEqual(['▸ fix/9', 'other'])
+})
+
+test('a stale copy written before the PR opened is the same run as the newer one with the PR', async ($, on) => {
+  const clock = mock.clock(on, { now: 2 * HOURS })
+  const copy = (pr: number | null, step: string) => () =>
+    statusJson({ current: { command: 'ship', issue: 9, pull_request: pr, step, wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+      { path: '/wt/early', branch: 'early', mtime: 1 * HOURS, stdout: copy(null, 's4') },
+      { path: '/wt/late', branch: 'late', mtime: 1.5 * HOURS, stdout: copy(2001, 's7') },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.findAll({ type: 'Button', text: '#9' })).length).toBe(1)
+  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeDefined()
+})
+
+test('the band comes back compact after every run is gone', async ($, on) => {
+  const clock = mock.clock(on)
+  let live = true
+  const prs = [2001, 2002, 2003, 2004]
+  stubEngine(on, {
+    project: true,
+    openPrs: prs,
+    worktrees: prs.map((pr, i) => ({
+      path: `/wt/${i}`,
+      branch: `b${i}`,
+      stdout: () => (live ? runAt(10 + i, pr)() : statusJson({ status: 'completed', current: null })),
+    })),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  let band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await band.press({ key: 'keel-progress-toggle' })
+  expect(await band.find({ type: 'Button', text: '#13' })).toBeDefined()
+  await band.unmount()
+  live = false
+  await clock.advance(5_000)
+  live = true
+  await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml' })
+  await clock.settle()
+  band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#13' })).toBeUndefined()
+  expect(await band.find({ type: 'Button', text: 'more' })).toBeDefined()
+})
+
+test('a wide-character branch name is cut by terminal cells, not characters', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/wt/cjk', branch: '機能/進捗表示の改善と修正', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  // 12 cells: 2 spaces + 機能 (4) + / (1) + 進捗 (4) = 11, then "…" makes 12.
+  const band = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 70 }, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: '  機能/進捗…' })).toBeDefined()
+})
+
+test('emoji, flags and zero-width marks are measured in cells too', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      // flag (two regional indicators, 2) + rocket (2) + "fix" (3) + e + U+0301 combining accent (1)
+      // = 8 cells: with the two-space prefix 10, padded to 12
+      { path: '/wt/emoji', branch: '\u{1F1F9}\u{1F1F7}\u{1F680}fixe\u0301', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 70 }, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: '  \u{1F1F9}\u{1F1F7}\u{1F680}fixe\u0301  ' })).toBeDefined()
 })

@@ -6,6 +6,13 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **keel-progress 0.2.1: the follow-ups from its reviews** (#1446).
+  - A keel command now rechecks a pull request that an earlier refetch found missing, so a run whose PR `gh pr list` had not listed yet no longer stays hidden for up to a minute.
+  - Branch labels are measured in terminal cells, so CJK and emoji names fit the band.
+  - New tests cover a run without a run id whose older copy predates its PR, and the band returning to compact once every run is gone.
+  - Comment and README wording.
+
 ## [1.29.0] - 2026-10-02
 
 - You can watch keel runs inside Claude Code. The optional `keel-progress` mod (0.2.0) shows the live `keel ship` runs across the repository's worktrees above the prompt, and a `/keel-progress` pane, without a second terminal. Click a run to open it in full, or expand the band to see every run with its whole branch.

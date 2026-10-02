@@ -75,6 +75,35 @@ export function latestPerRun(entries) {
   return { kept, superseded: entries.length - kept.length }
 }
 
+// Terminal cells a character takes: East Asian wide and fullwidth characters and emoji take
+// two; combining marks, variation selectors and the zero-width joiner take none. A flag is two
+// regional indicators (U+1F1E6-1F1FF) drawn in two cells, so each indicator counts as one.
+// Written as escapes: invisible characters in a regex source do not survive editors.
+const WIDE = /[\u{1100}-\u{115F}\u{231A}\u{231B}\u{23E9}-\u{23EC}\u{23F0}\u{23F3}\u{25FD}\u{25FE}\u{2614}\u{2615}\u{2648}-\u{2653}\u{267F}\u{2693}\u{26A1}\u{26AA}\u{26AB}\u{26BD}\u{26BE}\u{26C4}\u{26C5}\u{26CE}\u{26D4}\u{26EA}\u{26F2}\u{26F3}\u{26F5}\u{26FA}\u{26FD}\u{2705}\u{270A}\u{270B}\u{2728}\u{274C}\u{274E}\u{2753}-\u{2755}\u{2757}\u{2795}-\u{2797}\u{27B0}\u{27BF}\u{2B1B}\u{2B1C}\u{2B50}\u{2B55}\u{2E80}-\u{303E}\u{3041}-\u{33FF}\u{3400}-\u{4DBF}\u{4E00}-\u{9FFF}\u{A000}-\u{A4CF}\u{AC00}-\u{D7A3}\u{F900}-\u{FAFF}\u{FE30}-\u{FE4F}\u{FF00}-\u{FF60}\u{FFE0}-\u{FFE6}\u{1F300}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F900}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u
+const ZERO = /[\u{0300}-\u{036F}\u{200B}-\u{200D}\u{FE00}-\u{FE0F}]/u
+function charCells(ch) {
+  return ZERO.test(ch) ? 0 : WIDE.test(ch) ? 2 : 1
+}
+
+export function cells(text) {
+  let n = 0
+  for (const ch of text) n += charCells(ch)
+  return n
+}
+
+// The longest prefix of `text` that fits in `width` cells.
+export function fitCells(text, width) {
+  let out = ''
+  let n = 0
+  for (const ch of text) {
+    const w = charCells(ch)
+    if (n + w > width) break
+    out += ch
+    n += w
+  }
+  return out
+}
+
 export function isLive(snapshot) {
   return Boolean(snapshot && LIVE_STATES.has(snapshot.status) && snapshot.current)
 }
