@@ -52,7 +52,7 @@ const PANE = {
 
 // Stubs every call the mod makes; `project` decides whether .keel/project.yaml exists.
 function stubEngine(on: any, opts: { project: boolean; stdout?: () => string; exitCode?: () => number; stderr?: string }) {
-  const calls = { status: 0, opened: [] as string[] }
+  const calls = { status: 0, opened: [] as string[], closed: [] as string[] }
   on('fs.exists', () => ({ value: opts.project }))
   on('command.register', () => ({ value: undefined }))
   on('session.start', () => ({ cwd: '/work' }))
@@ -71,7 +71,10 @@ function stubEngine(on: any, opts: { project: boolean; stdout?: () => string; ex
     calls.opened.push(e.id)
     return { value: { isPlaced: true } }
   })
-  on('ui.close', () => ({ value: undefined }))
+  on('ui.close', ($: unknown, e: { id: string }) => {
+    calls.closed.push(e.id)
+    return { value: undefined }
+  })
   on('tool.call', () => ({ result: 'ok' }))
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
   return calls
@@ -243,4 +246,73 @@ test('a run that was showing goes quiet in the band when keel status starts fail
   await clock.advance(5_000)
   band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: ' #1022 ' })).toBeDefined()
+})
+
+test('unparsable keel status output is a pane error, not a crash', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true, stdout: () => 'not json' })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /^keel status failed: / })).toBeDefined()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: /keel/ })).toBeUndefined()
+})
+
+test('an interrupted run with no issue or PR yet still draws, marked stopped', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: null, pull_request: null, step: 's4', wait_reason: 'gate-failed' }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'interrupted', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' s4 implement' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' · stopped: gate-failed' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /PR #/ })).toBeUndefined()
+
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: 'issue #- · PR - · ship' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '  ▶ s4 implement — gate-failed' })).toBeDefined()
+})
+
+test('the pane says so when there is no keel project', async ($, on) => {
+  mock.clock(on)
+  const calls = stubEngine(on, { project: false })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.command.run({ command: 'keel-progress', args: '' })
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await pane.find({ type: 'Text', text: /No \.keel\/project\.yaml in this directory/ })).toBeDefined()
+  expect(calls.status).toBe(0)
+})
+
+test('Refresh reads keel status again and Close closes the pane', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const before = calls.status
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await pane.press({ key: 'refresh' })
+  await clock.settle()
+  expect(calls.status).toBe(before + 1)
+  await pane.press({ key: 'close' })
+  expect(calls.closed).toEqual(['keel-progress'])
+})
+
+test('a keel binary run by path or quoted still refreshes', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.tool.call({ tool: 'Bash', command: '.venv/bin/keel ship .keel/project.yaml' })
+  await clock.settle()
+  await $.tool.call({ tool: 'Bash', command: '"keel" status .keel/project.yaml' })
+  await clock.settle()
+  expect(calls.status).toBe(3)
 })

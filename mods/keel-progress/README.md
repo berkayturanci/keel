@@ -26,7 +26,8 @@ The mod runs `keel status .keel/project.yaml --json` from the session's working 
 - right after any Bash call that runs `keel`
 
 Only one `keel status` runs at a time. A read asked for after a keel command, by the pane or
-by **Refresh** starts once the running one ends, so it always sees what the command wrote.
+by **Refresh** starts once the running one ends, so it is taken after the command returned.
+A keel command run in the background returns at once; the next poll picks up what it writes.
 
 The step names come from the status contract (`keel.progress-status.v1`), so a renamed or
 added step shows up without a mod release.

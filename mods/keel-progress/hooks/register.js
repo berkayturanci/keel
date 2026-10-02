@@ -28,10 +28,11 @@ const TONES = {
 let hasProject = false
 let status = null // { snapshot, steps } from the last good `keel status --json`
 let error = null // last line of the last failure, shown in the pane only
-let lastStdout = ''
+let lastStdout = null
 let inFlight = null // the running refresh; callers share it instead of starting a second `keel status`
 let again = false // a fresh read was asked for while one ran: run once more after it
 let idleTicks = 0
+let poller = null // the polling timer, so a second session.start replaces it
 
 // The timer's tick: every time while a run is live, every IDLE_EVERY-th tick otherwise.
 function tick($) {
@@ -51,17 +52,23 @@ function refresh($, fresh) {
     if (fresh) again = true
     return inFlight
   }
-  inFlight = runUntilSettled($).finally(() => {
-    inFlight = null
-  })
+  inFlight = runUntilSettled($)
   return inFlight
 }
 
+// Clears inFlight in the same step as the last `again` check, so a request that lands
+// between them starts a new run instead of joining one that has already finished.
 async function runUntilSettled($) {
-  do {
-    again = false
-    await runStatus($)
-  } while (again)
+  try {
+    do {
+      again = false
+      await runStatus($)
+    } while (again)
+  } catch (err) {
+    error = String(err?.message ?? err) // never leave a rejection for a timer callback
+  } finally {
+    inFlight = null
+  }
 }
 
 function lastLine(text) {
@@ -76,6 +83,8 @@ async function runStatus($) {
     if (run.exitCode !== 0) {
       // keel prints warnings before the fatal message, so the last line is the one that matters
       failure = lastLine(run.stderr || run.stdout || '') ?? `exit ${run.exitCode}`
+    } else if (run.isStdoutTruncated) {
+      failure = 'keel status --json output is too large to read'
     } else if (run.stdout !== lastStdout) {
       status = parseStatus(run.stdout)
       lastStdout = run.stdout
@@ -100,7 +109,8 @@ export function register(on) {
     if (hasProject) {
       // Off the start path: the first status lands a moment after the session opens.
       $.clock.after(0, () => refresh($, true))
-      $.clock.every(POLL_MS, () => tick($))
+      poller?.cancel()
+      poller = $.clock.every(POLL_MS, () => tick($))
     }
     await $.command.register({
       name: 'keel-progress',
@@ -110,11 +120,13 @@ export function register(on) {
     return next(e)
   })
 
-  // A keel command may have just moved the run, so refresh as soon as it returns.
+  // A keel command may have just moved the run, so refresh as soon as it returns. A command
+  // run in the background returns at once; the next poll catches what it writes.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const result = await next(e)
-    // A keel invocation, not a path like `.keel/` or a word like `keel-visual`.
-    if (hasProject && /(^|[\s;&|(])keel(\s|$)/.test(String(e.command ?? ''))) {
+    // A keel invocation (bare, by path, quoted), not `.keel/` or `keel-visual`. An argument
+    // that happens to be the word keel costs one extra read; a miss would leave the band stale.
+    if (hasProject && /(^|[\s;&|(/`'"])keel[`'"]?(\s|$)/.test(String(e.command ?? ''))) {
       $.clock.after(0, () => refresh($, true))
     }
     return result
