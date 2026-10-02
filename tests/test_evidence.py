@@ -1083,6 +1083,7 @@ def _verdict(reviewer, *, head="abc123", vendor=None, model=None, scope=None):
 
     return _comment(
         artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer=reviewer,
             head_sha=head,
             vendor=vendor,
@@ -2702,7 +2703,7 @@ class TestMarkerInHeader(unittest.TestCase):
         # The rule is only as good as its agreement with what keel actually posts.
         self.assertEqual(
             evidence.marker_in_header(
-                artifacts.render_review_verdict(reviewer="alpha", head_sha="abc")
+                artifacts.render_review_verdict(verdict="LGTM", reviewer="alpha", head_sha="abc")
             ),
             evidence.REVIEW_VERDICT_MARKER,
         )
@@ -2769,7 +2770,10 @@ class VerdictReviewersNameWhoReviewedTheHead(unittest.TestCase):
     @staticmethod
     def _verdict(reviewer: str, head: str, **extra) -> dict:
         body = artifacts.render_review_verdict(
-            reviewer=reviewer, head_sha=head, scope="Checked `src/keel/swarm_landing.py`"
+            verdict="LGTM",
+            reviewer=reviewer,
+            head_sha=head,
+            scope="Checked `src/keel/swarm_landing.py`",
         )
         return {"body": body, "author_association": "OWNER", **extra}
 

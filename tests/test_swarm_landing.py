@@ -458,6 +458,7 @@ def _worker_record(pr: int, issue: int, head: str) -> dict:
 
 def _verdict(head: str, reviewer: str = "agy-gate") -> dict:
     body = artifacts.render_review_verdict(
+        verdict="LGTM",
         reviewer=reviewer,
         head_sha=head,
         scope="Checked `src/a.py` and `swarm_landing.landing_record()`",

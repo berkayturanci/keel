@@ -166,7 +166,7 @@ def render_review_verdict(
     *,
     reviewer: str,
     head_sha: str | None,
-    verdict: str = "LGTM",
+    verdict: str = "ABSTAIN",
     scope: str | None = None,
     findings: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
     testing: str | None = None,
@@ -229,7 +229,7 @@ def render_review_verdict(
     lines.extend(
         [
             "",
-            f"Verdict: {_value(verdict, 'LGTM')}",
+            f"Verdict: {_value(verdict, 'ABSTAIN')}",
             "",
             f"Scope reviewed: {_value(scope, 'Full changed-file diff and relevant contracts.')}",
             "",

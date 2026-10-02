@@ -84,6 +84,7 @@ class TestIssueUpdateRenderer(unittest.TestCase):
 class TestVerdictRenderers(unittest.TestCase):
     def test_review_verdict_is_head_bound_and_marker_based(self):
         body = artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer="Reviewer A",
             head_sha="abc123",
             findings=[{"severity": "minor", "message": "Consider a docs note."}],
@@ -95,13 +96,16 @@ class TestVerdictRenderers(unittest.TestCase):
         self.assertIn("- minor: Consider a docs note.", body)
 
     def test_review_verdict_omits_provenance_lines_by_default(self):
-        body = artifacts.render_review_verdict(reviewer="Reviewer A", head_sha="abc123")
+        body = artifacts.render_review_verdict(
+            verdict="LGTM", reviewer="Reviewer A", head_sha="abc123"
+        )
 
         self.assertNotIn("vendor:", body)
         self.assertNotIn("model:", body)
 
     def test_review_verdict_renders_vendor_and_model_provenance(self):
         body = artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer="Reviewer A",
             head_sha="abc123",
             vendor="Claude",
@@ -113,6 +117,7 @@ class TestVerdictRenderers(unittest.TestCase):
 
     def test_review_verdict_model_requires_vendor(self):
         body = artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer="Reviewer A",
             head_sha="abc123",
             model="opus",
@@ -123,6 +128,7 @@ class TestVerdictRenderers(unittest.TestCase):
 
     def test_review_verdict_falls_back_when_findings_have_no_messages(self):
         body = artifacts.render_review_verdict(
+            verdict="LGTM",
             reviewer="Reviewer A",
             head_sha="abc123",
             findings=[{"severity": "minor"}],
@@ -156,6 +162,19 @@ class TestVerdictRenderers(unittest.TestCase):
         )
         self.assertEqual(evidence.jury_verdict_token(placeholder), "PANEL_CONSENSUS")
         self.assertFalse(evidence.jury_verdict_approves(placeholder))
+
+    def test_a_review_verdict_without_a_verdict_is_not_an_approval(self):
+        """#1429: `render_review_verdict` defaulted to `LGTM`, so a caller that forgot the
+        verdict rendered an approval nobody gave; it renders `ABSTAIN` now."""
+        from keel import evidence
+
+        for verdict in ({}, {"verdict": None}, {"verdict": "  "}):
+            with self.subTest(verdict=verdict):
+                body = artifacts.render_review_verdict(
+                    reviewer="alpha", head_sha="abc123", scope="src/keel/evidence.py", **verdict
+                )
+                self.assertIn("Verdict: ABSTAIN", body)
+                self.assertFalse(evidence.verdict_approves(body))
 
 
 class TestReviewCycleSummaryRenderer(unittest.TestCase):
