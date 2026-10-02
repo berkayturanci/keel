@@ -95,3 +95,5 @@ cd mods/keel-progress && claude plugin test
   the session (`keel init`) shows after `/reload-plugins` or a new session.
 - A run in another worktree left behind without a pull request keeps showing for 24 hours
   after its checkpoint last changed.
+- While no run is live it scans every 30 seconds, so a run started from another terminal
+  (or by Codex) can take that long to appear. A keel command in this session scans at once.

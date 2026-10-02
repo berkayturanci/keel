@@ -42,6 +42,7 @@ const TONES = {
 let hasProject = false
 let runs = [] // [{ path, label, snapshot, steps }] — live runs, the session's own first
 let own = null // the session's own last good status, live or not: the pane's idle view
+let ownStale = false // the last read of the session's own folder failed, so `own` is old
 let failures = [] // [{ label, message }] — worktrees whose `keel status` failed
 let scanned = 0 // other worktrees with a fresh checkpoint at the last scan
 let closedPr = 0 // runs hidden because their pull request is no longer open
@@ -171,6 +172,7 @@ async function scan($) {
   if (mine.failure !== undefined) nextFailures.push({ label: ownLabel, message: mine.failure })
   else candidates.push({ path: cwd, label: ownLabel, ...mine.parsed })
   own = mine.parsed ?? own
+  ownStale = mine.failure !== undefined
 
   // Other worktrees: only those whose checkpoint (where this project keeps it) changed lately.
   const checkpoint = mine.parsed?.checkpointPath ?? DEFAULT_CHECKPOINT
@@ -299,6 +301,8 @@ export function register(on) {
       if (runs.length === 0 && own !== null) {
         // No live run: the session's own project, as it is (no active run, history, next issue).
         lines.push({ text: ' ', tone: 'plain' })
+        // After a failed read this is the last status that worked, and says so (#1446).
+        if (ownStale) lines.push({ text: 'last good status:', tone: 'dim' })
         lines.push(...paneLines(own.snapshot, own.steps))
       }
       for (const failure of failures) {

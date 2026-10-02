@@ -22,7 +22,7 @@ export function parseStatus(stdout) {
   }
   const declared = payload.contract?.source?.checkpoint?.steps
   const steps = Array.isArray(declared) && declared.length > 0
-    ? declared.map((s) => ({ id: String(s.step_id), name: String(s.step_name) }))
+    ? declared.map((s) => ({ id: String(s.step_id), name: String(s.step_name ?? s.step_id) }))
     : FALLBACK_STEPS
   const checkpoint = payload.contract?.source?.checkpoint?.path
   return { snapshot, steps, checkpointPath: typeof checkpoint === 'string' && checkpoint ? checkpoint : null }

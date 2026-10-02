@@ -583,3 +583,34 @@ test('a long branch name is cut with an ellipsis', async ($, on) => {
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: 'fix/merge-marks…  ' })).toBeDefined()
 })
+
+test('after a failed read the idle pane marks the project’s status as the last good one', async ($, on) => {
+  const clock = mock.clock(on)
+  let exit = 0
+  stubEngine(on, {
+    project: true,
+    exitCode: () => exit,
+    stdout: () => statusJson({ status: 'no-active-run', current: null }),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  exit = 1
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: 'last good status:' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'keel status failed (main): keel: boom' })).toBeDefined()
+})
+
+test('a step the contract names without a step name shows its id', async ($, on) => {
+  const clock = mock.clock(on)
+  const steps = STEPS.map((s) => (s.step_id === 's10' ? { step_id: 's10' } : s))
+  stubEngine(on, {
+    project: true,
+    stdout: () => JSON.stringify({ ...JSON.parse(statusJson()), contract: { source: { checkpoint: { steps } } } }),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' s10 s10' })).toBeDefined()
+})
