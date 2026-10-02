@@ -38,9 +38,41 @@ export function parseWorktrees(porcelain) {
       if (line.startsWith('worktree ')) path = line.slice('worktree '.length)
       else if (line.startsWith('branch ')) branch = line.slice('branch '.length).replace(/^refs\/heads\//, '')
     }
-    if (path) out.push({ path, label: branch ?? path.split('/').pop() })
+    if (path) out.push({ path, branch, label: branch ?? path.split('/').pop() })
   }
   return out
+}
+
+// Keeps one entry per run — by run id, else issue and PR, else the worktree — the one whose
+// checkpoint was written last (the session's own on a tie). When the session's own folder held a
+// stale copy, the winner is still the session's run: it keeps the `own` mark and goes first.
+// Returns { kept, superseded }.
+export function latestPerRun(entries) {
+  const keyOf = (e) => {
+    const c = e.snapshot.current
+    if (c.run_id) return `run:${c.run_id}`
+    // A copy written before the PR was opened has no PR yet: the issue alone names the run.
+    if (c.issue != null) return `issue:${c.issue}`
+    if (c.pull_request != null) return `pr:${c.pull_request}`
+    return `path:${e.path}`
+  }
+  const best = new Map()
+  const ownKeys = new Set()
+  for (const e of entries) {
+    const key = keyOf(e)
+    if (e.own) ownKeys.add(key)
+    const prev = best.get(key)
+    if (!prev || e.mtimeMs > prev.mtimeMs || (e.mtimeMs === prev.mtimeMs && e.own && !prev.own)) best.set(key, e)
+  }
+  const kept = []
+  for (const e of entries) {
+    const key = keyOf(e)
+    if (best.get(key) !== e) continue
+    const entry = ownKeys.has(key) ? { ...e, own: true } : e
+    if (entry.own) kept.unshift(entry)
+    else kept.push(entry)
+  }
+  return { kept, superseded: entries.length - kept.length }
 }
 
 export function isLive(snapshot) {

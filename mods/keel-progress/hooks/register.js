@@ -8,7 +8,7 @@
 //   - a `/keel-progress` pane with every live run's steps, history counts and next issue
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { bandParts, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
+import { bandParts, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
@@ -28,7 +28,11 @@ const FRESH_MS = 24 * 60 * 60 * 1000
 // in a scan that meets a PR it does not hold (a PR `keel ship` just opened).
 const PR_CACHE_MS = 60_000
 const BAND_MAX = 3
-const LABEL_WIDTH = 16
+// Branch labels in the band: at least LABEL_MIN cells, at most LABEL_MAX, else what is left of
+// the band's width after BAND_LINE_COLUMNS for the rest of the line.
+const LABEL_MIN = 12
+const LABEL_MAX = 48
+const BAND_LINE_COLUMNS = 64
 
 const TONES = {
   title: { bold: true },
@@ -45,6 +49,7 @@ let own = null // the session's own last good status, live or not: the pane's id
 let ownStale = false // the last read of the session's own folder failed, so `own` is old
 let failures = [] // [{ label, message }] — worktrees whose `keel status` failed
 let scanned = 0 // other worktrees with a fresh checkpoint at the last scan
+let superseded = 0 // stale copies of a run another worktree holds a newer checkpoint for
 let closedPr = 0 // runs hidden because their pull request is no longer open
 let openPrs = null // Set of open PR numbers, or null when `gh` could not say
 let openPrsAt = -Infinity
@@ -56,6 +61,8 @@ let inFlight = null // the running scan; callers share it instead of starting a 
 let again = false // a fresh scan was asked for while one ran: run once more after it
 let idleTicks = 0
 let poller = null
+let selected = null // the worktree path whose run the pane shows in full
+let expanded = false // the band lists every run, each with a second line
 
 // The timer's tick: every time while a run is live or the session's own read is failing (so
 // recovery shows at once), every IDLE_EVERY-th tick otherwise. Another worktree that keeps
@@ -169,13 +176,17 @@ async function scan($) {
   const mine = await statusOf($, null)
   const worktrees = await listWorktrees($)
   let ownLabel = 'here'
+  let ownBranch = null
   const others = []
   for (const w of worktrees) {
-    if ((await realPath($, w.path)) === here) ownLabel = w.label
+    if ((await realPath($, w.path)) === here) {
+      ownLabel = w.label
+      ownBranch = w.branch
+    }
     else others.push(w)
   }
   if (mine.failure !== undefined) nextFailures.push({ label: ownLabel, message: mine.failure })
-  else candidates.push({ path: cwd, label: ownLabel, ...mine.parsed })
+  else candidates.push({ path: cwd, label: ownLabel, branch: ownBranch, own: true, mtimeMs: 0, ...mine.parsed })
   own = mine.parsed ?? own
   ownStale = mine.failure !== undefined
 
@@ -185,22 +196,32 @@ async function scan($) {
   // Defensive: keel rejects an absolute checkpoint path today. If one ever appears it is one file
   // every worktree shares, which the session's own read already covers.
   const perWorktree = !checkpoint.startsWith('/')
+  if (perWorktree && candidates.length > 0) {
+    try {
+      candidates[0].mtimeMs = (await $.fs.stat(`${cwd}/${checkpoint}`)).mtimeMs
+    } catch {
+      // no checkpoint here: the own entry can only be a live run if keel says so; it ranks oldest
+    }
+  }
   let fresh = 0
   for (const w of perWorktree ? others : []) {
+    let mtimeMs
     try {
-      const st = await $.fs.stat(`${w.path}/${checkpoint}`)
-      if (now - st.mtimeMs >= FRESH_MS) continue
+      mtimeMs = (await $.fs.stat(`${w.path}/${checkpoint}`)).mtimeMs
+      if (now - mtimeMs >= FRESH_MS) continue
     } catch {
       continue // no checkpoint: no run in this worktree
     }
     fresh += 1
     const result = await statusOf($, w.path)
     if (result.failure !== undefined) nextFailures.push({ label: w.label, message: result.failure })
-    else candidates.push({ path: w.path, label: w.label, ...result.parsed })
+    else candidates.push({ path: w.path, label: w.label, branch: w.branch, own: false, mtimeMs, ...result.parsed })
   }
 
   // `gh` is asked only when a live run has a pull request, so an idle session makes no API calls.
-  const live = candidates.filter((run) => isLive(run.snapshot))
+  // One run can leave checkpoints in several worktrees (a worktree nested in another, a
+  // resumed run): the most recently written one is the run's state, the rest are stale copies.
+  const { kept: live, superseded: dupes } = latestPerRun(candidates.filter((run) => isLive(run.snapshot)))
   const withPr = live.some((run) => run.snapshot.current.pull_request != null)
   let prs = withPr ? await loadOpenPrs($, now, false) : null
   let refetched = false
@@ -221,18 +242,45 @@ async function scan($) {
     nextRuns.push(run)
   }
   runs = nextRuns
+  if (runs.length === 0) expanded = false // the band comes back compact
   failures = nextFailures
   scanned = fresh
   closedPr = hidden
+  superseded = dupes
 }
 
 function textProps(part) {
   return { ...TONES[part.tone], wrap: 'truncate', children: [part.text] }
 }
 
-function labelPart(run) {
-  const label = run.label.length > LABEL_WIDTH ? `${run.label.slice(0, LABEL_WIDTH - 1)}…` : run.label
-  return { text: `${label.padEnd(LABEL_WIDTH)} `, tone: 'dim' }
+// The branch label takes what the band can spare beside the step bar and its text.
+function labelWidth(bodyColumns) {
+  return Math.max(LABEL_MIN, Math.min(LABEL_MAX, (bodyColumns ?? 0) - BAND_LINE_COLUMNS))
+}
+
+// With several runs on screen, the session's own one is marked `▸` and drawn bright.
+function labelPart(run, width) {
+  const name = `${run.own ? '▸ ' : '  '}${run.label}`
+  const label = name.length > width ? `${name.slice(0, width - 1)}…` : name
+  return { text: label.padEnd(width), tone: run.own ? 'title' : 'dim' }
+}
+
+async function openRun($, path) {
+  selected = path
+  // No focus: a digit typed into an empty prompt (to answer something else) also presses the
+  // band's buttons, and must not take the keyboard away from the prompt.
+  await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true })
+  $.ui.invalidate('ui.render')
+}
+
+function selectRun($, path) {
+  selected = path
+  $.ui.invalidate('ui.render')
+}
+
+function toggleExpanded($) {
+  expanded = !expanded
+  $.ui.invalidate('ui.render')
 }
 
 export function register(on) {
@@ -266,6 +314,7 @@ export function register(on) {
 
   on('command.run', { command: 'keel-progress' }, async ($) => {
     // Open first: a slow scan must not delay the pane; the scan redraws it.
+    selected = null
     await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true })
     $.clock.after(0, () => refresh($, true))
     return {}
@@ -273,19 +322,61 @@ export function register(on) {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (runs.length === 0) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
     const labelled = runs.length > 1
-    const lines = runs.slice(0, BAND_MAX).map((run) =>
-      Box({
-        key: `keel-progress-${run.path}`,
-        flexDirection: 'row',
-        children: [...(labelled ? [labelPart(run)] : []), ...bandParts(run.snapshot, run.steps)].map((part) =>
-          Text(textProps(part)),
-        ),
-      }),
-    )
-    if (runs.length > BAND_MAX) {
-      lines.push(Text(textProps({ text: `+${runs.length - BAND_MAX} more keel runs · /keel-progress`, tone: 'dim' })))
+    const shown = expanded ? runs : runs.slice(0, BAND_MAX)
+    // As wide as the longest label on screen, within what the band can spare.
+    const longest = Math.max(...shown.map((run) => run.label.length + 2))
+    const width = Math.min(labelWidth(e.props.bodyColumns), Math.max(LABEL_MIN, longest))
+    const lines = []
+    shown.forEach((run, i) => {
+      // The issue is a button: click it, or type its digit into an empty prompt, to open the
+      // pane on this run.
+      const issue = run.snapshot.current.issue
+      const open = Button({
+        key: `keel-progress-open-${run.path}`,
+        label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
+        plain: true,
+        ...(i < 9 ? { hotkey: String(i + 1) } : {}),
+        onPress: () => openRun($, run.path),
+      })
+      const toggle =
+        i === 0 && (runs.length > 1 || expanded)
+          ? [
+              Button({
+                key: 'keel-progress-toggle',
+                label: expanded ? 'less' : 'more',
+                plain: true,
+                onPress: () => toggleExpanded($),
+              }),
+            ]
+          : []
+      lines.push(
+        Box({
+          key: `keel-progress-${run.path}`,
+          flexDirection: 'row',
+          columnGap: 1,
+          children: [
+            ...(labelled ? [Text(textProps(labelPart(run, width)))] : []),
+            Text(textProps({ text: 'keel', tone: 'title' })),
+            open,
+            ...bandParts(run.snapshot, run.steps).slice(2).map((part) => Text(textProps(part))),
+            ...toggle,
+          ],
+        }),
+      )
+      if (expanded) {
+        // The second line carries what the first had to cut: the whole branch and where it runs.
+        lines.push(
+          Text({
+            ...textProps({ text: `    ${run.branch ?? run.label} · ${run.path}`, tone: 'dim' }),
+            wrap: 'truncate-middle',
+          }),
+        )
+      }
+    })
+    if (!expanded && runs.length > BAND_MAX) {
+      lines.push(Text(textProps({ text: `+${runs.length - BAND_MAX} more keel runs · more, or /keel-progress`, tone: 'dim' })))
     }
     // Keep what the mods after this one draw in the band.
     const theirs = await next(e)
@@ -295,45 +386,64 @@ export function register(on) {
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
-    const lines = []
+    const children = []
+    const line = (part) => children.push(Text(textProps(part)))
     if (!hasProject) {
-      lines.push({ text: `No ${PROJECT} in this directory, so there is no keel run to show.`, tone: 'dim' })
+      line({ text: `No ${PROJECT} in this directory, so there is no keel run to show.`, tone: 'dim' })
     } else {
-      const hiddenNote = closedPr > 0 ? ` · ${closedPr} hidden (PR closed)` : ''
-      lines.push({
+      const hiddenNote =
+        (closedPr > 0 ? ` · ${closedPr} hidden (PR closed)` : '') +
+        (superseded > 0 ? ` · ${superseded} stale copy(ies) of a run` : '')
+      line({
         text: `${runs.length} live keel run(s) · ${scanned} other worktree(s) with a recent checkpoint${hiddenNote}`,
         tone: 'title',
       })
-      for (const run of runs) {
-        lines.push({ text: ' ', tone: 'plain' })
-        lines.push({ text: `${run.label}  ${run.path}`, tone: 'dim' })
-        lines.push(...paneLines(run.snapshot, run.steps))
+      // The run picked in the band (or the first) in full; the others as buttons to switch to.
+      const focus = runs.find((run) => run.path === selected) ?? runs[0]
+      if (focus) {
+        line({ text: ' ', tone: 'plain' })
+        line({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
+        line({ text: focus.path, tone: 'dim' })
+        for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) line(part)
+      }
+      const others = runs.filter((run) => run !== focus)
+      if (others.length > 0) {
+        line({ text: ' ', tone: 'plain' })
+        line({ text: 'Other runs:', tone: 'dim' })
+        for (const run of others) {
+          const c = run.snapshot.current
+          children.push(
+            Button({
+              key: `keel-progress-pick-${run.path}`,
+              label: `${run.own ? '▸ ' : ''}${run.branch ?? run.label} · #${c.issue ?? '-'} ${c.step ?? ''}`,
+              plain: true,
+              onPress: () => selectRun($, run.path),
+            }),
+          )
+        }
       }
       if (runs.length === 0 && own !== null) {
         // No live run: the session's own project, as it is (no active run, history, next issue).
-        lines.push({ text: ' ', tone: 'plain' })
+        line({ text: ' ', tone: 'plain' })
         // After a failed read this is the last status that worked, and says so (#1446).
-        if (ownStale) lines.push({ text: 'last good status:', tone: 'dim' })
-        lines.push(...paneLines(own.snapshot, own.steps))
+        if (ownStale) line({ text: 'last good status:', tone: 'dim' })
+        for (const part of paneLines(own.snapshot, own.steps)) line(part)
       }
       for (const failure of failures) {
-        lines.push({ text: `keel status failed (${failure.label}): ${failure.message}`, tone: 'bad' })
+        line({ text: `keel status failed (${failure.label}): ${failure.message}`, tone: 'bad' })
       }
     }
-    return Box({
-      flexDirection: 'column',
-      children: [
-        ...lines.map((part) => Text(textProps(part))),
-        Box({
-          key: 'keel-progress-actions',
-          flexDirection: 'row',
-          columnGap: 2,
-          children: [
-            Button({ key: 'refresh', label: 'Refresh', onPress: () => refresh($, true) }),
-            Button({ key: 'close', label: 'Close', onPress: () => $.ui.close({ id: PANE }) }),
-          ],
-        }),
-      ],
-    })
+    children.push(
+      Box({
+        key: 'keel-progress-actions',
+        flexDirection: 'row',
+        columnGap: 2,
+        children: [
+          Button({ key: 'refresh', label: 'Refresh', onPress: () => refresh($, true) }),
+          Button({ key: 'close', label: 'Close', onPress: () => $.ui.close({ id: PANE }) }),
+        ],
+      }),
+    )
+    return Box({ flexDirection: 'column', children })
   })
 }
