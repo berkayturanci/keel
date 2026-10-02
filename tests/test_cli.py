@@ -11422,6 +11422,86 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertTrue(data["checkpoint_gate"]["enforced"])
         self.assertEqual(data["checkpoint_gate"]["status"], "covered")
 
+    def _read_checkpoint(self, root, config_path):
+        config = cli.cfg.load_config(config_path)
+        return cli.checkpoint.read_checkpoint(cli.checkpoint.resolve_path(root, config))
+
+    def test_a_landed_merge_is_written_into_the_runs_checkpoint(self):
+        # #1448: the checkpoint the gate required at s10 used to stay at s10 "not-started".
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d)
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            data["checkpoint_update"], {"updated": True, "run_id": "RUN-1", "current_step": "s11"}
+        )
+        self.assertEqual(record["state"]["merge"], "merged")
+        self.assertEqual(record["position"]["current_step"], "s11")
+        self.assertIn("s10", record["position"]["completed_steps"])
+
+    def test_a_dry_run_or_a_refused_merge_leaves_the_checkpoint_alone(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d, extra=["--dry-run"])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("checkpoint_update", json.loads(out))
+            self.assertEqual(self._read_checkpoint(d, config)["state"]["merge"], "not-started")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s6")
+            rc, _, _ = self._run_merge(config=config, root=d)
+            self.assertEqual(rc, 1)
+            self.assertEqual(self._read_checkpoint(d, config)["position"]["current_step"], "s6")
+
+    def test_another_runs_checkpoint_is_not_rewritten(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-OTHER", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d, extra=["--no-checkpoint-gate"])
+            record = self._read_checkpoint(d, config)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(out)["checkpoint_update"],
+            {"updated": False, "reason": "no checkpoint for run RUN-1"},
+        )
+        self.assertEqual(record["state"]["merge"], "not-started")
+
+    def test_a_merge_with_no_run_id_has_no_checkpoint_to_update(self):
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run_merge(config=str(PROJECTS / "keel.yaml"), root=d, run_id=None)
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(out)["checkpoint_update"], {"updated": False, "reason": "no run-id"}
+        )
+
+    def test_a_checkpoint_that_is_not_utf8_does_not_fail_a_landed_merge(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            path = cli.checkpoint.resolve_path(d, cli.cfg.load_config(config))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\xff\xfe not utf-8")
+            rc, out, _ = self._run_merge(config=config, root=d, extra=["--no-checkpoint-gate"])
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertFalse(data["checkpoint_update"]["updated"])
+        self.assertIn("checkpoint not updated", data["checkpoint_update"]["reason"])
+
+    def test_a_checkpoint_that_cannot_be_written_does_not_fail_a_landed_merge(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s10")
+            with patch("keel.cli.checkpoint.write_checkpoint", side_effect=OSError("disk full")):
+                rc, out, _ = self._run_merge(config=config, root=d)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertFalse(data["checkpoint_update"]["updated"])
+        self.assertIn("disk full", data["checkpoint_update"]["reason"])
+
     def test_merge_refused_when_checkpoint_missing(self):
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:
