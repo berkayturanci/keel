@@ -73,7 +73,7 @@ let poller = null
 // Set by a fresh request (a keel command, a click): the next scan rechecks PRs `knownClosed` holds,
 // once, in case `gh pr list` lagged right after `gh pr create`.
 let recheckClosed = false
-let selected = null // the worktree path whose run the pane shows in full
+let selected = null // the run (runKey) the pane shows in full
 let expanded = false // the band lists every run, each with a second line
 
 // The timer's tick: every time while a run is live or the session's own read is failing (so
@@ -331,16 +331,23 @@ function labelPart(run, width) {
   return { text: label + ' '.repeat(Math.max(0, width - cells(label))), tone: run.own ? 'title' : 'dim' }
 }
 
-async function openRun($, path) {
-  selected = path
+// One worktree can hold several runs (a ship and a review-cycle stamping activity side by side),
+// so a run is named by its worktree and its run id (or issue), not the worktree alone.
+function runKey(run) {
+  const c = run.snapshot.current
+  return `${run.path}#${c.run_id ?? c.issue ?? c.pull_request ?? ''}`
+}
+
+async function openRun($, key) {
+  selected = key
   // No focus: a digit typed into an empty prompt (to answer something else) also presses the
   // band's buttons, and must not take the keyboard away from the prompt.
   await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true })
   $.ui.invalidate('ui.render')
 }
 
-function selectRun($, path) {
-  selected = path
+function selectRun($, key) {
+  selected = key
   $.ui.invalidate('ui.render')
 }
 
@@ -402,11 +409,11 @@ export function register(on) {
       // pane on this run.
       const issue = run.snapshot.current.issue
       const open = Button({
-        key: `keel-progress-open-${run.path}`,
+        key: `keel-progress-open-${runKey(run)}`,
         label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
         plain: true,
         ...(i < 9 ? { hotkey: String(i + 1) } : {}),
-        onPress: () => openRun($, run.path),
+        onPress: () => openRun($, runKey(run)),
       })
       const toggle =
         i === 0 && (runs.length > 1 || expanded)
@@ -421,7 +428,7 @@ export function register(on) {
           : []
       lines.push(
         Box({
-          key: `keel-progress-${run.path}`,
+          key: `keel-progress-${runKey(run)}`,
           flexDirection: 'row',
           columnGap: 1,
           children: [
@@ -463,11 +470,11 @@ export function register(on) {
         (closedPr > 0 ? ` · ${closedPr} hidden (PR closed)` : '') +
         (superseded > 0 ? ` · ${superseded} stale copy(ies) of a run` : '')
       line({
-        text: `${runs.length} live keel run(s) · ${scanned} other worktree(s) with a recent checkpoint${hiddenNote}`,
+        text: `${runs.length} live keel run(s) · ${scanned} other worktree(s) with recent keel state${hiddenNote}`,
         tone: 'title',
       })
       // The run picked in the band (or the first) in full; the others as buttons to switch to.
-      const focus = runs.find((run) => run.path === selected) ?? runs[0]
+      const focus = runs.find((run) => runKey(run) === selected) ?? runs[0]
       if (focus) {
         line({ text: ' ', tone: 'plain' })
         line({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
@@ -482,10 +489,10 @@ export function register(on) {
           const c = run.snapshot.current
           children.push(
             Button({
-              key: `keel-progress-pick-${run.path}`,
+              key: `keel-progress-pick-${runKey(run)}`,
               label: `${run.own ? '▸ ' : ''}${run.branch ?? run.label} · #${c.issue ?? '-'} ${c.step ?? ''}`,
               plain: true,
-              onPress: () => selectRun($, run.path),
+              onPress: () => selectRun($, runKey(run)),
             }),
           )
         }

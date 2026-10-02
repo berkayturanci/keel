@@ -445,7 +445,7 @@ test('a stale checkpoint, a worktree without one, and a run whose PR closed are 
   expect(
     await pane.find({
       type: 'Text',
-      text: '1 live keel run(s) · 1 other worktree(s) with a recent checkpoint · 1 hidden (PR closed)',
+      text: '1 live keel run(s) · 1 other worktree(s) with recent keel state · 1 hidden (PR closed)',
     }),
   ).toBeDefined()
 })
@@ -723,14 +723,14 @@ test('clicking a run in the band opens the pane on that run, with the others to 
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  await band.press({ key: 'keel-progress-open-/wt/a' })
+  await band.press({ key: 'keel-progress-open-/wt/a#11' })
   expect(calls.opened).toEqual(['keel-progress'])
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'fix/a-really-long-branch-name-that-the-band-cuts' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: '/wt/a' })).toBeDefined()
   const back = await pane.find({ type: 'Button', text: /▸ main · #1022 s10/ })
   expect(back).toBeDefined()
-  await pane.press({ key: 'keel-progress-pick-/work' })
+  await pane.press({ key: 'keel-progress-pick-/work#1022' })
   expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeDefined()
 })
 
@@ -1026,4 +1026,32 @@ test('a run id with capitals is found under keel\u2019s lowercase file name', as
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#12' })).toBeDefined()
+})
+
+test('two runs in one worktree get their own lines and keys', async ($, on) => {
+  const clock = mock.clock(on, { now: 2 * HOURS })
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2473, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      {
+        path: '/wt/pr',
+        branch: 'pr-2473',
+        mtime: null,
+        activityMtime: 1.9 * HOURS,
+        activity: [
+          act('ship-2470', 2470, 's7', { pr: 2001 }),
+          act('review-cycle-2473', 2473, 'review', { command: 'review-cycle', pr: 2473 }),
+        ],
+      },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await band.press({ key: 'keel-progress-open-/wt/pr#review-cycle-2473' })
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: 'issue #2473 · PR #2473 · review-cycle' })).toBeDefined()
+  expect(await pane.find({ type: 'Button', text: /pr-2473 · #2470 s7/ })).toBeDefined()
 })
