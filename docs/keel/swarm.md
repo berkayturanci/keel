@@ -694,6 +694,16 @@ got ([#1280](https://github.com/berkayturanci/keel/issues/1280)). Each worker re
 
 A state file written before these fields still loads; the missing fields read as unset.
 
+A live `swarm-review` records each cluster's outcome in that cluster's worker record of the run
+state, as `review` ([#1440](https://github.com/berkayturanci/keel/issues/1440)), and the board
+shows it in its `Review` column: the status, how many seats approved, and the head they
+reviewed — `posted 2/2 APPROVE @ 596e3d8a`, `changes-requested 1/2 APPROVE, 1 REQUEST_CHANGES
+@ …` (status `posted-changes-requested`), `held 2/3 APPROVE, 1 failed @ …`, `already-merged`,
+or `not reviewed`. `swarm-status` reads no pull request, so it cannot say whether the reviewed
+head is still the pull request's head; compare it with the pull request. The record is a
+report: `swarm-land` does not read it, and `keel merge`'s evidence gate — the verdicts on the
+pull request at its current head — stays the only authority on whether a cluster is reviewed.
+
 It exits `0` when it read the run, or when no `--swarm-id` was given and there is no run at all;
 it exits `1` when the run's state file cannot be read or `--swarm-id` names a run that does not
 exist, and `--json` then prints an object with an `error_code` instead of the `{}` that means "no
@@ -787,6 +797,17 @@ It reviews the plan `swarm-run` persisted, wave by wave, cluster by cluster
 
   A cluster with a posted rejection is `posted-changes-requested`, and the exit code is
   non-zero; fix the findings, push, and run `swarm-review` again on the new head.
+
+**What is recorded** ([#1440](https://github.com/berkayturanci/keel/issues/1440)). A live run
+writes each cluster's outcome into that cluster's worker record of the run state
+(`.keel/state/swarm/<swarm_id>.json`, the file `swarm-run` writes, through the same atomic
+writer), as the cluster ends: `review` = `{status, reason, pull_request, head_sha, tier,
+required, run_id, reviewed_at, seats: [{slot, reviewer, vendor, outcome, reason}]}`, each seat's
+`outcome` `APPROVE`, `REQUEST_CHANGES`, `failed`, `refused` (a seat keel would not run) or
+`not-run`. Re-running replaces the cluster's record whole — the latest review wins, pinned to the
+head it reviewed. A dry run records nothing. It takes no lock, like `swarm-land`: do not run it
+beside a `swarm-run` of the same swarm. `keel swarm-status` shows the record; `swarm-land`
+ignores it.
 
 A dry run reads each pull request and prints which seats would review it at which head; it checks
 out, runs and posts nothing. A live run needs `filesystem`, `git` and `github` approved, explicitly

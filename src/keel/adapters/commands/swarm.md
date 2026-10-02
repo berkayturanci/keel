@@ -199,6 +199,9 @@ implementation is the leads' work, below.
 - A lead never re-scores its cluster and never re-staffs it. If the work turns out heavier
   than the band said, it reports that through the worker record and the CTO re-plans.
 - When a cluster's issue fails, `rebalance_swarm_plan` drops the clusters carrying that issue from the remaining waves; there is no runtime file-divergence detection — clusters are kept apart by plan-time overlap partitioning (and, in a non-dry run, per-worktree isolation).
+- After `swarm-review --live`, the board's `Review` column shows each cluster's last review
+  (`posted 2/2 APPROVE @ <head>`, `changes-requested …`, `held …`, `not reviewed`) — a report:
+  only `keel merge`'s evidence gate decides whether a cluster lands.
 - Track live worker states with `keel swarm-status` — the board's `Lead` and `Band` columns
   are how the operator sees which lead owns which cluster and why it drew its provider.
 

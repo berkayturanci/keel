@@ -597,6 +597,57 @@ class WhatIsPosted(unittest.TestCase):
         self.assertEqual(sr.review_run_id("s1", "c1"), "s1/c1")
 
 
+class TheRecordTheRunStateKeeps(unittest.TestCase):
+    """#1440: what a live review leaves for `swarm-status`."""
+
+    def test_each_seat_is_recorded_with_its_outcome_and_reasons_are_bounded(self):
+        claude, agy, codex = _seats(
+            _seat("claude"), _seat("agy", slot="C"), _seat("codex", slot="B")
+        )
+        verdict = sr.SeatVerdict("A", claude.reviewer, sr.REQUEST_CHANGES, "x" * 400)
+        cluster = sr.ClusterReview(
+            "c1",
+            sr.POSTED_CHANGES_REQUESTED,
+            "posted",
+            9,
+            "abc",
+            2,
+            2,
+            (claude, agy, codex),
+            (verdict,),
+        )
+        record = sr.review_record(cluster, run_id="s1/c1", reviewed_at="2026-10-02T09:00:00Z")
+        self.assertEqual(
+            {k: v for k, v in record.items() if k != "seats"},
+            {
+                "status": "posted-changes-requested",
+                "reason": "posted",
+                "pull_request": 9,
+                "head_sha": "abc",
+                "tier": 2,
+                "required": 2,
+                "run_id": "s1/c1",
+                "reviewed_at": "2026-10-02T09:00:00Z",
+            },
+        )
+        seats = record["seats"]
+        self.assertEqual(
+            [(s["slot"], s["vendor"], s["outcome"]) for s in seats],
+            [
+                ("A", "claude", "REQUEST_CHANGES"),
+                ("C", "agy", "refused"),
+                ("B", "codex", "not-run"),
+            ],
+        )
+        self.assertEqual(len(seats[0]["reason"]), sr.RECORD_REASON_CHARS + 1)
+        self.assertIn("is the implementer's", seats[1]["reason"])
+        unplanned = _one("subagent:x", kind="subagent")
+        record = sr.review_record(
+            sr.ClusterReview("c1", sr.REFUSED, seats=(unplanned,)), run_id="r", reviewed_at="t"
+        )
+        self.assertEqual(record["seats"][0]["vendor"], "subagent:x")
+
+
 class TheReport(unittest.TestCase):
     def test_the_wave_succeeds_only_when_every_cluster_is_clean(self):
         clean = sr.ClusterReview("c1", sr.POSTED)
