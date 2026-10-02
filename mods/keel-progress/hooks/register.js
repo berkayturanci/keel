@@ -53,10 +53,11 @@ let again = false // a fresh scan was asked for while one ran: run once more aft
 let idleTicks = 0
 let poller = null
 
-// The timer's tick: every time while a run is live or a worktree is failing (so recovery shows
-// at once), every IDLE_EVERY-th tick otherwise.
+// The timer's tick: every time while a run is live or the session's own read is failing (so
+// recovery shows at once), every IDLE_EVERY-th tick otherwise. Another worktree that keeps
+// failing does not hold the whole scan on the fast cadence.
 function tick($) {
-  if (runs.length === 0 && failures.length === 0) {
+  if (runs.length === 0 && !ownStale) {
     idleTicks = (idleTicks + 1) % IDLE_EVERY
     if (idleTicks !== 0) return undefined
   }
@@ -192,12 +193,14 @@ async function scan($) {
     else candidates.push({ path: w.path, label: w.label, ...result.parsed })
   }
 
-  let prs = await loadOpenPrs($, now, false)
+  // `gh` is asked only when a live run has a pull request, so an idle session makes no API calls.
+  const live = candidates.filter((run) => isLive(run.snapshot))
+  const withPr = live.some((run) => run.snapshot.current.pull_request != null)
+  let prs = withPr ? await loadOpenPrs($, now, false) : null
   let refetched = false
   const nextRuns = []
   let hidden = 0
-  for (const run of candidates) {
-    if (!isLive(run.snapshot)) continue
+  for (const run of live) {
     const pr = run.snapshot.current.pull_request
     if (pr != null && prs !== null && !prs.has(pr) && !refetched) {
       refetched = true

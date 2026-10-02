@@ -31,7 +31,7 @@ export function parseStatus(stdout) {
 // `git worktree list --porcelain` → [{ path, label }]; the label is the branch, else the folder.
 export function parseWorktrees(porcelain) {
   const out = []
-  for (const block of porcelain.split('\n\n')) {
+  for (const block of porcelain.replace(/\r\n/g, '\n').split('\n\n')) {
     let path = null
     let branch = null
     for (const line of block.split('\n')) {

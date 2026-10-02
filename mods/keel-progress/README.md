@@ -17,8 +17,8 @@ fix/merge-chec…  keel #1448 ▰▰▰▰▰▰▰▶▱▱▱▱▱ s7 review 
   live.
 - **`/keel-progress`:** opens a pane listing every live run with its steps, the history counts (shipped,
   blocked, deferred, skipped) and the next queued issue, with **Refresh** and **Close**
-  buttons. If `keel status` fails, the pane shows the error and the line above the prompt
-  stays empty until a status succeeds again.
+  buttons. A worktree whose `keel status` fails is listed in the pane with its error and
+  left out of the band until a read succeeds again.
 
 ## How it reads the runs
 
