@@ -48,11 +48,18 @@ export function parseWorktrees(porcelain) {
 // stale copy, the winner is still the session's run: it keeps the `own` mark and goes first.
 // Returns { kept, superseded }.
 export function latestPerRun(entries) {
+  // A run id names the run; an entry without one (an older checkpoint) joins the run that shares
+  // its issue, so an activity record and an older checkpoint of the same run meet.
+  const runOfIssue = new Map()
+  for (const e of entries) {
+    const c = e.snapshot.current
+    if (c.run_id && c.issue != null && !runOfIssue.has(c.issue)) runOfIssue.set(c.issue, `run:${c.run_id}`)
+  }
   const keyOf = (e) => {
     const c = e.snapshot.current
     if (c.run_id) return `run:${c.run_id}`
     // A copy written before the PR was opened has no PR yet: the issue alone names the run.
-    if (c.issue != null) return `issue:${c.issue}`
+    if (c.issue != null) return runOfIssue.get(c.issue) ?? `issue:${c.issue}`
     if (c.pull_request != null) return `pr:${c.pull_request}`
     return `path:${e.path}`
   }
@@ -102,6 +109,47 @@ export function fitCells(text, width) {
     n += w
   }
   return out
+}
+
+// keel's file name for a run id (activity.run_id_slug): lowercase, runs of anything outside
+// [a-z0-9._-] become '-', and leading or trailing '-' and '.' go.
+export function runIdSlug(runId) {
+  return String(runId).trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '')
+}
+
+// `keel activity --json` → { dir, runs }: the directory keel read (absolute, or null when the
+// payload does not say) and the runs it says are still running, shaped like a status snapshot
+// so the band and the pane draw them the same way. Activity is written at every phase a command
+// stamps, so it is often newer than the checkpoint, which keel writes only at its safe
+// boundaries; and some flows stamp activity without ever writing a checkpoint. `steps` is the
+// backbone from a status contract, used when the phase is one of its steps (keel ship).
+export function activityRuns(stdout, steps) {
+  const payload = JSON.parse(stdout)
+  const dir = typeof payload?.path === 'string' && payload.path ? payload.path : null
+  const records = Array.isArray(payload?.activity) ? payload.activity : []
+  const runs = []
+  for (const r of records) {
+    if (!r || r.status !== 'running' || !r.run_id) continue
+    const onBackbone = steps.some((s) => s.id === r.phase)
+    const blocked = r.verdict === 'blocked'
+    runs.push({
+      fileName: `${runIdSlug(r.run_id)}.json`,
+      steps: onBackbone ? steps : [{ id: String(r.phase ?? r.command), name: `(${r.command})` }],
+      snapshot: {
+        status: blocked ? 'interrupted' : 'active',
+        current: {
+          run_id: String(r.run_id),
+          command: r.command ?? null,
+          issue: r.issue ?? null,
+          pull_request: r.pr ?? null,
+          step: r.phase ?? null,
+          wait_reason: blocked ? 'gates blocked' : null,
+        },
+        source: 'activity',
+      },
+    })
+  }
+  return { dir, runs }
 }
 
 export function isLive(snapshot) {
