@@ -236,7 +236,7 @@ Keel Swarm anchors multi-agent parallelism inside deterministic engineering inva
 - **Static DAG Dependency Clustering**: Pre-analyzes issue blast radiuses to schedule orthogonal tasks in parallel waves while serializing dependent tasks.
 - **Physical Git Worktree Isolation**: Workers develop inside dedicated `.keel/worktrees/<swarm_id>/<cluster_id>/` sandboxes.
 - **Single-Writer Batch Landing**: Merges each cluster's pull request through `keel merge`, one at a time under the atomic `merge_lock` — the merge window, the review-evidence gate and the head-pinned squash apply as to any pull request; a pull request `keel merge` refuses (`DIRTY`, no evidence, outside the window) is held with the reason and the next one is tried ([#1287](https://github.com/berkayturanci/keel/issues/1287)).
-- **Commit-Bound Evidence**: `keel merge` holds each cluster PR until review verdicts pinned to its head are posted. Those come from outside the swarm — it convenes no reviewer and no jury itself ([#1423](https://github.com/berkayturanci/keel/issues/1423)).
+- **Commit-Bound Evidence**: `keel merge` holds each cluster PR until review verdicts pinned to its head are posted. They come from outside the swarm unless you run `keel swarm-review`, which dispatches each cluster's reviewer seats and posts their verdicts; it has not yet run on a real repository, and it convenes no jury ([#1423](https://github.com/berkayturanci/keel/issues/1423)).
 - **Full-Spectrum Observability**: A terminal ASCII plan tree (`keel swarm-plan --tree`) and a status table (`keel swarm-status`), paired with `keel-visual`'s 2D / pseudo-3D swarm scenes (rendered snapshots).
 
 ---
@@ -427,7 +427,7 @@ Legend: ✅ yes · ◑ partial/limited · ❌ no · `OSS`/`Prop.`
 | Tool | Agent-agnostic | Merge queue | Merge window/freeze | AI review | Multi-agent debate | Policy/gate aggregation | Project config | Open source |
 |---|---|---|---|---|---|---|---|---|
 | **keel** | ✅ (CLI adapters) | ❌ (one-at-a-time + lock) | ✅ (native, TZ-aware) | ✅ (via ai-jury) | ✅ (review→debate→verify→synth) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
-| **keel-swarm** (experimental — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | ✅ (CLI adapters) | ✅ (sequential batch under one lock) | ✅ (each cluster lands through `keel merge`, which enforces it) | ❌ (nothing in the swarm reviews its PRs; verdicts are posted from outside — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | ❌ (none inside the swarm) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
+| **keel-swarm** (experimental — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | ✅ (CLI adapters) | ✅ (sequential batch under one lock) | ✅ (each cluster lands through `keel merge`, which enforces it) | ⚠️ (only with `swarm-review`, experimental and not yet run on a real repository; otherwise verdicts are posted from outside — [#1423](https://github.com/berkayturanci/keel/issues/1423)) | ❌ (none inside the swarm) | ✅ (Lego gates) | ✅ (`.keel/project.yaml`) | OSS (Apache-2.0) |
 | **Mergify** | ❌ | ✅ | ✅ (schedule + pause/freeze) | ❌ | ❌ | ◑ (conditions) | ◑ (config.yml) | Prop. (OSS repo exists) |
 | **GitHub merge queue** | ❌ | ✅ | ❌ (workarounds only) | ❌ | ❌ | ◑ (required checks) | ◑ | Prop. |
 | **bors-ng** | ❌ | ✅ (batch+bisect) | ❌ | ❌ | ❌ | ◑ | ◑ | OSS (Apache-2.0, deprecated) |

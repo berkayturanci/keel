@@ -382,9 +382,8 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
     def test_the_one_live_landing_is_stated_without_overclaiming(self):
         """#1281's closing comment: one live landing has run, on a sandbox repository, with
         each pull request reviewed outside the swarm. The adapter said "no real landing has
-        been exercised yet" after that ran. It may say the landing happened, but not that
-        the swarm reviews its own pull requests (#1423) or that it stopped being
-        experimental."""
+        been exercised yet" after that ran. It may say the landing happened, but not that it
+        stopped being experimental."""
         prose = _prose("swarm")
         description = re.search(r"^description: (.*)$", _source("swarm"), re.M).group(1)
         self.assertNotIn("no real landing has been exercised yet", prose)
@@ -394,13 +393,32 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
         self.assertNotIn("left the landed issues open", prose)
         self.assertIn("closes what it merged as `/keel:ship` does", prose)
         self.assertIn("then the issues closed (#1422)", prose)
-        self.assertIn("Whether the swarm should review its own pull requests is still open", prose)
         self.assertIn("Swarm stays experimental", prose)
-        self.assertIn("nothing in the swarm reviews the work it opens", prose)
         self.assertTrue(description.startswith("EXPERIMENTAL"))
-        self.assertIn("nothing in the swarm reviews them", description)
         self.assertIn("one live landing has run, on a sandbox repository", description)
-        self.assertIsNone(re.search(r"(?i)(?<!nothing in )the swarm (reviews|dispatches)", prose))
+
+    def test_swarm_review_is_offered_as_opt_in_and_not_as_proven(self):
+        """#1423, the owner's decision: `keel swarm-review` dispatches each cluster's reviewer
+        seats and posts their verdicts. It is opt-in and has not run on a real repository, so
+        the adapter must say both — and must stop saying nothing in the swarm reviews — and
+        must never claim that swarm review has run on a real repository."""
+        prose = _prose("swarm")
+        description = re.search(r"^description: (.*)$", _source("swarm"), re.M).group(1)
+        self.assertNotIn("nothing in the swarm reviews", prose)
+        self.assertNotIn("nothing in the swarm reviews", description)
+        self.assertNotIn(
+            "Whether the swarm should review its own pull requests is still open", prose
+        )
+        self.assertIn("keel swarm-review .keel/project.yaml --root . --swarm-id <swarm_id>", prose)
+        self.assertIn("has not yet run on a real repository", prose)
+        self.assertIn("not yet run on a real repository (#1423)", description)
+        self.assertIn("A seat whose answer does not parse is `failed`: never an approval", prose)
+        # #1426 made a change request evidence: swarm-review posts it, and keel merge holds.
+        self.assertIn("`posted-changes-requested`", prose)
+        self.assertIn("review-verdict-not-approved", prose)
+        self.assertNotIn("would still count as a verdict", prose)
+        self.assertIsNone(re.search(r"(?i)swarm[- ]review (has|have) (now )?(run|landed)", prose))
+        self.assertIsNone(re.search(r"(?i)no longer experimental", prose))
 
 
 if __name__ == "__main__":

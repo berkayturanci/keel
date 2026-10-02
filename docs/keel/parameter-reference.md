@@ -100,8 +100,10 @@ once here in full; the per-command sections below only note deviations.
   `work-block`, `overnight`, `regression`, `review-all-day`, `doctor` (where the
   consent covers what `doctor --fix` writes), and `swarm-run` (where `--live` delegates the
   consent to each cluster's worker; `agent` mode approves nothing it can delegate, so a live
-  swarm needs explicit or standing scopes and an operator), and `swarm-land` (which passes it to
-  the `keel merge` it runs for each cluster).
+  swarm needs explicit or standing scopes and an operator), `swarm-land` (which passes it to
+  the `keel merge` it runs for each cluster), and `swarm-review` (where `--live` needs approved
+  `filesystem,git,github` scopes and passes them to the `keel review` it posts each cluster's
+  verdicts with; `agent` mode is refused, as for `swarm-run`).
 - **Example:** `KEEL_CONSENT_MODE=agent keel plan .keel/project.yaml --command ship --live --json`
 
 ### `--approve-scope SCOPE`
@@ -183,7 +185,8 @@ only as pass-throughs to each child ship.
 - **`--jury` / `--no-jury` / `--jury-advisory` accepted by:** `plan`, `merge`, `ship`,
   `review`, `step-verify`, `evidence-verify`.
 - **`--reviewers` accepted by:** `plan`, `merge`, `ship`, `review`, `step-verify`,
-  `evidence-verify`, `work-block`, `overnight`, `swarm-plan`, `swarm-run`, `swarm-land`.
+  `evidence-verify`, `work-block`, `overnight`, `swarm-plan`, `swarm-run`, `swarm-land`,
+  `swarm-review`.
 - **`--review-comments` accepted by:** `plan`, `merge`, `ship`, `step-verify`,
   `evidence-verify`, `work-block`, `overnight`.
 
@@ -830,7 +833,8 @@ function `keel ship`, `keel plan`, `keel step-verify`, `keel evidence-verify` an
 so the surfaces can be checked against each other rather than assumed equal. Supplying
 fewer reviews than the tier requires exits 1
 (`supplied 1 review(s) but tier requires at least 2; refusing to under-post evidence`);
-an exact count or more is allowed. Pass a run's jury flags through to its `keel review`
+an exact count or more is allowed, and so is a short bundle that carries a verdict that does
+not approve — it holds `keel merge` on its own (#1426, #1423). Pass a run's jury flags through to its `keel review`
 call — `keel ship --no-jury` followed by a bare `keel review --verify` asks two halves of
 one run for two different gates.
 
@@ -2121,8 +2125,9 @@ keel install-legacy-wrappers all --force
 
 ## `keel swarm-land`
 
-> **Experimental subsystem** — nothing in a swarm reviews the pull requests it opens, so a
-> cluster lands only once its review is recorded by hand. See
+> **Experimental subsystem** — the swarm reviews the pull requests it opens only when you run
+> [`keel swarm-review`](#keel-swarm-review), which has not yet run on a real repository; a
+> cluster lands only once its review verdicts are posted. See
 > [#1423](https://github.com/berkayturanci/keel/issues/1423).
 
 Land a completed execution wave by merging each cluster's pull request through
@@ -2190,6 +2195,68 @@ not read as still in effect. Full field documentation:
 keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 \
   --approve-scope filesystem,git,github --operator "$USER"
 keel swarm-land .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live --json \
+  --approve-scope filesystem,git,github --operator "$USER"
+```
+
+## `keel swarm-review`
+
+> **Experimental subsystem** — added by [#1423](https://github.com/berkayturanci/keel/issues/1423)
+> and not yet run on a real repository.
+
+Review each cluster pull request of one wave with the cluster's own reviewer seats, and post
+their verdicts with [`keel review`](#keel-review), pinned to the head they reviewed. It is the
+opt-in step between `swarm-run --live` and `swarm-land --live`; neither of those calls it.
+
+```
+keel swarm-review <project.yaml> [--root DIR] [--wave N] [--swarm-id ID]
+                  [--review-delegate PROVIDER]... [--reviewers 1|2|3]
+                  [--max-workers N] [--seat-timeout SECONDS] [--live]
+                  [--approve-scope SCOPE] [--operator ID]
+                  [--consent-mode explicit|standing|agent] [--json]
+```
+
+| Flag | Type / values | Default | Effect |
+| --- | --- | --- | --- |
+| `path` | file path | required | Project config; also the config each `keel review` loads. |
+| `--root DIR` | path | `.` | Repo root for the swarm state, git and `gh`. |
+| `--wave N` | int | `1` | Which wave's clusters to review. |
+| `--swarm-id ID` | string | the newest run's state file | The run whose persisted plan (`.keel/state/swarm/<swarm_id>.plan.json`) is reviewed. There is no re-plan: without a persisted plan the command exits 1. |
+| `--review-delegate PROVIDER` | repeatable | none | Replace the reviewer seat in slot 1, 2, 3 positionally; each cluster's bench is re-resolved through the resolver `swarm-plan` used, keeping the implementer that ran. |
+| `--reviewers 1\|2\|3` | int | tier-derived | Re-resolve each bench at this count, and pass it to `keel review` as its own `--reviewers`. |
+| `--max-workers N` | int | `3` | Reviewer seats of one cluster that run at once. Clusters are reviewed one after another. |
+| `--seat-timeout SECONDS` | int | `1800` | Each seat's wall-clock limit, as `keel delegate run --timeout`. |
+| `--live` | flag | off | Run the seats and post. Without it each pull request's head, tier and required count are read and the seats planned; nothing is checked out, run or posted. |
+| `--approve-scope` / `--operator` / `--consent-mode` | consent flags | none | A live run needs `filesystem`, `git` (the checkouts) and `github` (the verdicts) approved, explicitly or as standing consent; `agent` mode is refused. Checked before the plan is read. Passed to each `keel review`. |
+| `--json` | flag | off | Structured result: `status`, and per cluster `status` (`posted`, `posted-changes-requested`, `planned`, `held`, `refused`, `skipped`, `already-merged`, `failed`), `reason`, `pull_request`, `head_sha`, `tier`, `required`, `seats` (slot, provider, vendor, transport, refusal) and `verdicts` (outcome, reason, findings). |
+
+Per cluster: its pull request is found as `swarm-land` finds it; `keel review`'s own tier and
+contract are resolved from the pull request's diff, which sets the verdict count and
+`require_distinct_vendors`; each reviewer seat is planned as `keel delegate run --role review`
+plans it. A host-subagent seat, a seat nothing makes read-only (a profile without
+`review_args`), and a seat from the implementer's own vendor are refused; the cluster is refused
+when what is left cannot meet the count or the distinct-vendor rule, or when its tier's review is
+the jury panel. Live, each seat runs in its own detached worktree at the head
+(`.keel/worktrees/<swarm_id>/<cluster_id>.review-<slot>`, removed afterwards) with no forge
+token, no `gh` login, no git credential helper and no network transport, briefed with the issue
+text, the diff and `/keel:ship` s7's refute-not-approve stance, and answers with one JSON
+verdict, its word read the evidence gate's own way. A seat that expressed a rejection (any word
+outside `APPROVING_VERDICTS`, or an approval with a critical or major finding) is never
+discarded: it is posted as `REQUEST_CHANGES`, with a keel-written scope or a `major` finding
+quoting a malformed one if need be. An approval that does not parse, and an answer with no
+readable verdict, is a failed seat. With every seat readable all verdicts are posted, pinned to
+the head; one change request holds `keel merge` with `review-verdict-not-approved` (#1426) and
+the cluster is `posted-changes-requested`. A failed seat holds the cluster fail-closed — nothing
+is posted — unless another seat rejected, when only the rejection(s) are posted. Nothing is
+posted (**held**) either when the head moved, a seat changed the git setup, or too few approved.
+Exit `0` only when every cluster was posted with every seat approving (live), planned (dry run)
+or already merged.
+
+### Examples
+
+```bash
+keel swarm-review .keel/project.yaml --root . --swarm-id swarm-714 --wave 1
+keel swarm-review .keel/project.yaml --root . --swarm-id swarm-714 --wave 1 --live --json \
+  --review-delegate codex --review-delegate claude \
   --approve-scope filesystem,git,github --operator "$USER"
 ```
 

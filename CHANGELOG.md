@@ -6,6 +6,40 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`keel swarm-review` reviews each cluster pull request with the cluster's own seats**
+  (#1423). The first live swarm landing needed one step outside the swarm: every cluster PR's
+  verdicts were produced by hand and posted with `keel review --live`. The owner chose option
+  (b): `swarm-review <project.yaml> --root . [--wave N] [--live]` reads the plan `swarm-run`
+  persisted and, per cluster, finds its pull request, resolves the tier and contract `keel
+  review` will resolve from its diff, and plans the reviewer seats `swarm-plan` printed (or
+  re-resolved with `--review-delegate` / `--reviewers`) as `keel delegate run --role review`
+  plans them. A host `subagent:` seat, a seat nothing makes read-only (a profile without
+  `review_args`) and a seat from the implementer's vendor are refused, and the cluster is
+  refused when the rest cannot meet the verdict count or `require_distinct_vendors`. Live,
+  each seat runs in its own detached worktree at the head (removed afterwards) under the
+  implementer's lockdown (no forge token, no `gh` login, no credential helper, no network
+  transport for git), briefed with `/keel:ship` s7's refute-not-approve stance, the issue and
+  the diff, and answers with one JSON verdict read through `keel review --reviews`' own parser;
+  whether a verdict approves is the evidence gate's own reading of its word. A seat that
+  expressed a rejection is never discarded: any non-approving word, or an approval with a
+  critical or major finding, is posted as `REQUEST_CHANGES` even when its scope is empty (keel
+  writes one naming the seat and head), its prose is thin, or a finding is malformed (carried
+  as one `major` finding quoting it). An approval that does not parse, and an answer with no
+  readable verdict, is a failed seat — never an approval. With every seat readable, all
+  verdicts are posted through `keel review --live`, pinned to the head the seats reviewed
+  (`keel review` now refuses when the head moved since); a change request holds `keel merge`
+  on `review-verdict-not-approved` (#1426), the cluster reports `posted-changes-requested` and
+  the command exits non-zero. A failed seat holds the cluster fail-closed — it may have been
+  about to reject — unless another seat rejected, when only the rejection(s) are posted.
+  `keel review` now accepts a bundle below the tier's count when it carries a verdict that does
+  not approve, so a lone rejection is posted rather than refused; a short bundle of approvals is
+  still refused. Nothing is posted when the head moved, when a seat changed the repository's
+  git setup, or when too few seats approve and none requests changes. A dry run reads and plans, and runs and posts nothing; a
+  live run needs `filesystem,git,github` consent before the plan is read. Opt-in: neither
+  `swarm-run` nor `swarm-land` calls it, and swarm stays experimental on every surface — it has
+  not yet run on a real repository.
+
 ## [1.27.0] - 2026-10-02
 
 - A review verdict now counts toward landing only when it approves: a reviewer's change request at the head holds `keel merge`, and the refusal names who asked for changes.

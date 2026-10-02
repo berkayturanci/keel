@@ -226,7 +226,7 @@
       '      </div>',
       '    </div>',
       '  </div>',
-      '  <p class="sim-desc"><b>A simulation of the design, not a live run</b> — swarm is experimental: nothing in it reviews the pull requests it opens (#1423), and its one live landing so far ran on a sandbox repository, reviewed outside the swarm (#1281). ' + preset.description + '</p>',
+      '  <p class="sim-desc"><b>A simulation of the design, not a live run</b> — swarm is experimental: it reviews the pull requests it opens only with the opt-in swarm-review, not yet run on a real repository (#1423), and its one live landing so far ran on a sandbox repository, reviewed outside the swarm (#1281). ' + preset.description + '</p>',
       '  <div class="sim-metrics-bar">',
       '    <div class="sim-metric"><span class="m-val ' + lockClass + '">' + state.lock + '</span><span class="m-lbl">Merge Lock State</span></div>',
       '    <div class="sim-metric"><span class="m-val">Wave ' + state.wave + ' of 2</span><span class="m-lbl">DAG Wave Phase</span></div>',

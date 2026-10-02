@@ -30,7 +30,7 @@ automatically. The core never depends on keel-visual.
 | `render` | a self-contained web page for one run (2D flow + 3D scene) | snapshot |
 | `render --all` | a self-contained web **board** across every project | snapshot |
 | `serve` / `serve --all` | a **live** web dashboard (localhost server, polls every ~0.5s) | yes |
-| `swarm` | **experimental**, like the swarm it draws, which lands no work: a self-contained web page for one swarm run (2D DAG + pseudo-3D topology), or served on localhost with `--serve` — see [swarm.md](swarm.md#5-visual-dashboard-integration-keel-visual-swarm) | snapshot |
+| `swarm` | **experimental**, like the swarm it draws, which lands no work: a self-contained web page for one swarm run (2D DAG + pseudo-3D topology), or served on localhost with `--serve` — see [swarm.md](swarm.md#6-visual-dashboard-integration-keel-visual-swarm) | snapshot |
 
 ### The board — `dash --all` (terminal, live)
 

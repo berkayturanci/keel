@@ -1,12 +1,12 @@
 ---
-description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. A live run implements each cluster and opens one PR per cluster; swarm-land merges each through keel merge once its review verdicts are posted — nothing in the swarm reviews them; one live landing has run, on a sandbox repository (#1281), reviewed outside the swarm (#1423). Use /keel:ship for an issue that must merge today.
+description: EXPERIMENTAL — a multi-agent swarm coordinator that clusters backlog issues, executes parallel waves in isolated worktrees, and lands them under a single-writer merge lock. A live run implements each cluster and opens one PR per cluster; swarm-land merges each through keel merge once its review verdicts are posted — the swarm reviews them only with swarm-review, opt-in and not yet run on a real repository (#1423); one live landing has run, on a sandbox repository (#1281), reviewed outside the swarm. Use /keel:ship for an issue that must merge today.
 argument-hint: "[issue numbers...] [--plan-only] [--tree] [--visual] [--delegate <provider>] [--review-delegate <provider>] [--effort <low|medium|high>] [--team <profile>]"
 allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Write, Agent
 ---
 
 # /keel:swarm
 
-## ⚠️ Experimental — nothing in the swarm reviews the work it opens
+## ⚠️ Experimental — the swarm reviews its work only through `swarm-review`, which has not yet run on a real repository
 
 `keel swarm-plan`, `--plan-only` and `--tree` run and render a plan. A dry `swarm-run`'s worker is
 `keel ship` the CLI subcommand — a *dry ship assessment* that reports tier, window, gates and a
@@ -16,7 +16,8 @@ agent CLI such as `claude`, `codex` or `agy` — a `subagent:` seat refuses the 
 own worktree, commits the result, runs the gates, pushes `swarm/<swarm_id>/<cluster_id>` and opens
 one pull request per cluster. It needs the **operator's** consent — `--approve-scope
 filesystem,git,github --operator <name>` — which you ask the user for and never supply on your own,
-and its pull requests carry **no review evidence**: nothing in the swarm reviews them, and
+and its pull requests carry **no review evidence**: the swarm reviews them only when you run
+`keel swarm-review` (Step 3 below; opt-in, and not yet run on a real repository — #1423), and
 `swarm-land` merges each one through `keel merge` (#1287), so it holds every cluster until that
 pull request's review verdicts are posted. The worker leaves the rest `keel merge` asks for
 itself (#1420): the seat's attribution labels on the pull request and a gates-pass for its head
@@ -51,21 +52,22 @@ with `--plan-only` it never runs at all — and could not show anything if it di
 board without it. A dry run of that kind runs the N child gate suites above, one at a time in
 your checkout — for a run that implements and lands nothing. Read the plan it renders as "what I
 passed", not "per-issue scope". A live run implements each cluster and opens one pull request per
-cluster; `swarm-land` merges each through `keel merge` once its review verdicts are posted, and
-nothing in the swarm posts them. Swarm stays experimental. One live landing has run end to end,
+cluster; `swarm-land` merges each through `keel merge` once its review verdicts are posted —
+by `keel swarm-review`, or by hand. Swarm stays experimental. One live landing has run end to end,
 once, on a sandbox repository (#1281): `swarm-run --live` implemented, gated, pushed and opened
 the pull requests, their review verdicts were posted from outside the swarm, and `swarm-land`
 merged them through `keel merge`. A landing now also closes what it merged as `/keel:ship` does
 at s11–s12: the closure comment on the pull request and each issue, then the issues closed
-(#1422). Whether the swarm should review its own pull requests is still open (#1423). For an issue the user needs **merged** today,
+(#1422). Since #1423 the swarm can review its own pull requests with `keel swarm-review`, but
+that step has not yet run on a real repository. For an issue the user needs **merged** today,
 say so and run `/keel:ship` per issue — it is still the proven path.
 
 Do not hand-drive the children to work around this. `swarm-land` lands a cluster only through
 `keel merge`, which holds any pull request without an armed gate, its review verdicts pinned to
 its head, or a gates-pass for that head — and `knobs.swarm_review_evidence: false` no longer turns
 that off (#1287). Driving the children by hand would skip the per-issue ledger and the backbone
-that `/keel:ship` gives you. What is left is tracked in #1423 (review inside the swarm); the
-audit epic #1281 is closed.
+that `/keel:ship` gives you. #1423 added `keel swarm-review`, which has not yet run on a real
+repository; the audit epic #1281 is closed.
 
 ## Live progress — stamp this run (required)
 
@@ -197,7 +199,33 @@ implementation is the leads' work, below.
 
 ## Step 3 — Batch landing under the merge lock
 
-When an execution wave completes, land it: `keel swarm-land` merges each cluster's pull request
+**Review first — opt-in (#1423).** A live wave's pull requests carry no review evidence. Either
+the user posts the verdicts (`keel review --live` per pull request), or `keel swarm-review`
+dispatches each cluster's own reviewer seats — the ones `swarm-plan` printed as `review X, Y`,
+each read-only through `keel delegate run --role review` in its own checkout of the head — and
+posts their verdicts with `keel review`, pinned to that head. Preview, then review; the live run
+needs the same operator consent, which you ask the user for:
+
+```bash
+keel swarm-review .keel/project.yaml --root . --swarm-id <swarm_id> --wave <n>
+keel swarm-review .keel/project.yaml --root . --swarm-id <swarm_id> --wave <n> --live \
+  --approve-scope filesystem,git,github --operator <name>
+```
+
+Report each cluster as the command does: `posted` (every seat approved),
+`posted-changes-requested` (the verdicts were posted, and at least one requests
+changes — `keel merge` holds the pull request on `review-verdict-not-approved` with the seat
+named, so relay that seat's findings), `held` (nothing posted: the head moved, a seat changed the
+git setup, a seat that did not answer readably, or too few approvals), `refused` (a `subagent:` seat, a seat
+from the implementer's vendor, too few eligible seats, the distinct-vendor rule — suggest
+`--review-delegate <provider>` per slot), `skipped` or `already-merged`. A seat whose answer does
+not parse is `failed`: never an approval, and nothing of it is posted — and a failed seat holds
+the cluster's approvals too (only a rejection is posted beside it). A seat that rejected is
+never discarded, however thin its answer. Never post an approving
+verdict yourself on top of a change request to get a cluster through; fix the findings, push,
+and run it again on the new head.
+
+When an execution wave completes and is reviewed, land it: `keel swarm-land` merges each cluster's pull request
 through `keel merge` against the project's `base_branch` (config — never assume a branch name).
 Preview first, then land; both need the operator's consent, which you ask the user for:
 
@@ -267,4 +295,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=plugin command=swarm keel_version=1.27.0 source_sha256=a28bea948047766668403ff00f20ce605d693fe7bdf6129729c812854d6cb8a1 generated_sha256=a28bea948047766668403ff00f20ce605d693fe7bdf6129729c812854d6cb8a1 -->
+<!-- keel-generated: surface=plugin command=swarm keel_version=1.27.0 source_sha256=0570657daeba6efbb6cd4a4eee787a5442a6395102f19979a0a49bf449a4d942 generated_sha256=0570657daeba6efbb6cd4a4eee787a5442a6395102f19979a0a49bf449a4d942 -->

@@ -3692,6 +3692,84 @@ def _review_bundle(
     )
 
 
+def _review_evidence_args(args: argparse.Namespace, dry_run: bool) -> argparse.Namespace:
+    """The evidence reader's arguments for one ``keel review`` run."""
+    return argparse.Namespace(
+        pr=args.pr,
+        issue=args.issue,
+        pr_body_file=None,
+        pr_comments_json=None,
+        issue_comments_json=None,
+        pr_reviews_json=None,
+        changed_file=tuple(args.changed_file or ()),
+        head_sha=args.head_sha,
+        head_ref=None,
+        pr_label=(),
+        dry_run=dry_run,
+        root=args.root,
+    )
+
+
+def _review_tier_and_contract(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    artifacts_ctx: dict[str, Any],
+    panel: jury.Panel | None,
+) -> tuple[int | None, dict[str, Any]]:
+    """The tier ``keel review`` reads off the pull request's diff, and its review contract.
+
+    One function for ``keel review`` and ``swarm-review`` (#1423), so the count a swarm
+    plans its seats against is the count ``keel review`` refuses to under-post.
+    """
+    changed_files = artifacts_ctx["changed_files"]
+    # Absent from a hand-built artifacts mapping = no evidence, so the path decides.
+    artifacts_patches = artifacts_ctx.get("patches")
+    tier = (
+        classify.tier_for_files(
+            changed_files,
+            tier3_globs=config.knobs.tier3_globs,
+            docs_globs=config.knobs.docs_gate_paths,
+            allowlist_globs=config.knobs.docs_only_allowlist,
+            patches=artifacts_patches,
+        )
+        if changed_files
+        else None
+    )
+    review_contract = ship.resolve_review_contract(
+        tier=tier,
+        reviewer_override=args.reviewers,
+        gates=config.gates,
+        policy_pack=config.policy_pack,
+        require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
+        assignment=_review_assignment(config, args, tier=tier),
+        # The same three flags every other review-aware surface accepts (#1043). They
+        # never move the bench — that is a pure function of config + tier + role +
+        # `--reviewers` / `--review-delegate` — but they own the jury line, and a
+        # surface that cannot hear them resolves a different one: on a plain tier-3
+        # config `keel review --verify` reported `jury-verdict` as required while the
+        # `keel ship --no-jury` run that produced the PR was told never to post it.
+        jury=args.jury,
+        no_jury=args.no_jury,
+        jury_advisory=args.jury_advisory,
+        # The panel that ran sizes the bench it has to fill: `--from-jury` knows how
+        # many ballots came back, so a jury-panel tier requires exactly those and the
+        # posting side cannot disagree with the gate that reads them back (#1015).
+        # Orthogonal to the flags above: `--from-jury` says where the verdicts come
+        # from, the flags say whether the contract requires a jury verdict at all, and
+        # a jury-panel tier outranks both (`ship.resolve_jury`).
+        jury_panel_size=None if panel is None else panel.size,
+        # …and the panel's vendor span travels with its size, for the same reason. The
+        # panel is right here, so this run can measure what `evidence-verify` will later
+        # recompute from the `vendors: N` line `jury_verdict` posts. Passing the size
+        # alone left the two disagreeing on a *non-panel* tier: a short panel's
+        # `jury-verdict` is downgraded gating -> advisory and dropped from the required
+        # evidence by the gate, while this surface — seeing no vendor count — kept
+        # resolving `gating` and reported a requirement the gate would not enforce.
+        jury_participating_vendors=None if panel is None else len(panel.vendors),
+    )
+    return tier, review_contract
+
+
 def _cmd_review(args: argparse.Namespace) -> int:
     if args.dry_run and args.live:
         print("--dry-run and --live cannot be used together", file=sys.stderr)
@@ -3774,71 +3852,22 @@ def _cmd_review(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    evidence_args = argparse.Namespace(
-        pr=args.pr,
-        issue=args.issue,
-        pr_body_file=None,
-        pr_comments_json=None,
-        issue_comments_json=None,
-        pr_reviews_json=None,
-        changed_file=tuple(args.changed_file or ()),
-        head_sha=args.head_sha,
-        head_ref=None,
-        pr_label=(),
-        dry_run=dry_run,
-        root=args.root,
-    )
     try:
-        artifacts_ctx = _load_evidence_artifacts(evidence_args, config)
+        artifacts_ctx = _load_evidence_artifacts(_review_evidence_args(args, dry_run), config)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    changed_files = artifacts_ctx["changed_files"]
-    # Absent from a hand-built artifacts mapping = no evidence, so the path decides.
-    artifacts_patches = artifacts_ctx.get("patches")
-    tier = (
-        classify.tier_for_files(
-            changed_files,
-            tier3_globs=config.knobs.tier3_globs,
-            docs_globs=config.knobs.docs_gate_paths,
-            allowlist_globs=config.knobs.docs_only_allowlist,
-            patches=artifacts_patches,
+    # `swarm-review` posts what its seats reviewed at one head (#1423): a pull request
+    # whose head moved since is not posted to. `keel review`'s own parser sets no pin.
+    expected_head = getattr(args, "expected_head_sha", None)
+    if expected_head and artifacts_ctx["head_sha"] != expected_head:
+        print(
+            f"PR #{args.pr}'s head is {artifacts_ctx['head_sha'] or 'unreadable'}, not the "
+            f"{expected_head} the verdicts were written for; nothing is posted",
+            file=sys.stderr,
         )
-        if changed_files
-        else None
-    )
-    review_contract = ship.resolve_review_contract(
-        tier=tier,
-        reviewer_override=args.reviewers,
-        gates=config.gates,
-        policy_pack=config.policy_pack,
-        require_distinct_vendors=config.knobs.evidence_require_distinct_vendors,
-        assignment=_review_assignment(config, args, tier=tier),
-        # The same three flags every other review-aware surface accepts (#1043). They
-        # never move the bench — that is a pure function of config + tier + role +
-        # `--reviewers` / `--review-delegate` — but they own the jury line, and a
-        # surface that cannot hear them resolves a different one: on a plain tier-3
-        # config `keel review --verify` reported `jury-verdict` as required while the
-        # `keel ship --no-jury` run that produced the PR was told never to post it.
-        jury=args.jury,
-        no_jury=args.no_jury,
-        jury_advisory=args.jury_advisory,
-        # The panel that ran sizes the bench it has to fill: `--from-jury` knows how
-        # many ballots came back, so a jury-panel tier requires exactly those and the
-        # posting side cannot disagree with the gate that reads them back (#1015).
-        # Orthogonal to the flags above: `--from-jury` says where the verdicts come
-        # from, the flags say whether the contract requires a jury verdict at all, and
-        # a jury-panel tier outranks both (`ship.resolve_jury`).
-        jury_panel_size=None if panel is None else panel.size,
-        # …and the panel's vendor span travels with its size, for the same reason. The
-        # panel is right here, so this run can measure what `evidence-verify` will later
-        # recompute from the `vendors: N` line `jury_verdict` posts. Passing the size
-        # alone left the two disagreeing on a *non-panel* tier: a short panel's
-        # `jury-verdict` is downgraded gating -> advisory and dropped from the required
-        # evidence by the gate, while this surface — seeing no vendor count — kept
-        # resolving `gating` and reported a requirement the gate would not enforce.
-        jury_participating_vendors=None if panel is None else len(panel.vendors),
-    )
+        return 1
+    tier, review_contract = _review_tier_and_contract(args, config, artifacts_ctx, panel)
     required_count = review_contract["reviewers"]["count"]
 
     try:
@@ -8398,6 +8427,218 @@ def _cmd_swarm_land(args: argparse.Namespace) -> int:
     return 0 if result.status == "success" and not result.held_clusters else 1
 
 
+def _swarm_review_consent(args: argparse.Namespace, config: cfg.ProjectConfig) -> str:
+    """Why a live ``swarm-review`` may not start; ``""`` when the operator approved it (#1423).
+
+    Asked before the plan is read, so a refused run reads, runs and posts nothing.
+    """
+    from . import swarm_review
+
+    try:
+        approved, source, operator, mode = _approved_consent(args, config, True)
+        contract = consent.build_consent_contract(
+            command="swarm-review",
+            side_effects=swarm_review.REVIEW_SIDE_EFFECTS,
+            dry_run=False,
+            approved_scopes=approved,
+            approval_source=source,
+            mode=mode,
+            operator=operator,
+            target=f"{args.root} (the review verdicts of each cluster pull request)",
+        )
+    except ValueError as exc:
+        return str(exc)
+    return swarm_review.consent_refusal(contract)
+
+
+def _swarm_review_argv(args: argparse.Namespace, pr: int, reviews: str, run_id: str) -> list[str]:
+    """The ``keel review`` argv a cluster's verdicts are posted with — parsed by its own
+    parser, so every default it has is the one the cluster gets."""
+    argv = [
+        "review",
+        args.path,
+        "--root",
+        args.root,
+        "--pr",
+        str(pr),
+        "--reviews",
+        reviews,
+        "--run-id",
+        run_id,
+        "--json",
+    ]
+    for approved in args.approve_scope:
+        argv.extend(("--approve-scope", approved))
+    if args.operator:
+        argv.extend(("--operator", args.operator))
+    if args.consent_mode:
+        argv.extend(("--consent-mode", args.consent_mode))
+    if args.reviewers is not None:
+        argv.extend(("--reviewers", str(args.reviewers)))
+    return argv
+
+
+def _swarm_review_read_pull_request(
+    args: argparse.Namespace, config: cfg.ProjectConfig
+) -> Callable[[int, bool], Any]:
+    """What ``swarm-review`` reads from a cluster pull request before any seat runs: its
+    head, title and diff, and the tier and review contract ``keel review`` resolves for it
+    — the same functions, with the argv ``keel review`` will be given."""
+    from . import swarm_review
+
+    def read(pr: int, with_diff: bool) -> swarm_review.PullRequestFacts:
+        review_args = build_parser().parse_args(_swarm_review_argv(args, pr, "-", "-"))
+        artifacts_ctx = _load_evidence_artifacts(_review_evidence_args(review_args, False), config)
+        head = artifacts_ctx["head_sha"]
+        if not isinstance(head, str) or not head:
+            raise ValueError("the pull request names no head commit")
+        tier, contract = _review_tier_and_contract(review_args, config, artifacts_ctx, None)
+        diff = ""
+        if with_diff:
+            res = run_argv(["gh", "pr", "diff", str(pr)], cwd=args.root)
+            if not res.ok:
+                raise ValueError(
+                    f"gh pr diff {pr} failed: {res.output.strip()[:200] or f'exit {res.code}'}"
+                )
+            diff = res.stdout or res.output
+        title = artifacts_ctx.get("pr_title")
+        return swarm_review.PullRequestFacts(
+            head, title if isinstance(title, str) else "", tier, contract, diff
+        )
+
+    return read
+
+
+def _swarm_review_read_head(args: argparse.Namespace, config: cfg.ProjectConfig):
+    """The pull request's head right now, read again just before its verdicts are posted."""
+
+    def read(pr: int) -> str:
+        pull = _gh_json(["repos", _owner_repo(config), "pulls", str(pr)], cwd=args.root)
+        head = pull.get("head") if isinstance(pull.get("head"), dict) else {}
+        sha = head.get("sha")
+        return sha if isinstance(sha, str) else ""
+
+    return read
+
+
+def _swarm_review_read_issue(args: argparse.Namespace) -> Callable[[int], tuple[str, str]]:
+    def read(number: int) -> tuple[str, str]:
+        facts, _reason = _read_swarm_issue(number, args.root)
+        return (facts[0], facts[1]) if facts is not None else ("", "")
+
+    return read
+
+
+def _swarm_review_post(args: argparse.Namespace) -> Callable[[int, str, list, str], str]:
+    """Post one cluster's approvals through ``keel review --live`` — the same function, with
+    the head pinned (#1423): ``keel review`` refuses when the pull request's head is no
+    longer the one the seats reviewed. ``""`` once posted, else ``keel review``'s reason."""
+    import contextlib
+    import io as stdio
+
+    def post(pr: int, head_sha: str, items: list, run_id: str) -> str:
+        out, err = stdio.StringIO(), stdio.StringIO()
+        with tempfile.TemporaryDirectory(prefix="keel-swarm-review-") as tmp:
+            bundle = Path(tmp) / "reviews.json"
+            bundle.write_text(json.dumps(items), encoding="utf-8")
+            review_args = build_parser().parse_args(
+                [*_swarm_review_argv(args, pr, str(bundle), run_id), "--live"]
+            )
+            review_args.expected_head_sha = head_sha
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = _cmd_review(review_args)
+        if code == 0:
+            return ""
+        lines = err.getvalue().strip().splitlines()
+        return lines[-1] if lines else f"keel review exited {code}"
+
+    return post
+
+
+def _swarm_review_plan(
+    args: argparse.Namespace, config: cfg.ProjectConfig, plan: swarm.SwarmPlan
+) -> swarm.SwarmPlan:
+    """The persisted plan, with each cluster's bench re-resolved when the operator passed
+    ``--reviewers`` / ``--review-delegate`` — through the resolver ``swarm-plan`` used."""
+    from . import swarm_review
+
+    if args.reviewers is None and not args.review_delegate:
+        return plan
+    overrides = swarm.AssignmentOverrides(
+        review_delegates=tuple(args.review_delegate), reviewers=args.reviewers
+    )
+    availability = providerprobe.jury_availability_for_any_tier(config, profile=None)
+
+    def resolve(cluster: swarm.SwarmCluster) -> dict[str, Any] | None:
+        if cluster.difficulty is None:
+            return None
+        return swarm.resolve_cluster_assignment(
+            cluster,
+            cluster.difficulty,
+            config=config,
+            overrides=overrides,
+            jury_availability=availability,
+        )
+
+    return swarm_review.restaff_plan(plan, resolve)
+
+
+def _cmd_swarm_review(args: argparse.Namespace) -> int:
+    """``keel swarm-review`` (#1423): each cluster pull request reviewed by its own seats."""
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.live and (why := _swarm_review_consent(args, config)):
+        print(f"swarm-review --live is refused: {why}", file=sys.stderr)
+        return 1
+
+    swarm_id = args.swarm_id or swarm.latest_swarm_id(args.root)
+    try:
+        plan = swarm.load_swarm_plan(swarm_id, root=args.root) if swarm_id else None
+    except swarm.SwarmPlanError as exc:
+        print(f"swarm-review: refusing the persisted plan: {exc}", file=sys.stderr)
+        return 1
+    if plan is None:
+        print(
+            "swarm-review reviews the pull requests of the plan swarm-run persisted, and "
+            f"there is none for {swarm_id or 'any swarm run under this root'}; run "
+            "swarm-run --live first, or name the run with --swarm-id",
+            file=sys.stderr,
+        )
+        return 1
+
+    from . import swarm_review, swarm_review_runtime
+
+    result = swarm_review_runtime.review_wave_clusters(
+        _swarm_review_plan(args, config, plan),
+        args.wave,
+        dry_run=not args.live,
+        io=swarm_review_runtime.ReviewIO(
+            find_pull_request=_swarm_land_find_pull_request(args, config),
+            read_pull_request=_swarm_review_read_pull_request(args, config),
+            read_head=_swarm_review_read_head(args, config),
+            read_issue=_swarm_review_read_issue(args),
+            post_verdicts=_swarm_review_post(args),
+        ),
+        root=args.root,
+        config=config,
+        registry=providers_mod.load_registry(),
+        host_agent=agents.HOST_DEFAULT,
+        seat_timeout=args.seat_timeout,
+        max_workers=args.max_workers,
+    )
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        print(swarm_review.render_swarm_review_result(result))
+    return 0 if result.status == "success" else 1
+
+
 def _cmd_canary(args: argparse.Namespace) -> int:
     try:
         cfg.load_config(args.path)
@@ -10769,6 +11010,69 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_sl.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sl.set_defaults(func=_cmd_swarm_land)
+
+    p_srv = sub.add_parser(
+        "swarm-review",
+        help=(
+            "EXPERIMENTAL: review each cluster pull request of a wave with the cluster's own "
+            "reviewer seats, read-only, and post their verdicts pinned to the head (#1423)"
+        ),
+    )
+    p_srv.add_argument("path", help="path to project.yaml")
+    p_srv.add_argument("--root", default=".", help="repo root for git and the swarm state")
+    p_srv.add_argument(
+        "--wave", type=_positive_int, default=1, help="wave index to review (default: 1)"
+    )
+    p_srv.add_argument(
+        "--swarm-id", default=None, help="the swarm run to review (default: the newest)"
+    )
+    p_srv.add_argument(
+        "--review-delegate",
+        action="append",
+        default=[],
+        metavar="PROVIDER",
+        help="per-run reviewer override, positional per slot; repeatable",
+    )
+    p_srv.add_argument(
+        "--reviewers",
+        type=int,
+        choices=(1, 2, 3),
+        default=None,
+        help="override the reviewer count; passed to keel review as its own --reviewers",
+    )
+    p_srv.add_argument(
+        "--max-workers",
+        type=_positive_int,
+        default=3,
+        help="reviewer seats of one cluster run at once (default: 3)",
+    )
+    p_srv.add_argument(
+        "--seat-timeout",
+        type=_positive_int,
+        default=delegate.DEFAULT_TIMEOUT_S,
+        metavar="SECONDS",
+        help=(
+            "wall-clock seconds each seat may run, as keel delegate run --timeout "
+            f"(default: {delegate.DEFAULT_TIMEOUT_S})"
+        ),
+    )
+    p_srv.add_argument(
+        "--live",
+        action="store_true",
+        help="run the seats and post their verdicts; without it, print who would review what",
+    )
+    p_srv.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for the live run (filesystem, git, github)",
+    )
+    p_srv.add_argument("--operator", default=None, help="who consents; recorded with the posts")
+    p_srv.add_argument(
+        "--consent-mode", choices=consent.CONSENT_MODES, default=None, help="operator consent mode"
+    )
+    p_srv.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_srv.set_defaults(func=_cmd_swarm_review)
 
     p_canary = sub.add_parser(
         "canary",

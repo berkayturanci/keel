@@ -29,9 +29,9 @@
    onto the pull request's branch (the base branch without `--onto`), the verdict and closure
    comments `keel post-comment` and `keel review --live` post or update, the labels
    `keel doctor --fix` creates, and the branch and pull request per cluster that the experimental
-   `keel swarm-run --live` pushes and opens, and `keel swarm-land --live` merges each such pull
-   request through `keel merge`. Locally: `keel worktree-remove` removes a
-   worktree, `keel swarm-status --clean` removes what swarm runs left behind, `keel rollback` (or `keel canary --auto-revert`) commits a revert, and the opt-in
+   `keel swarm-run --live` pushes and opens, `keel swarm-review --live` posts verdicts on, and
+   `keel swarm-land --live` merges each such pull request through `keel merge`. Locally: `keel worktree-remove` removes a
+   worktree, `keel swarm-status --clean` removes what swarm runs left behind, `keel swarm-review --live` adds and removes a checkout of the head per reviewer seat, `keel rollback` (or `keel canary --auto-revert`) commits a revert, and the opt-in
    `revert-check` gate has `keel run-gates` and `keel ship` add and remove a temp worktree.
 3. **A pull request merges only through `keel merge`**, which takes the merge lock,
    re-checks the merge window, reads the live CI rollup and verifies the head-pinned review
@@ -214,8 +214,10 @@ bill.
   as degraded there ([transport](docs/keel/github-transport.md)).
 - **Swarm is experimental.** `/keel:swarm` plans waves, and `swarm-run --live` now has each
   cluster's implementer seat write the change and opens one pull request per cluster, but those
-  pull requests carry no review evidence, and nothing in the swarm reviews them; `swarm-land`
-  merges them through `keel merge` only once their review is recorded
+  pull requests carry no review evidence, and the swarm reviews them only when you run
+  `swarm-review`, which has not yet run on a real repository
+  ([#1423](https://github.com/berkayturanci/keel/issues/1423)); `swarm-land` merges them through
+  `keel merge` only once their review is recorded
   ([#1400](https://github.com/berkayturanci/keel/issues/1400),
   [#1287](https://github.com/berkayturanci/keel/issues/1287)). Use `/keel:ship` for work you
   need merged.
@@ -445,7 +447,8 @@ or the reference it points at.
   and `bandit` / `gitleaks` / `semgrep` / `trivy` presets ([extensions](docs/keel/extensions.md)).
 - **Swarm (experimental)** — backlog waves in isolated worktrees; a live run implements each
   cluster and opens one pull request per cluster, which `swarm-land` merges through `keel merge`
-  once its review verdicts are posted — nothing in the swarm reviews them. A live landing has
+  once its review verdicts are posted — the swarm reviews them only when you run `swarm-review`,
+  which has not yet run on a real repository. A live landing has
   run once, on a sandbox repository, with the reviews done outside the swarm
   ([the run](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055), [guide](docs/keel/swarm.md)).
 

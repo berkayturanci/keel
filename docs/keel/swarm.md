@@ -1,6 +1,6 @@
 # Keel Swarm — High-Concurrency Multi-Agent Orchestration
 
-> ## ⚠️ Experimental — nothing in this subsystem reviews the work it produces
+> ## ⚠️ Experimental — the swarm reviews its own work only when you run `swarm-review`, which has not yet run on a real repository
 >
 > The planning commands run, and since
 > [#1400](https://github.com/berkayturanci/keel/issues/1400) a live run implements: **`swarm-run
@@ -10,12 +10,14 @@
 > [How a live worker implements a cluster](#how-a-live-worker-implements-a-cluster) and
 > [Consent delegation](#consent-delegation)). What it does not do yet is the rest of the ship:
 >
-> - The pull request carries **no review evidence**, and nothing in swarm reviews it.
->   `swarm-land` merges it through `keel merge`
+> - The pull request carries **no review evidence** when `swarm-run` opens it. `swarm-land`
+>   merges it through `keel merge`
 >   ([#1287](https://github.com/berkayturanci/keel/issues/1287)), so it holds the cluster until
->   the pull request's review verdicts are posted — today by hand (`keel review --live`), as for
->   any pull request; whether the swarm should review its own pull requests is still open
->   ([#1423](https://github.com/berkayturanci/keel/issues/1423)). The rest of what `keel merge`
+>   the pull request's review verdicts are posted. The swarm reviews only when you run
+>   [`keel swarm-review`](#4-review-keel-swarm-review) — the cluster's own reviewer seats,
+>   read-only, their verdicts posted pinned to the head — and it has not yet run on a real
+>   repository ([#1423](https://github.com/berkayturanci/keel/issues/1423)); otherwise the
+>   verdicts are posted by hand (`keel review --live`), as for any pull request. The rest of what `keel merge`
 >   asks of a pull request the worker leaves itself: the seat's attribution labels on it and a
 >   gates-pass for its head in the run ledger
 >   ([#1420](https://github.com/berkayturanci/keel/issues/1420)).
@@ -71,8 +73,8 @@
 > ([#1281's closing comment](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)). That is one run on a toy
 > repository, not evidence of maturity.
 >
-> The rest is tracked in [#1423](https://github.com/berkayturanci/keel/issues/1423) (review inside the
-> swarm); the audit epic [#1281](https://github.com/berkayturanci/keel/issues/1281) is closed. Everything below describes
+> The rest is tracked in [#1423](https://github.com/berkayturanci/keel/issues/1423) (`swarm-review`,
+> built and not yet run on a real repository); the audit epic [#1281](https://github.com/berkayturanci/keel/issues/1281) is closed. Everything below describes
 > the design and the code that exists; read it as architecture, not as a supported workflow.
 >
 > **Use [`/keel:ship`](../../src/keel/adapters/commands/ship.md) for work you need landed.**
@@ -355,7 +357,7 @@ The `--tree` flag prints the plan as a terminal tree:
 none, it would be planned as `*` and sit in a wave of its own. Issues whose predicted
 scopes overlap are pushed into later waves instead — each wave stays internally disjoint. Such a
 wave prints as `⏳ Wave 2 [sequential_dependent] — Dependent — refused until re-planned`, because
-`swarm-land` refuses it until the earlier wave lands; see [Landing](#4-landing-keel-swarm-land).
+`swarm-land` refuses it until the earlier wave lands; see [Landing](#5-landing-keel-swarm-land).
 A `*` issue in a later wave always does: it overlaps everything before it.)
 
 ---
@@ -700,7 +702,90 @@ keel swarm-status .keel/project.yaml --root . --clean
 
 ---
 
-## 4. Landing (`keel swarm-land`)
+## 4. Review (`keel swarm-review`)
+
+> **Experimental, and not yet run on a real repository** ([#1423](https://github.com/berkayturanci/keel/issues/1423)).
+> It is its own opt-in step: neither `swarm-run` nor `swarm-land` calls it.
+
+The owner's decision on #1423: keel dispatches each cluster pull request's reviewer seats itself
+and posts their verdicts with `keel review`, pinned to the head, so run → review → land works
+without a host agent:
+
+```bash
+keel swarm-run    .keel/project.yaml --root . --issues 714,715 --live --delegate agy \
+  --approve-scope filesystem,git,github --operator you
+keel swarm-review .keel/project.yaml --root . --wave 1             # dry run: who would review what
+keel swarm-review .keel/project.yaml --root . --wave 1 --live \
+  --approve-scope filesystem,git,github --operator you
+keel swarm-land   .keel/project.yaml --root . --wave 1 --live \
+  --approve-scope filesystem,git,github --operator you
+```
+
+It reviews the plan `swarm-run` persisted, wave by wave, cluster by cluster
+(`src/keel/swarm_review.py` decides, `src/keel/swarm_review_runtime.py` runs):
+
+- **The pull request and what it must meet.** Found as `swarm-land` finds it. keel reads its head
+  and resolves the tier and review contract `keel review` will resolve from its diff — the verdict
+  count `keel review` refuses to under-post, and `require_distinct_vendors`.
+- **Who reviews.** The cluster's reviewer seats, the ones `swarm-plan` prints as `review X, Y`
+  (`knobs.team.review`, a bench, or `--review-delegate` / `--reviewers`, re-resolved through the
+  same resolver with the implementer that ran kept). Each is planned as
+  `keel delegate run --provider <seat> --role review` plans it. Refused: a host `subagent:` seat,
+  a seat nothing makes read-only (a `delegate_profiles` entry with no `review_args`), and a seat
+  from the implementer's own vendor — a review from the vendor that wrote the change is not an
+  independent opinion. When what is left cannot meet the count, or `require_distinct_vendors` is
+  on and two seats share a vendor, or the tier's review is the jury panel, the cluster is
+  **refused** before anything runs.
+- **Read-only, and the transports.** A built-in CLI seat (`claude`, `codex`, `agy`) runs with its
+  vendor's documented read-only invocation in its own detached worktree at the head,
+  `.keel/worktrees/<swarm_id>/<cluster_id>.review-<slot>`, so it can read the code around the
+  diff; the worktree is removed when the seat ends, whichever way. An `api`/`ollama` seat has no
+  tools — it cannot write, and it cannot read the checkout either — so it reviews the diff and the
+  issue text its brief carries; it is accepted for that reason. Every seat runs under the
+  implementer's lockdown: no forge token, no `gh` login, no git credential helper, no network
+  transport for git; a change to the repository's git config or hooks while it ran holds the
+  cluster.
+- **The brief** is `/keel:ship` s7's: the seat's focus slice, the refute-not-approve stance, no
+  cross-reading, the head pinned, the project's `policy_pack.review` additions, the issue text and
+  the diff keel read with `gh pr diff` — and the one JSON verdict to end with (`verdict`
+  `APPROVE` or `REQUEST_CHANGES`, `scope`, `findings`, `testing`).
+- **Reading the answer.** Through the loader `keel review --reviews` uses and the evidence gate's
+  substance rule, after its verdict word is read with the evidence gate's own reading
+  (`evidence.review_verdict_token`, `APPROVING_VERDICTS`), so swarm-review and `keel merge`
+  cannot disagree. **A seat that expressed a rejection is never discarded:** any word outside
+  `APPROVING_VERDICTS` (`REQUEST_CHANGES`, `COMMENT`, `ABSTAIN`, `REJECT` …), or an approval
+  carrying a critical or major finding, is posted as `REQUEST_CHANGES` whatever the rest of the
+  answer looks like — an empty scope falls back to a sentence keel writes naming the seat and
+  head, and a malformed finding is carried as one `major` finding quoting what the seat wrote.
+  Only an approval must pass the parser, the severity vocabulary and the substance rule; one
+  that does not, and an answer with no readable verdict at all (no JSON object, no verdict
+  word, a failed or timed-out run), is a **failed** seat — never an approval, never posted.
+- **Posting.** keel re-reads the head and posts with `keel review --live` (which refuses again
+  if the head moved in between), each verdict naming its seat (`swarm-review-<slot>-<vendor>`,
+  vendor and model from the seat's attribution) and carrying its findings:
+  - **Every seat readable:** all verdicts are posted, approvals and change requests together.
+    The evidence gate reads each reviewer's latest verdict at the head
+    ([#1426](https://github.com/berkayturanci/keel/issues/1426)), so one rejection holds
+    `keel merge` with `review-verdict-not-approved: swarm-review-<slot>-<vendor> requests
+    changes at <head>` however many others approved.
+  - **A seat failed (fail closed):** a seat that did not answer readably may have been about to
+    reject, and landing on the remaining approvals would review the pull request with fewer
+    eyes than the plan staffed. With no rejection, nothing is posted and the cluster is
+    **held** (*seat X did not return a readable verdict; rerun swarm-review*); with a rejection,
+    only the rejection(s) are posted — they hold anyway, and `keel review` posts a rejection
+    even below the tier's count.
+  - **Nothing is posted** (held) either when the head moved, when a seat changed the
+    repository's git setup, or when every seat approved but fewer than the count.
+
+  A cluster with a posted rejection is `posted-changes-requested`, and the exit code is
+  non-zero; fix the findings, push, and run `swarm-review` again on the new head.
+
+A dry run reads each pull request and prints which seats would review it at which head; it checks
+out, runs and posts nothing. A live run needs `filesystem`, `git` and `github` approved, explicitly
+or as standing consent, before the plan is read. See the
+[CLI reference](cli.md) for every flag and the `--json` shape.
+
+## 5. Landing (`keel swarm-land`)
 
 Landing is coordinated by `src/keel/swarm_landing.py`; each merge is `keel merge`'s own, under
 its atomic merge lock (`.keel/state/locks/merge-<sha12>.lock`):
@@ -873,7 +958,7 @@ and the `keel swarm-land` section of [cli.md](cli.md).
 
 ---
 
-## 5. Visual Dashboard Integration (`keel-visual swarm`)
+## 6. Visual Dashboard Integration (`keel-visual swarm`)
 
 Swarm integrates directly with the companion package `keel-visual` to provide rich spatial observability:
 
@@ -915,7 +1000,7 @@ a different view from this one.)
 
 ---
 
-## 6. Review Evidence & Compound Learning
+## 7. Review Evidence & Compound Learning
 
 Swarm does not run a jury of its own. Review and learning happen inside each cluster's own
 `keel ship` run, and swarm gates landing on the result:
@@ -933,7 +1018,7 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 
 ---
 
-## 7. Competitive Comparison Matrix
+## 8. Competitive Comparison Matrix
 
 | Feature / Capability | Keel Swarm | CrewAI | AutoGen | MetaGPT | Devin / OpenHands |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -950,7 +1035,7 @@ Swarm does not run a jury of its own. Review and learning happen inside each clu
 
 ---
 
-## 8. Risk & Failure Mitigations
+## 9. Risk & Failure Mitigations
 
 | Risk / Failure Scenario | Detection Mechanism | Fail-Soft Mitigation |
 | :--- | :--- | :--- |
