@@ -44,7 +44,6 @@ All notable changes to keel are documented here. The format follows
   run once, on a sandbox repository, with single-vendor review seats.
 
 ### Changed
-
 - **docs(swarm): `swarm-review` has run once, and every surface says so — and still says
   experimental** ([#1423](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)).
   On 2026-10-02, on the throwaway sandbox repository, `swarm-plan` → `swarm-run --live` →
