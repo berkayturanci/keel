@@ -395,13 +395,15 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
         self.assertIn("then the issues closed (#1422)", prose)
         self.assertIn("Swarm stays experimental", prose)
         self.assertTrue(description.startswith("EXPERIMENTAL"))
-        self.assertIn("one live landing has run, on a sandbox repository", description)
+        self.assertIn("one live landing has run, on a sandbox repository (#1281)", description)
+        self.assertIn("reviewed outside the swarm before swarm-review existed", description)
 
     def test_swarm_review_is_offered_as_opt_in_and_not_as_proven(self):
         """#1423, the owner's decision: `keel swarm-review` dispatches each cluster's reviewer
-        seats and posts their verdicts. It is opt-in and has not run on a real repository, so
-        the adapter must say both — and must stop saying nothing in the swarm reviews — and
-        must never claim that swarm review has run on a real repository."""
+        seats and posts their verdicts. It is opt-in, and it has run once — on 2026-10-02, on
+        the sandbox repository, with two review seats of a single vendor (#1423's comment). The
+        adapter must say both, must stop saying it has not run, and must not stretch that one
+        run into maturity, production readiness or multi-vendor review."""
         prose = _prose("swarm")
         description = re.search(r"^description: (.*)$", _source("swarm"), re.M).group(1)
         self.assertNotIn("nothing in the swarm reviews", prose)
@@ -410,15 +412,29 @@ class TheSwarmAdapterDescribesTheDryRunItAllows(unittest.TestCase):
             "Whether the swarm should review its own pull requests is still open", prose
         )
         self.assertIn("keel swarm-review .keel/project.yaml --root . --swarm-id <swarm_id>", prose)
-        self.assertIn("has not yet run on a real repository", prose)
-        self.assertIn("not yet run on a real repository (#1423)", description)
+        for text in (prose, description):
+            with self.subTest(text=text[:40]):
+                self.assertNotIn("not yet run on a real repository", text)
+                self.assertIsNone(re.search(r"(?i)has not (yet )?run", text))
+                self.assertIsNone(re.search(r"(?i)no longer experimental", text))
+                self.assertIsNone(re.search(r"(?i)production[- ]ready|\bmature\b", text))
+                self.assertIsNone(re.search(r"(?i)multi[- ]vendor review", text))
+        self.assertIn(
+            "has run once, on a sandbox repository, with single-vendor review seats (#1423)",
+            description,
+        )
+        self.assertIn("its review seats were two `claude` seats, a single vendor", prose)
+        self.assertIn(
+            "Swarm stays experimental for three reasons: that is one run on a toy repository, its "
+            "review seats were single-vendor, and run, review and land are separate opt-in "
+            "commands.",
+            prose,
+        )
         self.assertIn("A seat whose answer does not parse is `failed`: never an approval", prose)
         # #1426 made a change request evidence: swarm-review posts it, and keel merge holds.
         self.assertIn("`posted-changes-requested`", prose)
         self.assertIn("review-verdict-not-approved", prose)
         self.assertNotIn("would still count as a verdict", prose)
-        self.assertIsNone(re.search(r"(?i)swarm[- ]review (has|have) (now )?(run|landed)", prose))
-        self.assertIsNone(re.search(r"(?i)no longer experimental", prose))
 
 
 if __name__ == "__main__":

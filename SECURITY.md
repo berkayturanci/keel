@@ -68,7 +68,10 @@ engineer, as the reports themselves state.
   That path was built after it, in the 1.26.0 line — a live worker implements its cluster
   and opens one pull request per cluster, and `swarm-land` merges each through `keel merge`
   ([#1400](https://github.com/berkayturanci/keel/issues/1400): #1402, #1406, #1409, #1414) —
-  and this audit does not cover it. It reports no `bandit` or `pip-audit` run.
+  and this audit does not cover it, nor the experimental `keel swarm-review`
+  ([#1423](https://github.com/berkayturanci/keel/issues/1423)), built later still and run once,
+  on a sandbox repository, with single-vendor review seats. It reports no `bandit` or
+  `pip-audit` run.
 - [2026-06-15](docs/security/2026-06-15-security-audit.md) — v1.3.0 line; produced by
   Claude (Opus 4.8). Focus: the new `keel-visual` and `website/` surfaces; no critical,
   high or medium finding.
