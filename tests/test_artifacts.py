@@ -188,6 +188,26 @@ class TestReviewCycleSummaryRenderer(unittest.TestCase):
         base.update(overrides)
         return base
 
+    def test_a_reviewer_who_gave_no_verdict_is_not_read_as_approving(self):
+        """#1439: a missing verdict rendered and counted as `LGTM`, so a reviewer who said
+        nothing read as approving and the recommendation could be "approve"."""
+        silent = self._reviewer(codename="Quiet-1")
+        del silent["verdict"]
+        blank = self._reviewer(codename="Blank-2", verdict="  ")
+
+        body = artifacts.render_review_cycle_summary(head_sha="abc", reviewers=[silent, blank])
+
+        self.assertIn("Verdict: ABSTAIN", body)
+        self.assertNotIn("LGTM", body)
+        self.assertIn("- Quiet-1: ABSTAIN", body)
+        self.assertIn("- Blank-2: ABSTAIN", body)
+        self.assertIn("Merge recommendation: ❌ block", body)
+        # The control: the same clean reviewer with its LGTM approves.
+        approving = artifacts.render_review_cycle_summary(
+            head_sha="abc", reviewers=[self._reviewer(codename="Quiet-1")]
+        )
+        self.assertIn("Merge recommendation: ✅ approve", approving)
+
     def test_full_summary_is_head_bound_marker_based_and_block(self):
         body = artifacts.render_review_cycle_summary(
             head_sha="cb05fe2",

@@ -2016,7 +2016,18 @@ PR content, issue text, or prior agent output.
 
 If `gates:` includes **`jury`** and the [ai-jury](https://github.com/berkayturanci/ai-jury)
 `jury` CLI is installed, the jury gate runs it on the diff (`git diff base...HEAD`) and maps
-its findings (file/line/severity) into keel findings (critical/major block). If `jury` is
+its findings (file/line/severity) into keel findings (critical/major block). It also reads the
+panel's **consensus** (#1436): the chair record's `verdict` in the report's `reviewers` array,
+which ai-jury writes from the chair's synthesis or, under `decision: vote`, from the vote. In
+gating mode a consensus that is not `APPROVE` / `LGTM` / `PASS` — `REQUEST_CHANGES` over
+minors alone, `ABSTAIN` when no chair synthesis was produced, `COMMENT`, `NO_QUORUM` — fails
+the gate with a `major` `jury:consensus` finding, the same set and reader the evidence gate
+applies to the posted `AI Jury verdict:` line, so a gates-pass is never recorded for a panel
+the merge gate would hold. A report that states **no** consensus (ai-jury before report schema
+1.1, which has no `reviewers` array, or malformed ballots) fails closed in gating mode: a gating
+jury has to conclude. In advisory mode a non-approving consensus is a `minor` finding and a
+report without one adds nothing. Both rules hold at once — a verified major still blocks a
+panel that approved. If `jury` is
 not installed the s8 gate is a **no-op**, but that does not waive the evidence: a tier-3
 merge still requires a `jury-verdict` unless the run passes `--no-jury`, and it relaxes to
 advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors. That

@@ -27,6 +27,20 @@ SAMPLE = {
 }
 
 
+def _ballot_report(chair, *, findings=(), ballots=("APPROVE", "APPROVE")):
+    """An ai-jury report (schema 1.1+) whose chair record carries ``chair`` (#1436).
+
+    ``chair=None`` leaves the chair record out — the synthesis failed.
+    """
+    reviewers = [
+        {"name": name, "vendor": name, "verdict": verdict, "scope": "Read src/x.py."}
+        for name, verdict in zip(("alpha", "beta"), ballots, strict=True)
+    ]
+    if chair is not None:
+        reviewers.append({"name": "chair", "role": "chair", "vendor": "openai", "verdict": chair})
+    return {"schema_version": "1.2", "findings": list(findings), "reviewers": reviewers}
+
+
 class _Proc:
     def __init__(self, code, out="", err=""):
         self.returncode = code
@@ -211,7 +225,9 @@ class TestIncompleteRun(unittest.TestCase):
         ok, fs, _to = jury.run_gate("diff", mode="gating", _run=_jury_ok)
         self.assertFalse(ok)  # SAMPLE carries a major
         self.assertEqual([f.source for f in fs if f.source == "jury:incomplete-run"], [])
-        self.assertEqual(len(fs), 3)
+        # SAMPLE predates report schema 1.1, so a gating run also says it states no
+        # consensus (#1436); the three findings are the report's own.
+        self.assertEqual(len([f for f in fs if f.source != jury.CONSENSUS_SOURCE]), 3)
 
     def test_absent_cli_is_still_a_no_op_not_an_incomplete_run(self):
         # keel does not depend on ai-jury; an uninstalled CLI is not an incomplete run. It
@@ -227,7 +243,7 @@ class TestIncompleteRun(unittest.TestCase):
         def _clean_empty(argv, **kw):
             if "--version" in argv:
                 return _Proc(0, "jury 1.0")
-            return _Proc(0, json.dumps({"findings": []}))
+            return _Proc(0, json.dumps(_ballot_report("APPROVE")))
 
         self.assertEqual(jury.run_gate("diff", mode="gating", _run=_clean_empty), (True, [], False))
 
@@ -242,7 +258,7 @@ class TestIncompleteRun(unittest.TestCase):
 
         ok, fs, _to = jury.run_gate("diff", mode="gating", _run=_noisy)
         self.assertFalse(ok)
-        self.assertEqual(len(fs), 3)  # findings survive
+        self.assertEqual(len([f for f in fs if f.source != jury.CONSENSUS_SOURCE]), 3)
         self.assertEqual(fs[0].source, "jury:claude")  # not jury:incomplete-run
 
     def test_clean_exit_with_unreadable_output_is_not_a_pass(self):
@@ -990,6 +1006,163 @@ class TestAbstentionsAreNotReviews(unittest.TestCase):
         self.assertEqual(ballot.testing, "Ran the unit suite.")
         self.assertIsNone(ballot.abstention_cause)
         self.assertEqual(jury.ballot_testing(ballot), "Ran the unit suite.")
+
+
+def _reports(report):
+    def _run(argv, **kw):
+        if "--version" in argv:
+            return _Proc(0, "jury 1.0")
+        return _Proc(1, json.dumps(report))
+
+    return _run
+
+
+_MINOR = {"severity": "minor", "file": "src/x.py", "line": 3, "claim": "naming", "reviewer": "a"}
+_MAJOR = {"severity": "major", "file": "src/x.py", "line": 3, "claim": "drops it", "reviewer": "a"}
+
+
+class TheJuryGateReadsTheConsensus(unittest.TestCase):
+    """#1436: the jury gate decided ``ok`` from finding severities alone.
+
+    A chair ``REQUEST_CHANGES`` over minors only, or an ``ABSTAIN`` (no chair synthesis),
+    recorded a gates-pass for a head the evidence gate holds since #1429.
+    """
+
+    def _gate(self, report, mode="gating"):
+        return jury.run_gate("diff", mode=mode, _run=_reports(report))
+
+    @staticmethod
+    def _consensus(findings):
+        return [(f.severity, f.message) for f in findings if f.source == jury.CONSENSUS_SOURCE]
+
+    def test_a_rejecting_consensus_over_minors_alone_fails_the_gate(self):
+        ok, findings, _ = self._gate(_ballot_report("REQUEST_CHANGES", findings=[_MINOR]))
+
+        self.assertFalse(ok)
+        self.assertEqual(
+            self._consensus(findings),
+            [("major", "jury consensus is REQUEST_CHANGES, not an approval.")],
+        )
+
+    def test_no_chair_synthesis_is_an_abstention_and_fails_the_gate(self):
+        ok, findings, _ = self._gate(_ballot_report(None))
+
+        self.assertFalse(ok)
+        self.assertEqual(
+            self._consensus(findings), [("major", "jury consensus is ABSTAIN, not an approval.")]
+        )
+
+    def test_every_non_approving_consensus_fails_and_every_approving_one_passes(self):
+        for chair in ("REQUEST_CHANGES", "NEEDS_INFO", "COMMENT", "UNCLEAR", "NO_QUORUM", "HMM"):
+            with self.subTest(chair=chair):
+                ok, _findings, _ = self._gate(_ballot_report(chair))
+                self.assertFalse(ok)
+        # `decision: vote` reaches keel on the same chair record; READY maps to LGTM.
+        for chair in ("APPROVE", "READY", "LGTM", "approve"):
+            with self.subTest(chair=chair):
+                self.assertEqual(self._gate(_ballot_report(chair)), (True, [], False))
+
+    def test_the_severity_rule_still_holds_an_approving_consensus(self):
+        ok, findings, _ = self._gate(_ballot_report("APPROVE", findings=[_MAJOR]))
+
+        self.assertFalse(ok)
+        self.assertEqual(self._consensus(findings), [])
+        self.assertEqual([f.severity for f in findings], ["major"])
+
+        ok, findings, _ = self._gate(_ballot_report("APPROVE", findings=[_MINOR]))
+        self.assertTrue(ok)
+
+    def test_advisory_mode_reports_a_rejecting_consensus_without_failing(self):
+        ok, findings, _ = self._gate(_ballot_report("REQUEST_CHANGES"), mode="advisory")
+
+        self.assertTrue(ok)
+        self.assertEqual(
+            self._consensus(findings),
+            [("minor", "jury consensus is REQUEST_CHANGES, not an approval.")],
+        )
+
+    def test_a_report_that_states_no_consensus_fails_closed_only_when_gating(self):
+        """ai-jury before report schema 1.1 has no ``reviewers`` array, so no consensus."""
+        legacy = {"findings": [_MINOR]}
+
+        ok, findings, _ = self._gate(legacy)
+        self.assertFalse(ok)
+        [(severity, message)] = self._consensus(findings)
+        self.assertEqual(severity, "major")
+        self.assertIn("states no panel consensus", message)
+
+        # Advisory keeps the severity rule alone, as before #1436.
+        ok, findings, _ = self._gate(legacy, mode="advisory")
+        self.assertTrue(ok)
+        self.assertEqual(self._consensus(findings), [])
+
+    def test_malformed_ballots_state_no_consensus(self):
+        broken = {"findings": [], "reviewers": ["not a ballot"]}
+
+        self.assertIsNone(jury.panel_consensus(broken))
+        ok, findings, _ = self._gate(broken)
+        self.assertFalse(ok)
+        self.assertIn("states no panel consensus", self._consensus(findings)[0][1])
+
+    def test_the_consensus_is_the_chair_records_verdict(self):
+        self.assertEqual(jury.panel_consensus(_ballot_report("APPROVE")), "LGTM")
+        self.assertEqual(jury.panel_consensus(_ballot_report("NEEDS_INFO")), "REQUEST_CHANGES")
+        self.assertEqual(jury.panel_consensus(_ballot_report(None)), "ABSTAIN")
+        self.assertIsNone(jury.panel_consensus("not json"))
+        self.assertIsNone(jury.panel_consensus({"findings": []}))
+
+    def test_a_rejecting_consensus_records_no_gates_pass(self):
+        """Scenario C of #1429's measurement: `gates: [build, jury]`, the ship-run record."""
+        import tempfile
+        from pathlib import Path
+
+        from keel import config as cfg
+        from keel import findings as fnd
+        from keel import gates, ledger, ship
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project.yaml"
+            project.write_text(
+                "extends: keel\ncore_version: '^1.0'\nbase_branch: main\nowner: acme\n"
+                "repo: widget\ngates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n"
+                "  tier3_globs: ['src/**']\n",
+                encoding="utf-8",
+            )
+            config = cfg.load_config(str(project))
+
+        def gates_pass(report):
+            specs = gates.plan_gates(config, {}, implement_mode="direct")
+
+            def runner(spec):
+                if spec.id == "jury":
+                    ok, found, timed_out = self._gate(report)
+                    return ok, found, timed_out, False, False
+                return True, [], False, False, False
+
+            outcomes = gates.run_gates(specs, runner)
+            record = ledger.build_ship_run_record(
+                command="ship",
+                base_branch="main",
+                changed_files=["src/x.py"],
+                outcomes=outcomes,
+                verdict=fnd.summarize(gates.collect_findings(outcomes)),
+                assessment=ship.ShipAssessment(
+                    tier=3,
+                    reviewers=3,
+                    window_open=True,
+                    ci_ok=True,
+                    merge=ship.MergeDecision("merge", "ok"),
+                ),
+                run_id="r1",
+                pr_number=7,
+                head_sha="abc123",
+                config=config,
+            )
+            return ledger.gates_pass_for_head([record], 7, "abc123")[0]
+
+        self.assertFalse(gates_pass(_ballot_report("REQUEST_CHANGES", findings=[_MINOR])))
+        self.assertFalse(gates_pass(_ballot_report(None)))
+        self.assertTrue(gates_pass(_ballot_report("APPROVE", findings=[_MINOR])))
 
 
 if __name__ == "__main__":

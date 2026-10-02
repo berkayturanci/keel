@@ -71,7 +71,8 @@ In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictl
   blocks wherever the jury verdict is required; an advisory or deferred panel's rejection is
   reported as `minor`. Until #1429 the line was not read, and on the `keel init` scaffold
   (`gates: [build, lint]`, no `jury` gate) nothing else stood between a rejecting panel and
-  `keel merge`. The panel-shape readers — the `vendors:` / `panelists:` counts and whether a
+  `keel merge`. Since #1436 the `jury` gate reads the same consensus, so a gating jury whose
+  consensus does not approve also records no gates-pass for the head. The panel-shape readers — the `vendors:` / `panelists:` counts and whether a
   panel sat — still read the comment's presence: a panel that rejected the change still sat.
   The panelists' ballots that `keel review --from-jury` posts are review verdicts, and are read
   like any other: a ballot that requests changes holds.
