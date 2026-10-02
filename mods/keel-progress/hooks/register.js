@@ -8,7 +8,7 @@
 //   - a `/keel-progress` pane with every live run's steps, history counts and next issue
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { bandParts, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
+import { bandParts, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
@@ -45,6 +45,7 @@ let own = null // the session's own last good status, live or not: the pane's id
 let ownStale = false // the last read of the session's own folder failed, so `own` is old
 let failures = [] // [{ label, message }] — worktrees whose `keel status` failed
 let scanned = 0 // other worktrees with a fresh checkpoint at the last scan
+let superseded = 0 // stale copies of a run another worktree holds a newer checkpoint for
 let closedPr = 0 // runs hidden because their pull request is no longer open
 let openPrs = null // Set of open PR numbers, or null when `gh` could not say
 let openPrsAt = -Infinity
@@ -175,7 +176,7 @@ async function scan($) {
     else others.push(w)
   }
   if (mine.failure !== undefined) nextFailures.push({ label: ownLabel, message: mine.failure })
-  else candidates.push({ path: cwd, label: ownLabel, ...mine.parsed })
+  else candidates.push({ path: cwd, label: ownLabel, own: true, mtimeMs: 0, ...mine.parsed })
   own = mine.parsed ?? own
   ownStale = mine.failure !== undefined
 
@@ -185,22 +186,32 @@ async function scan($) {
   // Defensive: keel rejects an absolute checkpoint path today. If one ever appears it is one file
   // every worktree shares, which the session's own read already covers.
   const perWorktree = !checkpoint.startsWith('/')
+  if (perWorktree && candidates.length > 0) {
+    try {
+      candidates[0].mtimeMs = (await $.fs.stat(`${cwd}/${checkpoint}`)).mtimeMs
+    } catch {
+      // no checkpoint here: the own entry can only be a live run if keel says so; it ranks oldest
+    }
+  }
   let fresh = 0
   for (const w of perWorktree ? others : []) {
+    let mtimeMs
     try {
-      const st = await $.fs.stat(`${w.path}/${checkpoint}`)
-      if (now - st.mtimeMs >= FRESH_MS) continue
+      mtimeMs = (await $.fs.stat(`${w.path}/${checkpoint}`)).mtimeMs
+      if (now - mtimeMs >= FRESH_MS) continue
     } catch {
       continue // no checkpoint: no run in this worktree
     }
     fresh += 1
     const result = await statusOf($, w.path)
     if (result.failure !== undefined) nextFailures.push({ label: w.label, message: result.failure })
-    else candidates.push({ path: w.path, label: w.label, ...result.parsed })
+    else candidates.push({ path: w.path, label: w.label, own: false, mtimeMs, ...result.parsed })
   }
 
   // `gh` is asked only when a live run has a pull request, so an idle session makes no API calls.
-  const live = candidates.filter((run) => isLive(run.snapshot))
+  // One run can leave checkpoints in several worktrees (a worktree nested in another, a
+  // resumed run): the most recently written one is the run's state, the rest are stale copies.
+  const { kept: live, superseded: dupes } = latestPerRun(candidates.filter((run) => isLive(run.snapshot)))
   const withPr = live.some((run) => run.snapshot.current.pull_request != null)
   let prs = withPr ? await loadOpenPrs($, now, false) : null
   let refetched = false
@@ -224,15 +235,18 @@ async function scan($) {
   failures = nextFailures
   scanned = fresh
   closedPr = hidden
+  superseded = dupes
 }
 
 function textProps(part) {
   return { ...TONES[part.tone], wrap: 'truncate', children: [part.text] }
 }
 
+// With several runs on screen, the session's own one is marked `▸` and drawn bright.
 function labelPart(run) {
-  const label = run.label.length > LABEL_WIDTH ? `${run.label.slice(0, LABEL_WIDTH - 1)}…` : run.label
-  return { text: `${label.padEnd(LABEL_WIDTH)} `, tone: 'dim' }
+  const name = `${run.own ? '▸ ' : '  '}${run.label}`
+  const label = name.length > LABEL_WIDTH ? `${name.slice(0, LABEL_WIDTH - 1)}…` : name
+  return { text: `${label.padEnd(LABEL_WIDTH)} `, tone: run.own ? 'title' : 'dim' }
 }
 
 export function register(on) {
@@ -299,7 +313,9 @@ export function register(on) {
     if (!hasProject) {
       lines.push({ text: `No ${PROJECT} in this directory, so there is no keel run to show.`, tone: 'dim' })
     } else {
-      const hiddenNote = closedPr > 0 ? ` · ${closedPr} hidden (PR closed)` : ''
+      const hiddenNote =
+        (closedPr > 0 ? ` · ${closedPr} hidden (PR closed)` : '') +
+        (superseded > 0 ? ` · ${superseded} stale copy(ies) of a run` : '')
       lines.push({
         text: `${runs.length} live keel run(s) · ${scanned} other worktree(s) with a recent checkpoint${hiddenNote}`,
         tone: 'title',

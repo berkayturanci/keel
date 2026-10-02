@@ -386,8 +386,8 @@ test('parallel runs in other worktrees each get a labelled line, the session’s
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  const labels = await band.findAll({ type: 'Text', text: /^(main|fix\/a|feat\/b)\s+$/ })
-  expect(labels.map((t: any) => String(t.children[0]).trim())).toEqual(['main', 'fix/a', 'feat/b'])
+  const labels = await band.findAll({ type: 'Text', text: /^(▸ main|  fix\/a|  feat\/b)\s+$/ })
+  expect(labels.map((t: any) => String(t.children[0]).trim())).toEqual(['▸ main', 'fix/a', 'feat/b'])
   expect(await band.find({ type: 'Text', text: ' #11 ' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: ' s4 implement' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: ' · PR #2002' })).toBeDefined()
@@ -585,7 +585,7 @@ test('a long branch name is cut with an ellipsis', async ($, on) => {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: 'fix/merge-marks… ' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: '  fix/merge-mar… ' })).toBeDefined()
 })
 
 test('after a failed read the idle pane marks the project’s status as the last good one', async ($, on) => {
@@ -638,4 +638,48 @@ test('a run whose PR closed costs no extra gh call per scan', async ($, on) => {
   expect(calls.gh).toBe(2)
   await clock.advance(10_000)
   expect(calls.gh).toBe(3)
+})
+
+test('one run checkpointed in two worktrees shows once, from the newer checkpoint', async ($, on) => {
+  // #3436 on smartinventory: the parent worktree still held s7 while the nested one was at s9.
+  const clock = mock.clock(on, { now: 2 * HOURS })
+  const run = (step: string) => () =>
+    statusJson({ current: { run_id: 'ship-3436', command: 'ship', issue: 3436, pull_request: 2001, step, wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/wt/parent', branch: 'claude/workflow', mtime: 1 * HOURS, stdout: run('s7') },
+      { path: '/wt/parent/worktrees/issue-3436', branch: 'fix/issue-3436', mtime: 1.5 * HOURS, stdout: run('s9') },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.findAll({ type: 'Text', text: ' #3436 ' })).length).toBe(1)
+  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeUndefined()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /1 stale copy\(ies\) of a run/ })).toBeDefined()
+})
+
+test('when the session’s own folder holds the stale copy, the newer one elsewhere wins', async ($, on) => {
+  const clock = mock.clock(on, { now: 2 * HOURS })
+  const run = (step: string) => () =>
+    statusJson({ current: { run_id: 'ship-9', command: 'ship', issue: 9, pull_request: 1027, step, wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: run('s7') },
+      { path: '/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeUndefined()
 })

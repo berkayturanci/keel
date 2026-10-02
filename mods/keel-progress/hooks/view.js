@@ -43,6 +43,21 @@ export function parseWorktrees(porcelain) {
   return out
 }
 
+// Keeps one entry per run — by run id, else issue and PR — the one whose checkpoint was written
+// last (the session's own on a tie), in the input's order. Returns { kept, superseded }.
+export function latestPerRun(entries) {
+  const best = new Map()
+  for (const e of entries) {
+    const c = e.snapshot.current
+    const key = c.run_id ?? `${c.issue ?? '?'}#${c.pull_request ?? '?'}`
+    const prev = best.get(key)
+    if (!prev || e.mtimeMs > prev.mtimeMs || (e.mtimeMs === prev.mtimeMs && e.own && !prev.own)) best.set(key, e)
+  }
+  const keep = new Set(best.values())
+  const kept = entries.filter((e) => keep.has(e))
+  return { kept, superseded: entries.length - kept.length }
+}
+
 export function isLive(snapshot) {
   return Boolean(snapshot && LIVE_STATES.has(snapshot.status) && snapshot.current)
 }
