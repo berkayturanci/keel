@@ -12,11 +12,13 @@ terminal running `keel-visual dash`.
 - **Above the prompt:** one line per live run (`active`, `waiting` or `interrupted`). Each
   shows the issue, a bar over the backbone steps (`▰` done, `▶` current, `▱` pending), the
   current step, why it is waiting (or, in red, why it stopped), and the pull request. With
-  more than one run each line starts with its worktree's branch, as wide as the band allows.
+  more than one run each line starts with its worktree's branch, as wide as the longest one
+  shown, within what the band can spare.
   The session's own run is first, marked `▸` and drawn bright. Nothing is drawn when no run
   is live.
-  - **Click a run's issue** (or type its digit, `1`–`9`, into an empty prompt) to open the pane
-    on that run.
+  - **Click a run's issue** (or type its digit, `1`–`9`, into an empty prompt and pause) to
+    open the pane on that run. The pane opens without taking the keyboard, so a digit meant
+    for something else costs nothing but an open pane.
   - **`more` / `less`** lists every run, not just the first three, each with a second line
     holding the whole branch name and the worktree path.
 - **`/keel-progress`:** opens a pane on one run: its whole branch name and worktree, every

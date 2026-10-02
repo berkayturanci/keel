@@ -242,6 +242,7 @@ async function scan($) {
     nextRuns.push(run)
   }
   runs = nextRuns
+  if (runs.length === 0) expanded = false // the band comes back compact
   failures = nextFailures
   scanned = fresh
   closedPr = hidden
@@ -266,7 +267,9 @@ function labelPart(run, width) {
 
 async function openRun($, path) {
   selected = path
-  await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true, focus: true })
+  // No focus: a digit typed into an empty prompt (to answer something else) also presses the
+  // band's buttons, and must not take the keyboard away from the prompt.
+  await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true })
   $.ui.invalidate('ui.render')
 }
 

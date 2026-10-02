@@ -439,7 +439,7 @@ test('the band shows three runs and counts the rest', async ($, on) => {
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#12' })).toBeDefined()
   expect(await band.find({ type: 'Button', text: '#13' })).toBeUndefined()
-  expect(await band.find({ type: 'Text', text: '+2 more keel runs · /keel-progress' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: '+2 more keel runs · more, or /keel-progress' })).toBeDefined()
 })
 
 test('without gh nothing is hidden on PR grounds, and the open list is cached', async ($, on) => {

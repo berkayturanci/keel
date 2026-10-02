@@ -51,7 +51,9 @@ export function latestPerRun(entries) {
   const keyOf = (e) => {
     const c = e.snapshot.current
     if (c.run_id) return `run:${c.run_id}`
-    if (c.issue != null || c.pull_request != null) return `ref:${c.issue}#${c.pull_request}`
+    // A copy written before the PR was opened has no PR yet: the issue alone names the run.
+    if (c.issue != null) return `issue:${c.issue}`
+    if (c.pull_request != null) return `pr:${c.pull_request}`
     return `path:${e.path}`
   }
   const best = new Map()
