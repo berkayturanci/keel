@@ -152,6 +152,7 @@ def _gate_runner(
     timeout: int = DEFAULT_GATE_TIMEOUT_S,
     run_jury: bool = True,
     phases: frozenset[str] | None = None,
+    posted_panel: tuple[bool, list[fnd.Finding]] | None = None,
 ):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
 
@@ -182,6 +183,11 @@ def _gate_runner(
         if spec.kind == "builtin" and spec.id == "jury":
             if not run_jury:
                 return True, [], False, True, False
+            if posted_panel is not None:
+                # The head's panel already ran and posted (#1437): its verdict is this
+                # gate's, read by the same two rules, and no second panel is convened.
+                reused_ok, reused_found = posted_panel
+                return reused_ok, reused_found, False, False, False
             jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
             ok, found, timed_out = jury.run_gate(
                 diff_text, cwd=root, mode=jury_mode, timeout=jury_limit
@@ -227,6 +233,64 @@ def _tdd_order_outcome(
     findings = [] if result.ok else [fnd.Finding("major", result.message, spec.id)]
     outcomes = gates.run_gates((spec,), lambda _spec: (result.ok, findings))
     return outcomes[0], result
+
+
+def _posted_panel(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    specs,
+    transport,
+    *,
+    gating: bool,
+) -> tuple[gates.PanelReuse, tuple[bool, list[fnd.Finding]]] | None:
+    """The jury verdict already posted for the head being certified, ready to reuse (#1437).
+
+    s7 on a jury-panel tier runs the panel once and ``keel review --from-jury`` posts it;
+    the jury *gate* in ``gates:`` used to convene a second paid panel for the same head,
+    whose result nothing tied to the posted one. When the plan carries the jury gate, a
+    pull request and a head are known, and the transport reads comments, this reads the
+    pull request's comments with the evidence gate's fetch and takes the standing jury
+    verdict exactly as ``keel merge`` will (:func:`keel.evidence.standing_jury_verdict`:
+    trusted author, marker, the head or a head it covers, latest posted).
+
+    ``None`` — **convene the panel as before** — whenever any of that is missing, the
+    comments cannot be read, no jury verdict stands for this head, or its summary is not
+    one keel rendered. A read failure is never a pass: it is a run.
+    """
+    if not any(spec.kind == "builtin" and spec.id == gates.JURY_ID for spec in specs):
+        return None
+    pr = args.pr if args.pr is not None else args.ledger_pr
+    head = args.head_sha
+    if pr is None or not head or transport.name != "gh" or not transport.supports("comments"):
+        return None
+    try:
+        owner_repo = _owner_repo(config)
+        comments = _gh_json_list(
+            ["repos", owner_repo, "issues", str(pr), "comments"], cwd=args.root
+        )
+        pull = _gh_json(["repos", owner_repo, "pulls", str(pr)], cwd=args.root)
+        pull_head = pull.get("head") if isinstance(pull.get("head"), dict) else {}
+        repo = pull_head.get("repo") if isinstance(pull_head.get("repo"), dict) else {}
+        head_repo = repo.get("full_name") if isinstance(repo.get("full_name"), str) else None
+        covered = _covered_heads(config, owner_repo, pr, head, cwd=args.root, head_repo=head_repo)
+    except (OSError, ValueError):
+        return None
+    standing = evidence.standing_jury_verdict(comments, head_sha=head, covered_heads=covered)
+    if standing is None:
+        return None
+    result = jury.reuse_posted_verdict(str(standing.get("body") or ""), gating=gating)
+    if result is None:
+        return None
+    comment_id = standing.get("id")
+    url = standing.get("html_url")
+    reuse = gates.PanelReuse(
+        head_sha=evidence.verdict_head(standing),
+        comment_id=comment_id
+        if isinstance(comment_id, int) and not isinstance(comment_id, bool)
+        else None,
+        url=url if isinstance(url, str) and url else None,
+    )
+    return reuse, result
 
 
 def _run_planned_gates(
@@ -1742,6 +1806,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     diff_text = git.diff(base_ref, "HEAD", cwd=args.root)
+    posted = _posted_panel(
+        args, config, specs, transport, gating=review_contract["jury"]["mode"] == "gating"
+    )
     outcomes, tdd_result = _run_planned_gates(
         specs,
         _gate_runner(
@@ -1749,10 +1816,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             diff_text,
             jury_mode=review_contract["jury"]["mode"],
             timeout=config.knobs.gate_timeout_s,
+            posted_panel=posted[1] if posted is not None else None,
         ),
         config=config,
         root=args.root,
     )
+    outcomes = gates.mark_jury_reused(outcomes, posted[0] if posted is not None else None)
     recorded_results = dict(getattr(args, "gate_result", None) or ())
     planned = {spec.id for spec in specs}
     unknown = sorted(set(recorded_results) - planned)

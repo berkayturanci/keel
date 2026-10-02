@@ -288,14 +288,55 @@ def render_jury_verdict(
         "",
         f"Participants: {', '.join(people) if people else 'not recorded'}.",
         "",
-        "Findings summary:",
+        JURY_SUMMARY_HEADING,
     ]
+    # One line per item, whitespace collapsed: :func:`jury_verdict_summary` reads the
+    # summary back line by line (#1437), so a message carrying its own newline must not
+    # end the item early — or start a line that reads as an item of its own.
     summaries = [
-        item.strip() for item in findings_summary if isinstance(item, str) and item.strip()
+        " ".join(item.split())
+        for item in findings_summary
+        if isinstance(item, str) and item.strip()
     ]
     lines.extend(f"- {item}" for item in summaries) if summaries else lines.append("- none")
-    lines.extend(["", f"Remaining risks: {_value(remaining_risks, 'none identified')}."])
+    lines.extend(["", f"{JURY_RISKS_LABEL} {_value(remaining_risks, 'none identified')}."])
     return "\n".join(lines) + "\n"
+
+
+#: The two labels that bracket a jury verdict's findings summary, as
+#: :func:`render_jury_verdict` writes them and :func:`jury_verdict_summary` reads them.
+JURY_SUMMARY_HEADING = "Findings summary:"
+JURY_RISKS_LABEL = "Remaining risks:"
+
+
+def jury_verdict_summary(body: str) -> tuple[str, ...] | None:
+    """The findings-summary items of a jury verdict :func:`render_jury_verdict` wrote (#1437).
+
+    The inverse of the renderer, written against it: every ``- <item>`` line between
+    :data:`JURY_SUMMARY_HEADING` and :data:`JURY_RISKS_LABEL`, with the renderer's
+    ``- none`` read as no items. A verdict keel rendered from a panel lists its verified
+    findings here as ``<severity>: <message>`` (:func:`keel.jury.jury_verdict`), which is
+    how ``keel ship`` reuses the head's posted panel without convening another.
+
+    Read to the risks line rather than to the first blank line, so the parse can only ever
+    see *more* of the comment than the renderer put in the summary — never stop short of a
+    finding. A body without the heading is not one keel rendered, and its summary cannot be
+    read: ``None``, which is never the same answer as "no findings".
+    """
+    lines = body.splitlines()
+    try:
+        start = lines.index(JURY_SUMMARY_HEADING) + 1
+    except ValueError:
+        return None
+    items: list[str] = []
+    for line in lines[start:]:
+        if line.startswith(JURY_RISKS_LABEL):
+            return () if items == ["none"] else tuple(items)
+        if line.startswith("- "):
+            items.append(line[2:].strip())
+    # No closing risks line: not the shape the renderer writes, so not a summary keel can
+    # vouch for — unreadable, and the caller convenes the panel instead of reusing it.
+    return None
 
 
 def render_ship_provenance(

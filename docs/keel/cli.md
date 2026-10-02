@@ -2027,7 +2027,24 @@ the merge gate would hold. A report that states **no** consensus (ai-jury before
 1.1, which has no `reviewers` array, or malformed ballots) fails closed in gating mode: a gating
 jury has to conclude. In advisory mode a non-approving consensus is a `minor` finding and a
 report without one adds nothing. Both rules hold at once — a verified major still blocks a
-panel that approved. If `jury` is
+panel that approved.
+
+**`keel ship` reuses the panel already posted for the head (#1437).** On a jury-panel tier s7
+runs the panel once and `keel review --from-jury` posts its `keel.jury-verdict.v1` comment;
+the jury gate used to convene a second paid panel at `ship --append-ledger`, whose result
+nothing tied to the posted one. Now, when `gates:` lists `jury` and the run knows a pull
+request (`--pr`) and a head (`--head-sha`) and its transport reads comments, `keel ship`
+reads the pull request's comments with the evidence gate's fetch and takes the standing jury
+verdict for that head exactly as `keel merge` does — trusted author, the marker, the head or a
+head it covers, the latest posted. If one stands, the jury gate is judged from it instead of
+from a new panel, by the same two rules: its consensus line must approve, and a
+`critical`/`major` item in its findings summary fails it. The ledger's jury gate entry records
+which happened — `source: reused` with `reused_from: {head_sha, comment_id, url}`, or
+`source: ran` — and `ship --json` carries `reused_from` on the outcome. With no pull request or
+head, unreadable comments, no jury verdict for that head (an older head's never counts), or a
+comment keel did not render, the panel is convened as before; a read failure is never a pass.
+`run-gates` writes no ledger and has no head to pin, so it does not reuse: on a panel tier
+`/keel:ship` passes it `--defer-jury` at s8 instead. If `jury` is
 not installed the s8 gate is a **no-op**, but that does not waive the evidence: a tier-3
 merge still requires a `jury-verdict` unless the run passes `--no-jury`, and it relaxes to
 advisory only when a posted verdict (or `--jury-vendors`) reports fewer than 2 vendors. That

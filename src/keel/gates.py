@@ -11,7 +11,7 @@ semantics, normalising everything into :class:`keel.findings.Finding`.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from . import revertcheck, tdd
@@ -133,6 +133,22 @@ class GateSpec:
 
 
 @dataclass(frozen=True)
+class PanelReuse:
+    """Where a jury gate's verdict came from when keel did not convene a panel (#1437).
+
+    The ``keel.jury-verdict.v1`` comment the head's panel already posted: its GitHub id
+    and URL when the payload carried them, and the head it is pinned to.
+    """
+
+    head_sha: str
+    comment_id: int | None = None
+    url: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {"head_sha": self.head_sha, "comment_id": self.comment_id, "url": self.url}
+
+
+@dataclass(frozen=True)
 class GateOutcome:
     """Result of running one gate."""
 
@@ -165,6 +181,11 @@ class GateOutcome:
     #: because no implementer can turn it green — only the project's config can — so the
     #: s4 loop stops on it at once instead of spending its budget (#1364).
     unconfigured: bool = False
+    #: Set on the jury gate when its verdict was **reused** from the panel already posted
+    #: for this head rather than from a panel keel convened (#1437). ``None`` means the
+    #: runner produced the outcome itself. Descriptive only: a reused outcome is judged by
+    #: ``ok`` and its findings exactly like one keel ran.
+    reused_from: PanelReuse | None = None
 
 
 # runner(spec) -> (ok, findings[, timed_out[, not_run[, skipped]]]). May raise; run_gates
@@ -451,6 +472,25 @@ def lone_jury_cannot_judge(
         GateOutcome(
             JURY_ID, False, found + outcome.findings, on_fail=outcome.on_fail, unconfigured=True
         )
+    ]
+
+
+def mark_jury_reused(
+    outcomes: Sequence[GateOutcome], reuse: PanelReuse | None
+) -> list[GateOutcome]:
+    """Stamp the jury outcome with the posted panel it was read from (#1437).
+
+    ``None`` leaves every outcome as it is. A jury outcome the runner did not produce from
+    ``reuse`` — not run, or rewritten by :func:`lone_jury_cannot_judge` — is never one the
+    caller handed a reused verdict for, so only an executed jury outcome is stamped.
+    """
+    if reuse is None:
+        return list(outcomes)
+    return [
+        replace(outcome, reused_from=reuse)
+        if outcome.gate == JURY_ID and not outcome.not_run and not outcome.unconfigured
+        else outcome
+        for outcome in outcomes
     ]
 
 

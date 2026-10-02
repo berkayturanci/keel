@@ -2490,6 +2490,34 @@ def _standing_jury_verdict(
     return standing
 
 
+def standing_jury_verdict(
+    pr_comments: list[dict[str, Any]] | None,
+    *,
+    head_sha: str | None,
+    covered_heads: Collection[str] = (),
+    enforced: bool = True,
+) -> dict[str, Any] | None:
+    """The jury verdict comment that stands for ``head_sha``, or ``None`` (#1437).
+
+    The merge gate's own reading (:func:`_standing_jury_verdict`): trusted author, the
+    jury marker in the header, pinned to the head or a head it covers, latest by when it
+    was posted. ``keel ship`` reuses the panel this names instead of convening another,
+    so the two can never pick different panels. A blank head is refused here, unlike
+    the evidence counters: reuse *replaces* a run, and a panel nobody pinned to a head
+    must not stand in for one.
+    """
+    if not head_sha:
+        return None
+    return _standing_jury_verdict(
+        pr_comments or [], head_sha=head_sha, covered_heads=covered_heads, enforced=enforced
+    )
+
+
+def verdict_head(item: dict[str, Any]) -> str:
+    """The head a verdict comment answers for: its ``head:`` field, else its commit."""
+    return _verdict_head(item, _body(item))
+
+
 def _jury_not_approved_finding(
     items: list[dict[str, Any]],
     *,
