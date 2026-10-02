@@ -57,9 +57,23 @@ In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictl
   carries forward, so a rejection there still holds. A reviewer who requested changes and then
   approved counts; one who approved and then requested changes holds the merge. A rejection
   pinned to an older head is not read: the new head is answered by the reviewer's next verdict.
-* **The jury verdict keeps its own semantics.** A `keel.jury-verdict.v1` comment is the
-  panel's consensus record, and the gate asks only that one is posted for the head. The
-  panelists' ballots that `keel review --from-jury` posts are review verdicts, and are read
+* **A jury verdict counts only when its consensus approves (#1429).** A
+  `keel.jury-verdict.v1` comment is the panel's consensus record, and the gate reads its
+  `AI Jury verdict:` line the way it reads a review's `Verdict:` line: the first word, any case
+  (`AI Jury verdict: REQUEST_CHANGES.` reads `REQUEST_CHANGES`), against the same
+  `APPROVE` / `LGTM` / `PASS` set. The **latest** trusted jury verdict at the head (or a head the
+  capture exemption carries forward), ordered by when it was posted, is the panel's word — a
+  re-run that approves supersedes the rejection before it, and the reverse holds. When it does
+  not approve — `REQUEST_CHANGES`, `NEEDS_INFO`, `COMMENT`, `ABSTAIN` (what keel writes when
+  the panel produced no chair synthesis), `NO_QUORUM`, an unknown word or no line —
+  `jury-verdict` is unsatisfied and a blocking `jury-verdict-not-approved` finding names the
+  consensus and head: `the jury's consensus at <head> is REQUEST_CHANGES, not an approval.` It
+  blocks wherever the jury verdict is required; an advisory or deferred panel's rejection is
+  reported as `minor`. Until #1429 the line was not read, and on the `keel init` scaffold
+  (`gates: [build, lint]`, no `jury` gate) nothing else stood between a rejecting panel and
+  `keel merge`. The panel-shape readers — the `vendors:` / `panelists:` counts and whether a
+  panel sat — still read the comment's presence: a panel that rejected the change still sat.
+  The panelists' ballots that `keel review --from-jury` posts are review verdicts, and are read
   like any other: a ballot that requests changes holds.
 * If the head commit changes by even one byte, previous review evidence is automatically invalidated,
   and Keel halts the merge until the new commit is re-verified by the backbone.
@@ -208,8 +222,9 @@ bench could never have promised.
 ### 5. Phase-Separated Verification Contract
 Evidence requirements are split by lifecycle phase:
 * **Pre-Merge Phase (`s10`)**: Requires verified `review-verdict` (from required risk-tier reviewer count),
-  a `jury-verdict` whenever the resolved jury mode is `gating` (a tier-3 change by default, unless the
-  run passes `--no-jury`, and whether or not the `jury` binary is installed), and passing gate results
+  a `jury-verdict` whose consensus approves whenever the resolved jury mode is `gating` (a tier-3 change
+  by default, unless the run passes `--no-jury`, and whether or not the `jury` binary is installed —
+  a posted verdict that rejects holds the merge by name, #1429), and passing gate results
   (`build`, `lint`, and `jury` or `revert-check` when `gates:` lists them).
 * **Post-Merge Phase (`s11`)**: Records `closure-comment` and `compound-learning` markers.
 

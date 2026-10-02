@@ -310,6 +310,33 @@ class TestTheJuryIsTheReviewPanel(unittest.TestCase):
             ],
         )
 
+    def test_a_panel_whose_consensus_rejects_holds_the_gate(self):
+        """#1429, scenario A: three approving ballots do not outvote a rejecting consensus.
+
+        Before #1429 the gate checked the jury verdict's presence only, so this panel —
+        every ballot `LGTM`, the chair `REQUEST_CHANGES` over a verified major — passed.
+        """
+        result = self._map_panel(["anthropic", "google", "anthropic"], chair="REQUEST_CHANGES")
+        jury_post = next(p for p in result["plan"]["posts"] if p["artifact"] == "jury-verdict")
+        self.assertIn("AI Jury verdict: REQUEST_CHANGES.", jury_post["body"])
+
+        rc, report = self._verify(result["plan"]["posts"])
+
+        self.assertEqual(rc, 1)
+        verification = report["verification"]
+        self.assertEqual(verification["status"], "fail")
+        self.assertEqual(verification["counts"]["review_verdict"], 3)
+        self.assertEqual(
+            [(f["id"], f["severity"], f["message"]) for f in verification["findings"]],
+            [
+                (
+                    "jury-verdict-not-approved",
+                    "major",
+                    "the jury's consensus at abc123 is REQUEST_CHANGES, not an approval.",
+                )
+            ],
+        )
+
     def test_a_single_vendor_panel_of_three_fails_distinctness(self):
         """The issue's second criterion: one vendor three times is one opinion."""
         result = self._map_panel(["anthropic", "anthropic", "anthropic"])

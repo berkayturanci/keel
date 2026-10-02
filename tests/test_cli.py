@@ -3692,7 +3692,7 @@ class TestShip(unittest.TestCase):
                         "keel.review-verdict.v1\nReviewer A LGTM\n"
                         "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
-                    _trusted_comment("keel.jury-verdict.v1\nAI Jury LGTM"),
+                    _trusted_comment("keel.jury-verdict.v1\nAI Jury verdict: LGTM."),
                 ],
             )
             _write_json_fixture(
@@ -5056,7 +5056,7 @@ class TestShip(unittest.TestCase):
                         "Verdict: LGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
-                    _trusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
+                    _trusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury verdict: LGTM."),
                 ],
             )
             _write_json_fixture(
@@ -9094,6 +9094,91 @@ class TestCoreMerge(unittest.TestCase):
             self.assertIn(
                 f"review-verdict-not-approved: {reviewer} requests changes at abc.", reason
             )
+
+    def test_merge_refuses_a_pull_request_its_jury_rejected(self):
+        """#1429, end to end: `keel merge` reads the jury verdict's consensus line.
+
+        Three approving reviews and a trusted, head-pinned jury verdict — everything the
+        gate asked for before — but the panel's consensus is `REQUEST_CHANGES`. The real
+        verification runs (only the fetch is stubbed) and the refusal names it.
+        """
+
+        def verdict(reviewer: str) -> dict:
+            return {
+                "body": artifacts.render_review_verdict(
+                    reviewer=reviewer,
+                    head_sha="abc",
+                    verdict="LGTM",
+                    vendor=reviewer,
+                    scope="Checked `src/keel/cli.py` and tests/test_cli.py.",
+                ),
+                "author_association": "OWNER",
+            }
+
+        jury_verdict = {
+            "body": artifacts.render_jury_verdict(
+                head_sha="abc",
+                participants=("alpha (anthropic)", "beta (google)"),
+                verdict="REQUEST_CHANGES",
+            ),
+            "author_association": "OWNER",
+        }
+        artifact = {
+            "pr_body": "Closes #265",
+            "pr_comments": [verdict("alpha"), verdict("beta"), verdict("gamma"), jury_verdict],
+            "issue_comments": [],
+            "pr_reviews": [],
+            "issue": 265,
+            "head_sha": "abc",
+            "changed_files": ["src/keel/cli.py"],
+            "pr_labels": ["keel:ship", "agent:claude"],
+        }
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch(
+                "keel.cli.github.pr_merge_snapshot",
+                return_value=_json_result(
+                    {
+                        "headRefOid": "abc",
+                        "mergeStateStatus": "CLEAN",
+                        "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                    }
+                ),
+            ),
+            patch("keel.cli._load_evidence_artifacts", return_value=artifact),
+            patch("keel.cli.github.merge_pr") as merge_pr,
+            patch("keel.cli.github.rest_merge_pr") as rest_merge_pr,
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            # The `keel init` scaffold's shape: no `jury` gate, so a tier-3 change resolves
+            # the jury as gating and nothing but this comment stands for the panel.
+            project = Path(tmp) / "project.yaml"
+            project.write_text(
+                "extends: keel\n"
+                "core_version: '^1.0'\n"
+                "base_branch: main\n"
+                "owner: acme\n"
+                "repo: widget\n"
+                "gates: [build, lint]\n"
+                "knobs:\n"
+                "  build_gate_cmd: 'true'\n"
+                "  lint_cmd: 'true'\n"
+                "  tier3_globs: ['src/**']\n",
+                encoding="utf-8",
+            )
+            argv = _merge_args(root=tmp, json_out=True)
+            argv[1] = str(project)
+            rc, out, _ = run(argv)
+
+        self.assertEqual(rc, 1)
+        merge_pr.assert_not_called()
+        rest_merge_pr.assert_not_called()
+        self.assertIn(
+            "jury-verdict-not-approved: the jury's consensus at abc is REQUEST_CHANGES, "
+            "not an approval.",
+            json.loads(out)["reason"],
+        )
 
     def test_merge_allows_projects_without_configured_window(self):
         fake_report = _merge_capability_report()

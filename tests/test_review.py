@@ -276,6 +276,35 @@ class TestBuildReviewPlan(unittest.TestCase):
         with self.assertRaisesRegex(review.ReviewError, "refusing to under-post"):
             plan("APPROVE")
 
+    def test_a_rejecting_jury_consensus_posts_below_the_tiers_count(self):
+        """#1429: a jury verdict that does not approve holds keel merge on its own, so a
+        panel whose consensus rejects posts even with fewer ballots than the tier."""
+
+        def plan(consensus):
+            return review.build_review_plan(
+                review.parse_reviews([{"reviewer": "alpha", "verdict": "LGTM"}]),
+                required_count=3,
+                head_sha="h",
+                pull_request=1,
+                issue=None,
+                run_id="run",
+                tier=3,
+                jury_record={"verdict": consensus, "panelists": 1},
+            )
+
+        for consensus in ("REQUEST_CHANGES", "ABSTAIN", "COMMENT"):
+            with self.subTest(consensus=consensus):
+                try:
+                    posted = plan(consensus)
+                except review.ReviewError as exc:
+                    self.fail(f"a rejecting consensus was refused as an under-count: {exc}")
+                self.assertEqual(
+                    [post.artifact for post in posted.posts], ["review-verdict", "jury-verdict"]
+                )
+                self.assertIn(f"AI Jury verdict: {consensus}.", posted.posts[-1].body)
+        with self.assertRaisesRegex(review.ReviewError, "refusing to under-post"):
+            plan("LGTM")
+
     def test_over_count_is_allowed(self):
         items = review.parse_reviews([*_two_reviews(), {"reviewer": "C", "verdict": "LGTM"}])
         plan = review.build_review_plan(

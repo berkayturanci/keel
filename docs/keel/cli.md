@@ -197,6 +197,12 @@ toward the tier's reviews, and a reviewer whose latest verdict at the head says 
 `blocking finding(s): review-verdict-not-approved: alice requests changes at <head>.` Before
 #1426 the line was never read, and two `REQUEST_CHANGES` verdicts satisfied a tier of two.
 
+**So does a jury that rejects it (#1429).** Where a gating jury verdict is required, it counts
+only when the latest one at the head says `AI Jury verdict: APPROVE`, `LGTM` or `PASS`; a
+consensus of `REQUEST_CHANGES`, `ABSTAIN`, `COMMENT` or anything else refuses the merge with
+`blocking finding(s): jury-verdict-not-approved: the jury's consensus at <head> is
+REQUEST_CHANGES, not an approval.`
+
 The gates-SHA check reads the run ledger and requires a `ship_run` record whose
 `pull_request.number` matches the PR, whose `git.head_sha` equals the PR's current head
 (from the live merge snapshot) — or a head that head **covers**: one it descends from by
@@ -1168,7 +1174,13 @@ which is the point — an explicit operator act stays distinguishable from armin
   blocking `review-vendor-distinctness` finding. This check is jury-agnostic: it reads only
   the verdict provenance fields and takes no dependency on any review vendor;
 - a posted jury verdict carrying `keel.jury-verdict.v1` and the current `head: <sha>`
-  when jury is enabled in gating mode, posted by a trusted GitHub actor;
+  when jury is enabled in gating mode, posted by a trusted GitHub actor, **whose consensus
+  approves** (#1429): the first word of its `AI Jury verdict:` line must be `APPROVE`, `LGTM`
+  or `PASS`. The latest such comment at the head is the panel's word; one that does not
+  approve leaves `jury-verdict` unsatisfied and raises a `jury-verdict-not-approved` finding
+  naming the consensus and head — blocking when the jury verdict is required, `minor` for an
+  advisory or deferred panel. The `vendors:` / `panelists:` readers that size the panel keep
+  reading presence;
 - at least one mandatory `agent:<vendor>` attribution label on the PR (the labels keel
   computes for the effective implementer). A missing `agent:*` label fails with a blocking
   `attribution-label` finding. When a `ship_run` ledger record exists for the PR, the label

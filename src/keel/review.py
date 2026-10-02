@@ -199,9 +199,11 @@ def build_review_plan(
 
     Fewer supplied reviews than required fails; exact or more is allowed — unless the
     bundle carries a verdict that does not approve (:func:`keel.evidence.verdict_approves`
-    on the verdict as it renders). Such a verdict holds ``keel merge`` on its own (#1426),
-    so refusing it would hide a rejection without protecting anything; an under-count
-    bundle of approvals is still refused (#1423). Each review renders as a head-pinned
+    on the verdict as it renders), or a ``jury_record`` whose consensus does not
+    (:func:`keel.evidence.jury_verdict_approves` on the jury verdict as it renders, #1429).
+    Either holds ``keel merge`` on its own (#1426), so refusing it would hide a rejection
+    without protecting anything; an under-count bundle of approvals is still refused
+    (#1423). Each review renders as a head-pinned
     verdict posted to the PR. A closure record,
     when supplied, renders once and posts to both the PR and the linked issue.
 
@@ -213,7 +215,14 @@ def build_review_plan(
     ballots it summarises is the drift this whole path removes.
     """
     supplied = len(reviews)
-    rejects = any(not evidence.verdict_approves(f"Verdict: {item.verdict}") for item in reviews)
+    jury_post = (
+        _jury_post(jury_record, head_sha=head_sha, pull_request=pull_request, run_id=run_id)
+        if jury_record is not None
+        else None
+    )
+    rejects = any(
+        not evidence.verdict_approves(f"Verdict: {item.verdict}") for item in reviews
+    ) or (jury_post is not None and not evidence.jury_verdict_approves(jury_post.body))
     if supplied < required_count and not rejects:
         raise ReviewError(
             f"supplied {supplied} review(s) but tier requires at least "
@@ -241,10 +250,8 @@ def build_review_plan(
                 body=body,
             )
         )
-    if jury_record is not None:
-        posts.append(
-            _jury_post(jury_record, head_sha=head_sha, pull_request=pull_request, run_id=run_id)
-        )
+    if jury_post is not None:
+        posts.append(jury_post)
     if closure_record is not None:
         posts.extend(
             _closure_posts(
