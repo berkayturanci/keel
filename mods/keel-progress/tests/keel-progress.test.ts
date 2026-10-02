@@ -581,7 +581,7 @@ test('a long branch name is cut with an ellipsis', async ($, on) => {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: 'fix/merge-marks…  ' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 'fix/merge-marks… ' })).toBeDefined()
 })
 
 test('after a failed read the idle pane marks the project’s status as the last good one', async ($, on) => {
