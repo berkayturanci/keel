@@ -408,6 +408,44 @@ def covering_checkpoint(
     }
 
 
+#: The step whose completion ``keel merge`` records (see :func:`mark_merged`).
+MERGE_STEP = "s10"
+
+
+def mark_merged(record: dict[str, Any] | None, run_id: str) -> dict[str, Any] | None:
+    """The checkpoint after ``run_id``'s merge landed, or ``None`` when it is not that run's.
+
+    Pure. ``keel merge`` refuses unless a checkpoint covers the run at s10, and once the merge
+    lands that checkpoint has to say so: left alone it reads ``merge: not-started`` at s10, and
+    ``keel status`` calls a merged run *waiting on the merge window* for as long as it exists
+    (#1448). The merged record says ``merge: merged``, counts s10 as completed and moves the
+    run to the next step; a run already past s10 keeps its position.
+    """
+    if record is None or record.get("run_id") != run_id:
+        return None
+    validate_checkpoint(record)
+    position = record["position"]
+    completed = list(position.get("completed_steps", []))
+    if MERGE_STEP not in completed:
+        completed.append(MERGE_STEP)
+    merge_index = STEP_IDS.index(MERGE_STEP)
+    current = position["current_step"]
+    if STEP_IDS.index(current) <= merge_index:
+        current = STEP_IDS[merge_index + 1]
+    merged = {
+        **record,
+        "position": {**position, "current_step": current, "completed_steps": completed},
+        "state": {**record["state"], "merge": "merged"},
+        "resume": {
+            **record["resume"],
+            "safe_boundary": current in _IDEMPOTENT_STEPS,
+            "action": _IDEMPOTENT_STEPS.get(current),
+        },
+    }
+    validate_checkpoint(merged)
+    return merged
+
+
 def find_orphans(
     *,
     live_branches: list[str] | None = None,

@@ -1095,6 +1095,32 @@ def _checkpoint_gate(
     return gate_payload, coverage["reason"]
 
 
+def _record_merge_in_checkpoint(
+    args: argparse.Namespace, config: cfg.ProjectConfig, run_id: str | None
+) -> dict[str, object]:
+    """Write the landed merge into the run's checkpoint (#1448). Fail-soft.
+
+    The thin I/O around :func:`keel.checkpoint.mark_merged`. The merge has already landed, so
+    nothing here may turn it into a failure: an unreadable or unwritable checkpoint is
+    reported in the payload and the merge still reports ``merged``.
+    """
+    if not run_id:
+        return {"updated": False, "reason": "no run-id"}
+    try:
+        path = checkpoint.resolve_path(args.root, config)
+        merged = checkpoint.mark_merged(checkpoint.read_checkpoint(path), run_id)
+        if merged is None:
+            return {"updated": False, "reason": f"no checkpoint for run {run_id}"}
+        checkpoint.write_checkpoint(path, merged)
+    except (OSError, checkpoint.CheckpointError) as exc:
+        return {"updated": False, "reason": f"checkpoint not updated: {exc}"}
+    return {
+        "updated": True,
+        "run_id": run_id,
+        "current_step": merged["position"]["current_step"],
+    }
+
+
 def _cmd_merge(args: argparse.Namespace) -> int:
     args.live = True
     try:
@@ -1332,6 +1358,9 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         landed = github.rest_json(merged) if transport == TRANSPORT_REST else None
         if isinstance(landed, dict) and isinstance(landed.get("sha"), str):
             args.merge_sha = landed["sha"]
+        payload["checkpoint_update"] = _record_merge_in_checkpoint(
+            args, config, getattr(args, "run_id", None) or gates_run_id
+        )
         _autostamp(
             config,
             args.root,

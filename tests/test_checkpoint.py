@@ -367,6 +367,52 @@ class TestCoveringCheckpoint(unittest.TestCase):
             checkpoint.covering_checkpoint(_record(), "RUN-149", "s99")
 
 
+class TestMarkMerged(unittest.TestCase):
+    """#1448: a landed merge is written into the run's checkpoint."""
+
+    def test_a_run_at_s10_moves_to_s11_with_the_merge_recorded(self):
+        record = _record(current_step="s10", completed_steps=["s0", "s9"])
+        merged = checkpoint.mark_merged(record, "RUN-149")
+        self.assertEqual(merged["state"]["merge"], "merged")
+        self.assertEqual(merged["position"]["current_step"], "s11")
+        self.assertEqual(merged["position"]["completed_steps"], ["s0", "s9", "s10"])
+        self.assertEqual(merged["resume"]["safe_boundary"], "s11" in checkpoint._IDEMPOTENT_STEPS)
+        # The input is not mutated.
+        self.assertEqual(record["state"]["merge"], "not-started")
+        self.assertEqual(record["position"]["current_step"], "s10")
+
+    def test_a_run_already_past_s10_keeps_its_step(self):
+        merged = checkpoint.mark_merged(_record(current_step="s12"), "RUN-149")
+        self.assertEqual(merged["position"]["current_step"], "s12")
+        self.assertIn("s10", merged["position"]["completed_steps"])
+
+    def test_it_is_idempotent(self):
+        once = checkpoint.mark_merged(_record(current_step="s10"), "RUN-149")
+        self.assertEqual(checkpoint.mark_merged(once, "RUN-149"), once)
+
+    def test_another_runs_checkpoint_or_none_is_left_alone(self):
+        self.assertIsNone(checkpoint.mark_merged(_record(run_id="RUN-OTHER"), "RUN-149"))
+        self.assertIsNone(checkpoint.mark_merged(None, "RUN-149"))
+
+    def test_status_no_longer_reads_a_merged_run_as_waiting_on_the_merge_window(self):
+        from keel import status
+
+        config = cfg.load_config(str(Path(__file__).parent.parent / "projects" / "keel.yaml"))
+        record = _record(current_step="s10", stop_reason=None)
+        before = status.build_status_snapshot(
+            config=config, checkpoint_record=record, ledger_records=[]
+        )
+        self.assertEqual(before["current"]["wait_reason"], "merge-window")
+        after = status.build_status_snapshot(
+            config=config,
+            checkpoint_record=checkpoint.mark_merged(record, "RUN-149"),
+            ledger_records=[],
+        )
+        self.assertEqual(after["current"]["step"], "s11")
+        self.assertEqual(after["current"]["merge_state"], "merged")
+        self.assertEqual(after["current"]["wait_reason"], "capture")
+
+
 class TestFindOrphans(unittest.TestCase):
     def _ledger_record(self, *, branch=None, pr=None):
         record = {"git": {"branch": branch}}
