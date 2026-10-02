@@ -23,18 +23,20 @@ fix/merge-chec…  keel #1448 ▰▰▰▰▰▰▰▶▱▱▱▱▱ s7 review 
 ## How it reads the runs
 
 Parallel `keel ship` runs each work in a worktree of their own and write that worktree's
-`.keel/state/checkpoint.json`. The mod lists the repository's worktrees with
-`git worktree list` and runs `keel status --json` in each one that has a live run. A run is
-shown when all three hold:
+checkpoint. The mod always reads the session's own folder, then lists the repository's
+worktrees with `git worktree list` and runs `keel status --json` in each other worktree whose
+checkpoint (found where the project's status contract says it lives) changed in the last
+24 hours. A run is shown when:
 
-- its checkpoint changed in the last six hours
-- `keel status` calls it live
+- `keel status` calls it live, and
 - its pull request, if it has one, is still open (`gh pr list --state open`, read at most
-  once a minute; without `gh` nothing is hidden on these grounds)
+  once a minute, and once more when a scan meets a PR the list doesn't hold; without `gh`
+  nothing is hidden on these grounds)
 
 The last rule exists because `keel merge` used to leave a merged run's checkpoint at s10
 (#1448), so old checkpoints read as waiting on the merge window. Outside a git repository,
-only the session's own folder is read.
+or when `git` can't run, only the session's own folder is read. With no live run, the pane
+still shows the session's project: no active run, its history counts and next issue.
 
 It scans:
 
@@ -91,5 +93,5 @@ cd mods/keel-progress && claude plugin test
 - A worktree whose `keel status` fails is listed in the pane and left out of the band.
 - It checks for `.keel/project.yaml` when the session starts. A project created later in
   the session (`keel init`) shows after `/reload-plugins` or a new session.
-- A run left behind without a pull request keeps showing for six hours after its
-  checkpoint last changed.
+- A run in another worktree left behind without a pull request keeps showing for 24 hours
+  after its checkpoint last changed.

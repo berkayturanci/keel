@@ -12,7 +12,8 @@ export const FALLBACK_STEPS = [
 // States worth a line above the prompt. `no-active-run` and `completed` draw nothing.
 const LIVE_STATES = new Set(['active', 'waiting', 'interrupted'])
 
-// Parses `keel status --json` stdout into { snapshot, steps }, or throws.
+// Parses `keel status --json` stdout into { snapshot, steps, checkpointPath }, or throws.
+// checkpointPath is the project's checkpoint, relative to its root, when the contract names it.
 export function parseStatus(stdout) {
   const payload = JSON.parse(stdout)
   const snapshot = payload && payload.snapshot
@@ -23,7 +24,8 @@ export function parseStatus(stdout) {
   const steps = Array.isArray(declared) && declared.length > 0
     ? declared.map((s) => ({ id: String(s.step_id), name: String(s.step_name) }))
     : FALLBACK_STEPS
-  return { snapshot, steps }
+  const checkpoint = payload.contract?.source?.checkpoint?.path
+  return { snapshot, steps, checkpointPath: typeof checkpoint === 'string' && checkpoint ? checkpoint : null }
 }
 
 // `git worktree list --porcelain` → [{ path, label }]; the label is the branch, else the folder.

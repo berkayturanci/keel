@@ -77,8 +77,11 @@ function stubEngine(
     exitCode?: () => number
     stderr?: string
     worktrees?: Worktree[]
-    openPrs?: number[] | null // null: gh fails
+    openPrs?: number[] | null | (() => number[] | null) // null: gh fails
     gitFails?: boolean
+    gitRejects?: boolean
+    realPaths?: Record<string, string> // what fs.stat({ resolve }) answers per path
+    checkpointRel?: string // where the project keeps its checkpoint
     clock?: { sleep: (ms: number) => Promise<void> }
     slowMs?: number
   },
@@ -90,20 +93,23 @@ function stubEngine(
   on('command.register', () => ({ value: undefined }))
   on('session.start', () => ({ cwd: '/work' }))
   on('session.cwd', () => ({ value: '/work' }))
-  on('fs.stat', ($: unknown, e: { path: string }) => {
-    const w = worktrees.find((x) => e.path === `${x.path}/.keel/state/checkpoint.json`)
+  on('fs.stat', ($: unknown, e: { path: string; resolve?: boolean }) => {
+    if (e.resolve) return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink: false, realPath: opts.realPaths?.[e.path] ?? e.path } }
+    const rel = opts.checkpointRel ?? '.keel/state/checkpoint.json'
+    const w = worktrees.find((x) => e.path === `${x.path}/${rel}`)
     const mtime = w?.mtime === undefined ? 0 : w.mtime
     if (!w || mtime === null) return { deny: 'ENOENT' }
     return { value: { kind: 'file', size: 10, mtimeMs: mtime, isLink: false } }
   })
   on('process.run', async ($: unknown, e: { argv: string[]; init?: { cwd?: string } }) => {
     if (e.argv[0] === 'git') {
+      if (opts.gitRejects) return { deny: 'spawn git ENOENT' }
       expect(e.argv).toEqual(['git', 'worktree', 'list', '--porcelain'])
       return { value: { exitCode: opts.gitFails ? 128 : 0, stdout: opts.gitFails ? '' : porcelain(worktrees), stderr: '' } }
     }
     if (e.argv[0] === 'gh') {
       calls.gh += 1
-      const prs = opts.openPrs === undefined ? [1027] : opts.openPrs
+      const prs = opts.openPrs === undefined ? [1027] : typeof opts.openPrs === 'function' ? opts.openPrs() : opts.openPrs
       if (prs === null) return { value: { exitCode: 1, stdout: '', stderr: 'gh: not logged in' } }
       return { value: { exitCode: 0, stdout: JSON.stringify(prs.map((number) => ({ number }))), stderr: '' } }
     }
@@ -388,19 +394,20 @@ test('parallel runs in other worktrees each get a labelled line, the session’s
 })
 
 test('a stale checkpoint, a worktree without one, and a run whose PR closed are not shown', async ($, on) => {
-  const clock = mock.clock(on, { now: 10 * HOURS })
+  const clock = mock.clock(on, { now: 30 * HOURS })
   const calls = stubEngine(on, {
     project: true,
     openPrs: [2001],
     worktrees: [
-      { path: '/work', branch: 'main', mtime: 10 * HOURS }, // PR 1027 is closed
-      { path: '/wt/live', branch: 'live', mtime: 10 * HOURS, stdout: runAt(11, 2001) },
-      { path: '/wt/stale', branch: 'stale', mtime: 3 * HOURS, stdout: runAt(12, 2001) },
+      { path: '/work', branch: 'main', mtime: 0 }, // read whatever its age; its PR 1027 is closed
+      { path: '/wt/live', branch: 'live', mtime: 30 * HOURS, stdout: runAt(11, 2001) },
+      { path: '/wt/stale', branch: 'stale', mtime: 5 * HOURS, stdout: runAt(12, 2001) }, // 25 h old
       { path: '/wt/none', branch: 'none', mtime: null },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
+  expect(calls.byPath['/work']).toBe(1)
   expect(calls.byPath['/wt/stale']).toBeUndefined()
   expect(calls.byPath['/wt/none']).toBeUndefined()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
@@ -411,7 +418,10 @@ test('a stale checkpoint, a worktree without one, and a run whose PR closed are 
   await clock.settle()
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(
-    await pane.find({ type: 'Text', text: '1 live keel run(s) · 2 recent checkpoint(s) · 1 hidden (PR closed)' }),
+    await pane.find({
+      type: 'Text',
+      text: '1 live keel run(s) · 1 other worktree(s) with a recent checkpoint · 1 hidden (PR closed)',
+    }),
   ).toBeDefined()
 })
 
@@ -476,4 +486,100 @@ test('one failing worktree does not hide the others', async ($, on) => {
   await clock.settle()
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'keel status failed (broken): keel: boom' })).toBeDefined()
+})
+
+test('git that cannot start still leaves the session’s own run, and a throwing scan clears the band', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, gitRejects: true })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.byPath['/work']).toBe(1)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' #1022 ' })).toBeDefined()
+})
+
+test('the session’s folder spelled differently by git is not shown twice', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, {
+    project: true,
+    realPaths: { '/work': '/private/work' },
+    worktrees: [{ path: '/private/work', branch: 'main' }],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.status).toBe(1)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await band.findAll({ type: 'Text', text: ' #1022 ' })).length).toBe(1)
+})
+
+test('a PR opened after the open list was read is looked up again, not hidden', async ($, on) => {
+  const clock = mock.clock(on)
+  let open = [1027]
+  const calls = stubEngine(on, {
+    project: true,
+    openPrs: () => open,
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/wt/new', branch: 'new', stdout: runAt(31, 3001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  // first scan: 3001 is not open yet, looked up once more, still hidden
+  expect(calls.gh).toBe(2)
+  open = [1027, 3001]
+  await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 31' })
+  await clock.settle()
+  expect(calls.gh).toBe(3)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' #31 ' })).toBeDefined()
+})
+
+test('other worktrees are found where this project keeps its checkpoint', async ($, on) => {
+  const clock = mock.clock(on)
+  const withPath = () =>
+    JSON.stringify({ ...JSON.parse(statusJson()), contract: { source: { checkpoint: { steps: STEPS, path: 'var/ck.json' } } } })
+  const calls = stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    checkpointRel: 'var/ck.json',
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: withPath },
+      { path: '/wt/a', branch: 'a', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.byPath['/wt/a']).toBe(1)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' #11 ' })).toBeDefined()
+})
+
+test('with no live run the pane still shows the project’s history and next issue', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'no-active-run', current: null }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: 'No active run.' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /shipped 1 · blocked 1/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'next: #1030' })).toBeDefined()
+})
+
+test('a long branch name is cut with an ellipsis', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/wt/long', branch: 'fix/merge-marks-checkpoint', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: 'fix/merge-marks…  ' })).toBeDefined()
 })
