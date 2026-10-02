@@ -7,6 +7,20 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **`keel swarm-status` shows whether each cluster was reviewed** (#1440). `swarm-review`
+  wrote nothing the status board read, so after a review run the board still stopped at the
+  opened pull request and could not say whether a cluster was posted, held or rejected. A live
+  `swarm-review` now records each cluster's outcome in its worker record of the run state
+  (`.keel/state/swarm/<id>.json`, the file `swarm-run` writes, through the same atomic writer)
+  as `review`: status, reason, pull request, the head the seats reviewed, the tier's count, each
+  seat's slot, reviewer, vendor and outcome (`APPROVE` / `REQUEST_CHANGES` / `failed`, or
+  `refused` / `not-run`), `reviewed_at` and the run id. A re-run replaces it (latest wins); a dry
+  run records nothing. `swarm-status` adds a `Review` column (`posted 2/2 APPROVE @ 596e3d8a`,
+  `changes-requested 1/2 APPROVE, 1 REQUEST_CHANGES @ …`, `not reviewed`), and `--json` carries
+  the record as each worker's `review` plus the cell as `review_summary`. It reads no pull
+  request, so it shows the reviewed head for the reader to compare rather than judging it stale.
+  A state file without the record still loads and reads as not reviewed. `swarm-land` does not
+  read the record: `keel merge`'s evidence gate stays the only authority.
 - **`keel merge --hotfix`'s help names everything it skips** (#1438). It read "bypass the merge window with a recorded justification", but a hotfix merge also skips the gates-pass check for the head (`docs/keel/cli.md` already said so). The help now says both, and that CI, the evidence gate and the head pin still apply.
 
 ## [1.28.0] - 2026-10-02

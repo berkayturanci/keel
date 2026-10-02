@@ -29,6 +29,7 @@ from keel.swarm import (
     SwarmRunState,
     SwarmWave,
     SwarmWorkerStatus,
+    load_swarm_state,
     save_swarm_plan,
     save_swarm_state,
 )
@@ -531,6 +532,73 @@ class AClusterIsSkippedOrRefusedWithItsReason(_Root):
         with patch("keel.swarm_runtime._default_implement", return_value={"ok": True}) as run:
             self.assertEqual(rt._default_seat("plan", {"A": "1"}), {"ok": True})
         run.assert_called_once_with("plan", {"A": "1"})
+
+
+class TheRunStateRecordsTheReview(_Root):
+    """#1440: a live review records each cluster's outcome where `swarm-status` reads it."""
+
+    def _record(self):
+        return load_swarm_state(SWARM, root=self.root).workers[0].review
+
+    def test_a_live_review_records_the_cluster_and_swarm_status_shows_it(self):
+        with patch("keel.swarm_runtime._now", return_value="2026-10-02T09:30:00+00:00"):
+            result = self.review(_IO())
+        self.assertEqual(result.warnings, ())
+        record = self._record()
+        self.assertEqual(record["status"], "posted")
+        self.assertEqual(record["head_sha"], HEAD)
+        self.assertEqual(record["run_id"], f"{SWARM}/cluster-1-7")
+        self.assertEqual(record["reviewed_at"], "2026-10-02T09:30:00+00:00")
+        self.assertEqual(
+            [(s["slot"], s["vendor"], s["outcome"]) for s in record["seats"]],
+            [("A", "claude", "APPROVE"), ("C", "codex", "APPROVE")],
+        )
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            code = main(["swarm-status", KEEL_YAML, "--root", str(self.root), "--swarm-id", SWARM])
+        self.assertEqual(code, 0)
+        self.assertIn(f"posted 2/2 APPROVE @ {HEAD[:8]}", out.getvalue())
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            main(
+                ["swarm-status", KEEL_YAML, "--root", str(self.root), "--swarm-id", SWARM, "--json"]
+            )
+        (worker,) = json.loads(out.getvalue())["workers"]
+        self.assertEqual(worker["review"], record)
+
+    def test_a_dry_run_records_nothing(self):
+        self.review(_IO(), dry_run=True)
+        self.assertIsNone(self._record())
+
+    def test_a_second_review_replaces_the_first(self):
+        self.review(_IO(answers={"codex": _answer("REQUEST_CHANGES")}))
+        self.assertEqual(self._record()["status"], sr.POSTED_CHANGES_REQUESTED)
+        self.review(_IO(head="b" * 40))
+        record = self._record()
+        self.assertEqual(record["status"], sr.HELD)
+        self.assertIn("moved from", record["reason"])
+
+    def test_a_refused_or_skipped_cluster_is_recorded_too(self):
+        branch = f"swarm/{SWARM}/cluster-1-7"
+        self.review(_IO(lookup={branch: PullRequestLookup(None, "PR #9 merged", merged=True)}))
+        self.assertEqual(
+            self._record(), {**self._record(), "status": "already-merged", "seats": []}
+        )
+
+    def test_no_state_or_no_worker_is_a_warning_and_nothing_is_written(self):
+        other = SwarmCluster(
+            "cluster-1-8", (8,), "core", ("b",), assignment=_assignment("claude", "codex")
+        )
+        result = self.review(_IO(), _plan(other))
+        self.assertEqual(
+            result.warnings,
+            (f"cluster-1-8: the run state of {SWARM} has no worker cluster-1-8 to record it on",),
+        )
+        self.assertIsNone(self._record())
+        shutil.rmtree(self.root / ".keel")
+        result = self.review(_IO())
+        self.assertIn("could not be read; the review is not recorded", result.warnings[0])
+        self.assertIsNone(load_swarm_state(SWARM, root=self.root))
 
 
 # --- the CLI -------------------------------------------------------------------------

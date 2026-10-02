@@ -3339,6 +3339,16 @@ always was, each record now with `wave`, `stage`, `started_at` and `finished_at`
 
 A state file written before these fields still loads.
 
+**The review** ([#1440](https://github.com/berkayturanci/keel/issues/1440)). Each row also has a
+**Review** column: what the last live `keel swarm-review` did with the cluster's pull request —
+its status, how many seats approved and the head they reviewed (`posted 2/2 APPROVE @
+596e3d8a`, `changes-requested 1/2 APPROVE, 1 REQUEST_CHANGES @ …`, `held 2/3 APPROVE, 1 failed @
+…`, `already-merged`), or `not reviewed`. `--json` carries the whole record as each worker's
+`review` (`null` when none) and the cell as `review_summary`. `swarm-status` reads no pull
+request, so it shows the reviewed head rather than judging it stale; compare it with the pull
+request's head. A state file without a review record reads as `not reviewed`. The record is a
+report: `swarm-land` does not read it — `keel merge`'s evidence gate decides.
+
 ### Leftovers: `--orphans` and `--clean`
 
 `--orphans` lists what swarm runs left behind instead of the board
@@ -3555,7 +3565,10 @@ run without `--swarm-id`); with none, it exits 1. For each cluster of `--wave`:
 consent mode and missing scopes exit 1 before the plan is read. The consent flags are passed to
 each `keel review`. `--json` prints `{swarm_id, wave_index, dry_run, status, clusters,
 warnings}`, each cluster with its `status`, `reason`, `pull_request`, `head_sha`, `tier`,
-`required`, `seats` and `verdicts`. Exit `0` only when every cluster is `posted` (live, every
+`required`, `seats` and `verdicts`. A live run also records each cluster's outcome in its worker
+record of the run state as `review` (#1440) — status, reviewed head, each seat's slot, vendor and
+outcome, `reviewed_at` and the run id — replacing any earlier record, which `keel swarm-status`
+shows; a dry run records nothing. Exit `0` only when every cluster is `posted` (live, every
 seat approved), `planned` (dry run) or `already-merged`; `posted-changes-requested` exits 1.
 
 ## `keel swarm-land <project.yaml> [--root DIR] [--wave N] [--issues N,N,…] [--issue N] [--issue-scope N=GLOB[,GLOB…]]... [--declared-file PATH] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--swarm-id ID] [--live] [--transport auto|graphql|rest] [--approve-scope SCOPE] [--operator ID] [--consent-mode explicit|standing|agent] [--delegate PROVIDER] [--review-delegate PROVIDER] [--effort low|medium|high] [--team PROFILE] [--reviewers 1|2|3] [--json]`
