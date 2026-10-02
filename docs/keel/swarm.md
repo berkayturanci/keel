@@ -1,6 +1,6 @@
 # Keel Swarm — High-Concurrency Multi-Agent Orchestration
 
-> ## ⚠️ Experimental — the swarm reviews its own work only when you run `swarm-review`, which has not yet run on a real repository
+> ## ⚠️ Experimental — the swarm reviews its own work only when you run the opt-in `swarm-review`, which has run once, on a sandbox repository
 >
 > The planning commands run, and since
 > [#1400](https://github.com/berkayturanci/keel/issues/1400) a live run implements: **`swarm-run
@@ -15,9 +15,9 @@
 >   ([#1287](https://github.com/berkayturanci/keel/issues/1287)), so it holds the cluster until
 >   the pull request's review verdicts are posted. The swarm reviews only when you run
 >   [`keel swarm-review`](#4-review-keel-swarm-review) — the cluster's own reviewer seats,
->   read-only, their verdicts posted pinned to the head — and it has not yet run on a real
->   repository ([#1423](https://github.com/berkayturanci/keel/issues/1423)); otherwise the
->   verdicts are posted by hand (`keel review --live`), as for any pull request. The rest of what `keel merge`
+>   read-only, their verdicts posted pinned to the head — and it has run once, on a sandbox
+>   repository, with single-vendor review seats ([#1423](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010));
+>   otherwise the verdicts are posted by hand (`keel review --live`), as for any pull request. The rest of what `keel merge`
 >   asks of a pull request the worker leaves itself: the seat's attribution labels on it and a
 >   gates-pass for its head in the run ledger
 >   ([#1420](https://github.com/berkayturanci/keel/issues/1420)).
@@ -73,8 +73,15 @@
 > ([#1281's closing comment](https://github.com/berkayturanci/keel/issues/1281#issuecomment-5935366055)). That is one run on a toy
 > repository, not evidence of maturity.
 >
-> The rest is tracked in [#1423](https://github.com/berkayturanci/keel/issues/1423) (`swarm-review`,
-> built and not yet run on a real repository); the audit epic [#1281](https://github.com/berkayturanci/keel/issues/1281) is closed. Everything below describes
+> The next day, on the same sandbox repository, a full run had no hand step: `swarm-plan`, then
+> `swarm-run --live`, then `swarm-review --live` — each cluster pull request reviewed by the
+> cluster's two review seats, both `claude` (a single vendor, the sandbox's default bench), their
+> verdicts posted pinned to the head — then `swarm-land --live` merged both pull requests and
+> closed their issues ([#1423's run](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)). Swarm stays
+> experimental: that is one run on a toy repository, its review seats were a single vendor, and
+> the swarm is opt-in step by step — run, review and land are separate commands.
+>
+> The audit epic [#1281](https://github.com/berkayturanci/keel/issues/1281) is closed. Everything below describes
 > the design and the code that exists; read it as architecture, not as a supported workflow.
 >
 > **Use [`/keel:ship`](../../src/keel/adapters/commands/ship.md) for work you need landed.**
@@ -704,7 +711,8 @@ keel swarm-status .keel/project.yaml --root . --clean
 
 ## 4. Review (`keel swarm-review`)
 
-> **Experimental, and not yet run on a real repository** ([#1423](https://github.com/berkayturanci/keel/issues/1423)).
+> **Experimental.** It has run once, on a sandbox repository, with two review seats of a single
+> vendor ([#1423](https://github.com/berkayturanci/keel/issues/1423#issuecomment-5946270010)) — one run on a toy repository.
 > It is its own opt-in step: neither `swarm-run` nor `swarm-land` calls it.
 
 The owner's decision on #1423: keel dispatches each cluster pull request's reviewer seats itself
