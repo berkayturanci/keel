@@ -341,6 +341,31 @@ the gate for callers that legitimately do not checkpoint. It **requires a named
 `--operator`** and records the bypass in the merge payload
 (`checkpoint_gate: {status: "bypassed", operator}`).
 
+**After the merge lands, the checkpoint records it (#1448).** Once GitHub has merged the
+head, `keel merge` reads the run's checkpoint and, when it belongs to the same run-id,
+writes it back through the pure `keel.checkpoint.mark_merged`:
+
+- `state.merge` becomes `merged`
+- `s10` is added to `completed_steps`
+- `current_step` moves to `s11` (a run already past `s10` keeps its step)
+- `state.stop_reason` is cleared
+
+`keel status` then reports the run as waiting on `capture`, not on the merge window, until
+capture and close run. Before #1448, every merged run stayed at `s10 / not-started` for as
+long as its checkpoint existed.
+
+This write happens whether the gate above was enforced, advisory or bypassed: it touches only
+a checkpoint that names this run. It is **fail-soft**: a missing, foreign, unreadable or
+unwritable checkpoint never turns a landed merge into a failure. The outcome is reported in
+the payload:
+
+- `checkpoint_update: {updated: true, run_id, current_step}` — the checkpoint was rewritten.
+- `checkpoint_update: {updated: false, reason}` — nothing was written. The reason is
+  `no run-id`, `no checkpoint for run <id>`, or `checkpoint not updated: <error>`.
+
+A dry run, a refused merge or a failed `gh` merge never reaches this step, so it carries no
+`checkpoint_update`.
+
 ## `keel attribution --vendor VENDOR [--model MODEL] [--profile NAME] [--config FILE] [--json]`
 
 Print keel's own attribution labels for a delegate vendor/model pair. This is the **only**
