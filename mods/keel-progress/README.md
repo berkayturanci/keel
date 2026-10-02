@@ -41,7 +41,8 @@ still shows the session's project: no active run, its history counts and next is
 It scans:
 
 - once when the session starts
-- every five seconds while a run is live (or a worktree is failing), every 30 seconds when
+- every five seconds while a run is live (or this session's own `keel status` is failing),
+  every 30 seconds when
   there is none
 - right after any Bash call that runs `keel`
 

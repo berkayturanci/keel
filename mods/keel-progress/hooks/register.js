@@ -48,6 +48,10 @@ let scanned = 0 // other worktrees with a fresh checkpoint at the last scan
 let closedPr = 0 // runs hidden because their pull request is no longer open
 let openPrs = null // Set of open PR numbers, or null when `gh` could not say
 let openPrsAt = -Infinity
+// PRs a forced refetch already found closed. They are not refetched for again (a merged run's
+// PR never reappears, and refetching for it every scan would call GitHub every few seconds);
+// the regular once-a-minute read still checks them.
+const knownClosed = new Set()
 let inFlight = null // the running scan; callers share it instead of starting a second one
 let again = false // a fresh scan was asked for while one ran: run once more after it
 let idleTicks = 0
@@ -176,8 +180,10 @@ async function scan($) {
   ownStale = mine.failure !== undefined
 
   // Other worktrees: only those whose checkpoint (where this project keeps it) changed lately.
-  const checkpoint = mine.parsed?.checkpointPath ?? DEFAULT_CHECKPOINT
-  // An absolute checkpoint path is one file every worktree shares: the session's own read covers it.
+  // A failed own read keeps the last known location, so other worktrees don't drop out.
+  const checkpoint = mine.parsed?.checkpointPath ?? own?.checkpointPath ?? DEFAULT_CHECKPOINT
+  // Defensive: keel rejects an absolute checkpoint path today. If one ever appears it is one file
+  // every worktree shares, which the session's own read already covers.
   const perWorktree = !checkpoint.startsWith('/')
   let fresh = 0
   for (const w of perWorktree ? others : []) {
@@ -202,10 +208,12 @@ async function scan($) {
   let hidden = 0
   for (const run of live) {
     const pr = run.snapshot.current.pull_request
-    if (pr != null && prs !== null && !prs.has(pr) && !refetched) {
+    if (pr != null && prs !== null && !prs.has(pr) && !refetched && !knownClosed.has(pr)) {
       refetched = true
       prs = await loadOpenPrs($, now, true)
+      if (prs !== null && !prs.has(pr)) knownClosed.add(pr)
     }
+    if (pr != null && prs !== null && prs.has(pr)) knownClosed.delete(pr)
     if (pr != null && prs !== null && !prs.has(pr)) {
       hidden += 1
       continue

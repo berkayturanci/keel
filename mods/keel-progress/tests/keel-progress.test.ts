@@ -512,7 +512,7 @@ test('the session’s folder spelled differently by git is not shown twice', asy
   expect((await band.findAll({ type: 'Text', text: ' #1022 ' })).length).toBe(1)
 })
 
-test('a PR opened after the open list was read is looked up again, not hidden', async ($, on) => {
+test('a PR missing from the open list is looked up once more, then on the regular read', async ($, on) => {
   const clock = mock.clock(on)
   let open = [1027]
   const calls = stubEngine(on, {
@@ -527,9 +527,13 @@ test('a PR opened after the open list was read is looked up again, not hidden', 
   await clock.settle()
   // first scan: 3001 is not open yet, looked up once more, still hidden
   expect(calls.gh).toBe(2)
+  // 3001 opens: a refetch already found it closed, so the next regular read (within a minute)
+  // picks it up, without a forced call on every scan in between.
   open = [1027, 3001]
   await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 31' })
   await clock.settle()
+  expect(calls.gh).toBe(2)
+  await clock.advance(60_000)
   expect(calls.gh).toBe(3)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: ' #31 ' })).toBeDefined()
@@ -613,4 +617,25 @@ test('a step the contract names without a step name shows its id', async ($, on)
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: ' s10 s10' })).toBeDefined()
+})
+
+test('a run whose PR closed costs no extra gh call per scan', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, {
+    project: true,
+    openPrs: [2001],
+    worktrees: [
+      { path: '/work', branch: 'main' }, // live, PR 1027 closed
+      { path: '/wt/live', branch: 'live', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  // first scan: the regular read, then one forced refetch for 1027
+  expect(calls.gh).toBe(2)
+  // a live run keeps the 5 s cadence; 1027 is known closed, so only the minute read calls gh
+  await clock.advance(55_000)
+  expect(calls.gh).toBe(2)
+  await clock.advance(10_000)
+  expect(calls.gh).toBe(3)
 })
