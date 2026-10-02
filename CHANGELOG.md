@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`keel merge --hotfix`'s help names everything it skips** (#1438). It read "bypass the merge window with a recorded justification", but a hotfix merge also skips the gates-pass check for the head (`docs/keel/cli.md` already said so). The help now says both, and that CI, the evidence gate and the head pin still apply.
+
 ## [1.28.0] - 2026-10-02
 
 - `keel swarm-review` (experimental, opt-in): keel dispatches each cluster pull request's own reviewer seats, read-only in a checkout of its head, and posts their verdicts — a rejection is always posted and holds the merge. It has run once, on a sandbox repository, with single-vendor review seats.
