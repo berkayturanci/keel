@@ -226,7 +226,11 @@ def main(argv: list[str] | None = None) -> int:
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         return 1
-    target = build_zip(root, Path(args.out) if args.out else None)
+    try:
+        target = build_zip(root, Path(args.out) if args.out else None)
+    except ValueError as exc:  # two skills writing one archive path
+        print(f"refusing to zip: {exc}", file=sys.stderr)
+        return 1
     print(f"plugin-bundle: wrote {target}")
     return 0
 

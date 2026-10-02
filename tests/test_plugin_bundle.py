@@ -410,9 +410,16 @@ class SyncCheckAndZipOnAFixtureTree(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             _fixture_root(root)
-            (root / "commands" / ".DS_Store").write_bytes(b"\0source")
+            # Source litter where the bundle actually reads: `skills/` is copied whole
+            # and `.agents/skills/keel-*` goes into the ZIP whole. (`commands/` would
+            # prove nothing — only `commands/*.md` is ever read.)
+            (root / "skills" / "keel-onboard" / ".DS_Store").write_bytes(b"\0source")
+            (root / ".agents" / "skills" / "keel-ship" / "Thumbs.db").write_bytes(b"\0source")
             plugin_bundle.sync(root)
-            self.assertFalse((root / "plugin" / "commands" / ".DS_Store").exists())
+            self.assertFalse((root / "plugin" / "skills" / "keel-onboard" / ".DS_Store").exists())
+            archive_names = set(plugin_bundle.zip_entries(root))
+            self.assertNotIn("skills/keel-onboard/.DS_Store", archive_names)
+            self.assertNotIn("skills/keel-ship/Thumbs.db", archive_names)
 
             (root / "plugin" / "commands" / ".DS_Store").write_bytes(b"\0bundle")
             self.assertEqual(
@@ -431,6 +438,20 @@ class SyncCheckAndZipOnAFixtureTree(unittest.TestCase):
         rule = re.search(r"^plugin-zip:(.*)$", makefile, re.M)
         self.assertIsNotNone(rule, "no plugin-zip target")
         self.assertLessEqual({"adapters", "plugin"}, set(rule.group(1).split()))
+
+    def test_zip_reports_two_skills_with_one_name_instead_of_a_traceback(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture_root(root)
+            plugin_bundle.sync(root)
+            clash = root / ".agents" / "skills" / "keel-onboard" / "SKILL.md"
+            clash.parent.mkdir(parents=True)
+            clash.write_bytes(b"---\nname: keel-onboard\ndescription: z\n---\n")
+
+            code, _, err = self._run("zip", "--root", tmp)
+
+        self.assertEqual(1, code)
+        self.assertIn("two skills write skills/keel-onboard/SKILL.md", err)
 
     def test_a_missing_readme_is_drift(self):
         with TemporaryDirectory() as tmp:
