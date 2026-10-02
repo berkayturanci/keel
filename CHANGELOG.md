@@ -38,7 +38,7 @@ All notable changes to keel are documented here. The format follows
   git setup, or when too few seats approve and none requests changes. A dry run reads and plans, and runs and posts nothing; a
   live run needs `filesystem,git,github` consent before the plan is read. Opt-in: neither
   `swarm-run` nor `swarm-land` calls it, and swarm stays experimental on every surface — it has
-  not yet run on a real repository.
+  run once, on a sandbox repository, with single-vendor review seats.
 
 ### Changed
 
