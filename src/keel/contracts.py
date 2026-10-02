@@ -902,6 +902,11 @@ def gate_outcome_as_dict(outcome: gates.GateOutcome) -> dict[str, Any]:
         "unconfigured": outcome.unconfigured,
         "error": outcome.error,
         "findings": [_finding_as_dict(finding) for finding in outcome.findings],
+        **(
+            {"reused_from": outcome.reused_from.as_dict()}
+            if outcome.reused_from is not None
+            else {}
+        ),
     }
 
 

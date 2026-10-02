@@ -1409,3 +1409,19 @@ class TheRunContextIsBuiltForOtherWriters(unittest.TestCase):
         )
         self.assertEqual(block["consent"], {"status": "approved", "scopes": ["git", "github"]})
         self.assertIsNone(block["profile"])
+
+
+class JurySourceIsRecorded(unittest.TestCase):
+    """#1437: a jury gate entry says whether its panel was reused or ran."""
+
+    def test_reused_ran_and_nothing_else(self):
+        from keel import gates
+
+        reuse = gates.PanelReuse(head_sha="abc", comment_id=7, url=None)
+        self.assertEqual(
+            ledger._jury_source(gates.GateOutcome("jury", True, reused_from=reuse)),
+            {"source": "reused", "reused_from": {"head_sha": "abc", "comment_id": 7, "url": None}},
+        )
+        self.assertEqual(ledger._jury_source(gates.GateOutcome("jury", True)), {"source": "ran"})
+        self.assertEqual(ledger._jury_source(gates.GateOutcome("jury", True, not_run=True)), {})
+        self.assertEqual(ledger._jury_source(gates.GateOutcome("build", True)), {})

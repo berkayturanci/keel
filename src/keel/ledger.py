@@ -200,6 +200,9 @@ def build_ship_run_record(
                 "on_fail": getattr(outcome, "on_fail", "block"),
                 "error": outcome.error,
                 "finding_count": len(outcome.findings),
+                # Which panel the jury gate's verdict is (#1437): one keel convened for
+                # this run, or the one already posted for this head and reused.
+                **_jury_source(outcome),
             }
             for outcome in outcomes
         ],
@@ -550,6 +553,20 @@ def latest_ship_run_for_pr(
         if number == pr_number:
             match = record
     return match
+
+
+def _jury_source(outcome: Any) -> dict[str, Any]:
+    """The jury gate's provenance fields for a ledger gate entry (#1437).
+
+    ``source: reused`` with the posted comment it was read from, or ``source: ran`` for a
+    jury this run executed; nothing for any other gate, or for a jury nobody ran.
+    """
+    reused = getattr(outcome, "reused_from", None)
+    if reused is not None:
+        return {"source": "reused", "reused_from": reused.as_dict()}
+    if outcome.gate == "jury" and not getattr(outcome, "not_run", False):
+        return {"source": "ran"}
+    return {}
 
 
 def record_gates_passed(record: dict[str, Any]) -> bool:

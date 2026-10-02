@@ -3344,5 +3344,20 @@ class ReviewVerdictToken(unittest.TestCase):
         self.assertEqual(evidence.APPROVING_VERDICTS, frozenset({"APPROVE", "LGTM", "PASS"}))
 
 
+class StandingJuryVerdictForReuse(unittest.TestCase):
+    """#1437: `keel ship` takes the posted panel through the merge gate's own reading."""
+
+    def test_it_is_the_merge_gates_reading_and_refuses_a_blank_head(self):
+        posted = {
+            "body": artifacts.render_jury_verdict(head_sha="abc123", verdict="LGTM"),
+            "author_association": "MEMBER",
+        }
+        self.assertIs(evidence.standing_jury_verdict([posted], head_sha="abc123"), posted)
+        self.assertIsNone(evidence.standing_jury_verdict([posted], head_sha="other"))
+        self.assertIsNone(evidence.standing_jury_verdict([posted], head_sha=None))
+        self.assertIsNone(evidence.standing_jury_verdict(None, head_sha="abc123"))
+        self.assertEqual(evidence.verdict_head(posted), "abc123")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1451,5 +1451,17 @@ class TestShipResultClosureComment(unittest.TestCase):
         self.assertIn("reviewer: reviewer", result["artifact_bodies"]["review_verdict_template"])
 
 
+class GateOutcomeCarriesTheReusedPanel(unittest.TestCase):
+    """#1437: `ship --json` says which panel a reused jury gate was read from."""
+
+    def test_reused_from_is_published_only_when_set(self):
+        reuse = gates.PanelReuse(head_sha="abc", comment_id=7, url="https://x")
+        reused = contracts.gate_outcome_as_dict(gates.GateOutcome("jury", True, reused_from=reuse))
+        self.assertEqual(reused["reused_from"], reuse.as_dict())
+        self.assertNotIn(
+            "reused_from", contracts.gate_outcome_as_dict(gates.GateOutcome("jury", True))
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
