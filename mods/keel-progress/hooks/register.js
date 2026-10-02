@@ -53,7 +53,7 @@ let superseded = 0 // stale copies of a run another worktree holds a newer check
 let closedPr = 0 // runs hidden because their pull request is no longer open
 let openPrs = null // Set of open PR numbers, or null when `gh` could not say
 let openPrsAt = -Infinity
-// PRs a forced refetch already found closed. They are not refetched for again (a merged run's
+// PRs a forced refetch already found closed. Timer scans do not refetch for them again (a merged run's
 // PR never reappears, and refetching for it every scan would call GitHub every few seconds);
 // the regular once-a-minute read still checks them.
 const knownClosed = new Set()

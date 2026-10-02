@@ -811,7 +811,24 @@ test('a wide-character branch name is cut by terminal cells, not characters', as
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
-  // 12 cells: two spaces, then five two-cell characters would be 12; the "…" needs one, so four fit.
+  // 12 cells: 2 spaces + 機能 (4) + / (1) + 進捗 (4) = 11, then "…" makes 12.
   const band = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 70 }, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: '  機能/進捗…' })).toBeDefined()
+})
+
+test('emoji, flags and zero-width marks are measured in cells too', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      // 🚀 (2) + "fix" (3) + e + U+0301 combining accent (1) = 6 cells: "  🚀fixé" is 8, padded to 12
+      { path: '/wt/emoji', branch: '🚀fixé', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 70 }, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: '  🚀fixé    ' })).toBeDefined()
 })

@@ -75,11 +75,17 @@ export function latestPerRun(entries) {
   return { kept, superseded: entries.length - kept.length }
 }
 
-// Terminal cells a string takes: East Asian wide and fullwidth characters and emoji take two.
-const WIDE = /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{1F300}-\u{1F64F}\u{1F900}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u
+// Terminal cells a character takes: East Asian wide and fullwidth characters and emoji take
+// two; combining marks, variation selectors and the zero-width joiner take none.
+const WIDE = /[ᄀ-ᅟ⌚⌛⏩-⏬⏰⏳◽◾☔☕♈-♓♿⚓⚡⚪⚫⚽⚾⛄⛅⛎⛔⛪⛲⛳⛵⛺⛽✅✊✋✨❌❎❓-❕❗➕-➗➰➿⬛⬜⭐⭕⺀-〾ぁ-㏿㐀-䶿一-鿿ꀀ-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F900}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u
+const ZERO = /[̀-ͯ​-‍︀-️]/u
+function charCells(ch) {
+  return ZERO.test(ch) ? 0 : WIDE.test(ch) ? 2 : 1
+}
+
 export function cells(text) {
   let n = 0
-  for (const ch of text) n += WIDE.test(ch) ? 2 : 1
+  for (const ch of text) n += charCells(ch)
   return n
 }
 
@@ -88,7 +94,7 @@ export function fitCells(text, width) {
   let out = ''
   let n = 0
   for (const ch of text) {
-    const w = WIDE.test(ch) ? 2 : 1
+    const w = charCells(ch)
     if (n + w > width) break
     out += ch
     n += w
