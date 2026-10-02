@@ -503,6 +503,11 @@ keel run from the ledger/checkpoint keel already writes — it never drives one 
 [`docs/keel/keel-visual.md`](docs/keel/keel-visual.md) and
 [its surfaces](docs/keel/overview.md#keel-visual).
 
+Inside Claude Code, the optional [`keel-progress`](mods/keel-progress/README.md) mod shows
+the same run without a second terminal: a step bar above the prompt and a
+`/keel-progress` pane, read from `keel status --json`. Install it with
+`/plugin install keel-progress@keel`; other hosts are unaffected.
+
 ## Docs
 
 - 🌐 **[Website + live coverage report](https://keel-ship.dev/)** — the
