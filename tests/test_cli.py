@@ -3607,7 +3607,7 @@ class TestShip(unittest.TestCase):
                         [
                             [
                                 {
-                                    "body": "keel.review-verdict.v1\nreviewer: a\nLGTM"
+                                    "body": "keel.review-verdict.v1\nreviewer: a\nVerdict: LGTM"
                                     "\n\nsrc/keel/evidence.py: ok.",
                                     "author_association": "MEMBER",
                                 },
@@ -3689,7 +3689,8 @@ class TestShip(unittest.TestCase):
                 [
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nReviewer A LGTM\n\nsrc/keel/evidence.py: ok."
+                        "keel.review-verdict.v1\nReviewer A LGTM\n"
+                        "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
                     _trusted_comment("keel.jury-verdict.v1\nAI Jury LGTM"),
                 ],
@@ -3704,7 +3705,8 @@ class TestShip(unittest.TestCase):
                 reviews,
                 [
                     _trusted_comment(
-                        "keel.review-verdict.v1\nReviewer B LGTM\n\nsrc/keel/evidence.py: ok."
+                        "keel.review-verdict.v1\nReviewer B LGTM\n"
+                        "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
                 ],
             )
@@ -3887,7 +3889,8 @@ class TestShip(unittest.TestCase):
                 [
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: a\nLGTM\n\nsrc/keel/evidence.py: ok."
+                        "keel.review-verdict.v1\nreviewer: a\n"
+                        "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
                 ],
             )
@@ -3942,7 +3945,7 @@ class TestShip(unittest.TestCase):
                 [
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nLGTM"
+                        "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nVerdict: LGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
                 ],
@@ -3957,7 +3960,7 @@ class TestShip(unittest.TestCase):
                 reviews,
                 [
                     _trusted_comment(
-                        f"keel.review-verdict.v1\nreviewer: b\nvendor: {vendor_b}\nLGTM"
+                        f"keel.review-verdict.v1\nreviewer: b\nvendor: {vendor_b}\nVerdict: LGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
                 ],
@@ -4203,7 +4206,7 @@ class TestShip(unittest.TestCase):
             reviews.write_text("[]", encoding="utf-8")
             body.write_text(
                 "Closes #212\n<!-- keel.closure-comment.v1 -->\n"
-                "keel.review-verdict.v1\nLGTM\n\nsrc/keel/evidence.py: ok.",
+                "keel.review-verdict.v1\nVerdict: LGTM\n\nsrc/keel/evidence.py: ok.",
                 encoding="utf-8",
             )
             rc, out, _ = run(
@@ -4375,7 +4378,8 @@ class TestShip(unittest.TestCase):
                 [
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: a\nLGTM\n\nsrc/keel/evidence.py: ok."
+                        "keel.review-verdict.v1\nreviewer: a\n"
+                        "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
                 ],
             )
@@ -4422,7 +4426,8 @@ class TestShip(unittest.TestCase):
                 [
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: a\nLGTM\n\nsrc/keel/evidence.py: ok."
+                        "keel.review-verdict.v1\nreviewer: a\n"
+                        "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
                 ],
             )
@@ -4610,7 +4615,8 @@ class TestShip(unittest.TestCase):
                 pr_comments,
                 [
                     _trusted_comment(
-                        "keel.review-verdict.v1\nReviewer A LGTM\n\nsrc/keel/evidence.py: ok."
+                        "keel.review-verdict.v1\nReviewer A LGTM\n"
+                        "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
                 ],
             )
@@ -4722,10 +4728,12 @@ class TestShip(unittest.TestCase):
                 [
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: a\nLGTM\n\nsrc/keel/evidence.py: ok."
+                        "keel.review-verdict.v1\nreviewer: a\n"
+                        "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: b\nLGTM\n\nsrc/keel/evidence.py: ok."
+                        "keel.review-verdict.v1\nreviewer: b\n"
+                        "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
                     ),
                 ],
             )
@@ -4892,7 +4900,7 @@ class TestShip(unittest.TestCase):
                             _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                             _trusted_comment(
                                 "keel.review-verdict.v1\nreviewer: a\nvendor: claude\n"
-                                "head: abc123\nLGTM"
+                                "head: abc123\nVerdict: LGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                         ]
@@ -4903,8 +4911,10 @@ class TestShip(unittest.TestCase):
                     json.dumps(
                         [
                             {
-                                "body": "keel.review-verdict.v1\nreviewer: b\nvendor: codex\nLGTM"
-                                "\n\nsrc/keel/evidence.py: ok.",
+                                "body": (
+                                    "keel.review-verdict.v1\nreviewer: b\nvendor: codex\n"
+                                    "Verdict: LGTM\n\nsrc/keel/evidence.py: ok."
+                                ),
                                 "commit_id": "abc123",
                                 "author_association": "MEMBER",
                             },
@@ -4973,12 +4983,12 @@ class TestShip(unittest.TestCase):
                             _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                             _trusted_comment(
                                 "keel.review-verdict.v1\nreviewer: a\nvendor: claude\n"
-                                "head: abc123\nLGTM"
+                                "head: abc123\nVerdict: LGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                             _trusted_comment(
                                 "keel.review-verdict.v1\nreviewer: b\nvendor: codex\n"
-                                "head: abc123\nLGTM"
+                                "head: abc123\nVerdict: LGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                         ]
@@ -5032,15 +5042,18 @@ class TestShip(unittest.TestCase):
                 [
                     _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nhead: abc123\nLGTM"
+                        "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nhead: abc123\n"
+                        "Verdict: LGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: b\nvendor: codex\nhead: abc123\nLGTM"
+                        "keel.review-verdict.v1\nreviewer: b\nvendor: codex\nhead: abc123\n"
+                        "Verdict: LGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
                     _trusted_comment(
-                        "keel.review-verdict.v1\nreviewer: c\nvendor: agy\nhead: abc123\nLGTM"
+                        "keel.review-verdict.v1\nreviewer: c\nvendor: agy\nhead: abc123\n"
+                        "Verdict: LGTM"
                         "\n\nsrc/keel/evidence.py: ok."
                     ),
                     _trusted_comment("keel.jury-verdict.v1\nhead: abc123\nAI Jury LGTM"),
@@ -5116,11 +5129,13 @@ class TestShip(unittest.TestCase):
                         [
                             _trusted_comment("<!-- keel.closure-comment.v1 -->"),
                             _trusted_comment(
-                                "keel.review-verdict.v1\nvendor: claude\nReviewer A LGTM"
+                                "keel.review-verdict.v1\nvendor: claude\n"
+                                "Verdict: LGTM\nReviewer A LGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                             _trusted_comment(
-                                "keel.review-verdict.v1\nvendor: codex\nReviewer B LGTM"
+                                "keel.review-verdict.v1\nvendor: codex\n"
+                                "Verdict: LGTM\nReviewer B LGTM"
                                 "\n\nsrc/keel/evidence.py: ok."
                             ),
                         ]
@@ -8562,10 +8577,10 @@ class TestCoreMerge(unittest.TestCase):
         # turns that into a finding, so the finding is the knob's observable effect.
         same_vendor = [
             _trusted_comment(
-                "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nhead: abc\nLGTM"
+                "keel.review-verdict.v1\nreviewer: a\nvendor: claude\nhead: abc\nVerdict: LGTM"
             ),
             _trusted_comment(
-                "keel.review-verdict.v1\nreviewer: b\nvendor: claude\nhead: abc\nLGTM"
+                "keel.review-verdict.v1\nreviewer: b\nvendor: claude\nhead: abc\nVerdict: LGTM"
             ),
         ]
         artifacts = {
@@ -9021,6 +9036,64 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(
             json.loads(out)["reason"], f"blocking finding(s): attribution-label: {message}"
         )
+
+    def test_merge_refuses_a_pull_request_its_reviewers_rejected(self):
+        """#1426, end to end: `keel merge` reads each verdict's `Verdict:` line.
+
+        Every verdict here is trusted, pinned to the head and substantive — what the gate
+        counted before — and every one requests changes. The real verification runs on
+        them (only the fetch is stubbed), and the refusal names each reviewer.
+        """
+
+        def verdict(reviewer: str) -> dict:
+            return {
+                "body": artifacts.render_review_verdict(
+                    reviewer=reviewer,
+                    head_sha="abc",
+                    verdict="REQUEST_CHANGES",
+                    vendor=reviewer,
+                    scope="Checked `src/keel/cli.py` and tests/test_cli.py.",
+                ),
+                "author_association": "OWNER",
+            }
+
+        artifact = {
+            "pr_body": "Closes #265",
+            "pr_comments": [verdict("alpha"), verdict("beta"), verdict("gamma")],
+            "issue_comments": [],
+            "pr_reviews": [],
+            "issue": 265,
+            "head_sha": "abc",
+            "changed_files": ["src/keel/cli.py"],
+            "pr_labels": ["keel:ship", "agent:claude"],
+        }
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch(
+                "keel.cli.github.pr_merge_snapshot",
+                return_value=_json_result(
+                    {
+                        "headRefOid": "abc",
+                        "mergeStateStatus": "CLEAN",
+                        "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                    }
+                ),
+            ),
+            patch("keel.cli._load_evidence_artifacts", return_value=artifact),
+            patch("keel.cli.github.merge_pr") as merge_pr,
+            patch("keel.cli.github.rest_merge_pr") as rest_merge_pr,
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+
+        self.assertEqual(rc, 1)
+        merge_pr.assert_not_called()
+        rest_merge_pr.assert_not_called()
+        reason = json.loads(out)["reason"]
+        for reviewer in ("alpha", "beta", "gamma"):
+            self.assertIn(
+                f"review-verdict-not-approved: {reviewer} requests changes at abc.", reason
+            )
 
     def test_merge_allows_projects_without_configured_window(self):
         fake_report = _merge_capability_report()
@@ -9752,7 +9825,7 @@ class TestCoreMerge(unittest.TestCase):
             "pr_comments": [
                 {
                     "body": "<!-- keel.review-verdict.v1 -->\nreviewer: a\n"
-                    "vendor: claude\nhead: abc\nLGTM"
+                    "vendor: claude\nhead: abc\nVerdict: LGTM"
                     "\n\nsrc/keel/cli.py: ok.",
                     "author_association": "OWNER",
                 },
@@ -9795,7 +9868,7 @@ class TestCoreMerge(unittest.TestCase):
             "pr_comments": [
                 {
                     "body": "<!-- keel.review-verdict.v1 -->\n"
-                    "reviewer: a\nvendor: claude\nhead: abc\nLGTM\n"
+                    "reviewer: a\nvendor: claude\nhead: abc\nVerdict: LGTM\n"
                     "Checked src/keel/cli.py _verify_merge_evidence and found no issues.",
                     "author_association": "OWNER",
                 }
@@ -10662,7 +10735,7 @@ class TestSingleVendorBenchCanLandATierThreeChange(unittest.TestCase):
     #: Three genuinely separate reviewers that happen to share a vendor: the shape the
     #: 1.20.0 tier-derived default turned into an unmergeable pull request.
     SAME_VENDOR_VERDICTS = tuple(
-        f"keel.review-verdict.v1\nreviewer: {who}\nvendor: anthropic\nhead: abc\nLGTM"
+        f"keel.review-verdict.v1\nreviewer: {who}\nvendor: anthropic\nhead: abc\nVerdict: LGTM"
         f"\n\nsrc/acme/auth.py: checked the token refresh path; ok."
         for who in ("lead", "gate", "third")
     )

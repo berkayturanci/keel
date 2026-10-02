@@ -18,7 +18,7 @@ import unittest
 from keel import artifacts, evidence
 
 TITLE = "sec(config): sensitive credential block in api_key_env"
-HEADER = "keel.review-verdict.v1\nreviewer: r\nhead: abc123\n\n"
+HEADER = "keel.review-verdict.v1\nreviewer: r\nhead: abc123\nVerdict: LGTM\n\n"
 
 #: Verbatim from the record in #926.
 OBSERVED = (
