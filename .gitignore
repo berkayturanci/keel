@@ -41,3 +41,7 @@ jury.toml
 # Root-level scratch scripts, same reason: real tests live in tests/, so a
 # test_*.py at the repo root is a throwaway an agent left behind (#616).
 /test_*.py
+
+# Claude Code writes these when it loads the keel-progress mod with --plugin-dir
+mods/keel-progress/tsconfig.json
+mods/keel-progress/.claude-plugin/types/

@@ -27,9 +27,10 @@ const TONES = {
 
 let hasProject = false
 let status = null // { snapshot, steps } from the last good `keel status --json`
-let error = null // first line of the last failure, shown in the pane only
+let error = null // last line of the last failure, shown in the pane only
 let lastStdout = ''
 let inFlight = null // the running refresh; callers share it instead of starting a second `keel status`
+let again = false // a fresh read was asked for while one ran: run once more after it
 let idleTicks = 0
 
 // The timer's tick: every time while a run is live, every IDLE_EVERY-th tick otherwise.
@@ -38,17 +39,34 @@ function tick($) {
     idleTicks = (idleTicks + 1) % IDLE_EVERY
     if (idleTicks !== 0) return undefined
   }
-  return refresh($)
+  return refresh($, false)
 }
 
-function refresh($) {
+// One `keel status` at a time. A caller that needs a read taken after something it just did
+// (`fresh`: a keel command, the pane, the button) gets one more run once the current one ends;
+// a timer tick just shares the running one.
+function refresh($, fresh) {
   if (!hasProject) return Promise.resolve()
-  if (inFlight === null) {
-    inFlight = runStatus($).finally(() => {
-      inFlight = null
-    })
+  if (inFlight !== null) {
+    if (fresh) again = true
+    return inFlight
   }
+  inFlight = runUntilSettled($).finally(() => {
+    inFlight = null
+  })
   return inFlight
+}
+
+async function runUntilSettled($) {
+  do {
+    again = false
+    await runStatus($)
+  } while (again)
+}
+
+function lastLine(text) {
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
+  return lines[lines.length - 1]
 }
 
 async function runStatus($) {
@@ -56,7 +74,8 @@ async function runStatus($) {
   try {
     const run = await $.process.run(['keel', 'status', PROJECT, '--json'], { timeoutMs: STATUS_TIMEOUT_MS })
     if (run.exitCode !== 0) {
-      failure = (run.stderr || run.stdout || `exit ${run.exitCode}`).trim().split('\n')[0]
+      // keel prints warnings before the fatal message, so the last line is the one that matters
+      failure = lastLine(run.stderr || run.stdout || '') ?? `exit ${run.exitCode}`
     } else if (run.stdout !== lastStdout) {
       status = parseStatus(run.stdout)
       lastStdout = run.stdout
@@ -66,6 +85,7 @@ async function runStatus($) {
   } catch (err) {
     failure = String(err?.message ?? err)
   }
+  if (failure !== null && failure === error) return // the same failure again: nothing to redraw
   error = failure
   $.ui.invalidate('ui.render')
 }
@@ -79,7 +99,7 @@ export function register(on) {
     hasProject = await $.fs.exists(PROJECT)
     if (hasProject) {
       // Off the start path: the first status lands a moment after the session opens.
-      $.clock.after(0, () => refresh($))
+      $.clock.after(0, () => refresh($, true))
       $.clock.every(POLL_MS, () => tick($))
     }
     await $.command.register({
@@ -93,20 +113,23 @@ export function register(on) {
   // A keel command may have just moved the run, so refresh as soon as it returns.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const result = await next(e)
-    if (hasProject && /\bkeel\b/.test(String(e.command ?? ''))) {
-      $.clock.after(0, () => refresh($))
+    // A keel invocation, not a path like `.keel/` or a word like `keel-visual`.
+    if (hasProject && /(^|[\s;&|(])keel(\s|$)/.test(String(e.command ?? ''))) {
+      $.clock.after(0, () => refresh($, true))
     }
     return result
   })
 
   on('command.run', { command: 'keel-progress' }, async ($) => {
-    await refresh($)
+    // Open first: a slow `keel status` must not delay the pane; the refresh redraws it.
     await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true })
+    $.clock.after(0, () => refresh($, true))
     return {}
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (!isLive(status?.snapshot)) return next(e)
+    // A failing `keel status` leaves the last good snapshot stale, so the band goes quiet.
+    if (error !== null || !isLive(status?.snapshot)) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const line = Box({
       key: 'keel-progress-band',
@@ -134,7 +157,7 @@ export function register(on) {
           flexDirection: 'row',
           columnGap: 2,
           children: [
-            Button({ key: 'refresh', label: 'Refresh', onPress: () => refresh($) }),
+            Button({ key: 'refresh', label: 'Refresh', onPress: () => refresh($, true) }),
             Button({ key: 'close', label: 'Close', onPress: () => $.ui.close({ id: PANE }) }),
           ],
         }),

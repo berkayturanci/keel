@@ -15,7 +15,7 @@ keel #1022 ▰▰▰▰▰▰▰▰▰▰▶▱▱ s10 merge · waiting: merge-w
 - **`/keel-progress`:** opens a pane listing every step, the history counts (shipped,
   blocked, deferred, skipped) and the next queued issue, with **Refresh** and **Close**
   buttons. If `keel status` fails, the pane shows the error and the line above the prompt
-  stays empty.
+  stays empty until a status succeeds again.
 
 ## How it reads the run
 
@@ -23,9 +23,10 @@ The mod runs `keel status .keel/project.yaml --json` from the session's working 
 
 - once when the session starts
 - every five seconds while a run is live, every 30 seconds when there is none
-- right after any Bash call whose command mentions `keel`
+- right after any Bash call that runs `keel`
 
-Only one `keel status` runs at a time; a refresh asked for meanwhile waits for it.
+Only one `keel status` runs at a time. A read asked for after a keel command, by the pane or
+by **Refresh** starts once the running one ends, so it always sees what the command wrote.
 
 The step names come from the status contract (`keel.progress-status.v1`), so a renamed or
 added step shows up without a mod release.
@@ -68,5 +69,7 @@ clock.
 
 - It shows one project: the `.keel/project.yaml` in the session's working directory.
   Runs in other worktrees aren't shown yet; `keel-visual dash` still covers those.
+- It checks for `.keel/project.yaml` when the session starts. A project created later in
+  the session (`keel init`) shows after `/reload-plugins` or a new session.
 - It shows whatever the checkpoint says. If a run left its checkpoint behind without
   closing, the line above the prompt keeps showing it until `keel` clears it.

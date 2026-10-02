@@ -51,7 +51,7 @@ const PANE = {
 } as const
 
 // Stubs every call the mod makes; `project` decides whether .keel/project.yaml exists.
-function stubEngine(on: any, opts: { project: boolean; stdout?: () => string; exitCode?: number }) {
+function stubEngine(on: any, opts: { project: boolean; stdout?: () => string; exitCode?: () => number; stderr?: string }) {
   const calls = { status: 0, opened: [] as string[] }
   on('fs.exists', () => ({ value: opts.project }))
   on('command.register', () => ({ value: undefined }))
@@ -59,7 +59,13 @@ function stubEngine(on: any, opts: { project: boolean; stdout?: () => string; ex
   on('process.run', ($: unknown, e: { argv: string[] }) => {
     expect(e.argv).toEqual(['keel', 'status', '.keel/project.yaml', '--json'])
     calls.status += 1
-    return { value: { exitCode: opts.exitCode ?? 0, stdout: opts.stdout ? opts.stdout() : statusJson(), stderr: 'keel: boom' } }
+    return {
+      value: {
+        exitCode: opts.exitCode ? opts.exitCode() : 0,
+        stdout: opts.stdout ? opts.stdout() : statusJson(),
+        stderr: opts.stderr ?? 'warning: ledger line 3 skipped\nkeel: boom\n',
+      },
+    }
   })
   on('ui.open', ($: unknown, e: { id: string }) => {
     calls.opened.push(e.id)
@@ -122,6 +128,7 @@ test('the status is polled on a timer and refreshed after a keel Bash call only'
   expect(calls.status).toBe(2)
 
   await $.tool.call({ tool: 'Bash', command: 'ls -la' })
+  await $.tool.call({ tool: 'Bash', command: 'cat .keel/project.yaml && keel-visual --help' })
   await clock.settle()
   expect(calls.status).toBe(2)
 
@@ -169,12 +176,15 @@ test('a refresh asked for while one runs shares it instead of starting another k
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
-  await $.tool.call({ tool: 'Bash', command: 'keel status .keel/project.yaml' })
+  // A keel command finishes while the first status still runs: that read may predate it,
+  // so exactly one more starts once it ends — never alongside it.
+  await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 1' })
   await clock.advance(6_000)
   expect(most).toBe(1)
   expect(calls).toBe(1)
   await clock.advance(10_000)
   expect(most).toBe(1)
+  expect(calls).toBe(2)
 })
 
 test('/keel-progress opens a pane listing every step, history and the next issue', async ($, on) => {
@@ -186,6 +196,7 @@ test('/keel-progress opens a pane listing every step, history and the next issue
   const answer = await $.command.run({ command: 'keel-progress', args: '' })
   expect(answer).toEqual({})
   expect(calls.opened).toEqual(['keel-progress'])
+  await clock.settle()
 
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'keel — waiting  (keel)' })).toBeDefined()
@@ -198,7 +209,7 @@ test('/keel-progress opens a pane listing every step, history and the next issue
 
 test('a failing keel status is reported in the pane, not the band', async ($, on) => {
   const clock = mock.clock(on)
-  stubEngine(on, { project: true, exitCode: 2 })
+  stubEngine(on, { project: true, exitCode: () => 1 })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
 
@@ -206,6 +217,30 @@ test('a failing keel status is reported in the pane, not the band', async ($, on
   expect(await band.find({ type: 'Text', text: /#1022/ })).toBeUndefined()
 
   await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // The fatal last line, not the warning keel printed before it.
   expect(await pane.find({ type: 'Text', text: 'keel status failed: keel: boom' })).toBeDefined()
+})
+
+test('a run that was showing goes quiet in the band when keel status starts failing', async ($, on) => {
+  const clock = mock.clock(on)
+  let exit = 0
+  stubEngine(on, { project: true, exitCode: () => exit })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  let band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' #1022 ' })).toBeDefined()
+  await band.unmount()
+
+  exit = 1
+  await clock.advance(5_000)
+  band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: /#1022/ })).toBeUndefined()
+  await band.unmount()
+
+  exit = 0
+  await clock.advance(5_000)
+  band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' #1022 ' })).toBeDefined()
 })
