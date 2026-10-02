@@ -13,7 +13,9 @@ root sources rather than maintained beside them:
 ``plugin/`` — the Claude plugin directory bundle (committed)
     ``.claude-plugin/plugin.json`` (a byte copy of the root manifest), ``commands/``
     (byte copies of the generated root ``commands/``), ``skills/keel-onboard/``,
-    ``LICENSE`` and ``assets/logo.svg`` (the site favicon). ``README.md`` is the one
+    ``LICENSE`` and ``assets/logo.svg`` (the site favicon — no manifest field names it;
+    it is the square icon to upload in the directory's listing form, kept in the folder
+    so the listing and the bundle cannot disagree). ``README.md`` is the one
     hand-written file. No hooks: ``hooks/session-start.sh`` is repository tooling.
 
 ``dist/keel-plugin-<version>.zip`` — the OpenAI (ChatGPT + Codex) upload (built, ignored)
@@ -30,7 +32,10 @@ Usage::
     python3 scripts/plugin_bundle.py check    # exit 1 if plugin/ has drifted (also --check)
     python3 scripts/plugin_bundle.py zip      # write dist/keel-plugin-<version>.zip
 
-``make plugin`` runs ``sync`` after regenerating ``commands/``; the drift test in
+``make plugin`` runs ``sync`` after regenerating ``commands/``. The ZIP also reads the
+seventeen ``.agents/skills/keel-*`` straight from the tree, which ``make adapters``
+regenerates and ``drift`` cannot see, so ``make plugin-zip`` runs ``adapters`` and
+``plugin`` first. The drift test in
 ``tests/test_plugin_bundle.py`` runs ``check``. Stdlib only, like every script here.
 """
 
@@ -59,13 +64,23 @@ AGENT_SKILLS_GLOB = "keel-*"
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 
 
-def _files_under(root: Path, rel_dir: str) -> list[str]:
-    """Every regular file under ``root/rel_dir``, repo-relative, sorted."""
+#: Finder litter a source tree can carry and no bundle may ship.
+OS_JUNK = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
+
+
+def _files_under(root: Path, rel_dir: str, *, skip_os_junk: bool = True) -> list[str]:
+    """Every regular file under ``root/rel_dir``, repo-relative, sorted.
+
+    Junk is skipped when listing *sources*, so a ``.DS_Store`` beside a command is never
+    copied. The bundle's own listing passes ``skip_os_junk=False``: a ``.DS_Store``
+    inside ``plugin/`` is exactly what the Claude directory blocks, so ``drift`` must
+    see it and ``sync`` must remove it.
+    """
     base = root / rel_dir
     return sorted(
         path.relative_to(root).as_posix()
         for path in base.rglob("*")
-        if path.is_file() and path.name != ".DS_Store"
+        if path.is_file() and not (skip_os_junk and path.name in OS_JUNK)
     )
 
 
@@ -94,7 +109,7 @@ def drift(root: Path) -> list[str]:
         elif dest_path.read_bytes() != (root / source).read_bytes():
             problems.append(f"differs: {dest} != {source}")
     allowed = set(expected) | set(HANDWRITTEN)
-    for present in _files_under(root, BUNDLE_DIR):
+    for present in _files_under(root, BUNDLE_DIR, skip_os_junk=False):
         if present not in allowed:
             problems.append(f"unexpected: {present} (not generated, not hand-written)")
     for handwritten in HANDWRITTEN:
@@ -117,7 +132,7 @@ def sync(root: Path) -> tuple[list[str], list[str]]:
         dest_path.write_bytes(data)
         written.append(dest)
     allowed = set(expected) | set(HANDWRITTEN)
-    for present in _files_under(root, BUNDLE_DIR):
+    for present in _files_under(root, BUNDLE_DIR, skip_os_junk=False):
         if present not in allowed:
             (root / present).unlink()
             removed.append(present)
@@ -167,6 +182,10 @@ def build_zip(root: Path, out: Path | None = None) -> Path:
         for name, source in sorted(zip_entries(root).items()):
             info = zipfile.ZipInfo(name, date_time=ZIP_EPOCH)
             info.compress_type = zipfile.ZIP_DEFLATED
+            # ZipInfo defaults create_system to 0 (MS-DOS) on win32 and 3 (Unix)
+            # elsewhere; pin it, or a Windows build differs in bytes and its
+            # external_attr is read as DOS attributes rather than the 0644 mode.
+            info.create_system = 3
             info.external_attr = 0o100644 << 16
             archive.writestr(info, _lf((root / source).read_bytes()))
     return target

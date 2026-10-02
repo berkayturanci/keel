@@ -86,8 +86,11 @@ loads, built by `scripts/plugin_bundle.py` from the same root sources:
   `keel-onboard` plus the seventeen generated `.agents/skills/keel-*`. Those seventeen stay
   out of `plugin/skills/`, where Claude would list each workflow twice.
 
-`make plugin` re-syncs `plugin/` after regenerating `commands/`, and
-`tests/test_plugin_bundle.py` fails on any drift, on anything a directory would refuse or
+`make plugin` re-syncs `plugin/` after regenerating `commands/`; `make plugin-zip` runs
+`make adapters` and `make plugin` first, because the ZIP reads the generated
+`.agents/skills/keel-*` directly and the drift check covers `plugin/` only. `assets/logo.svg`
+is named by no manifest field: it is the square icon to upload in the directory listing
+form. `tests/test_plugin_bundle.py` fails on any drift, on anything a directory would refuse or
 hold (symlinks, binaries, oversized files, a non-string `description`, a short README) and
 on a listing field past its limit. Both new manifests are release surfaces, so
 `make release-bump` moves their version with the rest.

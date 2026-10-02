@@ -76,7 +76,9 @@ plugin:
 	PYTHONPATH=src $(PY) -m keel install-adapter plugin --root . --force
 	$(PY) scripts/plugin_bundle.py sync
 
-plugin-zip:
+# The ZIP carries .agents/skills/keel-*, which only `adapters` regenerates and the
+# bundle drift check cannot see; rebuild both before zipping.
+plugin-zip: adapters plugin
 	$(PY) scripts/plugin_bundle.py zip
 
 site-params:

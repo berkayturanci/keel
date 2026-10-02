@@ -25,7 +25,9 @@ import importlib.util
 import io
 import json
 import re
+import sys
 import unittest
+import unittest.mock
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -307,12 +309,23 @@ class TheOpenAIZipCarriesSkillsOnly(unittest.TestCase):
                 self.assertLessEqual(len(data), MAX_TEXT_BYTES)
                 self.assertNotIn(b"\0", data)
 
-    def test_the_build_is_deterministic(self):
+    def test_a_windows_build_is_the_same_bytes(self):
+        """`ZipInfo` takes `create_system` from `sys.platform` when it is constructed: 0
+        on win32, 3 elsewhere. Two builds on one machine always agree, so the guard has
+        to build as Windows would; without the pin these bytes differ and the 0644 mode
+        is read as DOS attributes."""
         with TemporaryDirectory() as tmp:
-            first = plugin_bundle.build_zip(REPO_ROOT, Path(tmp) / "a.zip").read_bytes()
-            second = plugin_bundle.build_zip(REPO_ROOT, Path(tmp) / "b.zip").read_bytes()
+            here = plugin_bundle.build_zip(REPO_ROOT, Path(tmp) / "a.zip").read_bytes()
+            with unittest.mock.patch.object(sys, "platform", "win32"):
+                windows = plugin_bundle.build_zip(REPO_ROOT, Path(tmp) / "b.zip").read_bytes()
+            with zipfile.ZipFile(io.BytesIO(windows)) as archive:
+                infos = archive.infolist()
 
-        self.assertEqual(first, second)
+        self.assertEqual(here, windows)
+        for info in infos:
+            with self.subTest(name=info.filename):
+                self.assertEqual(3, info.create_system)
+                self.assertEqual(0o100644, info.external_attr >> 16)
 
 
 def _fixture_root(root: Path) -> None:
@@ -390,6 +403,34 @@ class SyncCheckAndZipOnAFixtureTree(unittest.TestCase):
 
             self.assertEqual(["plugin/commands/ship.md"], removed)
             self.assertEqual([], plugin_bundle.drift(root))
+
+    def test_finder_litter_in_the_bundle_is_drift_and_sync_removes_it(self):
+        """The Claude directory blocks a `.DS_Store`. Skipping it while listing *sources*
+        is right; skipping it while listing the *bundle* hid it from both commands."""
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture_root(root)
+            (root / "commands" / ".DS_Store").write_bytes(b"\0source")
+            plugin_bundle.sync(root)
+            self.assertFalse((root / "plugin" / "commands" / ".DS_Store").exists())
+
+            (root / "plugin" / "commands" / ".DS_Store").write_bytes(b"\0bundle")
+            self.assertEqual(
+                ["unexpected: plugin/commands/.DS_Store (not generated, not hand-written)"],
+                plugin_bundle.drift(root),
+            )
+            _, removed = plugin_bundle.sync(root)
+
+            self.assertEqual(["plugin/commands/.DS_Store"], removed)
+            self.assertEqual([], plugin_bundle.drift(root))
+
+    def test_make_plugin_zip_regenerates_what_the_zip_reads_first(self):
+        """The ZIP reads `.agents/skills/keel-*`, which only `make adapters` regenerates
+        and `drift` cannot see; without the prerequisite an edited adapter ships stale."""
+        makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        rule = re.search(r"^plugin-zip:(.*)$", makefile, re.M)
+        self.assertIsNotNone(rule, "no plugin-zip target")
+        self.assertLessEqual({"adapters", "plugin"}, set(rule.group(1).split()))
 
     def test_a_missing_readme_is_drift(self):
         with TemporaryDirectory() as tmp:
