@@ -202,6 +202,12 @@ def render_review_verdict(
 
     A genuinely clean review stays expressible; it just has to say what it
     looked at.
+
+    ``verdict`` is written as given on the ``Verdict:`` line, and that line is what the
+    gate reads (#1426): the verdict counts toward a merge only when its first word is in
+    :data:`keel.evidence.APPROVING_VERDICTS` (``APPROVE`` / ``LGTM`` / ``PASS``), and one
+    that requests changes holds the merge. Keep the line; a verdict without it is not an
+    approval.
     """
     lines = [
         evidence.REVIEW_VERDICT_MARKER,

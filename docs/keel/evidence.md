@@ -40,6 +40,27 @@ In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictl
   Verdict: APPROVE
   Scope reviewed: …
   ```
+* **A verdict counts only when it approves (#1426).** The gate reads the first word of the
+  comment's first `Verdict:` line, case-insensitively, and counts the verdict toward
+  `review-verdict-N` only when that word is `APPROVE`, `LGTM` or `PASS` — what
+  `render_review_verdict` (`LGTM`), the jury mapping (`APPROVE`/`READY` → `LGTM`) and the
+  host reviewers on keel's own pull requests (`APPROVE`, and earlier `pass`) actually write.
+  `APPROVE — minor nits` approves; `REQUEST_CHANGES`, `COMMENT`, `ABSTAIN`, any other word and
+  a verdict with no `Verdict:` line do not.
+* **A rejection holds the merge, by name.** A reviewer whose verdict at the head does not
+  approve is not merely left uncounted — then another reviewer's approval could make up the
+  number — but raises a blocking `review-verdict-not-approved` finding, which `keel merge`'s
+  refusal names: `review-verdict-not-approved: alice requests changes at <head>.`
+* **A reviewer's latest verdict is their review.** Verdicts are ordered by when they were
+  posted (`created_at`, or a review's `submitted_at`; an edit does not reorder one), and each
+  reviewer is judged by their last one at the head — or at a head the capture exemption below
+  carries forward, so a rejection there still holds. A reviewer who requested changes and then
+  approved counts; one who approved and then requested changes holds the merge. A rejection
+  pinned to an older head is not read: the new head is answered by the reviewer's next verdict.
+* **The jury verdict keeps its own semantics.** A `keel.jury-verdict.v1` comment is the
+  panel's consensus record, and the gate asks only that one is posted for the head. The
+  panelists' ballots that `keel review --from-jury` posts are review verdicts, and are read
+  like any other: a ballot that requests changes holds.
 * If the head commit changes by even one byte, previous review evidence is automatically invalidated,
   and Keel halts the merge until the new commit is re-verified by the backbone.
 * **One exemption, and only one: the lesson `keel capture-land` lands (#1203).** With an in-repo
@@ -261,7 +282,9 @@ keel evidence-verify .keel/project.yaml --root . --pr 554 --head-sha cfe06ca8...
 ```
 
 The verifier confirms:
-1. Presence of required reviewer verdicts matching the risk tier (`TIER-1` = 1, `TIER-2` = 2, `TIER-3` = 3).
+1. Presence of required reviewer verdicts matching the risk tier (`TIER-1` = 1, `TIER-2` = 2, `TIER-3` = 3),
+   counting only reviewers whose latest `Verdict:` line approves — and no reviewer whose latest
+   verdict at the head requests changes (or otherwise does not approve).
 2. Exact matching between the verdict `head_sha` and the target commit.
 3. Proper agent attribution.
 
@@ -276,7 +299,7 @@ To provide honest optics during in-flight pull requests while strictly preservin
 |---|---|---|---|---|
 | **`waiting`** | `2` | *incomplete* (🟡 yellow dot) | Required evidence for the active phase is not posted yet, or a verdict is pinned to a commit that is not the head. | ❌ Blocked |
 | **`pass`** | `0` | `success` (✅ green check) | All required evidence items for the active phase are verified and match `HEAD_SHA`. | ✅ Allowed |
-| **`fail`** | `1` | `failure` (❌ red mark) | Explicit violations detected: closure comment mismatch with the ledger record, a missing attribution label, an attribution label outside Keel's vocabulary (`attribution-vocabulary`), or an unarmed gate. | ❌ Blocked |
+| **`fail`** | `1` | `failure` (❌ red mark) | Explicit violations detected: a review verdict at the head that does not approve (`review-verdict-not-approved`), closure comment mismatch with the ledger record, a missing attribution label, an attribution label outside Keel's vocabulary (`attribution-vocabulary`), or an unarmed gate. | ❌ Blocked |
 
 The `keel-ship` workflow publishes these as a real check-run named
 **`keel evidence (required)`**, against the PR head, on every run. That check —
@@ -370,7 +393,7 @@ out contributor-authored code, even though it holds `checks: write`.
 Keel enforces the evidence chain programmatically, but complete end-to-end enforcement requires pairing Keel's deterministic core with standard repository protections:
 
 ### 1. Keel Core Deterministic Enforcement
-* **Fail-Closed Evidence Gate**: `keel merge` blocks if required reviewer verdicts are missing or not pinned to the head commit SHA, or if no gates-pass record matches that SHA. `--hotfix` is the one audited bypass, and it skips only the gates-SHA check and the merge window; the evidence, CI, lock and checkpoint-gate checks still apply.
+* **Fail-Closed Evidence Gate**: `keel merge` blocks if required reviewer verdicts are missing or not pinned to the head commit SHA, if a reviewer's verdict at that head does not approve, or if no gates-pass record matches that SHA. `--hotfix` is the one audited bypass, and it skips only the gates-SHA check and the merge window; the evidence, CI, lock and checkpoint-gate checks still apply.
 * **Independent Diff Verification**: The orchestrator inspects actual git filesystem diffs rather than trusting agent-declared file lists.
 * **Merge Lock & Window**: Simultaneous agent merges and out-of-window merges are blocked at the filesystem and clock level.
 

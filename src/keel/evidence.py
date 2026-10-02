@@ -32,6 +32,31 @@ DEFAULT_MINIMUM_JURY_VENDORS = team_policy.DEFAULT_MIN_VENDORS
 AGENT_LABEL_PREFIX = "agent:"
 MODEL_LABEL_PREFIX = "model:"
 REVIEW_VERDICT_MARKER = "keel.review-verdict.v1"
+#: The ``Verdict:`` tokens that **approve** a change (#1426). A review verdict counts
+#: toward ``review-verdict-N`` only when the first word of its ``Verdict:`` line is one
+#: of these, read case-insensitively by :func:`review_verdict_token`. The set is what
+#: keel and its hosts actually write, not a guess:
+#:
+#: * ``LGTM`` — the default of :func:`keel.artifacts.render_review_verdict`, what
+#:   ``contracts.py``'s ``review_verdict_template`` renders for an unblocked change, and
+#:   what :func:`keel.jury.map_verdict` folds ai-jury's ``APPROVE`` / ``READY`` into
+#:   before ``keel review --from-jury`` posts a ballot;
+#: * ``APPROVE`` — what the host reviewers post today: every verdict on the keel PRs
+#:   from #1405 onward, 631 of the 1,355 verdict comments on the repository;
+#: * ``PASS`` — 168 verdicts posted on #918–#992, written by hosts as ``Verdict: pass``.
+#:
+#: Everything else holds the merge: ``REQUEST_CHANGES`` (keel's own blocked-change
+#: template, and the jury's ``NEEDS_INFO``), ``COMMENT``, ``ABSTAIN``, a token keel does
+#: not know, and a verdict with no ``Verdict:`` line at all. Inventing an approval for a
+#: stance keel does not recognise is the mapping error that cannot be undone — the same
+#: rule :data:`keel.jury._VERDICT` states for ballots.
+APPROVING_VERDICTS = frozenset({"APPROVE", "LGTM", "PASS"})
+#: The non-approving tokens a refusal names as *requesting changes*; any other
+#: non-approving token is named by itself (``alice does not approve at <head> (verdict
+#: COMMENT)``).
+REQUEST_CHANGES_VERDICTS = frozenset({"REQUEST_CHANGES", "CHANGES_REQUESTED", "NEEDS_INFO"})
+#: The finding a non-approving review verdict at the current head raises (#1426).
+VERDICT_NOT_APPROVED_FINDING = "review-verdict-not-approved"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 #: The comment a live ship run posts on its PR right after creating it (#1013). It is
 #: the *primary* arming signal for the evidence gate: unlike the branch name it is
@@ -81,6 +106,14 @@ _FIELD_RE = re.compile(
     re.IGNORECASE,
 )
 _HEADER_LINE_RE = re.compile(r"^[A-Za-z0-9_-]+\s*:")
+#: A ``Verdict:`` line, as :func:`keel.artifacts.render_review_verdict` writes it. Anchored
+#: at the line start, so ``AI Jury verdict:`` and a quoted ``> Verdict:`` are not one.
+_VERDICT_LINE_RE = re.compile(r"^\s*verdict\s*:(?P<value>.*)$", re.IGNORECASE)
+#: The first word of a verdict line's value: wrapper punctuation (``**``, a backtick, an
+#: emoji) is skipped, and the word ends at the first character that is not a letter,
+#: ``_`` or ``-`` — so ``APPROVE — minor nits`` and ``APPROVE, minor nits`` both read
+#: ``APPROVE``.
+_VERDICT_TOKEN_RE = re.compile(r"^[\W_]*(?P<token>[A-Za-z][A-Za-z_-]*)")
 _SHIP_BRANCH_RE = re.compile(r"^(feature|fix|chore|docs|test)/issue-\d+(?:-|$)")
 #: The exact wrapper a marker line may wear. Every keel renderer emits its marker as
 #: the whole first line, in one of exactly two shapes: bare
@@ -259,7 +292,8 @@ def contract_as_dict(
         "accepted_sources": {
             "closure": ("trusted issue/PR comments carrying keel.closure-comment.v1"),
             "review": (
-                "trusted PR review/comment carrying keel.review-verdict.v1 and current head"
+                "trusted PR review/comment carrying keel.review-verdict.v1 and current head, "
+                "whose reviewer's latest Verdict line approves"
             ),
             "jury": "trusted PR comment carrying keel.jury-verdict.v1 and current head",
         },
@@ -470,6 +504,18 @@ def verify(
         pr_title=pr_title,
     )
     findings = [*findings, *substance]
+    # A reviewer whose standing verdict does not approve holds the merge by name (#1426):
+    # the counts above leave them out, and this says why instead of letting another
+    # reviewer's approval make up the number.
+    findings = [
+        *findings,
+        *_verdict_not_approved_findings(
+            [*(pr_comments or []), *(pr_reviews or [])],
+            head_sha=head_sha,
+            covered_heads=covered_heads,
+            enforced=enforced,
+        ),
+    ]
     findings = [
         *findings,
         *_malformed_marker_findings(
@@ -1016,8 +1062,10 @@ def count_review_verdicts(
 
     This is the same evidence-side counting the verify report uses for the
     ``review`` items: it collapses idempotent re-posts by the same reviewer to
-    one verdict and only counts trusted, head-bound verdicts. Reused by capture
-    reconcile to cross-check the ledger's recorded reviewer count.
+    one verdict and only counts trusted, head-bound verdicts whose reviewer's
+    latest ``Verdict:`` line approves (#1426) — a reviewer who requested changes
+    reviewed, but did not pass, the change. Reused by capture reconcile to
+    cross-check the ledger's recorded reviewer count.
     """
     keys = _review_evidence_keys(
         [*(pr_comments or []), *(pr_reviews or [])],
@@ -1053,7 +1101,9 @@ def verdict_reviewers(
     """The reviewers whose verdicts count for ``head_sha``, by name, sorted (#1422).
 
     The verdicts :func:`verify` counts toward ``review-verdict-N`` — trusted, head-pinned,
-    with substance — named by their ``reviewer:`` field, else by the commenter's login. A
+    with substance, and approving at the reviewer's latest word (#1426), so a reviewer who
+    requested changes is not listed as having passed it — named by their ``reviewer:``
+    field, else by the commenter's login. A
     verdict keyed only by its body names nobody and is left out. This is what a closure
     comment written after the merge says reviewed the change, read off the pull request
     rather than recalled.
@@ -1069,6 +1119,157 @@ def verdict_reviewers(
     return tuple(sorted(names))
 
 
+@dataclass(frozen=True)
+class _ReviewTally:
+    """What the review verdicts at a head add up to, per reviewer (#1426).
+
+    ``accepted`` are the reviewer keys whose verdict counts toward ``review-verdict-N``;
+    ``vendors`` maps each of them to its declared vendor (or ``None``). ``insubstantial``
+    are the ``(key, reason)`` pairs refused for naming nothing (#926), and
+    ``not_approved`` the ``(key, token, head)`` triples of reviewers whose standing
+    verdict does not approve (``token`` is ``None`` when it has no readable
+    ``Verdict:`` line). Both refusals are reported, never dropped.
+    """
+
+    accepted: frozenset[str]
+    vendors: dict[str, str | None]
+    insubstantial: tuple[tuple[str, str], ...]
+    not_approved: tuple[tuple[str, str | None, str], ...]
+
+
+def _posted_at(item: dict[str, Any]) -> str:
+    """When ``item`` was posted, as GitHub's ISO-8601 string, or ``""`` when unknown.
+
+    An issue comment carries ``created_at`` and a pull-request review ``submitted_at``.
+    ``updated_at`` is deliberately not read: editing an old approval (a typo fix, an
+    idempotent re-post of the same run's comment) must not make it outrank a rejection
+    posted after it. ISO-8601 UTC strings order lexically, so no clock is parsed.
+    """
+    for field in ("created_at", "submitted_at"):
+        value = item.get(field)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def review_verdict_token(body: str) -> str | None:
+    """The upper-cased first word of ``body``'s first ``Verdict:`` line, or ``None`` (#1426).
+
+    The line is the one :func:`keel.artifacts.render_review_verdict` writes
+    (``Verdict: <verdict>``); it is found anywhere in the comment, header block included,
+    but only at the start of a line. The first word is read case-insensitively, with
+    wrapper punctuation skipped and ``-`` spelled ``_``, so ``APPROVE — minor nits``,
+    ``**lgtm**`` and ``request-changes`` read ``APPROVE``, ``LGTM`` and
+    ``REQUEST_CHANGES``. ``None`` when the comment has no such line or the line has no
+    word, which :func:`verdict_approves` treats as not an approval.
+    """
+    for line in body.splitlines():
+        match = _VERDICT_LINE_RE.match(line)
+        if match is None:
+            continue
+        token = _VERDICT_TOKEN_RE.match(match.group("value").strip())
+        return token.group("token").upper().replace("-", "_") if token else None
+    return None
+
+
+def verdict_approves(body: str) -> bool:
+    """Whether a review verdict's ``Verdict:`` line approves (:data:`APPROVING_VERDICTS`)."""
+    return review_verdict_token(body) in APPROVING_VERDICTS
+
+
+def _not_approved_message(key: str, token: str | None, head: str) -> str:
+    """How a refusal names a reviewer whose standing verdict does not approve (#1426)."""
+    name = _reviewer_name(key)
+    if token in REQUEST_CHANGES_VERDICTS:
+        return f"{name} requests changes at {head}."
+    why = f"verdict {token}" if token else "no readable Verdict line"
+    return f"{name} does not approve at {head} ({why})."
+
+
+def _verdict_head(item: dict[str, Any], body: str) -> str:
+    """The head a verdict answers for: its ``head:`` field, else the review's commit."""
+    recorded = _fields(body).get("head")
+    if recorded:
+        return recorded
+    commit_id = item.get("commit_id")
+    return commit_id if isinstance(commit_id, str) and commit_id else "an unrecorded head"
+
+
+def _reviewer_name(key: str) -> str:
+    """A reviewer key as a refusal names it: the reviewer, or the verdict's digest."""
+    kind, _, name = key.partition(":")
+    return f"an unnamed reviewer (verdict {name[:12]})" if kind == "body" else name
+
+
+def _review_tally(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None = None,
+    covered_heads: Collection[str] = (),
+    enforced: bool = True,
+    pr_title: str = "",
+) -> _ReviewTally:
+    """Tally the trusted review verdicts that answer for ``head_sha`` (#1426).
+
+    **A reviewer's latest verdict is their review.** Verdicts are ordered by when they
+    were posted (:func:`_posted_at`, then their position), grouped by reviewer key, and
+    each reviewer is judged by the last one — at the head or at a head it descends from
+    by capture commits alone (``covered_heads``, #1203):
+
+    * **It does not approve** (:func:`verdict_approves`): the reviewer is refused, with
+      their stance and the head it was given at. A rejection is evidence; dropping it
+      silently would let another reviewer's approval outvote it. So a reviewer who
+      approved and then requested changes holds the merge.
+    * **It approves**: the reviewer counts when any verdict in their run of approvals
+      since their last non-approving one has substance (:func:`verdict_substance`) —
+      a thin verdict followed by a real one is accepted, because the later comment is
+      the review (#926). A reviewer who requested changes and then approved counts; a
+      thin approval cannot overturn their own substantive rejection.
+
+    A verdict pinned to any other head is not read at all: a rejection of an older head
+    is answered by the commits that moved it, and the reviewer's next verdict.
+    """
+    ordered = sorted(enumerate(items), key=lambda pair: (_posted_at(pair[1]), pair[0]))
+    by_key: dict[str, list[tuple[dict[str, Any], str]]] = {}
+    for _, item in ordered:
+        if not _is_trusted_source(item, enforced=enforced):
+            continue
+        body = _body(item)
+        if not _is_review_verdict_body(body):
+            continue
+        if not _matches_head(item, body, head_sha, covered_heads):
+            continue
+        by_key.setdefault(_reviewer_key(item, body), []).append((item, body))
+    accepted: set[str] = set()
+    vendors: dict[str, str | None] = {}
+    insubstantial: list[tuple[str, str]] = []
+    not_approved: list[tuple[str, str | None, str]] = []
+    for key, verdicts in by_key.items():
+        latest_item, latest_body = verdicts[-1]
+        token = review_verdict_token(latest_body)
+        if token not in APPROVING_VERDICTS:
+            not_approved.append((key, token, _verdict_head(latest_item, latest_body)))
+            continue
+        approvals: list[str] = []
+        for _, body in reversed(verdicts):
+            if not verdict_approves(body):
+                break
+            approvals.append(body)
+        substance = [verdict_substance(body, pr_title=pr_title) for body in approvals]
+        if not any(ok for ok, _ in substance):
+            insubstantial.extend((key, reason) for _, reason in reversed(substance))
+            continue
+        accepted.add(key)
+        vendor = _fields(verdicts[0][1]).get("vendor")
+        vendors[key] = vendor.lower() if vendor else None
+    return _ReviewTally(
+        accepted=frozenset(accepted),
+        vendors=vendors,
+        insubstantial=tuple(insubstantial),
+        not_approved=tuple(not_approved),
+    )
+
+
 def _review_evidence_keys_and_rejections(
     items: list[dict[str, Any]],
     *,
@@ -1082,28 +1283,13 @@ def _review_evidence_keys_and_rejections(
     Rejections are returned rather than dropped so the gate can *hold with a
     reason* — a verdict silently not counted would surface as "missing
     review-verdict-2", which sends the operator looking for a comment that is
-    right there (#926).
+    right there (#926). A reviewer whose standing verdict does not approve is in
+    neither: :func:`_verdict_not_approved_findings` reports them (#1426).
     """
-    keys: set[str] = set()
-    rejected: list[tuple[str, str]] = []
-    for item in items:
-        if not _is_trusted_source(item, enforced=enforced):
-            continue
-        body = _body(item)
-        if not _is_review_verdict_body(body):
-            continue
-        if not _matches_head(item, body, head_sha, covered_heads):
-            continue
-        key = _reviewer_key(item, body)
-        ok, reason = verdict_substance(body, pr_title=pr_title)
-        if not ok:
-            rejected.append((key, reason))
-            continue
-        keys.add(key)
-    # A reviewer who posted a thin verdict and then a real one is accepted: the
-    # later comment is the review, and holding on the earlier one would make
-    # correcting yourself impossible.
-    return keys, [(key, why) for key, why in rejected if key not in keys]
+    tally = _review_tally(
+        items, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced, pr_title=pr_title
+    )
+    return set(tally.accepted), list(tally.insubstantial)
 
 
 def _review_vendor_provenance(
@@ -1116,25 +1302,43 @@ def _review_vendor_provenance(
     """Map each accepted review-verdict reviewer-key to its declared vendor.
 
     The value is the lower-cased ``vendor:`` provenance for that verdict, or
-    ``None`` when the verdict carries no vendor field. Keys mirror
+    ``None`` when the verdict carries no vendor field. Keys are exactly
     :func:`_review_evidence_keys`, so duplicate reviewer-keys collapse to one
-    entry (idempotent re-posts do not inflate the vendor set).
+    entry (idempotent re-posts do not inflate the vendor set), and a reviewer
+    whose verdict does not count lends the panel no vendor either (#1426).
     """
-    provenance: dict[str, str | None] = {}
-    for item in items:
-        if not _is_trusted_source(item, enforced=enforced):
-            continue
-        body = _body(item)
-        if not _is_review_verdict_body(body):
-            continue
-        if not _matches_head(item, body, head_sha, covered_heads):
-            continue
-        key = _reviewer_key(item, body)
-        if key in provenance:
-            continue
-        vendor = _fields(body).get("vendor")
-        provenance[key] = vendor.lower() if vendor else None
-    return provenance
+    return dict(
+        _review_tally(
+            items, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced
+        ).vendors
+    )
+
+
+def _verdict_not_approved_findings(
+    items: list[dict[str, Any]],
+    *,
+    head_sha: str | None,
+    covered_heads: Collection[str] = (),
+    enforced: bool,
+) -> list[dict[str, Any]]:
+    """One finding per reviewer whose standing verdict at the head does not approve (#1426).
+
+    ``major`` when the gate is enforced, so a rejection **holds** the merge with its
+    reviewer and head named — ``review-verdict-not-approved: alice requests changes at
+    <head>`` in :func:`refusal_reason` — instead of merely not counting, where another
+    reviewer's approval could make up the number. ``minor`` otherwise, mirroring the
+    other content findings.
+    """
+    tally = _review_tally(items, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced)
+    return [
+        {
+            "id": VERDICT_NOT_APPROVED_FINDING,
+            "severity": "major" if enforced else "minor",
+            "kind": "review",
+            "message": _not_approved_message(key, token, head),
+        }
+        for key, token, head in sorted(tally.not_approved, key=lambda entry: entry[0])
+    ]
 
 
 def distinct_vendor_check(

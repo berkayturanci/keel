@@ -190,6 +190,13 @@ agent:<vendor> attribution label.`). It used to list the missing items alone, so
 request held on a finding with every verdict posted was refused with `missing evidence: ` and
 nothing after it (#1420).
 
+**A review that requests changes holds the merge (#1426).** `evidence-verify` reads each
+verdict's `Verdict:` line: only `APPROVE`, `LGTM` or `PASS` (its first word, any case) counts
+toward the tier's reviews, and a reviewer whose latest verdict at the head says anything else
+— `REQUEST_CHANGES`, `COMMENT`, no `Verdict:` line at all — refuses the merge by name:
+`blocking finding(s): review-verdict-not-approved: alice requests changes at <head>.` Before
+#1426 the line was never read, and two `REQUEST_CHANGES` verdicts satisfied a tier of two.
+
 The gates-SHA check reads the run ledger and requires a `ship_run` record whose
 `pull_request.number` matches the PR, whose `git.head_sha` equals the PR's current head
 (from the live merge snapshot) — or a head that head **covers**: one it descends from by
@@ -460,6 +467,13 @@ to the PR through the same post-comment path with a stable per-reviewer run-id s
 verdict so a later `evidence-verify --require-distinct-vendors` can enforce that the required
 verdicts came from distinct vendors. Provenance is omitted entirely when not supplied, so the
 default verdict rendering is unchanged.
+
+`verdict` is posted as written, on the verdict's `Verdict:` line — a `REQUEST_CHANGES` review is
+a real review and is posted like any other. What it does to the merge is `evidence-verify`'s
+call (#1426): only a verdict whose first word is `APPROVE`, `LGTM` or `PASS` counts toward the
+required number, and a reviewer whose latest verdict at the head does not approve holds the
+merge with a `review-verdict-not-approved` finding. So `--verify` after posting a rejection
+reports a failure, as it should.
 
 The required reviewer count is resolved from the live diff tier using the exact same logic
 `keel evidence-verify` uses (`ship.resolve_review_contract`). If fewer reviews are supplied
@@ -917,7 +931,8 @@ When the merged set is derived (or any reconcile input is supplied) three additi
   (recorded via `keel ship --capture-artifact <path|hash>`). `deferred`/`skipped` need none,
   and neither does a record whose `capture.artifact_scope` is `machine` — see the note below.
 - **reviewer-count-mismatch** — the ledger's `actors.reviewers` count exceeds the evidence-side
-  review-verdict count for that PR. Per-PR verdict counts come from the transport when deriving
+  review-verdict count for that PR — the reviewers whose latest verdict approves, as
+  `evidence-verify` counts them (#1426). Per-PR verdict counts come from the transport when deriving
   live, or from `--verdict-count PR=N` fixtures offline; a PR with no known count is advisory.
 
 The reconcile also reports **notes**, which are listed beside the findings in both the human
@@ -1122,7 +1137,15 @@ which is the point — an explicit operator act stays distinguishable from armin
 - the required count of distinct posted s7 reviewer verdicts from PR comments or reviews
   carrying `keel.review-verdict.v1`, `reviewer: <stable-id>`, and the current
   `head: <sha>` (formal PR reviews may use GitHub's review `commit_id` as the head
-  binding), posted by a trusted GitHub actor. A verdict must also **name something
+  binding), posted by a trusted GitHub actor. **A verdict counts only when it approves**
+  (#1426): the first word of its first `Verdict:` line, read case-insensitively, must be
+  `APPROVE`, `LGTM` or `PASS` (`APPROVE — minor nits` approves). Each reviewer is judged by
+  their **latest** verdict at the head (or a head it covers), ordered by when it was posted —
+  so requesting changes and then approving counts, and approving and then requesting changes
+  does not. A reviewer whose latest verdict does not approve — `REQUEST_CHANGES`, `COMMENT`,
+  `ABSTAIN`, an unknown word, or no `Verdict:` line — is a blocking
+  `review-verdict-not-approved` finding naming the reviewer and head, so a rejection holds the
+  merge rather than being outvoted by another reviewer's approval. A verdict must also **name something
   concrete**, or it is refused as a receipt (#926): an anchor — a path, a
   `file.py:42`, a backticked token, or a called `module.function()` — or two of the
   unbackticked forms (a bare filename, a dotted `module.symbol` carrying an
