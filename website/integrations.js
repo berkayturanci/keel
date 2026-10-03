@@ -260,8 +260,8 @@
       name: "Official GitHub Action",
       category: "platforms",
       badge: "CI/CD Automation",
-      desc: "Official composite action (berkayturanci/keel@v1.29.0) for gates, ship assessment, evidence verification and swarm planning.",
-      cmd: "uses: berkayturanci/keel@v1.29.0",
+      desc: "Official composite action (berkayturanci/keel@v1.30.0) for gates, ship assessment, evidence verification and swarm planning.",
+      cmd: "uses: berkayturanci/keel@v1.30.0",
       logo: "logos/githubactions.svg"
     },
     {

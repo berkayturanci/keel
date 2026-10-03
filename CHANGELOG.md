@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.30.0] - 2026-10-03
+
+- The `keel-progress` mod (0.4.0) no longer looks stuck. It also reads keel's per-phase activity records, so runs that never write a checkpoint (`pr-loop`, `review-cycle`, a ship blocked at its gates) show up too. Each run says how long ago keel last wrote for it and flags one that has gone quiet.
+- The pane links the PR and the issue and shows the last gate, review and check. A toast, with an optional sound, tells you when a run stops, needs you, or finishes. The refresh rate, band size, notifications and sound are settings in `/config`.
+
 ### Added
 - **keel-progress 0.4.0: freshness, details, notifications and settings** (#1462).
   - Each run in the band shows how long ago keel last wrote for it (`· 4m`), and a live run silent for 45 minutes reads `· quiet 1h`, so a stuck run stands out.
