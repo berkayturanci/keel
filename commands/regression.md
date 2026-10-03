@@ -222,4 +222,4 @@ section for every finding the confidence filter kept out of the issue set.
   findings ⇒ same issues) · `/keel:regression` never edits code, pushes, or merges — fixes go
   through `/keel:ship`'s backbone (window + lock + review).
 
-<!-- keel-generated: surface=plugin command=regression keel_version=1.29.0 source_sha256=d9258dfcc12949cdf527cec5a7437f178afe8150d1cd348ac1b3d79e580210c4 generated_sha256=d9258dfcc12949cdf527cec5a7437f178afe8150d1cd348ac1b3d79e580210c4 -->
+<!-- keel-generated: surface=plugin command=regression keel_version=1.30.0 source_sha256=d9258dfcc12949cdf527cec5a7437f178afe8150d1cd348ac1b3d79e580210c4 generated_sha256=d9258dfcc12949cdf527cec5a7437f178afe8150d1cd348ac1b3d79e580210c4 -->
