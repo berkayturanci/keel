@@ -97,6 +97,22 @@ RELEASE_SURFACES: tuple[Surface, ...] = (
         rf'"version": "(?P<version>{VERSION_RE})"',
         False,
     ),
+    # The directory-submission bundles (scripts/plugin_bundle.py). The Claude bundle's
+    # manifest is a byte copy of the root one, which `make plugin` re-syncs; it is a
+    # surface anyway so a bump and the release check read it like every other manifest.
+    # The OpenAI portable manifest becomes the uploaded ZIP's root `plugin.json`.
+    Surface(
+        "plugin/.claude-plugin/plugin.json",
+        '"version": "{version}"',
+        rf'"version": "(?P<version>{VERSION_RE})"',
+        False,
+    ),
+    Surface(
+        "packaging/openai-plugin/plugin.json",
+        '"version": "{version}"',
+        rf'"version": "(?P<version>{VERSION_RE})"',
+        False,
+    ),
     # --- pinned-install references a user copies ------------------------------
     Surface("README.md", "keel@v{version}", rf"keel@v(?P<version>{VERSION_RE})", False),
     # The published Action's own pin, in the page that documents it and the card that

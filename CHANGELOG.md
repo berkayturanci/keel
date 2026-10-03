@@ -6,6 +6,20 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Plugin-directory bundles for Claude and OpenAI.** The marketplace plugin is the whole
+  repository (`"source": "./"`): over 500 files, dozens of binaries and several files past
+  256 KiB, which both directories hold for review. `plugin/` is now a slim Claude plugin
+  directory bundle — the root manifest, the seventeen `commands/`, `skills/keel-onboard/`,
+  `LICENSE`, a logo and a README that discloses what keel runs, sends and fetches — built
+  from the root sources by `scripts/plugin_bundle.py` (`sync`, `check`, `zip`); `make plugin`
+  re-syncs it. `make plugin-zip` writes a deterministic `dist/keel-plugin-<version>.zip` for
+  the OpenAI (ChatGPT + Codex) directory: the portable `packaging/openai-plugin/plugin.json`
+  plus every keel skill, no commands and no hooks. Both new manifests are release surfaces,
+  and `tests/test_plugin_bundle.py` pins drift, the directories' file limits, frontmatter,
+  listing-field lengths, the logo and the ZIP's contents. Existing installs are unchanged.
+  How to submit: `docs/keel/plugin.md`.
+
 ### Changed
 - **keel-progress is shown, not only described** (#1467). The mod README and the root README now show real captures of the band (three parallel runs: one in review, one stopped with its gates blocked, a pr-loop) and of the `/keel-progress` pane. They are taken from Claude Code 2.1.288 running the mod over demo runs written with `keel activity --write`, and rendered as SVG. The Claude Code card on keel-ship.dev mentions the mod.
 

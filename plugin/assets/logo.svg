@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="keel">
+  <rect width="64" height="64" rx="15" fill="#0c1118"></rect>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14.25" fill="none" stroke="#232c38"></rect>
+  
+  <line x1="12" y1="40" x2="32" y2="40" stroke="#2a3744" stroke-width="3" stroke-linecap="round"></line>
+  <circle cx="12" cy="40" r="3.2" fill="#6366f1"></circle>
+  <circle cx="20" cy="40" r="3.2" fill="#6366f1"></circle>
+  <circle cx="28" cy="40" r="3.2" fill="#6366f1"></circle>
+  
+  <circle cx="32" cy="40" r="3.8" fill="#f5a524"></circle>
+  
+  <path d="M32 40 Q44 34 52 19" stroke="#10b981" stroke-width="5.5" fill="none" stroke-linecap="round"></path>
+  <circle cx="52" cy="19" r="4.5" fill="#10b981"></circle>
+</svg>

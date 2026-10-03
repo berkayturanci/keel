@@ -57,6 +57,8 @@ FIXTURE: dict[str, str] = {
     ".claude-plugin/plugin.json": '{{\n  "name": "keel",\n  "version": "{v}"\n}}\n',
     ".codex-plugin/plugin.json": '{{\n  "name": "keel",\n  "version": "{v}"\n}}\n',
     ".cursor-plugin/plugin.json": '{{\n  "name": "keel",\n  "version": "{v}"\n}}\n',
+    "plugin/.claude-plugin/plugin.json": '{{\n  "name": "keel",\n  "version": "{v}"\n}}\n',
+    "packaging/openai-plugin/plugin.json": '{{\n  "name": "keel",\n  "version": "{v}"\n}}\n',
     # The historical prose must survive the bump; the pinned install must not.
     "README.md": (
         'pip install "git+https://github.com/berkayturanci/keel@v{v}"\n'
@@ -269,13 +271,16 @@ class EveryPluginManifestIsARegisteredSurface(unittest.TestCase):
 
     #: Where a per-agent plugin manifest lives, by the convention every one of these
     #: ecosystems uses: a dot-directory at the repository root holding `plugin.json`.
-    _MANIFEST_GLOB = ".*/plugin.json"
+    #: The directory-submission bundles add two more homes (scripts/plugin_bundle.py): the
+    #: Claude bundle folder `plugin/`, and the OpenAI portable manifest under `packaging/`.
+    _MANIFEST_GLOBS = (".*/plugin.json", "plugin/.*/plugin.json", "packaging/*/plugin.json")
 
     def _manifests(self) -> list[str]:
         root = Path(release_surfaces.__file__).resolve().parents[1]
         found = sorted(
             path.relative_to(root).as_posix()
-            for path in root.glob(self._MANIFEST_GLOB)
+            for pattern in self._MANIFEST_GLOBS
+            for path in root.glob(pattern)
             if ".git/" not in path.as_posix()
         )
         self.assertTrue(found, "no plugin manifests found — the glob no longer matches")
@@ -289,7 +294,13 @@ class EveryPluginManifestIsARegisteredSurface(unittest.TestCase):
         equality here would fail two and send the reader to the glob instead.
         """
         self.assertLessEqual(
-            {".claude-plugin/plugin.json", ".codex-plugin/plugin.json"}, set(self._manifests())
+            {
+                ".claude-plugin/plugin.json",
+                ".codex-plugin/plugin.json",
+                "plugin/.claude-plugin/plugin.json",
+                "packaging/openai-plugin/plugin.json",
+            },
+            set(self._manifests()),
         )
 
     def test_every_manifest_in_the_tree_is_registered(self):
