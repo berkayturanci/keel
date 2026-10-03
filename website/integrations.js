@@ -26,7 +26,7 @@
       name: "Claude Code",
       category: "assistants",
       badge: "AI Assistant",
-      desc: "Native slash-command adapter and marketplace plugin (/keel:ship, /keel:swarm, /keel:wrap). The optional keel-progress mod shows every live run above the prompt and in a /keel-progress pane.",
+      desc: "Native slash-command adapter and marketplace plugin (/keel:ship, /keel:swarm, /keel:wrap). The optional keel-progress mod shows the live runs above the prompt and every one of them in a /keel-progress pane.",
       cmd: "/keel:ship 101",
       logo: "logos/claude.svg"
     },
