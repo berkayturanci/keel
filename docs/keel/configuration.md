@@ -944,6 +944,23 @@ one, keeps TIER-3 (`keel.classify.privileged_change` fails closed).
 Map of GitHub check or workflow display name to a path glob. `keel ship --pr` uses this
 mapping to decide which CI checks are relevant to a PR's changed files.
 
+`keel ship --pr` requires a declared workflow to have reported only when at least one
+changed file matches its glob (`fnmatch`, as for `tier3_globs`; a comma-separated value is
+several globs), so a PR touching only `android/**` is not blocked for a `web/**` workflow
+its path filter never triggers. If the changed files cannot be read, every declared
+workflow is required, and so is a workflow whose value has no usable glob (blank or `,`).
+
+**Keep each glob at least as wide as the workflow's own `on.*.paths` filter.** The glob is
+now part of the safety check: a changed file outside it no longer requires that workflow.
+If the workflow also triggers on, say, `shared/schema/**` or its own `.github/workflows/`
+file but the knob says only `web/**`, a PR touching just those paths can be assessed clear
+to merge without that workflow having run. List every trigger path, comma-separated, e.g.
+`"web/**,shared/schema/firebase/**,.github/workflows/web-ci.yml"`.
+
+The changed files come from the local `git diff origin/<base>...HEAD` in the checkout keel
+runs from, while the reported checks come from the PR head on GitHub; run `keel ship --pr`
+from a checkout whose `HEAD` is the PR head.
+
 #### `docs_gate_paths`
 
 The **docs surface**: paths that *are* documentation. Ship uses them to classify docs-only
