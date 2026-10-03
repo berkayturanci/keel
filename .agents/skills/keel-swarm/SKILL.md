@@ -306,4 +306,4 @@ Compile the overall multi-agent swarm outcome:
 - Record final completion:
   `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
-<!-- keel-generated: surface=skills command=swarm keel_version=1.28.0 source_sha256=2b5dd80ea0fbaf5e506abac61622ab870e0b68335f3bacaa71cc687390f57ec9 generated_sha256=b2919bd95fad28ce57fe0436c73ed40d1eb10728c12468f354b464dbbd13f946 -->
+<!-- keel-generated: surface=skills command=swarm keel_version=1.30.0 source_sha256=2b5dd80ea0fbaf5e506abac61622ab870e0b68335f3bacaa71cc687390f57ec9 generated_sha256=b2919bd95fad28ce57fe0436c73ed40d1eb10728c12468f354b464dbbd13f946 -->

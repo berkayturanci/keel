@@ -5,35 +5,78 @@ shows this repository's live keel runs inside Claude Code, so you don't need a s
 terminal running `keel-visual dash`.
 
 ```text
-main             keel #1444 ▰▰▰▰▰▰▰▰▰▰▶▱▱ s10 merge · waiting: merge-window · PR #1445
-fix/merge-chec…  keel #1448 ▰▰▰▰▰▰▰▶▱▱▱▱▱ s7 review · waiting: review · PR #1449
+▸ main                              keel 1: #1444 ▰▰▰▰▰▰▰▰▰▰▶▱▱ s10 merge · waiting: merge-window · PR #1445  more
+  fix/merge-marks-checkpoint        keel 2: #1448 ▰▰▰▰▰▰▰▶▱▱▱▱▱ s7 review · waiting: review · PR #1449
 ```
 
 - **Above the prompt:** one line per live run (`active`, `waiting` or `interrupted`). Each
   shows the issue, a bar over the backbone steps (`▰` done, `▶` current, `▱` pending), the
   current step, why it is waiting (or, in red, why it stopped), and the pull request. With
-  more than one run each line starts with its worktree's branch, the session's own run
-  first; after three, a `+N more` line points at the pane. Nothing is drawn when no run is
-  live.
-- **`/keel-progress`:** opens a pane listing every live run with its steps, the history counts (shipped,
-  blocked, deferred, skipped) and the next queued issue, with **Refresh** and **Close**
-  buttons. A worktree whose `keel status` fails is listed in the pane with its error and
+  more than one run each line starts with its worktree's branch, as wide as the longest one
+  shown, within what the band can spare.
+  The session's own run is first, marked `▸` and drawn bright. Nothing is drawn when no run
+  is live.
+  - **Click a run's issue** (or type its digit, `1`–`9`, into an empty prompt and pause) to
+    open the pane on that run. The pane opens without taking the keyboard, so a digit meant
+    for something else costs nothing but an open pane.
+  - **`more` / `less`** lists every run, not just the first three, each with a second line
+    holding the whole branch name and the worktree path.
+- **`/keel-progress`:** opens a pane on one run: its whole branch name and worktree, every
+  step, the history counts (shipped, blocked, deferred, skipped) and the next queued issue.
+  The other live runs are listed below it as buttons to switch to, with **Refresh** and
+  **Close**. A worktree whose `keel status` fails is listed in the pane with its error and
   left out of the band until a read succeeds again.
+
+- **How fresh it is:** each line ends with how long ago keel last wrote anything for that run
+  (`· 4m`). A live run nothing has been written for in 45 minutes reads `· quiet 1h`, in the
+  waiting colour, so a stuck run stands out.
+- **The pane's details:** links to the pull request and the issue (when the repository is on
+  GitHub), when and where keel last wrote (checkpoint or activity record), and the checkpoint's
+  last gate, review and check.
+- **Notifications:** a toast when a run stops (`interrupted`, gates blocked), waits for you
+  (`needs-input`), or leaves the board (merged, closed or finished). There are none for what
+  was already there when the session opened. A short sound can go with them.
+
+## Settings
+
+Set these in `/config` (or with `/plugin configure keel-progress@keel`):
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Refresh every (seconds) | 5 | How often keel is read while a run is live; six times less often with none |
+| Runs above the prompt | 3 | How many runs the band shows before `+N more` |
+| Notifications | on | Toasts for a stopped run, a run waiting for you, a run that left |
+| Sound | off | A short sound with those toasts |
 
 ## How it reads the runs
 
-Parallel `keel ship` runs each work in a worktree of their own and write that worktree's
-checkpoint. The mod always reads the session's own folder, then lists the repository's
-worktrees with `git worktree list` and runs `keel status --json` in each other worktree whose
-checkpoint (found where the project's status contract says it lives) changed in the last
-24 hours. A run is shown when:
+Parallel `keel ship` runs each work in a worktree of their own. keel records a run in two
+places, and the mod reads both:
 
-- `keel status` calls it live, and
+- **the checkpoint** (`.keel/state/checkpoint.json`, or wherever the project's status contract
+  says), written at keel's safe boundaries, read with `keel status --json`
+- **the activity record** (`.keel/activity/<run-id>.json`), stamped at every phase a command
+  passes through, read with `keel activity --json`. It is often newer than the checkpoint, and
+  some runs never write a checkpoint at all.
+
+For each run, whichever of the two was written last is shown. Activity from other commands
+(`pr-loop`, `review-cycle`, …) shows too, with its phase name and command.
+
+The mod always reads the session's own folder, then lists the repository's worktrees with
+`git worktree list` and reads each other worktree whose checkpoint or activity changed in the
+last 24 hours. A run is shown when:
+
+- keel calls it live (`keel status`), or its activity record says `running` and was stamped
+  in the last six hours (nothing marks an abandoned run done, so an older one is a run that
+  stopped),
+- it is the newest copy of its run: one run can leave checkpoints in several worktrees (a
+  worktree nested in another), and only the most recently written one is shown; the pane
+  counts the stale copies, and
 - its pull request, if it has one, is still open (`gh pr list --state open`, read at most
   once a minute, and once more when a scan meets a PR the list doesn't hold; without `gh`
   nothing is hidden on these grounds)
 
-The last rule exists because `keel merge` used to leave a merged run's checkpoint at s10
+The PR rule exists because `keel merge` used to leave a merged run's checkpoint at s10
 (#1448), so old checkpoints read as waiting on the merge window. Outside a git repository,
 or when `git` can't run, only the session's own folder is read. With no live run, the pane
 still shows the session's project: no active run, its history counts and next issue.
@@ -42,8 +85,7 @@ It scans:
 
 - once when the session starts
 - every five seconds while a run is live (or this session's own `keel status` is failing),
-  every 30 seconds when
-  there is none
+  every 30 seconds when there is none
 - right after any Bash call that runs `keel`
 
 Only one scan runs at a time. A read asked for after a keel command, by the pane or
