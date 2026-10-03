@@ -187,6 +187,92 @@ class TestMissingCiWorkflows(unittest.TestCase):
         self.assertEqual(ship.missing_ci_workflows(["  ", "CI", "CodeQL"], self.WORKFLOWS), ())
 
 
+class TestMissingCiWorkflowsPathAware(unittest.TestCase):
+    """A declared workflow is expected only when the change touches its glob (#1469)."""
+
+    DECLARED = {"Android CI": "android/**", "Web CI": "web/**"}
+
+    def test_android_only_change_does_not_require_web_ci(self):
+        self.assertEqual(
+            ship.missing_ci_workflows(
+                ["Android CI"], self.DECLARED, ["android/app/src/Main.kt", "android/build.gradle"]
+            ),
+            (),
+        )
+
+    def test_android_only_change_still_requires_android_ci(self):
+        self.assertEqual(
+            ship.missing_ci_workflows([], self.DECLARED, ["android/app/Main.kt"]),
+            ("Android CI",),
+        )
+
+    def test_change_touching_both_areas_requires_both(self):
+        changed = ["android/app/Main.kt", "web/src/index.ts"]
+        self.assertEqual(
+            ship.missing_ci_workflows(["Android CI"], self.DECLARED, changed), ("Web CI",)
+        )
+        self.assertEqual(
+            ship.missing_ci_workflows(["Android CI", "Web CI"], self.DECLARED, changed), ()
+        )
+
+    def test_unknown_change_set_keeps_failing_closed(self):
+        self.assertEqual(
+            ship.missing_ci_workflows(["Android CI"], self.DECLARED, None), ("Web CI",)
+        )
+        # An empty list is also "could not read the diff", as in classify.is_docs_only.
+        self.assertEqual(ship.missing_ci_workflows(["Android CI"], self.DECLARED, []), ("Web CI",))
+
+    def test_change_matching_no_declared_glob_requires_nothing(self):
+        self.assertEqual(ship.missing_ci_workflows([], self.DECLARED, ["README.md"]), ())
+
+    def test_comma_separated_globs_are_alternatives(self):
+        declared = {"Web CI": "web/**, shared/**"}
+        self.assertEqual(
+            ship.missing_ci_workflows([], declared, ["shared/schema.json"]), ("Web CI",)
+        )
+        self.assertEqual(ship.missing_ci_workflows([], declared, ["web/a.ts"]), ("Web CI",))
+        self.assertEqual(ship.missing_ci_workflows([], declared, ["android/a.kt"]), ())
+
+    def test_a_declaration_without_a_usable_glob_fails_closed(self):
+        self.assertEqual(ship.missing_ci_workflows([], {"CI": " , "}, ["android/a.kt"]), ("CI",))
+
+    def test_assess_android_only_change_is_not_blocked_by_web_ci(self):
+        a = ship.assess(
+            changed_files=["android/app/Main.kt"],
+            gate_verdict=CLEAN,
+            ci_conclusion="SUCCESS",
+            ci_check_names=["build"],
+            ci_workflow_names=["Android CI"],
+            ci_workflows=self.DECLARED,
+        )
+        self.assertEqual(a.missing_workflows, ())
+        self.assertEqual(a.merge.action, "merge")
+
+    def test_assess_unknown_changeset_still_blocks_on_unreported_workflow(self):
+        a = ship.assess(
+            changed_files=None,
+            gate_verdict=CLEAN,
+            ci_conclusion="SUCCESS",
+            ci_check_names=["build"],
+            ci_workflow_names=["Android CI"],
+            ci_workflows=self.DECLARED,
+        )
+        self.assertEqual(a.missing_workflows, ("Web CI",))
+        self.assertEqual(a.merge.action, "block")
+
+    def test_assess_docs_only_change_stays_carved_out(self):
+        a = ship.assess(
+            changed_files=["docs/a.md"],
+            gate_verdict=CLEAN,
+            ci_conclusion="",
+            ci_check_names=[],
+            docs_globs=("docs/**", "*.md"),
+            ci_workflows=self.DECLARED,
+        )
+        self.assertEqual(a.missing_workflows, ())
+        self.assertEqual(a.merge.action, "merge")
+
+
 class TestCiPassing(unittest.TestCase):
     def test_unknown(self):
         self.assertIsNone(ship.ci_passing(None))

@@ -7,6 +7,7 @@ fixing) are pure and live here, so they are reproducible and fully unit-tested.
 
 from __future__ import annotations
 
+import fnmatch
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -607,6 +608,7 @@ def ci_ran(ci_conclusion: str | None) -> bool | None:
 def missing_ci_workflows(
     workflow_names: Sequence[str] | None,
     ci_workflows: dict[str, str] | None,
+    changed_files: Sequence[str] | None = None,
 ) -> tuple[str, ...]:
     """Declared workflows in ``ci_workflows`` that reported nothing for this head.
 
@@ -622,6 +624,15 @@ def missing_ci_workflows(
     Matching is exact and case-insensitive — a prefix rule would let an unrelated
     ``testing-utils`` satisfy a declared ``test``.
 
+    Each declaration's value is the path glob that gates the workflow (#1469): a
+    workflow whose ``paths:`` filter matches nothing in the change never triggers, so
+    its absence is not a missing run. With ``changed_files`` given, a declared
+    workflow is expected only if at least one changed file matches its glob (same
+    ``fnmatch`` semantics as :mod:`keel.classify`; a comma-separated value is several
+    globs). ``changed_files`` of ``None`` or ``[]`` is an unknown change set and keeps
+    the fail-closed answer — every declared workflow is expected — as does a
+    declaration with no usable glob.
+
     ``()`` when nothing is declared or the names could not be read — absence of a
     declaration is not evidence of a missing run.
     """
@@ -629,8 +640,22 @@ def missing_ci_workflows(
         return ()
     reported = {name.strip().lower() for name in workflow_names if name.strip()}
     return tuple(
-        sorted(declared for declared in ci_workflows if declared.strip().lower() not in reported)
+        sorted(
+            declared
+            for declared, glob in ci_workflows.items()
+            if declared.strip().lower() not in reported and _workflow_expected(glob, changed_files)
+        )
     )
+
+
+def _workflow_expected(glob: str, changed_files: Sequence[str] | None) -> bool:
+    """Whether a declared workflow's path glob is touched by ``changed_files``."""
+    if not changed_files:
+        return True
+    globs = [g.strip() for g in str(glob).split(",") if g.strip()]
+    if not globs:
+        return True
+    return any(fnmatch.fnmatch(path, g) for path in changed_files for g in globs)
 
 
 def is_hotfix(labels: list[str] | tuple[str, ...], *, hotfix_label: str = "hotfix") -> bool:
@@ -770,7 +795,9 @@ def assess(
     ci_ok = ci_passing(ci_conclusion)
     ran = ci_ran(ci_conclusion)
     docs_only = changed_files is not None and classify.is_docs_only(list(changed_files), docs_globs)
-    missing = () if docs_only else missing_ci_workflows(ci_workflow_names, ci_workflows)
+    missing = (
+        () if docs_only else missing_ci_workflows(ci_workflow_names, ci_workflows, changed_files)
+    )
     if ci_ok is False:
         merge = MergeDecision("block", "CI failing")
     elif ran is False and not docs_only:
