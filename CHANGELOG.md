@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **keel-progress is shown, not only described** (#1467). The mod README and the root README now show real captures of the band (three parallel runs: one in review, one stopped with its gates blocked, a pr-loop) and of the `/keel-progress` pane. They are taken from Claude Code 2.1.288 running the mod over demo runs written with `keel activity --write`, and rendered as SVG. The Claude Code card on keel-ship.dev mentions the mod.
+
 ## [1.30.0] - 2026-10-03
 
 - The `keel-progress` mod (0.4.0) no longer looks stuck. It also reads keel's per-phase activity records, so runs that never write a checkpoint (`pr-loop`, `review-cycle`, a ship blocked at its gates) show up too. Each run says how long ago keel last wrote for it and flags one that has gone quiet.
