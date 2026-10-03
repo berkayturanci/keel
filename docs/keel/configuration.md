@@ -955,7 +955,7 @@ now part of the safety check: a changed file outside it no longer requires that 
 If the workflow also triggers on, say, `shared/schema/**` or its own `.github/workflows/`
 file but the knob says only `web/**`, a PR touching just those paths can be assessed clear
 to merge without that workflow having run. List every trigger path, comma-separated, e.g.
-`"web/**,shared/schema/firebase/**,.github/workflows/web-ci.yml"`.
+`"web/**,shared/schema/**,.github/workflows/web-ci.yml"`.
 
 The changed files come from the local `git diff origin/<base>...HEAD` in the checkout keel
 runs from, while the reported checks come from the PR head on GitHub; run `keel ship --pr`
