@@ -6,6 +6,20 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Plugin-directory bundles for Claude and OpenAI.** The marketplace plugin is the whole
+  repository (`"source": "./"`): over 500 files, dozens of binaries and several files past
+  256 KiB, which both directories hold for review. `plugin/` is now a slim Claude plugin
+  directory bundle — the root manifest, the seventeen `commands/`, `skills/keel-onboard/`,
+  `LICENSE`, a logo and a README that discloses what keel runs, sends and fetches — built
+  from the root sources by `scripts/plugin_bundle.py` (`sync`, `check`, `zip`); `make plugin`
+  re-syncs it. `make plugin-zip` writes a deterministic `dist/keel-plugin-<version>.zip` for
+  the OpenAI (ChatGPT + Codex) directory: the portable `packaging/openai-plugin/plugin.json`
+  plus every keel skill, no commands and no hooks. Both new manifests are release surfaces,
+  and `tests/test_plugin_bundle.py` pins drift, the directories' file limits, frontmatter,
+  listing-field lengths, the logo and the ZIP's contents. Existing installs are unchanged.
+  How to submit: `docs/keel/plugin.md`.
+
 ## [1.30.0] - 2026-10-03
 
 - The `keel-progress` mod (0.4.0) no longer looks stuck. It also reads keel's per-phase activity records, so runs that never write a checkpoint (`pr-loop`, `review-cycle`, a ship blocked at its gates) show up too. Each run says how long ago keel last wrote for it and flags one that has gone quiet.
@@ -35,18 +49,6 @@ All notable changes to keel are documented here. The format follows
 ### Added
 - **`keel-progress`: the live keel run inside Claude Code** (#1444). An opt-in Claude Code mod, published as a second plugin in the keel marketplace (`mods/keel-progress`). It polls `keel status --json` every five seconds while a run is live (every 30 s otherwise, never two at once) and right after any Bash call that runs `keel`, draws one line above the prompt while a run is active, waiting or interrupted (`keel #1022 ▰▰▰▰▰▰▰▰▰▰▶▱▱ s10 merge · waiting: merge-window · PR #1027`), and adds a `/keel-progress` pane listing every backbone step, the history counts and the next queued issue. Step names come from the status contract itself. Like keel-visual it only reads: it never writes the checkpoint or ledger and never drives a run. The `keel` plugin, the Python package and the Codex, Cursor and Antigravity adapters are unchanged.
 - **`keel-progress` shows every live keel run across the repository's worktrees** (#1450). Parallel `keel ship` runs each write their own worktree's checkpoint, and the mod read only the session's folder. It now lists the worktrees with `git worktree list`, always reads the session's own folder, and runs `keel status --json` in each other worktree whose checkpoint (where the status contract says it lives) changed in the last 24 hours. A run is shown while it is live and its pull request is still open (`gh pr list --state open`, read at most once a minute and again when a scan meets a PR it doesn't hold; without `gh` nothing is hidden on that ground). The PR rule hides the merged runs that `keel merge` left at s10 (#1448). The band draws one line per run, labelled with its branch when there are several and the session's own first, three at most and then `+N more`. The pane lists every run plus each worktree whose `keel status` failed.
-- **Plugin-directory bundles for Claude and OpenAI.** The marketplace plugin is the whole
-  repository (`"source": "./"`): over 500 files, dozens of binaries and several files past
-  256 KiB, which both directories hold for review. `plugin/` is now a slim Claude plugin
-  directory bundle — the root manifest, the seventeen `commands/`, `skills/keel-onboard/`,
-  `LICENSE`, a logo and a README that discloses what keel runs, sends and fetches — built
-  from the root sources by `scripts/plugin_bundle.py` (`sync`, `check`, `zip`); `make plugin`
-  re-syncs it. `make plugin-zip` writes a deterministic `dist/keel-plugin-<version>.zip` for
-  the OpenAI (ChatGPT + Codex) directory: the portable `packaging/openai-plugin/plugin.json`
-  plus every keel skill, no commands and no hooks. Both new manifests are release surfaces,
-  and `tests/test_plugin_bundle.py` pins drift, the directories' file limits, frontmatter,
-  listing-field lengths, the logo and the ZIP's contents. Existing installs are unchanged.
-  How to submit: `docs/keel/plugin.md`.
 
 ### Fixed
 - **`keel-progress` shows a run once, from its newest checkpoint** (#1455). One run can leave checkpoints in several worktrees, for example a worktree nested in another. On smartinventory, `ship-3436` showed twice: at s7 from the parent worktree's stale checkpoint and at s9 from the current one. The mod now keeps the most recently written checkpoint per run (by run id, else issue and PR) and counts the stale copies in the pane. With several runs on screen, the session's own line is marked `▸` and comes first, even when its own folder held the stale copy. The band is also interactive now. Clicking a run's issue (or typing its digit) opens the pane on that run: its whole branch, worktree and steps, with the other runs as buttons to switch to. `more` / `less` lists every run with its whole branch and path. Branch labels take the width the band can spare instead of 16 cells.
