@@ -4,10 +4,11 @@ An optional [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overv
 shows this repository's live keel runs inside Claude Code, so you don't need a second
 terminal running `keel-visual dash`.
 
-```text
-▸ main                              keel 1: #1444 ▰▰▰▰▰▰▰▰▰▰▶▱▱ s10 merge · waiting: merge-window · PR #1445  more
-  fix/merge-marks-checkpoint        keel 2: #1448 ▰▰▰▰▰▰▰▶▱▱▱▱▱ s7 review · waiting: review · PR #1449
-```
+![Three parallel keel runs above the Claude Code prompt: a ship in review, one stopped with its gates blocked, and a pr-loop](docs/band.svg)
+
+![The /keel-progress pane: one run's worktree, issue and PR, every backbone step, and when keel last wrote](docs/pane.svg)
+
+Both are captures of Claude Code 2.1.288 running the mod over three demo runs, rendered as SVG.
 
 - **Above the prompt:** one line per live run (`active`, `waiting` or `interrupted`). Each
   shows the issue, a bar over the backbone steps (`▰` done, `▶` current, `▱` pending), the

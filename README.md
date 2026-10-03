@@ -508,6 +508,8 @@ the same run without a second terminal: a step bar above the prompt and a
 `/keel-progress` pane, read from `keel status --json`. Install it with
 `/plugin install keel-progress@keel`; other hosts are unaffected.
 
+![keel-progress above the Claude Code prompt: three parallel runs, each with its branch, step bar and PR](mods/keel-progress/docs/band.svg)
+
 ## Docs
 
 - 🌐 **[Website + live coverage report](https://keel-ship.dev/)** — the
