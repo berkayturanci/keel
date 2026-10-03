@@ -146,10 +146,42 @@ export function activityRuns(stdout, steps) {
           wait_reason: blocked ? 'gates blocked' : null,
         },
         source: 'activity',
+        note: r.note ? String(r.note) : null,
       },
     })
   }
   return { dir, runs }
+}
+
+// "now", "4m", "2h", "3d": how long ago `ms` milliseconds is, for the band and the pane.
+export function ago(ms) {
+  if (!(ms >= 0)) return null
+  const m = Math.floor(ms / 60_000)
+  if (m < 1) return 'now'
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 48) return `${h}h`
+  return `${Math.floor(h / 24)}d`
+}
+
+// https://github.com/<owner>/<repo> from a git remote URL (https or ssh), else null.
+export function githubBase(remote) {
+  const m = /(?:^|[@/])github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(remote).trim())
+  return m ? `https://github.com/${m[1]}/${m[2]}` : null
+}
+
+// What a checkpoint says about the run's last gate, review and check, for the pane.
+export function checkpointDetails(text) {
+  try {
+    const state = JSON.parse(text)?.state ?? {}
+    const out = []
+    if (state.last_gate) out.push(['last gate', String(state.last_gate)])
+    if (state.last_review) out.push(['last review', String(state.last_review)])
+    if (state.last_check) out.push(['last check', String(state.last_check)])
+    return out
+  } catch {
+    return []
+  }
 }
 
 export function isLive(snapshot) {
