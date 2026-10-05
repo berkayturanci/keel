@@ -19,8 +19,8 @@
     "poll_seconds": {
       "type": "number",
       "title": "Refresh every (seconds)",
-      "description": "How often to read keel's state while a run is live. With no live run it reads six times less often.",
-      "default": 5,
+      "description": "How often to read keel's state while a run is live; with no live run it reads five times less often. keel status runs only when a checkpoint changed (or every 30 s), so this is cheap.",
+      "default": 2,
       "min": 2,
       "max": 60
     },

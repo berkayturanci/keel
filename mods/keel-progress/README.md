@@ -48,7 +48,7 @@ Set these in `/config` (or with `/plugin configure keel-progress@keel`):
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Refresh every (seconds) | 5 | How often keel is read while a run is live; six times less often with none |
+| Refresh every (seconds) | 2 | How often keel's state is read while a run is live; five times less often with none. `keel status` itself runs only when a checkpoint changed (or every 30 s), activity is read from its files |
 | Runs above the prompt | 3 | How many runs the band shows before `+N more` |
 | Notifications | on | Toasts for a stopped run, a run waiting for you, a run that left |
 | Sound | off | A short sound with those toasts |

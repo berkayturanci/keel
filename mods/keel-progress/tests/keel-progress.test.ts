@@ -313,7 +313,7 @@ test('keel status runs again only when the checkpoint changed, after 30 s, or af
   expect(calls.status).toBe(4)
 })
 
-test('with no live run the timer polls every 30 s, not every 5 s', async ($, on) => {
+test('with no live run keel status still runs only every 30 s, however often the timer ticks', async ($, on) => {
   const clock = mock.clock(on)
   const calls = stubEngine(on, { project: true, stdout: () => statusJson({ status: 'no-active-run', current: null }) })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })

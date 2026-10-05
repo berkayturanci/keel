@@ -24,9 +24,11 @@ const ACTIVITY_FRESH_MS = 6 * 60 * 60 * 1000
 let activityRel = ACTIVITY_DIR
 let activityRelKnown = false
 const PANE = 'keel-progress'
-const POLL_MS = 5_000
-// With no live run the timer still ticks every POLL_MS but polls only every IDLE_EVERY ticks (30 s).
-const IDLE_EVERY = 6
+// With keel status cached and activity read from its files, a scan starts no process unless
+// something changed, so every 2 s is cheap.
+const POLL_MS = 2_000
+// With no live run the timer still ticks every POLL_MS but polls only every IDLE_EVERY ticks (10 s).
+const IDLE_EVERY = 5
 const STATUS_TIMEOUT_MS = 10_000
 // Another worktree whose checkpoint is untouched this long is not scanned. It is longer than
 // any merge-window wait, so a run parked at s10 overnight still shows; the session's own
