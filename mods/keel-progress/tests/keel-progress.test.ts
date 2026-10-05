@@ -125,9 +125,24 @@ function stubEngine(
     calls.sounds.push(e.clip.asset)
     return { value: undefined }
   })
+  // keel names an activity file by run_id_slug (view.js runIdSlug).
+  const slug = (id: string) => String(id).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '')
   on('fs.read', ($: unknown, e: { path: string }) => {
+    const act = worktrees.find((x) => e.path.startsWith(`${x.path}/.keel/activity/`))
+    if (act) {
+      const name = e.path.slice(`${act.path}/.keel/activity/`.length)
+      const rec = (act.activity ?? []).find((r: any) => `${slug(r.run_id)}.json` === name)
+      return rec ? { value: JSON.stringify(rec) } : { deny: 'ENOENT' }
+    }
     const w = worktrees.find((x) => e.path === `${x.path}/.keel/state/checkpoint.json`)
     return w?.state ? { value: JSON.stringify({ state: w.state }) } : { deny: 'ENOENT' }
+  })
+  on('fs.list', ($: unknown, e: { path: string }) => {
+    const w = worktrees.find((x) => e.path === `${x.path}/.keel/activity`)
+    if (!w?.activity) return { deny: 'ENOENT' }
+    return {
+      value: w.activity.map((r: any) => ({ name: `${slug(r.run_id)}.json`, kind: 'file', size: 10, mtimeMs: w.activityMtime ?? 0, isLink: false })),
+    }
   })
   on('fs.exists', () => ({ value: opts.project }))
   on('command.register', () => ({ value: undefined }))
@@ -144,7 +159,12 @@ function stubEngine(
     }
     const rel = opts.checkpointRel ?? '.keel/state/checkpoint.json'
     const w = worktrees.find((x) => e.path === `${x.path}/${rel}`)
-    const mtime = w?.mtime === undefined ? 0 : w.mtime
+    // Unless a test sets it, the checkpoint's mtime follows what keel status says about it, as a
+    // real checkpoint's does: a changed status is a changed (rewritten) checkpoint.
+    const said = w ? `${w.exitCode ? w.exitCode() : 0}:${w.stdout ? w.stdout() : ''}` : ''
+    let h = 0
+    for (const ch of said) h = (h * 31 + ch.charCodeAt(0)) % 997
+    const mtime = w?.mtime === undefined ? -h : w.mtime
     if (!w || mtime === null) return { deny: 'ENOENT' }
     return { value: { kind: 'file', size: 10, mtimeMs: mtime, isLink: false } }
   })
@@ -242,7 +262,7 @@ test('a waiting run draws its step bar above the prompt on both surfaces', async
     for (const button of await band.findAll({ type: 'Button' })) expect((button as any).props?.hotkey).toBeUndefined()
     expect(await band.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
     expect(await styled(band, { type: 'Text', text: ' waiting: merge-window ' }, { backgroundColor: '#9A6700' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: 'PR #1027' })).toBeDefined()
+    expect(await band.find({ type: 'Link', text: 'PR #1027' })).toBeDefined()
     // The other mods' band drawing is kept under keel's line.
     expect(await band.find({ type: 'Text', text: 'drawn by Claude Code' })).toBeDefined()
     await band.unmount()
@@ -259,24 +279,38 @@ test('a finished run leaves the band alone', async ($, on) => {
   expect(await band.find({ text: /#1022/ })).toBeUndefined()
 })
 
-test('the status is polled on a timer and refreshed after a keel Bash call only', async ($, on) => {
+test('keel status runs again only when the checkpoint changed, after 30 s, or after a keel Bash call', async ($, on) => {
   const clock = mock.clock(on)
-  const calls = stubEngine(on, { project: true })
+  let step = 's10'
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson({ current: { command: 'ship', issue: 1022, pull_request: 1027, step } }) })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   expect(calls.status).toBe(1)
 
+  // Nothing changed: the timer reuses the answer instead of starting keel (a Python start).
+  await clock.advance(5_000)
+  expect(calls.status).toBe(1)
+
+  // The checkpoint was rewritten: the next tick reads it, and the band follows.
+  step = 's11'
   await clock.advance(5_000)
   expect(calls.status).toBe(2)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: 's11 capture' })).toBeDefined()
+  await band.unmount()
 
+  // Unchanged for 30 s: read once more anyway.
+  await clock.advance(30_000)
+  expect(calls.status).toBe(3)
+
+  // Other commands do not force a read; a keel command does.
   await $.tool.call({ tool: 'Bash', command: 'ls -la' })
   await $.tool.call({ tool: 'Bash', command: 'cat .keel/project.yaml && keel-visual --help' })
   await clock.settle()
-  expect(calls.status).toBe(2)
-
+  expect(calls.status).toBe(3)
   await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 1022' })
   await clock.settle()
-  expect(calls.status).toBe(3)
+  expect(calls.status).toBe(4)
 })
 
 test('with no live run the timer polls every 30 s, not every 5 s', async ($, on) => {
@@ -465,7 +499,7 @@ test('parallel runs in other worktrees each get a labelled line, the session’s
   expect(labels.map((t: any) => String(t.children[0]).trim())).toEqual(['▸ main', 'fix/a', 'feat/b'])
   expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: 's4 implement' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: 'PR #2002' })).toBeDefined()
+  expect(await band.find({ type: 'Link', text: 'PR #2002' })).toBeDefined()
 })
 
 test('a stale checkpoint, a worktree without one, and a run whose PR closed are not shown', async ($, on) => {
@@ -1316,4 +1350,18 @@ test('with several runs every row keeps the mark column whole and the issue colu
   const labels = (await band.findAll({ type: 'Text' })).filter((el: any) => /^(▸ | {2})(feat|fix)\//.test((el.children ?? []).join('')))
   expect(labels.length).toBe(2)
   expect(new Set(labels.map((el: any) => (el.children ?? []).join('').length)).size).toBe(1)
+})
+
+test("a run's PR in the band is a link to it on GitHub", async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const band = await $.ui.mount({ ...BAND, surface })
+    const link = await band.find({ type: 'Link', text: 'PR #1027' })
+    expect(link).toBeDefined()
+    expect((link as any).props?.href).toBe('https://github.com/acme/widgets/pull/1027')
+    await band.unmount()
+  }
 })

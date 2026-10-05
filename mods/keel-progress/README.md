@@ -14,7 +14,7 @@ The pane shows the run as a card too: the same step bar, then every step with it
 - **Above the prompt:** a rounded card with one row per live run (`active`, `waiting` or
   `interrupted`). Each row shows the issue, the backbone as a segmented bar of chips (done green,
   the current step blue, or red where the run stopped, the rest grey), the current step, why it
-  is held as a chip (amber while waiting, red when stopped), the pull request, and how long since
+  is held as a chip (amber while waiting, red when stopped), the pull request (a link to it on GitHub), and how long since
   keel last wrote. With more than one run each row starts with its worktree's branch, as wide as
   the longest one shown, within what the band can spare. The bar takes two cells per step on a
   band of 120 columns or more, one from 80, and is left out below that; the issue and the step

@@ -91,6 +91,12 @@ let openPrsAt = -Infinity
 // the regular once-a-minute read still checks them.
 const knownClosed = new Set()
 let inFlight = null // the running scan; callers share it instead of starting a second one
+// `keel status` costs a Python start (seconds), so its answer is kept per folder while that
+// folder's checkpoint is unchanged, for at most STATUS_TTL_MS. A fresh request (a keel command,
+// the pane, Refresh) reads every folder anew.
+const statusCache = new Map() // path ('' for the session's own) -> { mtimeMs, at, result }
+const STATUS_TTL_MS = 30_000
+let forceNext = false
 let again = false // a fresh scan was asked for while one ran: run once more after it
 let idleTicks = 0
 let poller = null
@@ -122,7 +128,10 @@ function tick($) {
 // ends; a timer tick just shares the running one.
 function refresh($, fresh) {
   if (!hasProject) return Promise.resolve()
-  if (fresh) recheckClosed = true
+  if (fresh) {
+    recheckClosed = true
+    forceNext = true
+  }
   if (inFlight !== null) {
     if (fresh) again = true
     return inFlight
@@ -241,9 +250,46 @@ async function listWorktrees($) {
   }
 }
 
+async function statusCached($, path, mtimeMs, now, force) {
+  const key = path ?? ''
+  const hit = statusCache.get(key)
+  if (!force && hit && hit.mtimeMs === mtimeMs && now - hit.at < STATUS_TTL_MS) return hit.result
+  const result = await statusOf($, path)
+  statusCache.set(key, { mtimeMs, at: now, result })
+  return result
+}
+
+// A folder's activity records, read straight from their files (keel.activity.v1, one JSON
+// record per run): no `keel activity` process per scan. Once the project's activity directory is
+// known, this is what every scan uses.
+async function activityFiles($, base, steps, now) {
+  const dir = `${base}/${activityRel}`
+  let listed
+  try {
+    listed = await $.fs.list(dir)
+  } catch {
+    return { dir: null, entries: [] }
+  }
+  const entries = []
+  for (const f of listed) {
+    if (f.kind !== 'file' || !f.name.endsWith('.json') || !(now - f.mtimeMs < ACTIVITY_FRESH_MS)) continue
+    let record
+    try {
+      record = JSON.parse(await $.fs.read(`${dir}/${f.name}`))
+    } catch {
+      continue // being rewritten, or not a record: the next scan reads it
+    }
+    const { runs: found } = activityRuns(JSON.stringify({ activity: [record], path: dir }), steps)
+    for (const entry of found) if (entry.fileName === f.name) entries.push({ ...entry, mtimeMs: f.mtimeMs })
+  }
+  return { dir, entries }
+}
+
 async function scan($) {
   const now = await $.clock.now()
   scanAt = now
+  const force = forceNext
+  forceNext = false
   await learnRepoBase($)
   const cwd = await $.session.cwd()
   const here = await realPath($, cwd)
@@ -251,7 +297,9 @@ async function scan($) {
   // The session's own folder first, always, whatever its checkpoint's age or location.
   const candidates = []
   const nextFailures = []
-  const mine = await statusOf($, null)
+  const ownCheckpoint = own?.checkpointPath ?? DEFAULT_CHECKPOINT
+  const ownCkM = ownCheckpoint.startsWith('/') ? null : await mtimeOf($, `${cwd}/${ownCheckpoint}`)
+  const mine = await statusCached($, null, ownCkM, now, force)
   const worktrees = await listWorktrees($)
   let ownLabel = 'here'
   let ownBranch = null
@@ -284,8 +332,8 @@ async function scan($) {
   // where this project keeps it.
   const ownActM = await mtimeOf($, `${cwd}/${activityRel}`)
   if (!activityRelKnown || (ownActM !== null && now - ownActM < FRESH_MS)) {
-    const mineAct = await activityOf($, null, cwd, steps, now)
-    if (mineAct.dir !== null) {
+    const mineAct = activityRelKnown ? await activityFiles($, cwd, steps, now) : await activityOf($, null, cwd, steps, now)
+    if (mineAct.dir !== null && !activityRelKnown) {
       activityRelKnown = true
       if (mineAct.dir.startsWith(`${here}/`)) activityRel = mineAct.dir.slice(here.length + 1)
     }
@@ -304,11 +352,14 @@ async function scan($) {
     fresh += 1
     const fields = { path: w.path, label: w.label, branch: w.branch, own: false }
     if (ckFresh) {
-      const result = await statusOf($, w.path)
+      const result = await statusCached($, w.path, ckM, now, force)
       if (result.failure !== undefined) nextFailures.push({ label: w.label, path: w.path, message: result.failure })
       else candidates.push({ ...fields, mtimeMs: ckM, ...result.parsed })
     }
-    if (actFresh) for (const entry of (await activityOf($, w.path, w.path, steps, now)).entries) candidates.push({ ...fields, ...entry })
+    if (actFresh) {
+      const act = activityRelKnown ? await activityFiles($, w.path, steps, now) : await activityOf($, w.path, w.path, steps, now)
+      for (const entry of act.entries) candidates.push({ ...fields, ...entry })
+    }
   }
 
   // `gh` is asked only when a live run has a pull request, so an idle session makes no API calls.
@@ -522,7 +573,14 @@ function bandRow(ui, run, cellsPerStep) {
     const stopped = run.snapshot.status === 'interrupted'
     parts.push(chip(Text, ` ${stopped ? 'stopped' : 'waiting'}: ${c.wait_reason} `, stopped ? 'stopChip' : 'waitChip'))
   }
-  if (c.pull_request != null) parts.push(chip(Text, `PR #${c.pull_request}`, 'dim'))
+  // The PR opens on GitHub when the repository is there; otherwise it is plain text.
+  if (c.pull_request != null) {
+    parts.push(
+      repoBase !== null
+        ? Box({ flexShrink: 0, children: [ui.Link({ href: `${repoBase}/pull/${c.pull_request}`, label: `PR #${c.pull_request}` })] })
+        : chip(Text, `PR #${c.pull_request}`, 'dim'),
+    )
+  }
   for (const part of agePart(run)) parts.push(chip(Text, part.text.replace(/^ · /, ''), part.tone))
   return parts
 }
