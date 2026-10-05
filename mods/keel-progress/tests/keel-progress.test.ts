@@ -36,6 +36,13 @@ async function stepSegments(view: any): Promise<{ bg: string; text: string }[]> 
     .map((el: any) => ({ bg: el.props.backgroundColor, text: (el.children ?? []).join('') }))
 }
 
+// `find` matches type, key and text only (ElementQuery); this also holds the element's props to
+// what the test names, so a color or border assertion really checks the color or border.
+async function styled(view: any, query: { type: string; text?: string | RegExp }, props: Record<string, unknown>): Promise<any> {
+  const hits = await view.findAll(query)
+  return hits.find((el: any) => Object.entries(props).every(([k, v]) => el.props?.[k] === v))
+}
+
 const BAND = {
   plugin: 'keel-progress',
   component: 'AbovePrompt',
@@ -225,7 +232,7 @@ test('a waiting run draws its step bar above the prompt on both surfaces', async
     expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
     // A rounded card headed by the keel mark; the backbone as a segmented bar of chips:
     // ten steps done (green), s10 current (blue), two to come (grey).
-    expect(await band.find({ type: 'Box', props: { borderStyle: 'round' } })).toBeDefined()
+    expect(await styled(band, { type: 'Box' }, { borderStyle: 'round' })).toBeDefined()
     expect(await band.find({ type: 'Text', text: '◆ keel' })).toBeDefined()
     // 118 columns: one cell per step.
     const segments = await stepSegments(band)
@@ -234,7 +241,7 @@ test('a waiting run draws its step bar above the prompt on both surfaces', async
     // No digit hotkey on the band's buttons: it must not take the first key of a prompt (#1466).
     for (const button of await band.findAll({ type: 'Button' })) expect((button as any).props?.hotkey).toBeUndefined()
     expect(await band.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: ' waiting: merge-window ', props: { backgroundColor: '#9A6700' } })).toBeDefined()
+    expect(await styled(band, { type: 'Text', text: ' waiting: merge-window ' }, { backgroundColor: '#9A6700' })).toBeDefined()
     expect(await band.find({ type: 'Text', text: 'PR #1027' })).toBeDefined()
     // The other mods' band drawing is kept under keel's line.
     expect(await band.find({ type: 'Text', text: 'drawn by Claude Code' })).toBeDefined()
