@@ -46,8 +46,11 @@ const NEEDS_YOU = new Set(['needs-input'])
 const LABEL_MIN = 12
 const LABEL_MAX = 48
 const BAND_LINE_COLUMNS = 64
-// The card's border and padding take this many of the band's columns.
+// The card's border and padding take this many of the band's columns, the keel mark (or the
+// spacer under it) and its gap this many more, and the more/less toggle on the first row these.
 const CARD_CHROME = 4
+const MARK_COLUMNS = 7
+const TOGGLE_COLUMNS = 5
 // The step bar: two cells per step on a wide band, one on a narrower one, none below that.
 const WIDE_BAR_COLUMNS = 120
 const NARROW_BAR_COLUMNS = 80
@@ -446,9 +449,12 @@ function stepCells(bodyColumns) {
   return cols >= WIDE_BAR_COLUMNS ? 2 : cols >= NARROW_BAR_COLUMNS ? 1 : 0
 }
 
-function labelWidth(bodyColumns, steps) {
+// One label width for every row, so the issue and bar columns line up: it leaves room for the
+// widest bar on screen, the mark, and the toggle the first row carries.
+function labelWidth(bodyColumns, steps, toggle) {
   const bar = stepCells(bodyColumns) * steps
-  return Math.max(LABEL_MIN, Math.min(LABEL_MAX, (bodyColumns ?? 0) - BAND_LINE_COLUMNS - CARD_CHROME - bar))
+  const reserve = BAND_LINE_COLUMNS + CARD_CHROME + MARK_COLUMNS + (toggle ? TOGGLE_COLUMNS : 0) + bar
+  return Math.max(LABEL_MIN, Math.min(LABEL_MAX, (bodyColumns ?? 0) - reserve))
 }
 
 // With several runs on screen, the session's own one is marked `▸` and drawn bright.
@@ -573,7 +579,9 @@ export function register(on, options = {}) {
     // As wide as the longest label on screen, within what the band can spare.
     const longest = Math.max(...shown.map((run) => cells(run.label) + 2))
     const barCells = stepCells(e.props.bodyColumns)
-    const width = Math.min(labelWidth(e.props.bodyColumns, shown[0].steps.length), Math.max(LABEL_MIN, longest))
+    const toggle = runs.length > 1 || expanded
+    const widestBar = Math.max(...shown.map((run) => run.steps.length))
+    const width = Math.min(labelWidth(e.props.bodyColumns, widestBar, toggle), Math.max(LABEL_MIN, longest))
     const rows = []
     shown.forEach((run, i) => {
       const issue = run.snapshot.current.issue
@@ -584,7 +592,7 @@ export function register(on, options = {}) {
           columnGap: 1,
           children: [
             // The keel mark heads the first row (no header row of its own: the card is short).
-            chip(Text, i === 0 ? '◆ keel' : '      ', 'title'),
+            Box({ flexShrink: 0, children: [chip(Text, i === 0 ? '◆ keel' : '      ', 'title')] }),
             ...(labelled ? [Text(textProps(labelPart(run, width)))] : []),
             // The issue is a button: click it to open the pane on this run. No digit hotkey: a
             // passive band must not take the first key of a prompt (#1466).
@@ -600,7 +608,7 @@ export function register(on, options = {}) {
               ],
             }),
             ...bandRow(ui, run, barCells),
-            ...(i === 0 && (runs.length > 1 || expanded)
+            ...(i === 0 && toggle
               ? [Button({ key: 'keel-progress-toggle', label: expanded ? 'less' : 'more', plain: true, onPress: () => toggleExpanded($) })]
               : []),
           ],
@@ -660,7 +668,20 @@ export function register(on, options = {}) {
             }),
           )
         }
-        rows.push(Box({ flexDirection: 'row', columnGap: 1, children: [stepBar(ui, focus), chip(Text, stepName(focus.steps, c.step), 'title')] }))
+        // The pane sizes the bar to its own width, as the band does: the bar, the card's chrome and
+        // a step name must fit.
+        const paneCols = e.props.bodyColumns ?? 0
+        const paneCells = paneCols >= 50 ? 2 : paneCols >= 36 ? 1 : 0
+        rows.push(
+          Box({
+            flexDirection: 'row',
+            columnGap: 1,
+            children: [
+              ...(paneCells > 0 ? [stepBar(ui, focus, paneCells)] : []),
+              Box({ flexShrink: 0, children: [chip(Text, stepName(focus.steps, c.step), 'title')] }),
+            ],
+          }),
+        )
         for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) cline(part)
         const since = focus.mtimeMs > 0 && scanAt > 0 ? ago(scanAt - focus.mtimeMs) : null
         if (since !== null) {

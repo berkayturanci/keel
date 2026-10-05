@@ -1291,3 +1291,22 @@ test('the step bar fits the band: two cells per step when wide, none when narrow
   expect(await narrow.find({ type: 'Button', text: '#1022' })).toBeDefined()
   expect(await narrow.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
 })
+
+test('with several runs every row keeps the mark column whole and the issue columns line up', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'feat/a-rather-long-branch-name-for-the-band' },
+      { path: '/wt/b', branch: 'fix/b', stdout: () => statusJson({ current: { command: 'ship', issue: 2002, pull_request: 1027, step: 's4' } }) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 80 } })
+  expect(await band.find({ type: 'Text', text: '◆ keel' })).toBeDefined()
+  // Every row's label is padded to one width, so the issue buttons start in one column.
+  const labels = (await band.findAll({ type: 'Text' })).filter((el: any) => /^(▸ | {2})(feat|fix)\//.test((el.children ?? []).join('')))
+  expect(labels.length).toBe(2)
+  expect(new Set(labels.map((el: any) => (el.children ?? []).join('').length)).size).toBe(1)
+})
