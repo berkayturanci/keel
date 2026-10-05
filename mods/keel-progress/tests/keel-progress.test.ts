@@ -102,6 +102,7 @@ function stubEngine(
     checkpointRel?: string // where the project keeps its checkpoint
     clock?: { sleep: (ms: number) => Promise<void> }
     slowMs?: number
+    remote?: string // origin URL `git remote get-url origin` answers
   },
 ) {
   const own: Worktree = { path: '/work', branch: 'main', stdout: opts.stdout, exitCode: opts.exitCode }
@@ -170,7 +171,7 @@ function stubEngine(
   })
   on('process.run', async ($: unknown, e: { argv: string[]; init?: { cwd?: string } }) => {
     if (e.argv[0] === 'git' && e.argv[1] === 'remote') {
-      return { value: { exitCode: 0, stdout: 'git@github.com:acme/widgets.git\n', stderr: '' } }
+      return { value: { exitCode: 0, stdout: `${opts.remote ?? 'git@github.com:acme/widgets.git'}\n`, stderr: '' } }
     }
     if (e.argv[0] === 'git') {
       if (opts.gitRejects) return { deny: 'spawn git ENOENT' }
@@ -1364,4 +1365,15 @@ test("a run's PR in the band is a link to it on GitHub", async ($, on) => {
     expect((link as any).props?.href).toBe('https://github.com/acme/widgets/pull/1027')
     await band.unmount()
   }
+})
+
+test('a remote that would make an invalid link gives no link, and the band still draws', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true, remote: 'git@github.com:acme/ré.git' })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Link' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 'PR #1027' })).toBeDefined()
+  expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
 })

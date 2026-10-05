@@ -165,9 +165,32 @@ export function ago(ms) {
 }
 
 // https://github.com/<owner>/<repo> from a git remote URL (https or ssh), else null.
+// Only github.com itself (an ssh host alias such as `github.com-work` included), and only names
+// GitHub allows, so a link built from it is always a valid href (a refused href would make the
+// engine refuse the whole band).
+const GH_NAME = '[A-Za-z0-9_.-]+'
+const GH_REMOTES = [
+  new RegExp(`^(?:ssh://)?[A-Za-z0-9_.-]+@github\\.com(?:-[A-Za-z0-9_.-]+)?[:/](${GH_NAME})/(${GH_NAME}?)(?:\\.git)?/?$`),
+  new RegExp(`^https?://(?:[^@/\\s]+@)?github\\.com/(${GH_NAME})/(${GH_NAME}?)(?:\\.git)?/?$`),
+]
+
 export function githubBase(remote) {
-  const m = /(?:^|[@/])github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(remote).trim())
-  return m ? `https://github.com/${m[1]}/${m[2]}` : null
+  const text = String(remote ?? '').trim()
+  for (const re of GH_REMOTES) {
+    const m = text.match(re)
+    if (m && !['.', '..'].includes(m[1]) && !['.', '..', ''].includes(m[2])) return `https://github.com/${m[1]}/${m[2]}`
+  }
+  return null
+}
+
+// An href the mod API accepts: https, printable ASCII, no '@', spelled exactly as URL spells it.
+export function safeHref(h) {
+  if (typeof h !== 'string' || !/^https:\/\/[\x21-\x7e]+$/.test(h) || h.includes('@')) return null
+  try {
+    return typeof URL === 'function' && new URL(h).href === h ? h : null
+  } catch {
+    return null
+  }
 }
 
 // What a checkpoint says about the run's last gate, review and check, for the pane.

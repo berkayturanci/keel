@@ -8,7 +8,7 @@
 //   - a `/keel-progress` pane with every live run's steps, history counts and next issue
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { FALLBACK_STEPS, activityRuns, ago, checkpointDetails, githubBase, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees, stepStates, stepName } from './view.js'
+import { FALLBACK_STEPS, activityRuns, ago, cells, checkpointDetails, fitCells, githubBase, isLive, latestPerRun, paneLines, parseStatus, parseWorktrees, safeHref, stepName, stepStates } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
@@ -578,13 +578,22 @@ function bandRow(ui, run, cellsPerStep) {
   // The PR opens on GitHub when the repository is there; otherwise it is plain text.
   if (c.pull_request != null) {
     parts.push(
-      repoBase !== null
-        ? Box({ flexShrink: 0, children: [ui.Link({ href: `${repoBase}/pull/${c.pull_request}`, label: `PR #${c.pull_request}` })] })
+      prHref(c.pull_request)
+        ? Box({ flexShrink: 0, children: [ui.Link({ href: prHref(c.pull_request), label: `PR #${c.pull_request}` })] })
         : chip(Text, `PR #${c.pull_request}`, 'dim'),
     )
   }
   for (const part of agePart(run)) parts.push(chip(Text, part.text.replace(/^ · /, ''), part.tone))
   return parts
+}
+
+// Links to a run's PR and issue on GitHub, or null where there is no valid one to make.
+function prHref(n) {
+  return repoBase !== null && Number.isInteger(n) ? safeHref(`${repoBase}/pull/${n}`) : null
+}
+
+function issueHref(n) {
+  return repoBase !== null && Number.isInteger(n) ? safeHref(`${repoBase}/issues/${n}`) : null
 }
 
 export function register(on, options = {}) {
@@ -724,8 +733,8 @@ export function register(on, options = {}) {
               flexDirection: 'row',
               columnGap: 2,
               children: [
-                ...(c.pull_request != null ? [Link({ href: `${repoBase}/pull/${c.pull_request}`, label: `PR #${c.pull_request}` })] : []),
-                ...(c.issue != null ? [Link({ href: `${repoBase}/issues/${c.issue}`, label: `issue #${c.issue}` })] : []),
+                ...(prHref(c.pull_request) ? [Link({ href: prHref(c.pull_request), label: `PR #${c.pull_request}` })] : []),
+                ...(issueHref(c.issue) ? [Link({ href: issueHref(c.issue), label: `issue #${c.issue}` })] : []),
               ],
             }),
           )
