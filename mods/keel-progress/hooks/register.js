@@ -42,25 +42,31 @@ const QUIET_MS = 45 * 60 * 1000
 // Wait reasons that mean the run is waiting for a person, worth a notification.
 const NEEDS_YOU = new Set(['needs-input'])
 // Branch labels in the band: at least LABEL_MIN cells, at most LABEL_MAX, else what is left of
-// the band's width after BAND_LINE_COLUMNS for the rest of the line.
+// the band's width after BAND_LINE_COLUMNS, the step bar and the card's border and padding.
 const LABEL_MIN = 12
 const LABEL_MAX = 48
 const BAND_LINE_COLUMNS = 64
+// The card's border and padding take this many of the band's columns.
+const CARD_CHROME = 4
+// The step bar: two cells per step on a wide band, one on a narrower one, none below that.
+const WIDE_BAR_COLUMNS = 120
+const NARROW_BAR_COLUMNS = 80
 
-// Colors that read on a dark and a light background alike.
+// Text colors are the terminal's own (they follow its theme); a chip is white on a saturated
+// background, which reads on a dark and a light theme alike.
 const TONES = {
   title: { bold: true },
-  bar: { color: '#58A6FF', bold: true },
-  ok: { color: '#3FB950' },
-  wait: { color: '#D29922' },
-  bad: { color: '#F85149' },
+  bar: { color: 'cyan', bold: true },
+  ok: { color: 'green' },
+  wait: { color: 'yellow' },
+  bad: { color: 'red' },
   dim: { dimColor: true },
   plain: {},
   // the step bar: one two-cell chip per backbone step
   done: { backgroundColor: '#2D7D46' },
   current: { backgroundColor: '#1F6FEB' },
   stopped: { backgroundColor: '#B62324' },
-  todo: { backgroundColor: '#30363D' },
+  todo: { backgroundColor: '#6E7681' },
   // why a run is held: a chip
   waitChip: { backgroundColor: '#9A6700', color: '#FFFFFF' },
   stopChip: { backgroundColor: '#B62324', color: '#FFFFFF', bold: true },
@@ -435,8 +441,14 @@ function notify($, text, sound) {
 }
 
 // The branch label takes what the band can spare beside the step bar and its text.
-function labelWidth(bodyColumns) {
-  return Math.max(LABEL_MIN, Math.min(LABEL_MAX, (bodyColumns ?? 0) - BAND_LINE_COLUMNS))
+function stepCells(bodyColumns) {
+  const cols = bodyColumns ?? 0
+  return cols >= WIDE_BAR_COLUMNS ? 2 : cols >= NARROW_BAR_COLUMNS ? 1 : 0
+}
+
+function labelWidth(bodyColumns, steps) {
+  const bar = stepCells(bodyColumns) * steps
+  return Math.max(LABEL_MIN, Math.min(LABEL_MAX, (bodyColumns ?? 0) - BAND_LINE_COLUMNS - CARD_CHROME - bar))
 }
 
 // With several runs on screen, the session's own one is marked `▸` and drawn bright.
@@ -477,24 +489,29 @@ function chip(Text, text, tone) {
 
 // The backbone as one segmented bar: a two-cell chip per step, done green, the current one blue
 // (red when the run stopped there), the rest grey.
-function stepBar(ui, run) {
+function stepBar(ui, run, cellsPerStep = 2) {
   const { Box, Text } = ui
   const stopped = run.snapshot.status === 'interrupted'
+  const cell = ' '.repeat(cellsPerStep)
   return Box({
     flexDirection: 'row',
     flexShrink: 0,
     children: stepStates(run.steps, run.snapshot.current.step).map((st) =>
-      chip(Text, '  ', st.state === 'done' ? 'done' : st.state === 'current' ? (stopped ? 'stopped' : 'current') : 'todo'),
+      chip(Text, cell, st.state === 'done' ? 'done' : st.state === 'current' ? (stopped ? 'stopped' : 'current') : 'todo'),
     ),
   })
 }
 
 // What a band row shows after the issue button: the step bar, the step, why it is held, the PR
 // and how long since keel last wrote.
-function bandRow(ui, run) {
-  const { Text } = ui
+function bandRow(ui, run, cellsPerStep) {
+  const { Box, Text } = ui
   const c = run.snapshot.current
-  const parts = [stepBar(ui, run), chip(Text, stepName(run.steps, c.step), 'title')]
+  // The step name never shrinks; the bar is left out on a band too narrow for it.
+  const parts = [
+    ...(cellsPerStep > 0 ? [stepBar(ui, run, cellsPerStep)] : []),
+    Box({ flexShrink: 0, children: [chip(Text, stepName(run.steps, c.step), 'title')] }),
+  ]
   if (c.wait_reason) {
     const stopped = run.snapshot.status === 'interrupted'
     parts.push(chip(Text, ` ${stopped ? 'stopped' : 'waiting'}: ${c.wait_reason} `, stopped ? 'stopChip' : 'waitChip'))
@@ -555,20 +572,10 @@ export function register(on, options = {}) {
     const shown = expanded ? runs : runs.slice(0, settings.bandMax)
     // As wide as the longest label on screen, within what the band can spare.
     const longest = Math.max(...shown.map((run) => cells(run.label) + 2))
-    const width = Math.min(labelWidth(e.props.bodyColumns), Math.max(LABEL_MIN, longest))
-    const header = Box({
-      flexDirection: 'row',
-      columnGap: 1,
-      children: [
-        chip(Text, '◆ keel', 'title'),
-        chip(Text, `${runs.length} live run${runs.length === 1 ? '' : 's'}`, 'dim'),
-        ...(runs.length > 1 || expanded
-          ? [Button({ key: 'keel-progress-toggle', label: expanded ? 'less' : 'more', plain: true, onPress: () => toggleExpanded($) })]
-          : []),
-      ],
-    })
+    const barCells = stepCells(e.props.bodyColumns)
+    const width = Math.min(labelWidth(e.props.bodyColumns, shown[0].steps.length), Math.max(LABEL_MIN, longest))
     const rows = []
-    for (const run of shown) {
+    shown.forEach((run, i) => {
       const issue = run.snapshot.current.issue
       rows.push(
         Box({
@@ -576,28 +583,38 @@ export function register(on, options = {}) {
           flexDirection: 'row',
           columnGap: 1,
           children: [
+            // The keel mark heads the first row (no header row of its own: the card is short).
+            chip(Text, i === 0 ? '◆ keel' : '      ', 'title'),
             ...(labelled ? [Text(textProps(labelPart(run, width)))] : []),
             // The issue is a button: click it to open the pane on this run. No digit hotkey: a
             // passive band must not take the first key of a prompt (#1466).
-            Button({
-              key: `keel-progress-open-${runKey(run)}`,
-              label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
-              plain: true,
-              onPress: () => openRun($, runKey(run)),
+            Box({
+              flexShrink: 0,
+              children: [
+                Button({
+                  key: `keel-progress-open-${runKey(run)}`,
+                  label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
+                  plain: true,
+                  onPress: () => openRun($, runKey(run)),
+                }),
+              ],
             }),
-            ...bandRow(ui, run),
+            ...bandRow(ui, run, barCells),
+            ...(i === 0 && (runs.length > 1 || expanded)
+              ? [Button({ key: 'keel-progress-toggle', label: expanded ? 'less' : 'more', plain: true, onPress: () => toggleExpanded($) })]
+              : []),
           ],
         }),
       )
       if (expanded) {
         // The second line carries what the first had to cut: the whole branch and where it runs.
-        rows.push(Text({ ...textProps({ text: `    ${run.branch ?? run.label} · ${run.path}`, tone: 'dim' }), wrap: 'truncate-middle' }))
+        rows.push(Text({ ...textProps({ text: `       ${run.branch ?? run.label} · ${run.path}`, tone: 'dim' }), wrap: 'truncate-middle' }))
       }
-    }
+    })
     if (!expanded && runs.length > settings.bandMax) {
       rows.push(Text(textProps({ text: `+${runs.length - settings.bandMax} more keel runs · more, or /keel-progress`, tone: 'dim' })))
     }
-    const card = Box({ flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1, children: [header, ...rows] })
+    const card = Box({ flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1, children: rows })
     // Keep what the mods after this one draw in the band.
     const theirs = await next(e)
     return Box({ flexDirection: 'column', children: theirs ? [card, theirs] : [card] })

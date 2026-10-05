@@ -28,6 +28,14 @@ function statusJson(overrides: Record<string, unknown> = {}): string {
   })
 }
 
+// The step bar's chips: Texts colored as a step (done, current, stopped, to come).
+const STEP_COLORS = new Set(['#2D7D46', '#1F6FEB', '#B62324', '#6E7681'])
+async function stepSegments(view: any): Promise<{ bg: string; text: string }[]> {
+  return (await view.findAll({ type: 'Text' }))
+    .filter((el: any) => STEP_COLORS.has(el.props?.backgroundColor) && /^ +$/.test((el.children ?? []).join('')))
+    .map((el: any) => ({ bg: el.props.backgroundColor, text: (el.children ?? []).join('') }))
+}
+
 const BAND = {
   plugin: 'keel-progress',
   component: 'AbovePrompt',
@@ -219,9 +227,12 @@ test('a waiting run draws its step bar above the prompt on both surfaces', async
     // ten steps done (green), s10 current (blue), two to come (grey).
     expect(await band.find({ type: 'Box', props: { borderStyle: 'round' } })).toBeDefined()
     expect(await band.find({ type: 'Text', text: '◆ keel' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: '1 live run' })).toBeDefined()
-    const segments = (await band.findAll({ type: 'Text', text: '  ' })).map((el: any) => el.props?.backgroundColor)
-    expect(segments).toEqual([...Array(10).fill('#2D7D46'), '#1F6FEB', '#30363D', '#30363D'])
+    // 118 columns: one cell per step.
+    const segments = await stepSegments(band)
+    expect(segments.map((s) => s.bg)).toEqual([...Array(10).fill('#2D7D46'), '#1F6FEB', '#6E7681', '#6E7681'])
+    expect(new Set(segments.map((s) => s.text))).toEqual(new Set([' ']))
+    // No digit hotkey on the band's buttons: it must not take the first key of a prompt (#1466).
+    for (const button of await band.findAll({ type: 'Button' })) expect((button as any).props?.hotkey).toBeUndefined()
     expect(await band.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
     expect(await band.find({ type: 'Text', text: ' waiting: merge-window ', props: { backgroundColor: '#9A6700' } })).toBeDefined()
     expect(await band.find({ type: 'Text', text: 'PR #1027' })).toBeDefined()
@@ -1261,4 +1272,22 @@ test('band_rows sets how many runs the band shows before "+N more"', { options: 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#11' })).toBeUndefined()
   expect(await band.find({ type: 'Text', text: '+1 more keel runs · more, or /keel-progress' })).toBeDefined()
+})
+
+test('the step bar fits the band: two cells per step when wide, none when narrow, the issue and step always whole', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+
+  const wide = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 140 } })
+  const segments = await stepSegments(wide)
+  expect(segments.length).toBe(13)
+  expect(new Set(segments.map((s) => s.text))).toEqual(new Set(['  ']))
+  await wide.unmount()
+
+  const narrow = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 60 } })
+  expect((await stepSegments(narrow)).length).toBe(0)
+  expect(await narrow.find({ type: 'Button', text: '#1022' })).toBeDefined()
+  expect(await narrow.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
 })
