@@ -43,6 +43,12 @@
       "title": "Sound",
       "description": "Play a short sound with those notifications.",
       "default": false
+    },
+    "all_sessions": {
+      "type": "boolean",
+      "title": "Show other sessions' runs",
+      "description": "Off: a session shows only its own keel runs, in its folder and the worktrees keel made under it. On: every recently active worktree of the repository, as before (this costs a read per worktree).",
+      "default": false
     }
   }
 }

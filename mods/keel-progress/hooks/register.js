@@ -103,7 +103,7 @@ let again = false // a fresh scan was asked for while one ran: run once more aft
 let idleTicks = 0
 let poller = null
 // The user's settings (plugin userConfig), with the defaults the manifest declares.
-const settings = { pollMs: POLL_MS, bandMax: BAND_MAX, notify: true, sound: false }
+const settings = { pollMs: POLL_MS, bandMax: BAND_MAX, notify: true, sound: false, allSessions: false }
 let scanAt = 0 // when the last scan read the runs, for "updated … ago"
 let repoBase = null // https://github.com/<owner>/<repo>, once read from `git remote`
 let repoBaseKnown = false
@@ -307,11 +307,15 @@ async function scan($) {
   let ownBranch = null
   const others = []
   for (const w of worktrees) {
-    if ((await realPath($, w.path)) === here) {
+    const at = await realPath($, w.path)
+    if (at === here) {
       ownLabel = w.label
       ownBranch = w.branch
     }
-    else others.push(w)
+    // A session shows its own runs: its folder and the worktrees keel made under it (keel ship
+    // puts a run's worktree inside the session's checkout). The rest belong to other sessions,
+    // and are read only when the user asked to see every session's runs.
+    else if (settings.allSessions || at.startsWith(`${here}/`)) others.push(w)
   }
   if (mine.failure !== undefined) nextFailures.push({ label: ownLabel, path: cwd, message: mine.failure })
   else candidates.push({ path: cwd, label: ownLabel, branch: ownBranch, own: true, mtimeMs: 0, ...mine.parsed })
@@ -601,6 +605,7 @@ export function register(on, options = {}) {
   if (Number.isFinite(options.band_rows)) settings.bandMax = Math.max(1, Math.min(9, options.band_rows))
   if (typeof options.notify === 'boolean') settings.notify = options.notify
   if (typeof options.sound === 'boolean') settings.sound = options.sound
+  if (typeof options.all_sessions === 'boolean') settings.allSessions = options.all_sessions
   on('session.start', async ($, e, next) => {
     hasProject = await $.fs.exists(PROJECT)
     if (hasProject) {

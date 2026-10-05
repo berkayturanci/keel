@@ -488,9 +488,9 @@ test('parallel runs in other worktrees each get a labelled line, the session’s
     project: true,
     openPrs: [1027, 2001, 2002],
     worktrees: [
-      { path: '/wt/a', branch: 'fix/a', stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'fix/a', stdout: runAt(11, 2001) },
       { path: '/work', branch: 'main' },
-      { path: '/wt/b', branch: 'feat/b', stdout: runAt(12, 2002, 's4', '') },
+      { path: '/work/wt/b', branch: 'feat/b', stdout: runAt(12, 2002, 's4', '') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -510,16 +510,16 @@ test('a stale checkpoint, a worktree without one, and a run whose PR closed are 
     openPrs: [2001],
     worktrees: [
       { path: '/work', branch: 'main', mtime: 0 }, // read whatever its age; its PR 1027 is closed
-      { path: '/wt/live', branch: 'live', mtime: 30 * HOURS, stdout: runAt(11, 2001) },
-      { path: '/wt/stale', branch: 'stale', mtime: 5 * HOURS, stdout: runAt(12, 2001) }, // 25 h old
-      { path: '/wt/none', branch: 'none', mtime: null },
+      { path: '/work/wt/live', branch: 'live', mtime: 30 * HOURS, stdout: runAt(11, 2001) },
+      { path: '/work/wt/stale', branch: 'stale', mtime: 5 * HOURS, stdout: runAt(12, 2001) }, // 25 h old
+      { path: '/work/wt/none', branch: 'none', mtime: null },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   expect(calls.byPath['/work']).toBe(1)
-  expect(calls.byPath['/wt/stale']).toBeUndefined()
-  expect(calls.byPath['/wt/none']).toBeUndefined()
+  expect(calls.byPath['/work/wt/stale']).toBeUndefined()
+  expect(calls.byPath['/work/wt/none']).toBeUndefined()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
   expect(await band.find({ text: /#1022/ })).toBeUndefined()
@@ -541,7 +541,7 @@ test('the band shows three runs and counts the rest', async ($, on) => {
   stubEngine(on, {
     project: true,
     openPrs: prs,
-    worktrees: prs.map((pr, i) => ({ path: `/wt/${i}`, branch: `b${i}`, stdout: runAt(10 + i, pr) })),
+    worktrees: prs.map((pr, i) => ({ path: `/work/wt/${i}`, branch: `b${i}`, stdout: runAt(10 + i, pr) })),
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
@@ -583,8 +583,8 @@ test('one failing worktree does not hide the others', async ($, on) => {
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/broken', branch: 'broken', exitCode: () => 1 },
-      { path: '/wt/ok', branch: 'ok', stdout: runAt(11, 2001) },
+      { path: '/work/wt/broken', branch: 'broken', exitCode: () => 1 },
+      { path: '/work/wt/ok', branch: 'ok', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -630,7 +630,7 @@ test('a PR missing from the open list is looked up once more, then on the regula
     openPrs: () => open,
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/new', branch: 'new', stdout: runAt(31, 3001) },
+      { path: '/work/wt/new', branch: 'new', stdout: runAt(31, 3001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -659,12 +659,12 @@ test('other worktrees are found where this project keeps its checkpoint', async 
     checkpointRel: 'var/ck.json',
     worktrees: [
       { path: '/work', branch: 'main', stdout: withPath },
-      { path: '/wt/a', branch: 'a', stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'a', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
-  expect(calls.byPath['/wt/a']).toBe(1)
+  expect(calls.byPath['/work/wt/a']).toBe(1)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
 })
@@ -689,7 +689,7 @@ test('a long branch name is cut with an ellipsis', async ($, on) => {
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/long', branch: 'fix/merge-marks-checkpoint', stdout: runAt(11, 2001) },
+      { path: '/work/wt/long', branch: 'fix/merge-marks-checkpoint', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -737,7 +737,7 @@ test('a run whose PR closed costs no extra gh call per scan', async ($, on) => {
     openPrs: [2001],
     worktrees: [
       { path: '/work', branch: 'main' }, // live, PR 1027 closed
-      { path: '/wt/live', branch: 'live', stdout: runAt(11, 2001) },
+      { path: '/work/wt/live', branch: 'live', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -761,8 +761,8 @@ test('one run checkpointed in two worktrees shows once, from the newer checkpoin
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/parent', branch: 'claude/workflow', mtime: 1 * HOURS, stdout: run('s7') },
-      { path: '/wt/parent/worktrees/issue-4101', branch: 'fix/issue-4101', mtime: 1.5 * HOURS, stdout: run('s9') },
+      { path: '/work/wt/parent', branch: 'claude/workflow', mtime: 1 * HOURS, stdout: run('s7') },
+      { path: '/work/wt/parent/worktrees/issue-4101', branch: 'fix/issue-4101', mtime: 1.5 * HOURS, stdout: run('s9') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -785,7 +785,7 @@ test('when the session’s own folder holds the stale copy, the newer one elsewh
     project: true,
     worktrees: [
       { path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: run('s7') },
-      { path: '/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
+      { path: '/work/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -802,17 +802,17 @@ test('clicking a run in the band opens the pane on that run, with the others to 
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/a', branch: 'fix/a-really-long-branch-name-that-the-band-cuts', stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'fix/a-really-long-branch-name-that-the-band-cuts', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  await band.press({ key: 'keel-progress-open-/wt/a#11' })
+  await band.press({ key: 'keel-progress-open-/work/wt/a#11' })
   expect(calls.opened).toEqual(['keel-progress'])
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'fix/a-really-long-branch-name-that-the-band-cuts' })).toBeDefined()
-  expect(await pane.find({ type: 'Text', text: '/wt/a' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '/work/wt/a' })).toBeDefined()
   const back = await pane.find({ type: 'Button', text: /▸ main · #1022 s10/ })
   expect(back).toBeDefined()
   await pane.press({ key: 'keel-progress-pick-/work#1022' })
@@ -825,7 +825,7 @@ test('"more" lists every run with its whole branch; "less" folds it back', async
   stubEngine(on, {
     project: true,
     openPrs: prs,
-    worktrees: prs.map((pr, i) => ({ path: `/wt/${i}`, branch: `feature/branch-number-${i}`, stdout: runAt(10 + i, pr) })),
+    worktrees: prs.map((pr, i) => ({ path: `/work/wt/${i}`, branch: `feature/branch-number-${i}`, stdout: runAt(10 + i, pr) })),
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
@@ -833,7 +833,7 @@ test('"more" lists every run with its whole branch; "less" folds it back', async
   expect(await band.find({ type: 'Button', text: '#13' })).toBeUndefined()
   await band.press({ key: 'keel-progress-toggle' })
   expect(await band.find({ type: 'Button', text: '#13' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: '    feature/branch-number-3 · /wt/3' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /feature\/branch-number-3 · \/work\/wt\/3$/ })).toBeDefined()
   expect(await band.find({ type: 'Button', text: 'less' })).toBeDefined()
   await band.press({ key: 'keel-progress-toggle' })
   expect(await band.find({ type: 'Button', text: '#13' })).toBeUndefined()
@@ -847,9 +847,9 @@ test('the session’s run keeps its mark when its own folder held the stale copy
     project: true,
     openPrs: [1027, 2001],
     worktrees: [
-      { path: '/wt/other', branch: 'other', stdout: runAt(11, 2001) },
+      { path: '/work/wt/other', branch: 'other', stdout: runAt(11, 2001) },
       { path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: run('s7') },
-      { path: '/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
+      { path: '/work/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -868,8 +868,8 @@ test('a stale copy written before the PR opened is the same run as the newer one
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/early', branch: 'early', mtime: 1 * HOURS, stdout: copy(null, 's4') },
-      { path: '/wt/late', branch: 'late', mtime: 1.5 * HOURS, stdout: copy(2001, 's7') },
+      { path: '/work/wt/early', branch: 'early', mtime: 1 * HOURS, stdout: copy(null, 's4') },
+      { path: '/work/wt/late', branch: 'late', mtime: 1.5 * HOURS, stdout: copy(2001, 's7') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -887,7 +887,7 @@ test('the band comes back compact after every run is gone', async ($, on) => {
     project: true,
     openPrs: prs,
     worktrees: prs.map((pr, i) => ({
-      path: `/wt/${i}`,
+      path: `/work/wt/${i}`,
       branch: `b${i}`,
       stdout: () => (live ? runAt(10 + i, pr)() : statusJson({ status: 'completed', current: null })),
     })),
@@ -915,7 +915,7 @@ test('a wide-character branch name is cut by terminal cells, not characters', as
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/cjk', branch: '機能/進捗表示の改善と修正', stdout: runAt(11, 2001) },
+      { path: '/work/wt/cjk', branch: '機能/進捗表示の改善と修正', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -934,7 +934,7 @@ test('emoji, flags and zero-width marks are measured in cells too', async ($, on
       { path: '/work', branch: 'main' },
       // flag (two regional indicators, 2) + rocket (2) + "fix" (3) + e + U+0301 combining accent (1)
       // = 8 cells: with the two-space prefix 10, padded to 12
-      { path: '/wt/emoji', branch: '\u{1F1F9}\u{1F1F7}\u{1F680}fixe\u0301', stdout: runAt(11, 2001) },
+      { path: '/work/wt/emoji', branch: '\u{1F1F9}\u{1F1F7}\u{1F680}fixe\u0301', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -956,7 +956,7 @@ test('a run that only stamps activity, never a checkpoint, still shows', async (
     openPrs: [1027, 4103],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/release', branch: 'release', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-4102', 4102, 's8', { pr: 4103, verdict: 'blocked' })] },
+      { path: '/work/wt/release', branch: 'release', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-4102', 4102, 's8', { pr: 4103, verdict: 'blocked' })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1005,7 +1005,7 @@ test('another command\u2019s activity shows with its own phase name', async ($, 
     openPrs: [1027, 2473],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/pr', branch: 'pr-2473', mtime: null, activityMtime: 1.9 * HOURS, activity: [act('review-cycle-2473', 2473, 'review', { command: 'review-cycle', pr: 2473 })] },
+      { path: '/work/wt/pr', branch: 'pr-2473', mtime: null, activityMtime: 1.9 * HOURS, activity: [act('review-cycle-2473', 2473, 'review', { command: 'review-cycle', pr: 2473 })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1037,7 +1037,7 @@ test('a newer finished checkpoint hides the run\u2019s older "running" activity'
     project: true,
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/8', branch: 'fix/8', mtime: 2.5 * HOURS, stdout: done, activityMtime: 2 * HOURS, activity: [act('ship-8', 8, 's9')] },
+      { path: '/work/wt/8', branch: 'fix/8', mtime: 2.5 * HOURS, stdout: done, activityMtime: 2 * HOURS, activity: [act('ship-8', 8, 's9')] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1053,7 +1053,7 @@ test('an activity run whose PR closed is hidden like any other', async ($, on) =
     openPrs: [],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/9', branch: 'fix/9', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-9', 9, 's8', { pr: 3001 })] },
+      { path: '/work/wt/9', branch: 'fix/9', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-9', 9, 's8', { pr: 3001 })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1070,8 +1070,8 @@ test('a checkpoint in one worktree and newer activity in another are one run', a
     openPrs: [2001],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/parent', branch: 'parent', mtime: 1 * HOURS, stdout: ck },
-      { path: '/wt/parent/nested', branch: 'fix/5', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-5', 5, 's9', { pr: 2001 })] },
+      { path: '/work/wt/parent', branch: 'parent', mtime: 1 * HOURS, stdout: ck },
+      { path: '/work/wt/parent/nested', branch: 'fix/5', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-5', 5, 's9', { pr: 2001 })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1104,7 +1104,7 @@ test('a run id with capitals is found under keel\u2019s lowercase file name', as
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/cap', branch: 'cap', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('Ship-ABC', 12, 's4', { pr: 2001 })] },
+      { path: '/work/wt/cap', branch: 'cap', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('Ship-ABC', 12, 's4', { pr: 2001 })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1121,7 +1121,7 @@ test('two runs in one worktree get their own lines and keys', async ($, on) => {
     worktrees: [
       { path: '/work', branch: 'main' },
       {
-        path: '/wt/pr',
+        path: '/work/wt/pr',
         branch: 'pr-2473',
         mtime: null,
         activityMtime: 1.9 * HOURS,
@@ -1135,7 +1135,7 @@ test('two runs in one worktree get their own lines and keys', async ($, on) => {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  await band.press({ key: 'keel-progress-open-/wt/pr#review-cycle-2473' })
+  await band.press({ key: 'keel-progress-open-/work/wt/pr#review-cycle-2473' })
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'issue #2473 · PR #2473 · review-cycle' })).toBeDefined()
   expect(await pane.find({ type: 'Button', text: /pr-2473 · #2470 s7/ })).toBeDefined()
@@ -1150,7 +1150,7 @@ test('each run says how long ago keel last wrote for it, and a long silence read
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main', mtime: 2 * HOURS - 4 * MIN },
-      { path: '/wt/slow', branch: 'slow', mtime: 2 * HOURS - 70 * MIN, stdout: runAt(11, 2001) },
+      { path: '/work/wt/slow', branch: 'slow', mtime: 2 * HOURS - 70 * MIN, stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1222,7 +1222,7 @@ test('a worktree that fails one read is not announced as gone', async ($, on) =>
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001), exitCode: () => (failing ? 1 : 0) },
+      { path: '/work/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001), exitCode: () => (failing ? 1 : 0) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1242,9 +1242,9 @@ test('a run whose newer copy moves to another worktree is the same run, not a de
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001) },
       {
-        path: '/wt/a/nested',
+        path: '/work/wt/a/nested',
         branch: 'a2',
         get mtime() {
           return nestedAt
@@ -1306,7 +1306,7 @@ test('band_rows sets how many runs the band shows before "+N more"', { options: 
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/a', branch: 'a', stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'a', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1340,7 +1340,7 @@ test('with several runs every row keeps the mark column whole and the issue colu
     project: true,
     worktrees: [
       { path: '/work', branch: 'feat/a-rather-long-branch-name-for-the-band' },
-      { path: '/wt/b', branch: 'fix/b', stdout: () => statusJson({ current: { command: 'ship', issue: 2002, pull_request: 1027, step: 's4' } }) },
+      { path: '/work/wt/b', branch: 'fix/b', stdout: () => statusJson({ current: { command: 'ship', issue: 2002, pull_request: 1027, step: 's4' } }) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1376,4 +1376,32 @@ test('a remote that would make an invalid link gives no link, and the band still
   expect(await band.find({ type: 'Link' })).toBeUndefined()
   expect(await band.find({ type: 'Text', text: 'PR #1027' })).toBeDefined()
   expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
+})
+
+const OTHER_SESSION: Worktree[] = [
+  { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+  { path: '/work/worktrees/pr-11', branch: 'fix/mine', stdout: () => statusJson({ current: { command: 'ship', issue: 11, pull_request: 1027, step: 's7' } }) },
+  { path: '/elsewhere/other-session', branch: 'feat/theirs', stdout: () => statusJson({ current: { command: 'ship', issue: 22, pull_request: 1027, step: 's4' } }) },
+]
+
+test("a session shows only its own runs: its folder and the worktrees keel made under it", async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, worktrees: OTHER_SESSION })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
+  expect(await band.find({ type: 'Button', text: '#22' })).toBeUndefined()
+  // Another session's worktree is not even read.
+  expect(calls.byPath['/elsewhere/other-session']).toBeUndefined()
+})
+
+test("with all_sessions on, other sessions' runs show too", { options: { all_sessions: true } }, async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true, worktrees: OTHER_SESSION })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
+  expect(await band.find({ type: 'Button', text: '#22' })).toBeDefined()
 })

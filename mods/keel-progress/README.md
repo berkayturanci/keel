@@ -11,6 +11,10 @@ terminal running `keel-visual dash`.
 Both are captures of Claude Code 2.1.288 running the mod over three demo runs, rendered as SVG.
 The pane shows the run as a card too: the same step bar, then every step with its state.
 
+- **Whose runs:** a session shows its own keel runs only: the ones in its folder and in the
+  worktrees keel made under it (keel ship puts a run's worktree inside the session's checkout).
+  Other sessions' runs are neither shown nor read. Turn on "Show other sessions' runs" in
+  `/config` to see every recently active worktree of the repository.
 - **Above the prompt:** a rounded card with one row per live run (`active`, `waiting` or
   `interrupted`). Each row shows the issue, the backbone as a segmented bar of chips (done green,
   the current step blue, or red where the run stopped, the rest grey), the current step, why it
@@ -48,6 +52,7 @@ Set these in `/config` (or with `/plugin configure keel-progress@keel`):
 
 | Setting | Default | What it does |
 | --- | --- | --- |
+| Show other sessions' runs | off | Every recently active worktree of the repository, not only this session's own (a read per worktree). |
 | Refresh every (seconds) | 2 | How often keel's state is read while a run is live; five times less often with none. `keel status` itself runs only when a checkpoint changed (or every 30 s), activity is read from its files |
 | Runs above the prompt | 3 | How many runs the band shows before `+N more` |
 | Notifications | on | Toasts for a stopped run, a run waiting for you, a run that left |
