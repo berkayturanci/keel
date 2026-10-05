@@ -9,17 +9,18 @@ terminal running `keel-visual dash`.
 ![The /keel-progress pane: one run's worktree, issue and PR, every backbone step, and when keel last wrote](docs/pane.svg)
 
 Both are captures of Claude Code 2.1.288 running the mod over three demo runs, rendered as SVG.
+The pane shows the run as a card too: the same step bar, then every step with its state.
 
-- **Above the prompt:** one line per live run (`active`, `waiting` or `interrupted`). Each
-  shows the issue, a bar over the backbone steps (`▰` done, `▶` current, `▱` pending), the
-  current step, why it is waiting (or, in red, why it stopped), and the pull request. With
-  more than one run each line starts with its worktree's branch, as wide as the longest one
-  shown, within what the band can spare.
+- **Above the prompt:** a rounded card with one row per live run (`active`, `waiting` or
+  `interrupted`). Each row shows the issue, the backbone as a segmented bar of chips (done green,
+  the current step blue, or red where the run stopped, the rest grey), the current step, why it
+  is held as a chip (amber while waiting, red when stopped), the pull request, and how long since
+  keel last wrote. With more than one run each row starts with its worktree's branch, as wide as
+  the longest one shown, within what the band can spare.
   The session's own run is first, marked `▸` and drawn bright. Nothing is drawn when no run
   is live.
-  - **Click a run's issue** (or type its digit, `1`–`9`, into an empty prompt and pause) to
-    open the pane on that run. The pane opens without taking the keyboard, so a digit meant
-    for something else costs nothing but an open pane.
+  - **Click a run's issue** to open the pane on that run. There is no digit hotkey: a passive
+    band must not take the first key of a prompt.
   - **`more` / `less`** lists every run, not just the first three, each with a second line
     holding the whole branch name and the worktree path.
 - **`/keel-progress`:** opens a pane on one run: its whole branch name and worktree, every

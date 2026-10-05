@@ -1,35 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="151" viewBox="0 0 1040 151" role="img" aria-label="keel-progress — above the prompt">
+<svg xmlns="http://www.w3.org/2000/svg" width="1628" height="227" viewBox="0 0 1628 227" role="img" aria-label="keel-progress — above the prompt">
 <rect width="100%" height="100%" rx="8" fill="#1e1e1e"/>
 <rect width="100%" height="30" rx="8" fill="#2d2d2d"/><rect y="22" width="100%" height="8" fill="#2d2d2d"/>
 <circle cx="18" cy="15" r="5.5" fill="#ff5f57"/><circle cx="36" cy="15" r="5.5" fill="#febc2e"/><circle cx="54" cy="15" r="5.5" fill="#28c840"/>
-<text x="520" y="19" fill="#9d9d9d" font-family="-apple-system,Segoe UI,sans-serif" font-size="12" text-anchor="middle">keel-progress — above the prompt</text>
+<text x="814" y="19" fill="#9d9d9d" font-family="-apple-system,Segoe UI,sans-serif" font-size="12" text-anchor="middle">keel-progress — above the prompt</text>
+<rect x="343.6" y="82" width="117.6" height="19" fill="#5f875f"/>
+<rect x="461.2" y="82" width="16.8" height="19" fill="#5f87ff"/>
+<rect x="478.0" y="82" width="84.0" height="19" fill="#5f5f5f"/>
+<rect x="343.6" y="101" width="134.4" height="19" fill="#5f875f"/>
+<rect x="478.0" y="101" width="16.8" height="19" fill="#d75f5f"/>
+<rect x="494.8" y="101" width="67.2" height="19" fill="#5f5f5f"/>
+<rect x="637.6" y="101" width="201.6" height="19" fill="#d75f5f"/>
+<rect x="343.6" y="120" width="16.8" height="19" fill="#5f87ff"/>
 <g font-family="SF Mono,Menlo,Consolas,DejaVu Sans Mono,monospace" font-size="14" xml:space="preserve">
-<text x="16.0" y="58" fill="#d4d4d4" font-weight="bold" textLength="210.0" lengthAdjust="spacingAndGlyphs">▸ feat/1022-progress-band</text>
-<text x="276.4" y="58" fill="#d4d4d4" font-weight="bold" textLength="33.6" lengthAdjust="spacingAndGlyphs">keel</text>
-<text x="318.4" y="58" fill="#afd7ff" textLength="8.4" lengthAdjust="spacingAndGlyphs">1</text>
-<text x="326.8" y="58" fill="#d4d4d4" textLength="58.8" lengthAdjust="spacingAndGlyphs">: #1022</text>
-<text x="394.0" y="58" fill="#00afd7" textLength="109.2" lengthAdjust="spacingAndGlyphs">▰▰▰▰▰▰▰▶▱▱▱▱▱</text>
-<text x="520.0" y="58" fill="#d4d4d4" textLength="75.6" lengthAdjust="spacingAndGlyphs">s7 review</text>
-<text x="612.4" y="58" fill="#949494" textLength="84.0" lengthAdjust="spacingAndGlyphs">· PR #1027</text>
-<text x="713.2" y="58" fill="#949494" textLength="33.6" lengthAdjust="spacingAndGlyphs">· 2m</text>
-<text x="755.2" y="58" fill="#d4d4d4" textLength="33.6" lengthAdjust="spacingAndGlyphs">more</text>
-<text x="32.8" y="77" fill="#949494" textLength="168.0" lengthAdjust="spacingAndGlyphs">fix/1029-ledger-lock</text>
-<text x="276.4" y="77" fill="#d4d4d4" font-weight="bold" textLength="33.6" lengthAdjust="spacingAndGlyphs">keel</text>
-<text x="318.4" y="77" fill="#afd7ff" textLength="8.4" lengthAdjust="spacingAndGlyphs">2</text>
-<text x="326.8" y="77" fill="#d4d4d4" textLength="58.8" lengthAdjust="spacingAndGlyphs">: #1029</text>
-<text x="394.0" y="77" fill="#00afd7" textLength="109.2" lengthAdjust="spacingAndGlyphs">▰▰▰▰▰▰▰▰▶▱▱▱▱</text>
-<text x="520.0" y="77" fill="#d4d4d4" textLength="58.8" lengthAdjust="spacingAndGlyphs">s8 test</text>
-<text x="595.6" y="77" fill="#d75f87" textLength="201.6" lengthAdjust="spacingAndGlyphs">· stopped: gates blocked</text>
-<text x="814.0" y="77" fill="#949494" textLength="84.0" lengthAdjust="spacingAndGlyphs">· PR #1030</text>
-<text x="914.8" y="77" fill="#949494" textLength="33.6" lengthAdjust="spacingAndGlyphs">· 1m</text>
-<text x="32.8" y="96" fill="#949494" textLength="235.2" lengthAdjust="spacingAndGlyphs">feat/1031-retry-flaky-upload</text>
-<text x="276.4" y="96" fill="#d4d4d4" font-weight="bold" textLength="33.6" lengthAdjust="spacingAndGlyphs">keel</text>
-<text x="318.4" y="96" fill="#afd7ff" textLength="8.4" lengthAdjust="spacingAndGlyphs">3</text>
-<text x="326.8" y="96" fill="#d4d4d4" textLength="58.8" lengthAdjust="spacingAndGlyphs">: #1031</text>
-<text x="394.0" y="96" fill="#00afd7" textLength="8.4" lengthAdjust="spacingAndGlyphs">▶</text>
-<text x="419.2" y="96" fill="#d4d4d4" textLength="134.4" lengthAdjust="spacingAndGlyphs">review (pr-loop)</text>
-<text x="570.4" y="96" fill="#949494" textLength="84.0" lengthAdjust="spacingAndGlyphs">· PR #1033</text>
-<text x="671.2" y="96" fill="#949494" textLength="33.6" lengthAdjust="spacingAndGlyphs">· 1m</text>
-<text x="16.0" y="115" fill="#808080" textLength="1008.0" lengthAdjust="spacingAndGlyphs">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-<text x="16.0" y="134" fill="#d4d4d4" textLength="294.0" lengthAdjust="spacingAndGlyphs">❯ Try &quot;write a test for &lt;filepath&gt;&quot;</text>
+<text x="16.0" y="58" fill="#8787af" textLength="1554.0" lengthAdjust="spacingAndGlyphs">╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
+<text x="1578.4" y="58" fill="#949494" textLength="25.2" lengthAdjust="spacingAndGlyphs">[-]</text>
+<text x="16.0" y="77" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="32.8" y="77" fill="#d4d4d4" font-weight="bold" textLength="50.4" lengthAdjust="spacingAndGlyphs">◆ keel</text>
+<text x="91.6" y="77" fill="#949494" textLength="92.4" lengthAdjust="spacingAndGlyphs">3 live runs</text>
+<text x="192.4" y="77" fill="#d4d4d4" textLength="33.6" lengthAdjust="spacingAndGlyphs">more</text>
+<text x="1561.6" y="77" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="96" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="32.8" y="96" fill="#d4d4d4" font-weight="bold" textLength="210.0" lengthAdjust="spacingAndGlyphs">▸ feat/1022-progress-band</text>
+<text x="293.2" y="96" fill="#d4d4d4" textLength="42.0" lengthAdjust="spacingAndGlyphs">#1022</text>
+<text x="570.4" y="96" fill="#d4d4d4" font-weight="bold" textLength="75.6" lengthAdjust="spacingAndGlyphs">s7 review</text>
+<text x="654.4" y="96" fill="#949494" textLength="67.2" lengthAdjust="spacingAndGlyphs">PR #1027</text>
+<text x="730.0" y="96" fill="#949494" textLength="25.2" lengthAdjust="spacingAndGlyphs">now</text>
+<text x="1561.6" y="96" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="115" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="115" fill="#949494" textLength="168.0" lengthAdjust="spacingAndGlyphs">fix/1029-ledger-lock</text>
+<text x="293.2" y="115" fill="#d4d4d4" textLength="42.0" lengthAdjust="spacingAndGlyphs">#1029</text>
+<text x="570.4" y="115" fill="#d4d4d4" font-weight="bold" textLength="58.8" lengthAdjust="spacingAndGlyphs">s8 test</text>
+<text x="646.0" y="115" fill="#ffffff" font-weight="bold" textLength="184.8" lengthAdjust="spacingAndGlyphs">stopped: gates blocked</text>
+<text x="847.6" y="115" fill="#949494" textLength="67.2" lengthAdjust="spacingAndGlyphs">PR #1030</text>
+<text x="923.2" y="115" fill="#949494" textLength="25.2" lengthAdjust="spacingAndGlyphs">now</text>
+<text x="1561.6" y="115" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="134" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="134" fill="#949494" textLength="235.2" lengthAdjust="spacingAndGlyphs">feat/1031-retry-flaky-upload</text>
+<text x="293.2" y="134" fill="#d4d4d4" textLength="42.0" lengthAdjust="spacingAndGlyphs">#1031</text>
+<text x="368.8" y="134" fill="#d4d4d4" font-weight="bold" textLength="134.4" lengthAdjust="spacingAndGlyphs">review (pr-loop)</text>
+<text x="511.6" y="134" fill="#949494" textLength="67.2" lengthAdjust="spacingAndGlyphs">PR #1033</text>
+<text x="587.2" y="134" fill="#949494" textLength="25.2" lengthAdjust="spacingAndGlyphs">now</text>
+<text x="1561.6" y="134" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="153" fill="#8787af" textLength="1554.0" lengthAdjust="spacingAndGlyphs">╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</text>
+<text x="16.0" y="172" fill="#808080" textLength="1596.0" lengthAdjust="spacingAndGlyphs">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="16.0" y="191" fill="#d4d4d4" textLength="226.8" lengthAdjust="spacingAndGlyphs">❯ Try &quot;refactor &lt;filepath&gt;&quot;</text>
+<text x="16.0" y="210" fill="#808080" textLength="1596.0" lengthAdjust="spacingAndGlyphs">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
 </g></svg>

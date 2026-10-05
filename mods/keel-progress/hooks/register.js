@@ -8,7 +8,7 @@
 //   - a `/keel-progress` pane with every live run's steps, history counts and next issue
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { FALLBACK_STEPS, activityRuns, ago, bandParts, checkpointDetails, githubBase, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
+import { FALLBACK_STEPS, activityRuns, ago, checkpointDetails, githubBase, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees, stepStates, stepName } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
@@ -47,14 +47,25 @@ const LABEL_MIN = 12
 const LABEL_MAX = 48
 const BAND_LINE_COLUMNS = 64
 
+// Colors that read on a dark and a light background alike.
 const TONES = {
   title: { bold: true },
-  bar: { color: 'cyan' },
-  wait: { color: 'yellow' },
-  bad: { color: 'red' },
+  bar: { color: '#58A6FF', bold: true },
+  ok: { color: '#3FB950' },
+  wait: { color: '#D29922' },
+  bad: { color: '#F85149' },
   dim: { dimColor: true },
   plain: {},
+  // the step bar: one two-cell chip per backbone step
+  done: { backgroundColor: '#2D7D46' },
+  current: { backgroundColor: '#1F6FEB' },
+  stopped: { backgroundColor: '#B62324' },
+  todo: { backgroundColor: '#30363D' },
+  // why a run is held: a chip
+  waitChip: { backgroundColor: '#9A6700', color: '#FFFFFF' },
+  stopChip: { backgroundColor: '#B62324', color: '#FFFFFF', bold: true },
 }
+const BORDER = '#6E7681'
 
 let hasProject = false
 let runs = [] // [{ path, label, snapshot, steps }] — live runs, the session's own first
@@ -460,6 +471,39 @@ function toggleExpanded($) {
   $.ui.invalidate('ui.render')
 }
 
+function chip(Text, text, tone) {
+  return Text({ ...TONES[tone], wrap: 'truncate', children: [text] })
+}
+
+// The backbone as one segmented bar: a two-cell chip per step, done green, the current one blue
+// (red when the run stopped there), the rest grey.
+function stepBar(ui, run) {
+  const { Box, Text } = ui
+  const stopped = run.snapshot.status === 'interrupted'
+  return Box({
+    flexDirection: 'row',
+    flexShrink: 0,
+    children: stepStates(run.steps, run.snapshot.current.step).map((st) =>
+      chip(Text, '  ', st.state === 'done' ? 'done' : st.state === 'current' ? (stopped ? 'stopped' : 'current') : 'todo'),
+    ),
+  })
+}
+
+// What a band row shows after the issue button: the step bar, the step, why it is held, the PR
+// and how long since keel last wrote.
+function bandRow(ui, run) {
+  const { Text } = ui
+  const c = run.snapshot.current
+  const parts = [stepBar(ui, run), chip(Text, stepName(run.steps, c.step), 'title')]
+  if (c.wait_reason) {
+    const stopped = run.snapshot.status === 'interrupted'
+    parts.push(chip(Text, ` ${stopped ? 'stopped' : 'waiting'}: ${c.wait_reason} `, stopped ? 'stopChip' : 'waitChip'))
+  }
+  if (c.pull_request != null) parts.push(chip(Text, `PR #${c.pull_request}`, 'dim'))
+  for (const part of agePart(run)) parts.push(chip(Text, part.text.replace(/^ · /, ''), part.tone))
+  return parts
+}
+
 export function register(on, options = {}) {
   if (Number.isFinite(options.poll_seconds)) settings.pollMs = Math.max(2, Math.min(60, options.poll_seconds)) * 1000
   if (Number.isFinite(options.band_rows)) settings.bandMax = Math.max(1, Math.min(9, options.band_rows))
@@ -505,71 +549,64 @@ export function register(on, options = {}) {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (runs.length === 0) return next(e)
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Button } = ui
     const labelled = runs.length > 1
     const shown = expanded ? runs : runs.slice(0, settings.bandMax)
     // As wide as the longest label on screen, within what the band can spare.
     const longest = Math.max(...shown.map((run) => cells(run.label) + 2))
     const width = Math.min(labelWidth(e.props.bodyColumns), Math.max(LABEL_MIN, longest))
-    const lines = []
-    shown.forEach((run, i) => {
-      // The issue is a button: click it, or type its digit into an empty prompt, to open the
-      // pane on this run.
+    const header = Box({
+      flexDirection: 'row',
+      columnGap: 1,
+      children: [
+        chip(Text, '◆ keel', 'title'),
+        chip(Text, `${runs.length} live run${runs.length === 1 ? '' : 's'}`, 'dim'),
+        ...(runs.length > 1 || expanded
+          ? [Button({ key: 'keel-progress-toggle', label: expanded ? 'less' : 'more', plain: true, onPress: () => toggleExpanded($) })]
+          : []),
+      ],
+    })
+    const rows = []
+    for (const run of shown) {
       const issue = run.snapshot.current.issue
-      const open = Button({
-        key: `keel-progress-open-${runKey(run)}`,
-        label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
-        plain: true,
-        ...(i < 9 ? { hotkey: String(i + 1) } : {}),
-        onPress: () => openRun($, runKey(run)),
-      })
-      const toggle =
-        i === 0 && (runs.length > 1 || expanded)
-          ? [
-              Button({
-                key: 'keel-progress-toggle',
-                label: expanded ? 'less' : 'more',
-                plain: true,
-                onPress: () => toggleExpanded($),
-              }),
-            ]
-          : []
-      lines.push(
+      rows.push(
         Box({
           key: `keel-progress-${runKey(run)}`,
           flexDirection: 'row',
           columnGap: 1,
           children: [
             ...(labelled ? [Text(textProps(labelPart(run, width)))] : []),
-            Text(textProps({ text: 'keel', tone: 'title' })),
-            open,
-            ...bandParts(run.snapshot, run.steps).slice(2).map((part) => Text(textProps(part))),
-            ...agePart(run).map((part) => Text(textProps(part))),
-            ...toggle,
+            // The issue is a button: click it to open the pane on this run. No digit hotkey: a
+            // passive band must not take the first key of a prompt (#1466).
+            Button({
+              key: `keel-progress-open-${runKey(run)}`,
+              label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
+              plain: true,
+              onPress: () => openRun($, runKey(run)),
+            }),
+            ...bandRow(ui, run),
           ],
         }),
       )
       if (expanded) {
         // The second line carries what the first had to cut: the whole branch and where it runs.
-        lines.push(
-          Text({
-            ...textProps({ text: `    ${run.branch ?? run.label} · ${run.path}`, tone: 'dim' }),
-            wrap: 'truncate-middle',
-          }),
-        )
+        rows.push(Text({ ...textProps({ text: `    ${run.branch ?? run.label} · ${run.path}`, tone: 'dim' }), wrap: 'truncate-middle' }))
       }
-    })
-    if (!expanded && runs.length > settings.bandMax) {
-      lines.push(Text(textProps({ text: `+${runs.length - settings.bandMax} more keel runs · more, or /keel-progress`, tone: 'dim' })))
     }
+    if (!expanded && runs.length > settings.bandMax) {
+      rows.push(Text(textProps({ text: `+${runs.length - settings.bandMax} more keel runs · more, or /keel-progress`, tone: 'dim' })))
+    }
+    const card = Box({ flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1, children: [header, ...rows] })
     // Keep what the mods after this one draw in the band.
     const theirs = await next(e)
-    return Box({ flexDirection: 'column', children: theirs ? [...lines, theirs] : lines })
+    return Box({ flexDirection: 'column', children: theirs ? [card, theirs] : [card] })
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
-    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = ui
     const children = []
     const line = (part) => children.push(Text(textProps(part)))
     if (!hasProject) {
@@ -586,12 +623,15 @@ export function register(on, options = {}) {
       const focus = runs.find((run) => runKey(run) === selected) ?? runs[0]
       if (focus) {
         line({ text: ' ', tone: 'plain' })
-        line({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
-        line({ text: focus.path, tone: 'dim' })
+        // The run in full, as a card: what the band shows, then every step and what keel last wrote.
+        const rows = []
+        const cline = (part) => rows.push(Text(textProps(part)))
+        cline({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
+        cline({ text: focus.path, tone: 'dim' })
         const c = focus.snapshot.current
         // Links to the PR and the issue, when the repository is on GitHub.
         if (repoBase !== null && (c.pull_request != null || c.issue != null)) {
-          children.push(
+          rows.push(
             Box({
               key: 'keel-progress-links',
               flexDirection: 'row',
@@ -603,15 +643,17 @@ export function register(on, options = {}) {
             }),
           )
         }
-        for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) line(part)
+        rows.push(Box({ flexDirection: 'row', columnGap: 1, children: [stepBar(ui, focus), chip(Text, stepName(focus.steps, c.step), 'title')] }))
+        for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) cline(part)
         const since = focus.mtimeMs > 0 && scanAt > 0 ? ago(scanAt - focus.mtimeMs) : null
         if (since !== null) {
           const from = focus.snapshot.source === 'activity' ? 'activity record' : 'checkpoint'
           const quiet = scanAt - focus.mtimeMs >= QUIET_MS
-          line({ text: `last written ${since === 'now' ? 'just now' : `${since} ago`} (${from})${quiet ? ' · quiet' : ''}`, tone: quiet ? 'wait' : 'dim' })
+          cline({ text: `last written ${since === 'now' ? 'just now' : `${since} ago`} (${from})${quiet ? ' · quiet' : ''}`, tone: quiet ? 'wait' : 'dim' })
         }
-        for (const [name, value] of focus.details ?? []) line({ text: `${name}: ${value}`, tone: 'plain' })
-        if (focus.snapshot.note) line({ text: `note: ${focus.snapshot.note}`, tone: 'plain' })
+        for (const [name, value] of focus.details ?? []) cline({ text: `${name}: ${value}`, tone: 'plain' })
+        if (focus.snapshot.note) cline({ text: `note: ${focus.snapshot.note}`, tone: 'plain' })
+        children.push(Box({ flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1, children: rows }))
       }
       const others = runs.filter((run) => run !== focus)
       if (others.length > 0) {

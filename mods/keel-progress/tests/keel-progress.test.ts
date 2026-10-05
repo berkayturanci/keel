@@ -215,10 +215,16 @@ test('a waiting run draws its step bar above the prompt on both surfaces', async
   for (const surface of ['terminal', 'desktop'] as const) {
     const band = await $.ui.mount({ ...BAND, surface })
     expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: '▰▰▰▰▰▰▰▰▰▰▶▱▱' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: ' s10 merge' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: ' · waiting: merge-window' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: ' · PR #1027' })).toBeDefined()
+    // A rounded card headed by the keel mark; the backbone as a segmented bar of chips:
+    // ten steps done (green), s10 current (blue), two to come (grey).
+    expect(await band.find({ type: 'Box', props: { borderStyle: 'round' } })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: '◆ keel' })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: '1 live run' })).toBeDefined()
+    const segments = (await band.findAll({ type: 'Text', text: '  ' })).map((el: any) => el.props?.backgroundColor)
+    expect(segments).toEqual([...Array(10).fill('#2D7D46'), '#1F6FEB', '#30363D', '#30363D'])
+    expect(await band.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: ' waiting: merge-window ', props: { backgroundColor: '#9A6700' } })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: 'PR #1027' })).toBeDefined()
     // The other mods' band drawing is kept under keel's line.
     expect(await band.find({ type: 'Text', text: 'drawn by Claude Code' })).toBeDefined()
     await band.unmount()
@@ -369,8 +375,8 @@ test('an interrupted run with no issue or PR yet still draws, marked stopped', a
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s4 implement' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' · stopped: gate-failed' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's4 implement' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' stopped: gate-failed ' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: /PR #/ })).toBeUndefined()
 
   await $.command.run({ command: 'keel-progress', args: '' })
@@ -440,8 +446,8 @@ test('parallel runs in other worktrees each get a labelled line, the session’s
   const labels = await band.findAll({ type: 'Text', text: /^(▸ main|  fix\/a|  feat\/b)\s+$/ })
   expect(labels.map((t: any) => String(t.children[0]).trim())).toEqual(['▸ main', 'fix/a', 'feat/b'])
   expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s4 implement' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' · PR #2002' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's4 implement' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 'PR #2002' })).toBeDefined()
 })
 
 test('a stale checkpoint, a worktree without one, and a run whose PR closed are not shown', async ($, on) => {
@@ -668,7 +674,7 @@ test('a step the contract names without a step name shows its id', async ($, on)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s10 s10' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's10 s10' })).toBeDefined()
 })
 
 test('a run whose PR closed costs no extra gh call per scan', async ($, on) => {
@@ -710,8 +716,8 @@ test('one run checkpointed in two worktrees shows once, from the newer checkpoin
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#4101' })).length).toBe(1)
-  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 's9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's7 review' })).toBeUndefined()
   await $.command.run({ command: 'keel-progress', args: '' })
   await clock.settle()
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -732,8 +738,8 @@ test('when the session’s own folder holds the stale copy, the newer one elsewh
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 's9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's7 review' })).toBeUndefined()
 })
 
 test('clicking a run in the band opens the pane on that run, with the others to switch to', async ($, on) => {
@@ -817,7 +823,7 @@ test('a stale copy written before the PR opened is the same run as the newer one
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#9' })).length).toBe(1)
-  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's7 review' })).toBeDefined()
 })
 
 test('the band comes back compact after every run is gone', async ($, on) => {
@@ -904,8 +910,8 @@ test('a run that only stamps activity, never a checkpoint, still shows', async (
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#4102' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' · stopped: gates blocked' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' stopped: gates blocked ' })).toBeDefined()
 })
 
 test('activity newer than the checkpoint moves the run on; an older one does not', async ($, on) => {
@@ -920,8 +926,8 @@ test('activity newer than the checkpoint moves the run on; an older one does not
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s6 ci' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's6 ci' })).toBeUndefined()
   expect((await band.findAll({ type: 'Button', text: '#7' })).length).toBe(1)
 })
 
@@ -952,7 +958,7 @@ test('another command\u2019s activity shows with its own phase name', async ($, 
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' review (review-cycle)' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 'review (review-cycle)' })).toBeDefined()
 })
 
 test('a checkpoint newer than the activity keeps the checkpoint\u2019s step', async ($, on) => {
@@ -967,8 +973,8 @@ test('a checkpoint newer than the activity keeps the checkpoint\u2019s step', as
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s10 merge' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeUndefined()
 })
 
 test('a newer finished checkpoint hides the run\u2019s older "running" activity', async ($, on) => {
@@ -1019,7 +1025,7 @@ test('a checkpoint in one worktree and newer activity in another are one run', a
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#5' })).length).toBe(1)
-  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's9 fixloop' })).toBeDefined()
 })
 
 test('an older checkpoint without a run id and the activity of the same issue are one run', async ($, on) => {
@@ -1035,7 +1041,7 @@ test('an older checkpoint without a run id and the activity of the same issue ar
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#6' })).length).toBe(1)
-  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
 })
 
 test('a run id with capitals is found under keel\u2019s lowercase file name', async ($, on) => {
@@ -1097,8 +1103,8 @@ test('each run says how long ago keel last wrote for it, and a long silence read
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' · 4m' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' · quiet 1h' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: '4m' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 'quiet 1h' })).toBeDefined()
 })
 
 test('a run that stops, or leaves the board, raises a toast; the first scan raises none', async ($, on) => {
@@ -1199,7 +1205,7 @@ test('a run whose newer copy moves to another worktree is the same run, not a de
   nestedAt = 2.5 * HOURS
   await clock.advance(5_000)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's9 fixloop' })).toBeDefined()
   expect(calls.toasts).toEqual([])
 })
 
