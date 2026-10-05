@@ -593,7 +593,9 @@ export function register(on, options = {}) {
           children: [
             // The keel mark heads the first row (no header row of its own: the card is short).
             Box({ flexShrink: 0, children: [chip(Text, i === 0 ? '◆ keel' : '      ', 'title')] }),
-            ...(labelled ? [Text(textProps(labelPart(run, width)))] : []),
+            // The label keeps its padded width, so the issue and bar columns line up row to row;
+            // only the trailing chips give way on a narrow band.
+            ...(labelled ? [Box({ flexShrink: 0, children: [Text(textProps(labelPart(run, width)))] })] : []),
             // The issue is a button: click it to open the pane on this run. No digit hotkey: a
             // passive band must not take the first key of a prompt (#1466).
             Box({
