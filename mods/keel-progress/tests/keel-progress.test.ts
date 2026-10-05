@@ -693,7 +693,7 @@ test('a run whose PR closed costs no extra gh call per scan', async ($, on) => {
 })
 
 test('one run checkpointed in two worktrees shows once, from the newer checkpoint', async ($, on) => {
-  // #3436 on smartinventory: the parent worktree still held s7 while the nested one was at s9.
+  // Seen in a consumer project: the parent worktree still held s7 while the nested one was at s9.
   const clock = mock.clock(on, { now: 2 * HOURS })
   const run = (step: string) => () =>
     statusJson({ current: { run_id: 'ship-3436', command: 'ship', issue: 3436, pull_request: 2001, step, wait_reason: '' } })
@@ -890,7 +890,7 @@ function act(run_id: string, issue: number, phase: string, extra: Record<string,
 }
 
 test('a run that only stamps activity, never a checkpoint, still shows', async ($, on) => {
-  // smartinventory's ship-3289: blocked gates at s8, no checkpoint in its worktree.
+  // Seen in a consumer project: a ship run with blocked gates at s8, no checkpoint in its worktree.
   const clock = mock.clock(on, { now: 2 * HOURS })
   stubEngine(on, {
     project: true,
