@@ -696,20 +696,20 @@ test('one run checkpointed in two worktrees shows once, from the newer checkpoin
   // Seen in a consumer project: the parent worktree still held s7 while the nested one was at s9.
   const clock = mock.clock(on, { now: 2 * HOURS })
   const run = (step: string) => () =>
-    statusJson({ current: { run_id: 'ship-3436', command: 'ship', issue: 3436, pull_request: 2001, step, wait_reason: '' } })
+    statusJson({ current: { run_id: 'ship-4101', command: 'ship', issue: 4101, pull_request: 2001, step, wait_reason: '' } })
   stubEngine(on, {
     project: true,
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
       { path: '/wt/parent', branch: 'claude/workflow', mtime: 1 * HOURS, stdout: run('s7') },
-      { path: '/wt/parent/worktrees/issue-3436', branch: 'fix/issue-3436', mtime: 1.5 * HOURS, stdout: run('s9') },
+      { path: '/wt/parent/worktrees/issue-4101', branch: 'fix/issue-4101', mtime: 1.5 * HOURS, stdout: run('s9') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await band.findAll({ type: 'Button', text: '#3436' })).length).toBe(1)
+  expect((await band.findAll({ type: 'Button', text: '#4101' })).length).toBe(1)
   expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeUndefined()
   await $.command.run({ command: 'keel-progress', args: '' })
@@ -894,16 +894,16 @@ test('a run that only stamps activity, never a checkpoint, still shows', async (
   const clock = mock.clock(on, { now: 2 * HOURS })
   stubEngine(on, {
     project: true,
-    openPrs: [1027, 3312],
+    openPrs: [1027, 4103],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/v120', branch: 'v120', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-3289', 3289, 's8', { pr: 3312, verdict: 'blocked' })] },
+      { path: '/wt/release', branch: 'release', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-4102', 4102, 's8', { pr: 4103, verdict: 'blocked' })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Button', text: '#3289' })).toBeDefined()
+  expect(await band.find({ type: 'Button', text: '#4102' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: ' · stopped: gates blocked' })).toBeDefined()
 })
