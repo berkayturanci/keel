@@ -148,9 +148,48 @@ export function activityRuns(stdout, steps) {
         source: 'activity',
         note: r.note ? String(r.note) : null,
       },
+      who: whoFromRecord(r),
     })
   }
   return { dir, runs }
+}
+
+// Who drives a run (#1482): the host, agent, model and effort an activity record carries, and the
+// `agent:` / `model:` labels of the run's PR. Only what is known, in that order; activity wins over
+// labels. `labels` is the gh label list ([{ name }]); null/undefined when there is none.
+export const WHO_FIELDS = ['host', 'agent', 'model', 'effort']
+const WHO_MAX = 64
+
+function whoValue(v) {
+  if (typeof v !== 'string') return null
+  const t = v.trim()
+  return t && t.length <= WHO_MAX && !/[\u0000-\u001f\u007f]/.test(t) ? t : null
+}
+
+export function whoFromRecord(record) {
+  const who = {}
+  for (const f of WHO_FIELDS) {
+    const v = whoValue(record?.[f])
+    if (v !== null) who[f] = v
+  }
+  return who
+}
+
+export function whoFromLabels(labels) {
+  const who = {}
+  for (const l of Array.isArray(labels) ? labels : []) {
+    const name = typeof l?.name === 'string' ? l.name : ''
+    for (const f of ['agent', 'model']) {
+      const v = name.startsWith(`${f}:`) ? whoValue(name.slice(f.length + 1)) : null
+      if (v !== null && who[f] === undefined) who[f] = v
+    }
+  }
+  return who
+}
+
+export function whoText(...sources) {
+  const who = Object.assign({}, ...sources)
+  return WHO_FIELDS.map((f) => who[f]).filter(Boolean).join(' · ')
 }
 
 // "now", "4m", "2h", "3d": how long ago `ms` milliseconds is, for the band and the pane.

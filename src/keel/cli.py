@@ -561,6 +561,7 @@ def _autostamp(
                 issue=issue,
                 pr=pr,
             )
+            record = activity.carry_identity(record, existing)
             activity.write_activity(path, activity.carry_usage(record, existing))
     except (activity.ActivityError, OSError):
         return
@@ -5110,9 +5111,15 @@ def _cmd_activity(args: argparse.Namespace) -> int:
                 issue=args.issue,
                 pr=args.pull_request,
                 note=args.note,
+                host=args.host or _detect_host(),
+                agent=args.agent,
+                model=args.model,
+                effort=args.effort,
             )
             with activity.record_lock(_lock_root(args.root), path, owner="activity-write"):
-                record = activity.carry_usage(record, _readable_activity(path))
+                existing = _readable_activity(path)
+                record = activity.carry_identity(record, existing)
+                record = activity.carry_usage(record, existing)
                 activity.write_activity(path, record)
             _emit_activity(args, [record], path=str(path))
             return 0
@@ -5138,6 +5145,16 @@ def _cmd_activity(args: argparse.Namespace) -> int:
     except activity.ActivityError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+
+def _detect_host() -> str | None:
+    """The host driving this process, when the environment says so reliably.
+
+    Claude Code sets ``CLAUDECODE=1`` in the shells it spawns. No other host is claimed:
+    none has a documented marker this code can justify, so they stay unset unless the
+    caller passes ``--host``.
+    """
+    return "Claude Code" if os.environ.get("CLAUDECODE") == "1" else None
 
 
 def _readable_activity(path: Path) -> dict | None:
@@ -10199,6 +10216,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--pull-request", type=_positive_int, default=None, help="pull request number to record"
     )
     p_activity.add_argument("--note", default=None, help="optional free-text note")
+    for _flag, _what in (
+        ("host", "host driving the run, e.g. 'Claude Code' (default: detected from the env)"),
+        ("agent", "agent or delegate doing the work, e.g. claude, codex"),
+        ("model", "model id, e.g. opus"),
+        ("effort", "reasoning effort, e.g. high"),
+    ):
+        p_activity.add_argument(
+            f"--{_flag}", default=None, help=f"{_what}; kept from the record when omitted (--write)"
+        )
     p_activity.add_argument("--json", action="store_true", help="emit structured JSON")
     p_activity.set_defaults(func=_cmd_activity)
 

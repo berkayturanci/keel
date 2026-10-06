@@ -43,6 +43,39 @@ class TestContract(unittest.TestCase):
         self.assertIn("merged", c["statuses"])
 
 
+class TestIdentity(unittest.TestCase):
+    def test_identity_fields_are_recorded_only_when_given(self):
+        self.assertFalse(set(activity.IDENTITY_FIELDS) & set(_record()))
+        rec = _record(host="Claude Code", agent="claude", model="opus", effort="high")
+        self.assertEqual(
+            [rec[f] for f in activity.IDENTITY_FIELDS], ["Claude Code", "claude", "opus", "high"]
+        )
+        activity.validate_activity(rec)
+
+    def test_identity_is_validated(self):
+        for bad in ("", "  ", "x" * 65, "a\x07b", "a\nb"):
+            with self.assertRaises(activity.ActivityError):
+                _record(agent=bad)
+        for field in activity.IDENTITY_FIELDS:
+            rec = _record()
+            rec[field] = 7
+            with self.assertRaises(activity.ActivityError):
+                activity.validate_activity(rec)
+
+    def test_carry_identity_fills_only_omitted_fields(self):
+        existing = _record(agent="claude", model="opus")
+        carried = activity.carry_identity(_record(model="sonnet"), existing)
+        self.assertEqual((carried["agent"], carried["model"]), ("claude", "sonnet"))
+        bare = _record()
+        self.assertIs(activity.carry_identity(bare, None), bare)
+        self.assertIs(activity.carry_identity(bare, _record()), bare)
+
+    def test_contract_lists_identity_fields(self):
+        self.assertEqual(
+            activity.activity_contract_as_dict()["identity_fields"], list(activity.IDENTITY_FIELDS)
+        )
+
+
 class TestDir(unittest.TestCase):
     def test_default_dir(self):
         raw, source = activity.configured_activity_dir(_config())

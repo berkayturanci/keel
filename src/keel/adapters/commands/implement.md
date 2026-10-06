@@ -13,7 +13,9 @@ go**. This command's phases are: `config` → `fetch` → `branch` → `resolve`
 (e.g. `implement-<issue-or-pr>`):
 
 - **Right now, before the work below**, stamp the first phase:
-  `keel activity .keel/project.yaml --root . --write --command implement --run-id "$RUN" --phase config`
+  `keel activity .keel/project.yaml --root . --write --command implement --run-id "$RUN" --phase config --agent <your own name> --model <your model id> --effort <your reasoning effort, if known>`
+  (the board shows who is driving the run; later stamps keep these, so pass them once).
+  Where this command hands implement or fix work to another provider with `keel delegate run`, stamp that phase again with `--agent <that provider> --model <its model id>`, so the board shows who did it.
 - Re-run with the next `--phase` (`fetch`, …) **as you advance** through the flow.
 - At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 

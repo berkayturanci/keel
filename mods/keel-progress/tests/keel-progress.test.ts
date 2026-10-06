@@ -96,6 +96,7 @@ function stubEngine(
     stderr?: string
     worktrees?: Worktree[]
     openPrs?: number[] | null | (() => number[] | null) // null: gh fails
+    prLabels?: Record<number, string[]> // label names per open PR, as `gh pr list --json labels`
     gitFails?: boolean
     gitRejects?: boolean
     realPaths?: Record<string, string> // what fs.stat({ resolve }) answers per path
@@ -112,6 +113,7 @@ function stubEngine(
     status: 0,
     byPath: {} as Record<string, number>,
     gh: 0,
+    ghJson: "",
     running: 0,
     most: 0,
     opened: [] as string[],
@@ -183,9 +185,10 @@ function stubEngine(
     }
     if (e.argv[0] === 'gh') {
       calls.gh += 1
+      calls.ghJson = e.argv[e.argv.indexOf('--json') + 1]
       const prs = opts.openPrs === undefined ? [1027] : typeof opts.openPrs === 'function' ? opts.openPrs() : opts.openPrs
       if (prs === null) return { value: { exitCode: 1, stdout: '', stderr: 'gh: not logged in' } }
-      return { value: { exitCode: 0, stdout: JSON.stringify(prs.map((number) => ({ number }))), stderr: '' } }
+      return { value: { exitCode: 0, stdout: JSON.stringify(prs.map((number) => ({ number, labels: (opts.prLabels?.[number] ?? []).map((name) => ({ name })) }))), stderr: '' } }
     }
     if (e.argv[1] === 'activity') {
       const at = e.argv[e.argv.indexOf('--root') + 1]
@@ -1578,4 +1581,81 @@ test('with several runs, pointing at a branch shows the whole branch and its wor
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: ' fix/a · /work/wt/a ' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: ' main · /work ' })).toBeDefined()
+})
+
+// Who drives a run (#1482): activity fields and the PR's labels, in the panel and the band hover.
+const whoWorktrees = (record: Record<string, unknown>) => [
+  { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+  { path: '/work/wt/who', branch: 'feat/who', mtime: null, activityMtime: 1 * HOURS, activity: [act('ship-9', 9, 's7', { pr: 2001, ...record })] },
+  // A second run, so the band labels each row (and a branch has a hover to show who).
+  { path: '/work/wt/other', branch: 'feat/other', mtime: null, activityMtime: 1 * HOURS, activity: [act('ship-10', 10, 's7', { pr: 2002 })] },
+]
+
+async function whoPane($: any, on: any, opts: { labels?: string[]; record?: Record<string, unknown> }) {
+  const clock = mock.clock(on, { now: 1.5 * HOURS })
+  const calls = stubEngine(on, {
+    project: true,
+    openPrs: [2001, 2002],
+    prLabels: opts.labels ? { 2001: opts.labels } : undefined,
+    worktrees: whoWorktrees(opts.record ?? {}),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  return { pane, band, calls }
+}
+
+const SUMMARY = (who: string) => `8 of 13 steps · next s8 test · PR #2001${who ? ` · ${who}` : ''} · /work/wt/who`
+
+test('the PR labels say who drives a run, from the same gh call that lists the open PRs', async ($, on) => {
+  const { pane, band, calls } = await whoPane($, on, { labels: ['bug', 'agent:claude', 'model:opus'] })
+  expect(calls.ghJson).toBe('number,labels')
+  expect(calls.gh).toBe(1)
+  expect(await pane.find({ type: 'Text', text: SUMMARY('claude · opus') })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' feat/who · /work/wt/who · claude · opus ' })).toBeDefined()
+})
+
+test('the activity record says who drives a run, and wins over the PR labels', async ($, on) => {
+  const { pane, band } = await whoPane($, on, {
+    labels: ['agent:codex', 'model:gpt'],
+    record: { host: 'Claude Code', agent: 'claude', model: 'opus', effort: 'high' },
+  })
+  expect(await pane.find({ type: 'Text', text: SUMMARY('Claude Code · claude · opus · high') })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' feat/who · /work/wt/who · Claude Code · claude · opus · high ' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: SUMMARY('codex · gpt') })).toBeUndefined()
+})
+
+test('an activity record fills only the fields it has; the labels give the rest', async ($, on) => {
+  const { pane } = await whoPane($, on, { labels: ['agent:codex', 'model:gpt'], record: { effort: 'high' } })
+  expect(await pane.find({ type: 'Text', text: SUMMARY('codex · gpt · high') })).toBeDefined()
+})
+
+test('the open run card shows who drives it', async ($, on) => {
+  const { pane } = await whoPane($, on, { record: { host: 'Codex', agent: 'codex', model: 'gpt-5' } })
+  await pane.press({ key: 'keel-progress-pick-/work/wt/who#ship-9' })
+  expect(await pane.find({ type: 'Text', text: 'Codex · codex · gpt-5' })).toBeDefined()
+})
+
+test('nothing about who is shown when nothing is known', async ($, on) => {
+  const { pane, band } = await whoPane($, on, { labels: ['bug'], record: { agent: 'bad\u0007agent', model: 42 } })
+  expect(await pane.find({ type: 'Text', text: SUMMARY('') })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' feat/who · /work/wt/who ' })).toBeDefined()
+})
+
+test('a checkpoint newer than the activity record still shows who the record says drives the run', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const ck = () => statusJson({ current: { run_id: 'ship-7', command: 'ship', issue: 7, pull_request: 1027, step: 's6', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    worktrees: [{ path: '/work', branch: 'main', mtime: 2 * HOURS, stdout: ck, activityMtime: 1 * HOURS, activity: [act('ship-7', 7, 's4', { pr: 1027, agent: 'claude', model: 'opus' })] }],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '7 of 13 steps · next s7 review · PR #1027 · claude · opus · /work' })).toBeDefined()
 })

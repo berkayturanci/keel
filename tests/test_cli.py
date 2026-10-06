@@ -14511,6 +14511,44 @@ class TestActivityCli(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertTrue(err.strip())
 
+    def test_identity_flags_are_recorded_kept_and_host_detected(self):
+        import json
+        import tempfile
+
+        base = ["--command", "triage", "--run-id", "t-1", "--phase", "classify"]
+        with tempfile.TemporaryDirectory() as d, patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("CLAUDECODE", None)
+            cfg_path = self._cfg()
+            show = ["activity", cfg_path, "--root", d, "--json"]
+            rc, _, _ = run(
+                ["activity", cfg_path, "--root", d, "--write", *base]
+                + ["--agent", "claude", "--model", "opus", "--effort", "high"]
+            )
+            self.assertEqual(rc, 0)
+            rec = json.loads(run(show)[1])["activity"][0]
+            who = (rec["agent"], rec["model"], rec["effort"])
+            self.assertEqual(who, ("claude", "opus", "high"))
+            self.assertNotIn("host", rec)  # no CLAUDECODE, no --host: unknown stays unset
+            # A later stamp that omits them keeps them; one that gives a field changes only it.
+            later = ["--write", *base[:-1], "rank", "--model", "sonnet"]
+            run(["activity", cfg_path, "--root", d, *later])
+            rec = json.loads(run(show)[1])["activity"][0]
+            who = (rec["agent"], rec["model"], rec["effort"])
+            self.assertEqual(who, ("claude", "sonnet", "high"))
+            run(["activity", cfg_path, "--root", d, "--done", "--run-id", "t-1"])
+            self.assertEqual(json.loads(run(show)[1])["activity"][0]["agent"], "claude")
+            # Claude Code's own marker names the host; --host overrides it.
+            os.environ["CLAUDECODE"] = "1"
+            run(["activity", cfg_path, "--root", d, "--write", *base])
+            self.assertEqual(json.loads(run(show)[1])["activity"][0]["host"], "Claude Code")
+            run(["activity", cfg_path, "--root", d, "--write", *base, "--host", "Codex"])
+            self.assertEqual(json.loads(run(show)[1])["activity"][0]["host"], "Codex")
+            # A bad value is refused, not written.
+            bad = ["--write", *base, "--agent", "a\nb"]
+            rc, _, err = run(["activity", cfg_path, "--root", d, *bad])
+            self.assertEqual(rc, 1)
+            self.assertIn("control characters", err)
+
 
 class TestRenderReport(unittest.TestCase):
     def _payload(self, value):

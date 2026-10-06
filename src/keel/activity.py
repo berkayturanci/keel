@@ -51,6 +51,12 @@ VERDICTS = ("pass", "blocked")
 #: count. Absent until a delegate records into the run.
 USAGE_FIELD = "delegate_usage"
 
+#: Optional "who is driving this run" fields (#1482): the host (Claude Code, Codex…),
+#: the agent or delegate (claude, codex…), its model id and reasoning effort. Additive
+#: to ``keel.activity.v1`` — absent from a record means unknown, never ``None``.
+IDENTITY_FIELDS = ("host", "agent", "model", "effort")
+IDENTITY_MAX_LEN = 64
+
 #: How long a writer waits for another writer of the same record: attempts x poll.
 #: Holding the lock takes one read and one atomic write, so two seconds is ample; it is
 #: bounded because a holder killed mid-write leaves its claim behind.
@@ -78,6 +84,7 @@ def activity_contract_as_dict() -> dict[str, Any]:
         "touches_checkpoint": False,
         "phase_source": "keel.flows.flow_for(command)",
         "usage_field": USAGE_FIELD,
+        "identity_fields": list(IDENTITY_FIELDS),
     }
 
 
@@ -135,6 +142,10 @@ def build_activity_record(
     issue: int | None = None,
     pr: int | None = None,
     note: str | None = None,
+    host: str | None = None,
+    agent: str | None = None,
+    model: str | None = None,
+    effort: str | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic activity record, validating command + phase.
 
@@ -147,6 +158,10 @@ def build_activity_record(
     board's sense — it advanced, it did not finish — and recording only that made a
     red gate indistinguishable from an in-progress one (#636). ``None`` = no verdict
     to report, which must not read as a pass.
+
+    ``host`` / ``agent`` / ``model`` / ``effort`` (:data:`IDENTITY_FIELDS`) say who is
+    driving the run; each is a short single-line string and is left out of the record
+    when not given.
     """
     if not flows.is_known(command):
         raise ActivityError(f"unknown command: {command!r}")
@@ -156,7 +171,7 @@ def build_activity_record(
         raise ActivityError(f"unsupported status: {status!r}")
     if verdict is not None and verdict not in VERDICTS:
         raise ActivityError(f"unsupported verdict: {verdict!r}")
-    return {
+    record: dict[str, Any] = {
         "schema_version": ACTIVITY_SCHEMA_VERSION,
         "record_type": RECORD_TYPE_ACTIVITY,
         "command": command,
@@ -168,6 +183,37 @@ def build_activity_record(
         "pr": pr,
         "note": note,
     }
+    for name, value in zip(IDENTITY_FIELDS, (host, agent, model, effort), strict=True):
+        if value is not None:
+            issue_text = identity_issue(value)
+            if issue_text is not None:
+                raise ActivityError(f"{name}: {issue_text}")
+            record[name] = value
+    return record
+
+
+def identity_issue(value: Any) -> str | None:
+    """Why ``value`` is not a valid identity string, or ``None`` when it is."""
+    if not isinstance(value, str) or not value.strip():
+        return "must be a non-empty string"
+    if len(value) > IDENTITY_MAX_LEN:
+        return f"must be at most {IDENTITY_MAX_LEN} characters"
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        return "must not contain control characters"
+    return None
+
+
+def carry_identity(record: dict[str, Any], existing: dict[str, Any] | None) -> dict[str, Any]:
+    """``record`` with any identity field it omits taken from ``existing``.
+
+    A later stamp that does not repeat ``--agent`` / ``--model`` must not erase them.
+    """
+    carried = {
+        name: existing[name]
+        for name in IDENTITY_FIELDS
+        if name not in record and existing and name in existing
+    }
+    return {**record, **carried} if carried else record
 
 
 def validate_activity(record: Any) -> None:
@@ -191,6 +237,11 @@ def validate_activity(record: Any) -> None:
     # not — a board that trusts this field must never read a typo as a pass.
     if record.get("verdict") is not None and record.get("verdict") not in VERDICTS:
         raise ActivityError("unsupported verdict")
+    for name in IDENTITY_FIELDS:
+        if name in record:
+            problem = identity_issue(record[name])
+            if problem is not None:
+                raise ActivityError(f"{name}: {problem}")
     usage = record.get(USAGE_FIELD)
     if usage is not None:
         # The cost report prices whatever is here as measured, so a malformed entry is

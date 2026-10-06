@@ -37,7 +37,9 @@ merge → capture → close). Use **the same `--run-id`** you pass to `keel ship
 checkpoint` (e.g. `ship-<issue-or-pr>`) so the board treats them as one run:
 
 - **Right now, before Step 0 below**, stamp the first phase:
-  `keel activity .keel/project.yaml --root . --write --command ship --run-id "$RUN_ID" --phase s0`
+  `keel activity .keel/project.yaml --root . --write --command ship --run-id "$RUN_ID" --phase s0 --agent <your own name> --model <your model id> --effort <your reasoning effort, if known>`
+  (the board shows who is driving the run; later stamps keep these, so pass them once).
+  Where this command hands implement or fix work to another provider with `keel delegate run`, stamp that phase again with `--agent <that provider> --model <its model id>`, so the board shows who did it.
 - Re-run with the next `--phase` (`s1`, `s2`, …) **as you advance** through the backbone,
   adding `--issue <N>` once the issue is selected (s1) and `--pull-request <PR>` once the PR
   exists (s2+) so the board can pair this with the checkpoint/ledger records and never
@@ -1658,4 +1660,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.30.0 source_sha256=a2ca66c0310d8f740e538189c3cfe5062efadf93b40add03580072fe18708999 generated_sha256=a2ca66c0310d8f740e538189c3cfe5062efadf93b40add03580072fe18708999 -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.30.0 source_sha256=bd1c1b64e319d07496064893847d61d42f0f83ac4da4de41c07f2197b5946f99 generated_sha256=bd1c1b64e319d07496064893847d61d42f0f83ac4da4de41c07f2197b5946f99 -->
