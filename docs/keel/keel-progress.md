@@ -41,7 +41,9 @@ the pointer moves.
 under **NEEDS YOU** (stopped, or waiting for input) and **RUNNING**. Click a run to open it
 in full: its branch and worktree, links to the PR and the issue, the step bar, every
 backbone step, the history counts (shipped, blocked, deferred, skipped), the next queued
-issue and when keel last wrote.
+issue and when keel last wrote. For a run whose phase is not a backbone step (a pr-loop,
+say), the card lists one step named like `review (pr-loop)` instead; the history counts and
+the next issue come from the checkpoint of the run that won.
 
 ![The /keel-progress side panel: a stopped run under NEEDS YOU, two running runs, one open in full with every backbone step](../../mods/keel-progress/docs/panel.svg)
 
@@ -64,7 +66,9 @@ keel records a run in two places, and the mod reads both:
   checkpoint. It is read straight from its file; `keel activity --json` runs once, to learn
   where the records live
 
-For each run, whichever was written last is shown. `keel status` runs only when a checkpoint
+Of a run's live records (a running activity record, or an active, waiting or interrupted
+checkpoint), the newest wins. An activity record that is done or merged is dropped, so it
+never replaces an older live checkpoint. `keel status` runs only when a checkpoint
 changed, or at most every 30 seconds while a run is live, and at once after a keel Bash
 call, when the panel opens, or on Refresh; activity is read from its files. The mod scans
 every two seconds while a run is live and five times less often (10 seconds at the default)
