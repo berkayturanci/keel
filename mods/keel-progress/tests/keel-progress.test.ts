@@ -60,7 +60,7 @@ const PANE = {
     isFocused: true,
     bodyColumns: 60,
     placement: 'inline',
-    scroll: { offset: 0, bodyRows: 20 },
+    scroll: { offset: 0, bodyRows: 40 },
     view: {},
   },
 } as const
@@ -103,6 +103,7 @@ function stubEngine(
     clock?: { sleep: (ms: number) => Promise<void> }
     slowMs?: number
     remote?: string // origin URL `git remote get-url origin` answers
+    panes?: 'fail' | 'behind' // panes() rejects, or lists the panel as a tab behind another
   },
 ) {
   const own: Worktree = { path: '/work', branch: 'main', stdout: opts.stdout, exitCode: opts.exitCode }
@@ -115,6 +116,8 @@ function stubEngine(
     most: 0,
     opened: [] as string[],
     closed: [] as string[],
+    panes: [] as string[],
+    openArgs: [] as Record<string, unknown>[],
     toasts: [] as string[],
     sounds: [] as string[],
   }
@@ -220,11 +223,18 @@ function stubEngine(
   })
   on('ui.open', ($: unknown, e: { id: string }) => {
     calls.opened.push(e.id)
+    calls.openArgs.push({ ...e })
+    if (!calls.panes.includes(e.id)) calls.panes.push(e.id)
     return { value: { isPlaced: true } }
   })
   on('ui.close', ($: unknown, e: { id: string }) => {
     calls.closed.push(e.id)
+    calls.panes = calls.panes.filter((id) => id !== e.id)
     return { value: undefined }
+  })
+  on('ui.panes', () => {
+    if (opts.panes === 'fail') throw new Error('no panes here')
+    return { value: calls.panes.map((id) => ({ id, title: 'keel', isShown: opts.panes !== 'behind', isPlaced: true })) }
   })
   on('tool.call', () => ({ result: 'ok' }))
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
@@ -529,7 +539,7 @@ test('a stale checkpoint, a worktree without one, and a run whose PR closed are 
   expect(
     await pane.find({
       type: 'Text',
-      text: '1 live keel run(s) · 1 other worktree(s) with recent keel state · 1 hidden (PR closed)',
+      text: '1 other worktree(s) with recent keel state · 1 hidden (PR closed)',
     }),
   ).toBeDefined()
 })
@@ -812,7 +822,7 @@ test('clicking a run in the band opens the pane on that run, with the others to 
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'fix/a-really-long-branch-name-that-the-band-cuts' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: '/work/wt/a' })).toBeDefined()
-  const back = await pane.find({ type: 'Button', text: /▸ main · #1022 s10/ })
+  const back = await pane.find({ type: 'Button', text: '▸ main · #1022' })
   expect(back).toBeDefined()
   await pane.press({ key: 'keel-progress-pick-/work#1022' })
   expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeDefined()
@@ -1137,7 +1147,7 @@ test('two runs in one worktree get their own lines and keys', async ($, on) => {
   await band.press({ key: 'keel-progress-open-/work/wt/pr#review-cycle-2473' })
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'issue #2473 · PR #2473 · review-cycle' })).toBeDefined()
-  expect(await pane.find({ type: 'Button', text: /pr-2473 · #2470 s7/ })).toBeDefined()
+  expect(await pane.find({ type: 'Button', text: 'pr-2473 · #2470' })).toBeDefined()
 })
 
 const MIN = 60 * 1000
@@ -1423,4 +1433,149 @@ test('one failed keel status does not stick: the run comes back on a later read'
   await clock.advance(40_000)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
+})
+
+test('the side panel heads its list like the agents panel: a count, then a row per run under NEEDS YOU or RUNNING', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: 7, pull_request: 1027, step: 's4', wait_reason: 'gate-failed' }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'interrupted', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '✦ Keel' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'in this session' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '1 need you' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'NEEDS YOU' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'RUNNING' })).toBeUndefined()
+  // The run's row: a red dot, its name a button, why it is held on the right, and under it how
+  // far along it is and its PR.
+  expect(await pane.find({ type: 'Box', key: 'keel-progress-row-/work#7' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' stopped: gate-failed ' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '5 of 13 steps · next s5 classify · PR #1027 · /work' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'click a run for its steps · /keel-progress to hide' })).toBeDefined()
+})
+
+test('pointing at the step bar shows how far along the run is; at a label, its whole branch and worktree', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: 7, pull_request: null, step: 's4', wait_reason: null }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'waiting', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  // The detail is drawn hidden in a keyed Box; the surface shows it while hovered (the test view
+  // drops `hover` from props, so the reveal itself is checked in a real session).
+  expect(await band.find({ type: 'Text', text: ' 5 of 13 steps · next s5 classify ' })).toBeDefined()
+})
+
+test('/keel-progress opens the side panel and closes it when it is open', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson() })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  expect(calls.openArgs[0]).toMatchObject({ id: 'keel-progress', columns: 64, closeOnEscape: true })
+  await $.command.run({ command: 'keel-progress', args: '' })
+  expect(calls.opened).toEqual(['keel-progress'])
+  expect(calls.closed).toEqual(['keel-progress'])
+})
+
+test('in a short panel the run is not opened by itself, so the header stays in sight; a picked run opens', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: 7, pull_request: null, step: 's4', wait_reason: null }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'waiting', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const short = { ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 8 } } }
+  const pane = await $.ui.mount({ ...short, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '✦ Keel' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeUndefined()
+  await pane.press({ key: 'keel-progress-pick-/work#7' })
+  await pane.unmount()
+  const again = await $.ui.mount({ ...short, surface: 'terminal' })
+  expect(await again.find({ type: 'Text', text: '▸ this session · main' })).toBeDefined()
+})
+
+test('a panel behind another tab is brought forward, not closed', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson(), panes: 'behind' })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await $.command.run({ command: 'keel-progress', args: '' })
+  expect(calls.opened).toEqual(['keel-progress', 'keel-progress'])
+  expect(calls.closed).toEqual([])
+})
+
+test('panes() failing still opens the keel panel', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson(), panes: 'fail' })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  expect(calls.opened).toEqual(['keel-progress'])
+})
+
+test('pressing the open run again closes it, and no run then opens by itself', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: 7, pull_request: null, step: 's4', wait_reason: null }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'waiting', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeDefined()
+  await pane.press({ key: 'keel-progress-pick-/work#7' })
+  await pane.unmount()
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await again.find({ type: 'Text', text: '▸ this session · main' })).toBeUndefined()
+  expect(await again.find({ type: 'Text', text: '›' })).toBeDefined()
+})
+
+test('a run waiting for input is under NEEDS YOU and opens first; one waiting for the merge window stays under RUNNING, yellow', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/work/wt/a', branch: 'fix/a', stdout: runAt(11, 2001, 's4', 'needs-input') },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '◌ 1 running · 1 need you' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'NEEDS YOU' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'RUNNING' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' waiting: needs-input ' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' waiting: merge-window ' })).toBeDefined()
+  // The session's own run waits for the merge window: a yellow dot, not blue.
+  expect((await pane.findAll({ type: 'Text', text: '●' })).map((t: any) => t.props?.color)).toEqual(['yellow', 'yellow'])
+  // The run that needs you is the one open in full, though the session's own run comes first.
+  expect(await pane.find({ type: 'Text', text: 'fix/a' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeUndefined()
+})
+
+test('with several runs, pointing at a branch shows the whole branch and its worktree', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/work/wt/a', branch: 'fix/a', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' fix/a · /work/wt/a ' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' main · /work ' })).toBeDefined()
 })

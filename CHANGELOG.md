@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **keel-progress 0.6.0: a side panel and hover details** (#1477). Modelled on the agents panel from Claude Code's mods video, as jury-progress 0.6.0 does. `/keel-progress` now toggles a side panel (docked beside a wide fullscreen transcript, above the prompt otherwise): a header (`✦ Keel in this session` on the left, `◌ N running · M need you` on the right), then NEEDS YOU and RUNNING sections with one row per run (a colored dot, branch and issue as a button, the step and age or why it is held on the right, and under it how far along it is, the PR and the worktree). The run you click opens in full under its row; with none picked, the first one listed (one that needs you first) opens only when it fits, so the header stays in sight, and pressing the open run closes it. In the band, pointing at the step bar shows how far along the run is and the next step, and pointing at a branch its whole name and worktree, at the row's right end in inverse text; the run's name lights in the panel and the band together. The terminal draws the hover, so no hook runs as the pointer moves.
+
 ### Fixed
 - **`keel ship` no longer blocks a single-area PR for a workflow its paths never trigger** (#1469). The "declared CI workflow(s) never ran" check ignored the path glob in `knobs.ci_workflows`, so an Android-only PR was blocked for `Web CI` even with every workflow that should run green (`keel merge` did not block, so the two disagreed). A declared workflow is now expected only when a changed file matches its glob (same `fnmatch` rules as the tier globs; a comma-separated value is several globs). An unreadable or empty change set still expects every declared workflow.
 
