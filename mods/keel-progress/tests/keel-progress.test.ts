@@ -104,7 +104,7 @@ function stubEngine(
     slowMs?: number
     remote?: string // origin URL `git remote get-url origin` answers
     panes?: 'fail' | 'behind' // panes() rejects, or lists the panel as a tab behind another
-    activityFails?: boolean // `keel activity --json` exits 2 (keel older than 1.6.0)
+    activityFails?: 'exit' | 'throw' | 'truncated' // `keel activity --json` exits 2 (keel older than 1.6.0), times out (rejects), or cuts its output
   },
 ) {
   const own: Worktree = { path: '/work', branch: 'main', stdout: opts.stdout, exitCode: opts.exitCode }
@@ -191,6 +191,8 @@ function stubEngine(
     }
     if (e.argv[1] === 'activity') {
       calls.activity += 1
+      if (opts.activityFails === 'throw') return { deny: 'timed out' }
+      if (opts.activityFails === 'truncated') return { value: { exitCode: 0, stdout: '{"activity":', stderr: '', isStdoutTruncated: true } }
       if (opts.activityFails) return { value: { exitCode: 2, stdout: '', stderr: 'invalid choice: activity' } }
       const at = e.argv[e.argv.indexOf('--root') + 1]
       const w = worktrees.find((x) => x.path === (at === '.' ? '/work' : at))
@@ -1110,11 +1112,12 @@ test('an older checkpoint without a run id and the activity of the same issue ar
   expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
 })
 
-test('a failing `keel activity` is not spawned again on every scan (#1461)', async ($, on) => {
+for (const mode of ['exit', 'throw', 'truncated'] as const) {
+test(`a failing keel activity (${mode}) is not spawned again on every scan (#1461)`, async ($, on) => {
   const clock = mock.clock(on, { now: 3 * HOURS })
   const calls = stubEngine(on, {
     project: true,
-    activityFails: true,
+    activityFails: mode,
     worktrees: [{ path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: () => statusJson({ current: { run_id: 'ship-6', command: 'ship', issue: 6, pull_request: 1027, step: 's6', wait_reason: '' } }), activityMtime: 2.9 * HOURS, activity: [act('ship-6', 6, 's8', { pr: 1027 })] }],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1126,6 +1129,7 @@ test('a failing `keel activity` is not spawned again on every scan (#1461)', asy
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
 })
+}
 
 test('a checkpoint without a run id joins the newest of its issue\u2019s runs (#1461)', async ($, on) => {
   const clock = mock.clock(on, { now: 3 * HOURS })

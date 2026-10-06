@@ -50,7 +50,7 @@ export function parseWorktrees(porcelain) {
 export function latestPerRun(entries) {
   // A run id names the run; an entry without one (an older checkpoint) joins the run that shares
   // its issue, so an activity record and an older checkpoint of the same run meet. With several
-  // run ids for one issue it joins the one written last, whatever order the entries come in.
+  // run ids for one issue it joins the one written last; runs written at the same moment keep the first seen.
   const runOfIssue = new Map()
   const newestOfIssue = new Map()
   for (const e of entries) {
