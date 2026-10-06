@@ -1,7 +1,7 @@
 {
   "name": "keel-progress",
-  "version": "0.4.0",
-  "description": "Shows the live keel runs inside Claude Code: one line per run above the prompt and a /keel-progress pane, read from `keel status --json` and `keel activity --json`. Read-only; it never drives a run.",
+  "version": "0.6.0",
+  "description": "Shows the live keel runs inside Claude Code: one line per run above the prompt (point at its step bar or branch for more) and a /keel-progress side panel, read from `keel status --json` and `keel activity --json`. Read-only; it never drives a run.",
   "author": {
     "name": "Berkay Turancı",
     "url": "https://github.com/berkayturanci"
@@ -19,8 +19,8 @@
     "poll_seconds": {
       "type": "number",
       "title": "Refresh every (seconds)",
-      "description": "How often to read keel's state while a run is live. With no live run it reads six times less often.",
-      "default": 5,
+      "description": "How often to read keel's state while a run is live; with no live run it reads five times less often. keel status runs only when a checkpoint changed (or every 30 s while a run is live), so this is cheap.",
+      "default": 2,
       "min": 2,
       "max": 60
     },
@@ -42,6 +42,12 @@
       "type": "boolean",
       "title": "Sound",
       "description": "Play a short sound with those notifications.",
+      "default": false
+    },
+    "all_sessions": {
+      "type": "boolean",
+      "title": "Show other sessions' runs",
+      "description": "Off: a session shows only its own keel runs, in its folder and the worktrees keel made under it. On: every recently active worktree of the repository, as before (this costs a read per worktree).",
       "default": false
     }
   }
