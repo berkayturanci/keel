@@ -9,17 +9,25 @@ terminal running `keel-visual dash`.
 ![The /keel-progress pane: one run's worktree, issue and PR, every backbone step, and when keel last wrote](docs/pane.svg)
 
 Both are captures of Claude Code 2.1.288 running the mod over three demo runs, rendered as SVG.
+The pane shows the run as a card too: the same step bar, then every step with its state.
 
-- **Above the prompt:** one line per live run (`active`, `waiting` or `interrupted`). Each
-  shows the issue, a bar over the backbone steps (`▰` done, `▶` current, `▱` pending), the
-  current step, why it is waiting (or, in red, why it stopped), and the pull request. With
-  more than one run each line starts with its worktree's branch, as wide as the longest one
-  shown, within what the band can spare.
+- **Whose runs:** a session shows its own keel runs only: the ones in its folder and in the
+  worktrees keel made under it (keel ship puts a run's worktree inside the session's checkout).
+  Other sessions' runs are neither shown nor read. Turn on "Show other sessions' runs" in
+  `/config` to see every recently active worktree of the repository.
+- **Above the prompt:** a rounded card with one row per live run (`active`, `waiting` or
+  `interrupted`). Each row shows the issue, the backbone as a segmented bar of chips (done green,
+  the current step blue, or red where the run stopped, the rest grey), the current step, why it
+  is held as a chip (amber while waiting, red when stopped), the pull request (a link to it on GitHub), and how long since
+  keel last wrote. With more than one run each row starts with its worktree's branch, as wide as
+  the longest one shown, within what the band can spare. The bar takes two cells per step on a
+  band of 120 columns or more, one from 80, and is left out below that; the issue and the step
+  name are never cut. The card adds two rows of border to the band: one run takes three rows.
+  Text uses your terminal's own colors.
   The session's own run is first, marked `▸` and drawn bright. Nothing is drawn when no run
   is live.
-  - **Click a run's issue** (or type its digit, `1`–`9`, into an empty prompt and pause) to
-    open the pane on that run. The pane opens without taking the keyboard, so a digit meant
-    for something else costs nothing but an open pane.
+  - **Click a run's issue** to open the pane on that run. There is no digit hotkey: a passive
+    band must not take the first key of a prompt.
   - **`more` / `less`** lists every run, not just the first three, each with a second line
     holding the whole branch name and the worktree path.
 - **`/keel-progress`:** opens a pane on one run: its whole branch name and worktree, every
@@ -44,7 +52,8 @@ Set these in `/config` (or with `/plugin configure keel-progress@keel`):
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Refresh every (seconds) | 5 | How often keel is read while a run is live; six times less often with none |
+| Show other sessions' runs | off | Every recently active worktree of the repository, not only this session's own (a read per worktree). |
+| Refresh every (seconds) | 2 | How often keel's state is read while a run is live; five times less often with none. `keel status` itself runs only when a checkpoint changed (or every 30 s while a run is live); activity is read from its files |
 | Runs above the prompt | 3 | How many runs the band shows before `+N more` |
 | Notifications | on | Toasts for a stopped run, a run waiting for you, a run that left |
 | Sound | off | A short sound with those toasts |
@@ -85,8 +94,10 @@ still shows the session's project: no active run, its history counts and next is
 It scans:
 
 - once when the session starts
-- every five seconds while a run is live (or this session's own `keel status` is failing),
-  every 30 seconds when there is none
+- every two seconds while a run is live (or this session's own `keel status` is failing), every
+  ten when there is none. A read lists the worktrees with `git` and reads the activity files;
+  `keel status` itself runs only when a checkpoint changed, at most every 30 s while a run is
+  live, and not at all in an idle session whose checkpoint has not moved
 - right after any Bash call that runs `keel`
 
 Only one scan runs at a time. A read asked for after a keel command, by the pane or
@@ -139,5 +150,5 @@ cd mods/keel-progress && claude plugin test
   the session (`keel init`) shows after `/reload-plugins` or a new session.
 - A run in another worktree left behind without a pull request keeps showing for 24 hours
   after its checkpoint last changed.
-- While no run is live it scans every 30 seconds, so a run started from another terminal
-  (or by Codex) can take that long to appear. A keel command in this session scans at once.
+- While no run is live it scans every ten seconds, so a run started from another terminal
+  (or by Codex) in this session's folder can take that long to appear. A keel command in this session scans at once.

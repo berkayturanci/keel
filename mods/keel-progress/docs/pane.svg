@@ -1,28 +1,101 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="738" height="474" viewBox="0 0 738 474" role="img" aria-label="/keel-progress">
+<svg xmlns="http://www.w3.org/2000/svg" width="628" height="550" viewBox="0 0 628 550" role="img" aria-label="/keel-progress">
 <rect width="100%" height="100%" rx="8" fill="#1e1e1e"/>
 <rect width="100%" height="30" rx="8" fill="#2d2d2d"/><rect y="22" width="100%" height="8" fill="#2d2d2d"/>
 <circle cx="18" cy="15" r="5.5" fill="#ff5f57"/><circle cx="36" cy="15" r="5.5" fill="#febc2e"/><circle cx="54" cy="15" r="5.5" fill="#28c840"/>
-<text x="369" y="19" fill="#9d9d9d" font-family="-apple-system,Segoe UI,sans-serif" font-size="12" text-anchor="middle">/keel-progress</text>
+<text x="314" y="19" fill="#9d9d9d" font-family="-apple-system,Segoe UI,sans-serif" font-size="12" text-anchor="middle">/keel-progress</text>
+<rect x="16.0" y="44" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="63" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="82" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="101" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="120" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="139" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="158" width="16.8" height="19" fill="#262626"/>
+<rect x="32.8" y="158" width="117.6" height="19" fill="#5f875f"/>
+<rect x="150.4" y="158" width="16.8" height="19" fill="#5f87ff"/>
+<rect x="167.2" y="158" width="84.0" height="19" fill="#8787af"/>
+<rect x="251.2" y="158" width="361.2" height="19" fill="#262626"/>
+<rect x="16.0" y="177" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="196" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="215" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="234" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="253" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="272" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="291" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="310" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="329" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="348" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="367" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="386" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="405" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="424" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="443" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="462" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="481" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="500" width="596.4" height="19" fill="#262626"/>
+<rect x="16.0" y="519" width="596.4" height="19" fill="#262626"/>
 <g font-family="SF Mono,Menlo,Consolas,DejaVu Sans Mono,monospace" font-size="14" xml:space="preserve">
-<text x="16.0" y="58" fill="#d4d4d4" font-weight="bold" textLength="529.2" lengthAdjust="spacingAndGlyphs">3 live keel run(s) · 2 other worktree(s) with recent keel state</text>
-<text x="713.2" y="58" fill="#949494" textLength="8.4" lengthAdjust="spacingAndGlyphs">✕</text>
-<text x="16.0" y="96" fill="#d4d4d4" font-weight="bold" textLength="336.0" lengthAdjust="spacingAndGlyphs">▸ this session · feat/1022-progress-band</text>
-<text x="16.0" y="115" fill="#949494" textLength="184.8" lengthAdjust="spacingAndGlyphs">/private/tmp/keel-demo</text>
-<text x="16.0" y="134" fill="#d4d4d4" textLength="243.6" lengthAdjust="spacingAndGlyphs">issue #1022 · PR #1027 · ship</text>
-<text x="32.8" y="153" fill="#949494" textLength="92.4" lengthAdjust="spacingAndGlyphs">✓ s0 config</text>
-<text x="32.8" y="172" fill="#949494" textLength="92.4" lengthAdjust="spacingAndGlyphs">✓ s1 select</text>
-<text x="32.8" y="191" fill="#949494" textLength="92.4" lengthAdjust="spacingAndGlyphs">✓ s2 branch</text>
-<text x="32.8" y="210" fill="#949494" textLength="84.0" lengthAdjust="spacingAndGlyphs">✓ s3 guard</text>
-<text x="32.8" y="229" fill="#949494" textLength="117.6" lengthAdjust="spacingAndGlyphs">✓ s4 implement</text>
-<text x="32.8" y="248" fill="#949494" textLength="109.2" lengthAdjust="spacingAndGlyphs">✓ s5 classify</text>
-<text x="32.8" y="267" fill="#949494" textLength="58.8" lengthAdjust="spacingAndGlyphs">✓ s6 ci</text>
-<text x="32.8" y="286" fill="#00afd7" textLength="92.4" lengthAdjust="spacingAndGlyphs">▶ s7 review</text>
-<text x="32.8" y="305" fill="#d4d4d4" textLength="75.6" lengthAdjust="spacingAndGlyphs">· s8 test</text>
-<text x="32.8" y="324" fill="#d4d4d4" textLength="100.8" lengthAdjust="spacingAndGlyphs">· s9 fixloop</text>
-<text x="32.8" y="343" fill="#d4d4d4" textLength="92.4" lengthAdjust="spacingAndGlyphs">· s10 merge</text>
-<text x="32.8" y="362" fill="#d4d4d4" textLength="109.2" lengthAdjust="spacingAndGlyphs">· s11 capture</text>
-<text x="32.8" y="381" fill="#d4d4d4" textLength="92.4" lengthAdjust="spacingAndGlyphs">· s12 close</text>
-<text x="16.0" y="400" fill="#d4d4d4" textLength="462.0" lengthAdjust="spacingAndGlyphs">history: shipped 0 · blocked 0 · deferred 0 · skipped 0</text>
-<text x="16.0" y="419" fill="#d4d4d4" textLength="58.8" lengthAdjust="spacingAndGlyphs">next: -</text>
-<text x="16.0" y="438" fill="#949494" textLength="310.8" lengthAdjust="spacingAndGlyphs">last written 2m ago (activity record)</text>
+<text x="595.6" y="58" fill="#949494" textLength="8.4" lengthAdjust="spacingAndGlyphs">✕</text>
+<text x="16.0" y="77" fill="#d4d4d4" font-weight="bold" textLength="529.2" lengthAdjust="spacingAndGlyphs">3 live keel run(s) · 2 other worktree(s) with recent keel state</text>
+<text x="16.0" y="115" fill="#8787af" textLength="596.4" lengthAdjust="spacingAndGlyphs">╭─────────────────────────────────────────────────────────────────────╮</text>
+<text x="16.0" y="134" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="32.8" y="134" fill="#d4d4d4" font-weight="bold" textLength="336.0" lengthAdjust="spacingAndGlyphs">▸ this session · feat/1022-progress-band</text>
+<text x="604.0" y="134" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="153" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="32.8" y="153" fill="#949494" textLength="184.8" lengthAdjust="spacingAndGlyphs">/private/tmp/keel-demo</text>
+<text x="604.0" y="153" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="172" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="259.6" y="172" fill="#d4d4d4" font-weight="bold" textLength="75.6" lengthAdjust="spacingAndGlyphs">s7 review</text>
+<text x="604.0" y="172" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="191" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="32.8" y="191" fill="#d4d4d4" textLength="243.6" lengthAdjust="spacingAndGlyphs">issue #1022 · PR #1027 · ship</text>
+<text x="604.0" y="191" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="210" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="210" fill="#5faf87" textLength="92.4" lengthAdjust="spacingAndGlyphs">✓ s0 config</text>
+<text x="604.0" y="210" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="229" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="229" fill="#5faf87" textLength="92.4" lengthAdjust="spacingAndGlyphs">✓ s1 select</text>
+<text x="604.0" y="229" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="248" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="248" fill="#5faf87" textLength="92.4" lengthAdjust="spacingAndGlyphs">✓ s2 branch</text>
+<text x="604.0" y="248" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="267" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="267" fill="#5faf87" textLength="84.0" lengthAdjust="spacingAndGlyphs">✓ s3 guard</text>
+<text x="604.0" y="267" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="286" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="286" fill="#5faf87" textLength="117.6" lengthAdjust="spacingAndGlyphs">✓ s4 implement</text>
+<text x="604.0" y="286" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="305" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="305" fill="#5faf87" textLength="109.2" lengthAdjust="spacingAndGlyphs">✓ s5 classify</text>
+<text x="604.0" y="305" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="324" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="324" fill="#5faf87" textLength="58.8" lengthAdjust="spacingAndGlyphs">✓ s6 ci</text>
+<text x="604.0" y="324" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="343" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="343" fill="#00afd7" font-weight="bold" textLength="92.4" lengthAdjust="spacingAndGlyphs">▶ s7 review</text>
+<text x="604.0" y="343" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="362" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="362" fill="#d4d4d4" textLength="75.6" lengthAdjust="spacingAndGlyphs">· s8 test</text>
+<text x="604.0" y="362" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="381" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="381" fill="#d4d4d4" textLength="100.8" lengthAdjust="spacingAndGlyphs">· s9 fixloop</text>
+<text x="604.0" y="381" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="400" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="400" fill="#d4d4d4" textLength="92.4" lengthAdjust="spacingAndGlyphs">· s10 merge</text>
+<text x="604.0" y="400" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="419" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="419" fill="#d4d4d4" textLength="109.2" lengthAdjust="spacingAndGlyphs">· s11 capture</text>
+<text x="604.0" y="419" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="438" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="49.6" y="438" fill="#d4d4d4" textLength="92.4" lengthAdjust="spacingAndGlyphs">· s12 close</text>
+<text x="604.0" y="438" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="457" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="32.8" y="457" fill="#d4d4d4" textLength="462.0" lengthAdjust="spacingAndGlyphs">history: shipped 0 · blocked 0 · deferred 0 · skipped 0</text>
+<text x="604.0" y="457" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="476" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="32.8" y="476" fill="#d4d4d4" textLength="58.8" lengthAdjust="spacingAndGlyphs">next: -</text>
+<text x="604.0" y="476" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="495" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="32.8" y="495" fill="#949494" textLength="327.6" lengthAdjust="spacingAndGlyphs">last written just now (activity record)</text>
+<text x="604.0" y="495" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
+<text x="16.0" y="514" fill="#8787af" textLength="596.4" lengthAdjust="spacingAndGlyphs">╰─────────────────────────────────────────────────────────────────────╯</text>
 </g></svg>

@@ -8,7 +8,7 @@
 //   - a `/keel-progress` pane with every live run's steps, history counts and next issue
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { FALLBACK_STEPS, activityRuns, ago, bandParts, checkpointDetails, githubBase, cells, fitCells, latestPerRun, isLive, paneLines, parseStatus, parseWorktrees } from './view.js'
+import { FALLBACK_STEPS, activityRuns, ago, cells, checkpointDetails, fitCells, githubBase, isLive, latestPerRun, paneLines, parseStatus, parseWorktrees, safeHref, stepName, stepStates } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
@@ -24,9 +24,11 @@ const ACTIVITY_FRESH_MS = 6 * 60 * 60 * 1000
 let activityRel = ACTIVITY_DIR
 let activityRelKnown = false
 const PANE = 'keel-progress'
-const POLL_MS = 5_000
-// With no live run the timer still ticks every POLL_MS but polls only every IDLE_EVERY ticks (30 s).
-const IDLE_EVERY = 6
+// With keel status cached and activity read from its files, a scan's only process is the cheap
+// `git worktree list`; keel itself starts only when something changed, so every 2 s is cheap.
+const POLL_MS = 2_000
+// With no live run the timer still ticks every POLL_MS but polls only every IDLE_EVERY ticks (10 s).
+const IDLE_EVERY = 5
 const STATUS_TIMEOUT_MS = 10_000
 // Another worktree whose checkpoint is untouched this long is not scanned. It is longer than
 // any merge-window wait, so a run parked at s10 overnight still shows; the session's own
@@ -42,19 +44,39 @@ const QUIET_MS = 45 * 60 * 1000
 // Wait reasons that mean the run is waiting for a person, worth a notification.
 const NEEDS_YOU = new Set(['needs-input'])
 // Branch labels in the band: at least LABEL_MIN cells, at most LABEL_MAX, else what is left of
-// the band's width after BAND_LINE_COLUMNS for the rest of the line.
+// the band's width after BAND_LINE_COLUMNS, the step bar and the card's border and padding.
 const LABEL_MIN = 12
 const LABEL_MAX = 48
 const BAND_LINE_COLUMNS = 64
+// The card's border and padding take this many of the band's columns, the keel mark (or the
+// spacer under it) and its gap this many more, and the more/less toggle on the first row these.
+const CARD_CHROME = 4
+const MARK_COLUMNS = 7
+const TOGGLE_COLUMNS = 5
+// The step bar: two cells per step on a wide band, one on a narrower one, none below that.
+const WIDE_BAR_COLUMNS = 120
+const NARROW_BAR_COLUMNS = 80
 
+// Text colors are the terminal's own (they follow its theme); a chip is white on a saturated
+// background, which reads on a dark and a light theme alike.
 const TONES = {
   title: { bold: true },
-  bar: { color: 'cyan' },
+  bar: { color: 'cyan', bold: true },
+  ok: { color: 'green' },
   wait: { color: 'yellow' },
   bad: { color: 'red' },
   dim: { dimColor: true },
   plain: {},
+  // the step bar: one two-cell chip per backbone step
+  done: { backgroundColor: '#2D7D46' },
+  current: { backgroundColor: '#1F6FEB' },
+  stopped: { backgroundColor: '#B62324' },
+  todo: { backgroundColor: '#6E7681' },
+  // why a run is held: a chip
+  waitChip: { backgroundColor: '#9A6700', color: '#FFFFFF' },
+  stopChip: { backgroundColor: '#B62324', color: '#FFFFFF', bold: true },
 }
+const BORDER = '#6E7681'
 
 let hasProject = false
 let runs = [] // [{ path, label, snapshot, steps }] — live runs, the session's own first
@@ -71,11 +93,17 @@ let openPrsAt = -Infinity
 // the regular once-a-minute read still checks them.
 const knownClosed = new Set()
 let inFlight = null // the running scan; callers share it instead of starting a second one
+// `keel status` costs a Python start (seconds), so its answer is kept per folder while that
+// folder's checkpoint is unchanged, for at most STATUS_TTL_MS. A fresh request (a keel command,
+// the pane, Refresh) reads every folder anew.
+const statusCache = new Map() // path ('' for the session's own) -> { mtimeMs, at, result }
+const STATUS_TTL_MS = 30_000
+let forceNext = false
 let again = false // a fresh scan was asked for while one ran: run once more after it
 let idleTicks = 0
 let poller = null
 // The user's settings (plugin userConfig), with the defaults the manifest declares.
-const settings = { pollMs: POLL_MS, bandMax: BAND_MAX, notify: true, sound: false }
+const settings = { pollMs: POLL_MS, bandMax: BAND_MAX, notify: true, sound: false, allSessions: false }
 let scanAt = 0 // when the last scan read the runs, for "updated … ago"
 let repoBase = null // https://github.com/<owner>/<repo>, once read from `git remote`
 let repoBaseKnown = false
@@ -102,7 +130,10 @@ function tick($) {
 // ends; a timer tick just shares the running one.
 function refresh($, fresh) {
   if (!hasProject) return Promise.resolve()
-  if (fresh) recheckClosed = true
+  if (fresh) {
+    recheckClosed = true
+    forceNext = true
+  }
   if (inFlight !== null) {
     if (fresh) again = true
     return inFlight
@@ -221,9 +252,52 @@ async function listWorktrees($) {
   }
 }
 
+async function statusCached($, path, mtimeMs, now, force) {
+  const key = path ?? ''
+  const hit = statusCache.get(key)
+  // Unchanged checkpoint: reuse the answer. The 30 s re-read applies only while a run is live, so
+  // an idle session starts no keel process at all.
+  // A failed read is never kept past the TTL: one timeout under load must not hide a waiting run.
+  const fresh = now - hit?.at < STATUS_TTL_MS
+  if (!force && hit && hit.mtimeMs === mtimeMs && (fresh || (runs.length === 0 && hit.result.failure === undefined))) return hit.result
+  const result = await statusOf($, path)
+  statusCache.set(key, { mtimeMs, at: now, result })
+  return result
+}
+
+// A folder's activity records, read straight from their files (keel.activity.v1, one JSON
+// record per run): no `keel activity` process per scan. Once the project's activity directory is
+// known, this is what every scan uses.
+async function activityFiles($, base, steps, now) {
+  const dir = `${base}/${activityRel}`
+  let listed
+  try {
+    listed = await $.fs.list(dir)
+  } catch {
+    return { dir: null, entries: [] }
+  }
+  const entries = []
+  for (const f of listed) {
+    if (f.kind !== 'file' || !f.name.endsWith('.json') || !(now - f.mtimeMs < ACTIVITY_FRESH_MS)) continue
+    let record
+    try {
+      record = JSON.parse(await $.fs.read(`${dir}/${f.name}`))
+    } catch {
+      continue // being rewritten, or not a record: the next scan reads it
+    }
+    // Only keel's own records, as `keel activity` reads them.
+    if (record?.schema_version !== 'keel.activity.v1' || record?.record_type !== 'command_activity') continue
+    const { runs: found } = activityRuns(JSON.stringify({ activity: [record], path: dir }), steps)
+    for (const entry of found) if (entry.fileName === f.name) entries.push({ ...entry, mtimeMs: f.mtimeMs })
+  }
+  return { dir, entries }
+}
+
 async function scan($) {
   const now = await $.clock.now()
   scanAt = now
+  const force = forceNext
+  forceNext = false
   await learnRepoBase($)
   const cwd = await $.session.cwd()
   const here = await realPath($, cwd)
@@ -231,17 +305,23 @@ async function scan($) {
   // The session's own folder first, always, whatever its checkpoint's age or location.
   const candidates = []
   const nextFailures = []
-  const mine = await statusOf($, null)
+  const ownCheckpoint = own?.checkpointPath ?? DEFAULT_CHECKPOINT
+  const ownCkM = ownCheckpoint.startsWith('/') ? null : await mtimeOf($, `${cwd}/${ownCheckpoint}`)
+  const mine = await statusCached($, null, ownCkM, now, force)
   const worktrees = await listWorktrees($)
   let ownLabel = 'here'
   let ownBranch = null
   const others = []
   for (const w of worktrees) {
-    if ((await realPath($, w.path)) === here) {
+    const at = await realPath($, w.path)
+    if (at === here) {
       ownLabel = w.label
       ownBranch = w.branch
     }
-    else others.push(w)
+    // A session shows its own runs: its folder and the worktrees keel made under it (keel ship
+    // puts a run's worktree inside the session's checkout). The rest belong to other sessions,
+    // and are read only when the user asked to see every session's runs.
+    else if (settings.allSessions || at.startsWith(`${here}/`)) others.push(w)
   }
   if (mine.failure !== undefined) nextFailures.push({ label: ownLabel, path: cwd, message: mine.failure })
   else candidates.push({ path: cwd, label: ownLabel, branch: ownBranch, own: true, mtimeMs: 0, ...mine.parsed })
@@ -264,8 +344,8 @@ async function scan($) {
   // where this project keeps it.
   const ownActM = await mtimeOf($, `${cwd}/${activityRel}`)
   if (!activityRelKnown || (ownActM !== null && now - ownActM < FRESH_MS)) {
-    const mineAct = await activityOf($, null, cwd, steps, now)
-    if (mineAct.dir !== null) {
+    const mineAct = activityRelKnown ? await activityFiles($, cwd, steps, now) : await activityOf($, null, cwd, steps, now)
+    if (mineAct.dir !== null && !activityRelKnown) {
       activityRelKnown = true
       if (mineAct.dir.startsWith(`${here}/`)) activityRel = mineAct.dir.slice(here.length + 1)
     }
@@ -284,11 +364,14 @@ async function scan($) {
     fresh += 1
     const fields = { path: w.path, label: w.label, branch: w.branch, own: false }
     if (ckFresh) {
-      const result = await statusOf($, w.path)
+      const result = await statusCached($, w.path, ckM, now, force)
       if (result.failure !== undefined) nextFailures.push({ label: w.label, path: w.path, message: result.failure })
       else candidates.push({ ...fields, mtimeMs: ckM, ...result.parsed })
     }
-    if (actFresh) for (const entry of (await activityOf($, w.path, w.path, steps, now)).entries) candidates.push({ ...fields, ...entry })
+    if (actFresh) {
+      const act = activityRelKnown ? await activityFiles($, w.path, steps, now) : await activityOf($, w.path, w.path, steps, now)
+      for (const entry of act.entries) candidates.push({ ...fields, ...entry })
+    }
   }
 
   // `gh` is asked only when a live run has a pull request, so an idle session makes no API calls.
@@ -424,8 +507,17 @@ function notify($, text, sound) {
 }
 
 // The branch label takes what the band can spare beside the step bar and its text.
-function labelWidth(bodyColumns) {
-  return Math.max(LABEL_MIN, Math.min(LABEL_MAX, (bodyColumns ?? 0) - BAND_LINE_COLUMNS))
+function stepCells(bodyColumns) {
+  const cols = bodyColumns ?? 0
+  return cols >= WIDE_BAR_COLUMNS ? 2 : cols >= NARROW_BAR_COLUMNS ? 1 : 0
+}
+
+// One label width for every row, so the issue and bar columns line up: it leaves room for the
+// widest bar on screen, the mark, and the toggle the first row carries.
+function labelWidth(bodyColumns, steps, toggle) {
+  const bar = stepCells(bodyColumns) * steps
+  const reserve = BAND_LINE_COLUMNS + CARD_CHROME + MARK_COLUMNS + (toggle ? TOGGLE_COLUMNS : 0) + bar
+  return Math.max(LABEL_MIN, Math.min(LABEL_MAX, (bodyColumns ?? 0) - reserve))
 }
 
 // With several runs on screen, the session's own one is marked `▸` and drawn bright.
@@ -460,11 +552,66 @@ function toggleExpanded($) {
   $.ui.invalidate('ui.render')
 }
 
+function chip(Text, text, tone) {
+  return Text({ ...TONES[tone], wrap: 'truncate', children: [text] })
+}
+
+// The backbone as one segmented bar: a two-cell chip per step, done green, the current one blue
+// (red when the run stopped there), the rest grey.
+function stepBar(ui, run, cellsPerStep = 2) {
+  const { Box, Text } = ui
+  const stopped = run.snapshot.status === 'interrupted'
+  const cell = ' '.repeat(cellsPerStep)
+  return Box({
+    flexDirection: 'row',
+    flexShrink: 0,
+    children: stepStates(run.steps, run.snapshot.current.step).map((st) =>
+      chip(Text, cell, st.state === 'done' ? 'done' : st.state === 'current' ? (stopped ? 'stopped' : 'current') : 'todo'),
+    ),
+  })
+}
+
+// What a band row shows after the issue button: the step bar, the step, why it is held, the PR
+// and how long since keel last wrote.
+function bandRow(ui, run, cellsPerStep) {
+  const { Box, Text } = ui
+  const c = run.snapshot.current
+  // The step name never shrinks; the bar is left out on a band too narrow for it.
+  const parts = [
+    ...(cellsPerStep > 0 ? [stepBar(ui, run, cellsPerStep)] : []),
+    Box({ flexShrink: 0, children: [chip(Text, stepName(run.steps, c.step), 'title')] }),
+  ]
+  if (c.wait_reason) {
+    const stopped = run.snapshot.status === 'interrupted'
+    parts.push(chip(Text, ` ${stopped ? 'stopped' : 'waiting'}: ${c.wait_reason} `, stopped ? 'stopChip' : 'waitChip'))
+  }
+  // The PR opens on GitHub when the repository is there; otherwise it is plain text.
+  if (c.pull_request != null) {
+    parts.push(
+      prHref(c.pull_request)
+        ? Box({ flexShrink: 0, children: [ui.Link({ href: prHref(c.pull_request), label: `PR #${c.pull_request}` })] })
+        : chip(Text, `PR #${c.pull_request}`, 'dim'),
+    )
+  }
+  for (const part of agePart(run)) parts.push(chip(Text, part.text.replace(/^ · /, ''), part.tone))
+  return parts
+}
+
+// Links to a run's PR and issue on GitHub, or null where there is no valid one to make.
+function prHref(n) {
+  return repoBase !== null && Number.isInteger(n) ? safeHref(`${repoBase}/pull/${n}`) : null
+}
+
+function issueHref(n) {
+  return repoBase !== null && Number.isInteger(n) ? safeHref(`${repoBase}/issues/${n}`) : null
+}
+
 export function register(on, options = {}) {
   if (Number.isFinite(options.poll_seconds)) settings.pollMs = Math.max(2, Math.min(60, options.poll_seconds)) * 1000
   if (Number.isFinite(options.band_rows)) settings.bandMax = Math.max(1, Math.min(9, options.band_rows))
   if (typeof options.notify === 'boolean') settings.notify = options.notify
   if (typeof options.sound === 'boolean') settings.sound = options.sound
+  if (typeof options.all_sessions === 'boolean') settings.allSessions = options.all_sessions
   on('session.start', async ($, e, next) => {
     hasProject = await $.fs.exists(PROJECT)
     if (hasProject) {
@@ -505,71 +652,68 @@ export function register(on, options = {}) {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (runs.length === 0) return next(e)
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Button } = ui
     const labelled = runs.length > 1
     const shown = expanded ? runs : runs.slice(0, settings.bandMax)
     // As wide as the longest label on screen, within what the band can spare.
     const longest = Math.max(...shown.map((run) => cells(run.label) + 2))
-    const width = Math.min(labelWidth(e.props.bodyColumns), Math.max(LABEL_MIN, longest))
-    const lines = []
+    const barCells = stepCells(e.props.bodyColumns)
+    const toggle = runs.length > 1 || expanded
+    const widestBar = Math.max(...shown.map((run) => run.steps.length))
+    const width = Math.min(labelWidth(e.props.bodyColumns, widestBar, toggle), Math.max(LABEL_MIN, longest))
+    const rows = []
     shown.forEach((run, i) => {
-      // The issue is a button: click it, or type its digit into an empty prompt, to open the
-      // pane on this run.
       const issue = run.snapshot.current.issue
-      const open = Button({
-        key: `keel-progress-open-${runKey(run)}`,
-        label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
-        plain: true,
-        ...(i < 9 ? { hotkey: String(i + 1) } : {}),
-        onPress: () => openRun($, runKey(run)),
-      })
-      const toggle =
-        i === 0 && (runs.length > 1 || expanded)
-          ? [
-              Button({
-                key: 'keel-progress-toggle',
-                label: expanded ? 'less' : 'more',
-                plain: true,
-                onPress: () => toggleExpanded($),
-              }),
-            ]
-          : []
-      lines.push(
+      rows.push(
         Box({
           key: `keel-progress-${runKey(run)}`,
           flexDirection: 'row',
           columnGap: 1,
           children: [
-            ...(labelled ? [Text(textProps(labelPart(run, width)))] : []),
-            Text(textProps({ text: 'keel', tone: 'title' })),
-            open,
-            ...bandParts(run.snapshot, run.steps).slice(2).map((part) => Text(textProps(part))),
-            ...agePart(run).map((part) => Text(textProps(part))),
-            ...toggle,
+            // The keel mark heads the first row (no header row of its own: the card is short).
+            Box({ flexShrink: 0, children: [chip(Text, i === 0 ? '◆ keel' : '      ', 'title')] }),
+            // The label keeps its padded width, so the issue and bar columns line up row to row;
+            // only the trailing chips give way on a narrow band.
+            ...(labelled ? [Box({ flexShrink: 0, children: [Text(textProps(labelPart(run, width)))] })] : []),
+            // The issue is a button: click it to open the pane on this run. No digit hotkey: a
+            // passive band must not take the first key of a prompt (#1466).
+            Box({
+              flexShrink: 0,
+              children: [
+                Button({
+                  key: `keel-progress-open-${runKey(run)}`,
+                  label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
+                  plain: true,
+                  onPress: () => openRun($, runKey(run)),
+                }),
+              ],
+            }),
+            ...bandRow(ui, run, barCells),
+            ...(i === 0 && toggle
+              ? [Button({ key: 'keel-progress-toggle', label: expanded ? 'less' : 'more', plain: true, onPress: () => toggleExpanded($) })]
+              : []),
           ],
         }),
       )
       if (expanded) {
         // The second line carries what the first had to cut: the whole branch and where it runs.
-        lines.push(
-          Text({
-            ...textProps({ text: `    ${run.branch ?? run.label} · ${run.path}`, tone: 'dim' }),
-            wrap: 'truncate-middle',
-          }),
-        )
+        rows.push(Text({ ...textProps({ text: `       ${run.branch ?? run.label} · ${run.path}`, tone: 'dim' }), wrap: 'truncate-middle' }))
       }
     })
     if (!expanded && runs.length > settings.bandMax) {
-      lines.push(Text(textProps({ text: `+${runs.length - settings.bandMax} more keel runs · more, or /keel-progress`, tone: 'dim' })))
+      rows.push(Text(textProps({ text: `+${runs.length - settings.bandMax} more keel runs · more, or /keel-progress`, tone: 'dim' })))
     }
+    const card = Box({ flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1, children: rows })
     // Keep what the mods after this one draw in the band.
     const theirs = await next(e)
-    return Box({ flexDirection: 'column', children: theirs ? [...lines, theirs] : lines })
+    return Box({ flexDirection: 'column', children: theirs ? [card, theirs] : [card] })
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)
-    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = ui
     const children = []
     const line = (part) => children.push(Text(textProps(part)))
     if (!hasProject) {
@@ -586,32 +730,50 @@ export function register(on, options = {}) {
       const focus = runs.find((run) => runKey(run) === selected) ?? runs[0]
       if (focus) {
         line({ text: ' ', tone: 'plain' })
-        line({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
-        line({ text: focus.path, tone: 'dim' })
+        // The run in full, as a card: what the band shows, then every step and what keel last wrote.
+        const rows = []
+        const cline = (part) => rows.push(Text(textProps(part)))
+        cline({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
+        cline({ text: focus.path, tone: 'dim' })
         const c = focus.snapshot.current
         // Links to the PR and the issue, when the repository is on GitHub.
         if (repoBase !== null && (c.pull_request != null || c.issue != null)) {
-          children.push(
+          rows.push(
             Box({
               key: 'keel-progress-links',
               flexDirection: 'row',
               columnGap: 2,
               children: [
-                ...(c.pull_request != null ? [Link({ href: `${repoBase}/pull/${c.pull_request}`, label: `PR #${c.pull_request}` })] : []),
-                ...(c.issue != null ? [Link({ href: `${repoBase}/issues/${c.issue}`, label: `issue #${c.issue}` })] : []),
+                ...(prHref(c.pull_request) ? [Link({ href: prHref(c.pull_request), label: `PR #${c.pull_request}` })] : []),
+                ...(issueHref(c.issue) ? [Link({ href: issueHref(c.issue), label: `issue #${c.issue}` })] : []),
               ],
             }),
           )
         }
-        for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) line(part)
+        // The pane sizes the bar to its own width, as the band does: the bar, the card's chrome and
+        // a step name must fit.
+        const paneCols = e.props.bodyColumns ?? 0
+        const paneCells = paneCols >= 50 ? 2 : paneCols >= 36 ? 1 : 0
+        rows.push(
+          Box({
+            flexDirection: 'row',
+            columnGap: 1,
+            children: [
+              ...(paneCells > 0 ? [stepBar(ui, focus, paneCells)] : []),
+              Box({ flexShrink: 0, children: [chip(Text, stepName(focus.steps, c.step), 'title')] }),
+            ],
+          }),
+        )
+        for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) cline(part)
         const since = focus.mtimeMs > 0 && scanAt > 0 ? ago(scanAt - focus.mtimeMs) : null
         if (since !== null) {
           const from = focus.snapshot.source === 'activity' ? 'activity record' : 'checkpoint'
           const quiet = scanAt - focus.mtimeMs >= QUIET_MS
-          line({ text: `last written ${since === 'now' ? 'just now' : `${since} ago`} (${from})${quiet ? ' · quiet' : ''}`, tone: quiet ? 'wait' : 'dim' })
+          cline({ text: `last written ${since === 'now' ? 'just now' : `${since} ago`} (${from})${quiet ? ' · quiet' : ''}`, tone: quiet ? 'wait' : 'dim' })
         }
-        for (const [name, value] of focus.details ?? []) line({ text: `${name}: ${value}`, tone: 'plain' })
-        if (focus.snapshot.note) line({ text: `note: ${focus.snapshot.note}`, tone: 'plain' })
+        for (const [name, value] of focus.details ?? []) cline({ text: `${name}: ${value}`, tone: 'plain' })
+        if (focus.snapshot.note) cline({ text: `note: ${focus.snapshot.note}`, tone: 'plain' })
+        children.push(Box({ flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1, children: rows }))
       }
       const others = runs.filter((run) => run !== focus)
       if (others.length > 0) {
