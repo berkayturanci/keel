@@ -198,11 +198,11 @@ built-in gate under the same contract.
 | Phase | What | Owner |
 |---|---|---|
 | 1 | Cross-repo audit ✅ | done |
-| 2 | **Import** Tier-A/B bodies to SI tip (final seed); drop Tier-C + retire `sync-to-ai-infra` ✅ | keel (PR #5) |
+| 2 | **Import** Tier-A/B bodies to the first consumer's tip (final seed); drop Tier-C + retire `sync-to-ai-infra` ✅ | keel (PR #5) |
 | **2.5** | **Extension-point model** — backbone slot IDs, extension contract, config↔extension binding (**this doc**) | keel |
-| 3 | Config schema + JSON-Schema validator — incl. the `extensions:` block; seed SI + example-flutter | keel |
+| 3 | Config schema + JSON-Schema validator — incl. the `extensions:` block; seed the first consumer + example-flutter | keel |
 | 4 | **keel-core** skeleton CLI + step-runner + extension loader (+ tests) | keel |
-| 5 | `ship` POC: render as a thin adapter over keel-core; SI golden-diff identical | keel |
+| 5 | `ship` POC: render as a thin adapter over keel-core; first-consumer golden-diff identical | keel |
 | 6 | De-contaminate example-flutter → Flutter/Supabase + its first Lego (design-parity) | example-flutter |
 | 7 | Tests in keel CI — config-injection snapshots + **extension-injection** (inject a test-extension; assert the backbone still runs + invariants hold) + dry-run smoke; publish gate | keel |
 | 8 | Adapters (Codex/Gemini/agy) + cutover: pinned install; retire file-copy sync | keel → projects |

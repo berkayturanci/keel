@@ -165,9 +165,32 @@ export function ago(ms) {
 }
 
 // https://github.com/<owner>/<repo> from a git remote URL (https or ssh), else null.
+// Only github.com itself (an ssh host alias such as `github.com-work` included), and only names
+// GitHub allows, so a link built from it is always a valid href (a refused href would make the
+// engine refuse the whole band).
+const GH_NAME = '[A-Za-z0-9_.-]+'
+const GH_REMOTES = [
+  new RegExp(`^(?:ssh://)?[A-Za-z0-9_.-]+@github\\.com(?:-[A-Za-z0-9_.-]+)?[:/](${GH_NAME})/(${GH_NAME}?)(?:\\.git)?/?$`),
+  new RegExp(`^https?://(?:[^@/\\s]+@)?github\\.com/(${GH_NAME})/(${GH_NAME}?)(?:\\.git)?/?$`),
+]
+
 export function githubBase(remote) {
-  const m = /(?:^|[@/])github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(remote).trim())
-  return m ? `https://github.com/${m[1]}/${m[2]}` : null
+  const text = String(remote ?? '').trim()
+  for (const re of GH_REMOTES) {
+    const m = text.match(re)
+    if (m && !['.', '..'].includes(m[1]) && !['.', '..', ''].includes(m[2])) return `https://github.com/${m[1]}/${m[2]}`
+  }
+  return null
+}
+
+// An href the mod API accepts: https, printable ASCII, no '@', spelled exactly as URL spells it.
+export function safeHref(h) {
+  if (typeof h !== 'string' || !/^https:\/\/[\x21-\x7e]+$/.test(h) || h.includes('@')) return null
+  try {
+    return typeof URL === 'function' && new URL(h).href === h ? h : null
+  } catch {
+    return null
+  }
 }
 
 // What a checkpoint says about the run's last gate, review and check, for the pane.
@@ -197,33 +220,9 @@ export function stepStates(steps, currentStep) {
   }))
 }
 
-export function bar(steps, currentStep) {
-  return stepStates(steps, currentStep)
-    .map((s) => (s.state === 'done' ? '▰' : s.state === 'current' ? '▶' : '▱'))
-    .join('')
-}
-
 export function stepName(steps, id) {
   const found = steps.find((s) => s.id === id)
   return found ? `${id} ${found.name}` : String(id ?? '-')
-}
-
-// The band line's parts, in order. `tone` picks a colour in register.js.
-export function bandParts(snapshot, steps) {
-  const c = snapshot.current
-  const parts = [
-    { text: 'keel', tone: 'title' },
-    { text: c.issue != null ? ` #${c.issue} ` : ' ', tone: 'plain' },
-    { text: bar(steps, c.step), tone: 'bar' },
-    { text: ` ${stepName(steps, c.step)}`, tone: 'plain' },
-  ]
-  if (c.wait_reason) {
-    const tone = snapshot.status === 'interrupted' ? 'bad' : 'wait'
-    const label = snapshot.status === 'interrupted' ? 'stopped' : 'waiting'
-    parts.push({ text: ` · ${label}: ${c.wait_reason}`, tone })
-  }
-  if (c.pull_request != null) parts.push({ text: ` · PR #${c.pull_request}`, tone: 'dim' })
-  return parts
 }
 
 // The pane's lines, top to bottom, each { text, tone }.
@@ -237,7 +236,7 @@ export function paneLines(snapshot, steps) {
       tone: 'plain',
     })
     for (const s of stepStates(steps, c.step)) {
-      if (s.state === 'done') lines.push({ text: `  ✓ ${s.id} ${s.name}`, tone: 'dim' })
+      if (s.state === 'done') lines.push({ text: `  ✓ ${s.id} ${s.name}`, tone: 'ok' })
       else if (s.state === 'current') {
         const why = c.wait_reason ? ` — ${c.wait_reason}` : ''
         lines.push({ text: `  ▶ ${s.id} ${s.name}${why}`, tone: snapshot.status === 'interrupted' ? 'bad' : 'bar' })

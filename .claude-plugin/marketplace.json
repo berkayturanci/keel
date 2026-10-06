@@ -12,7 +12,7 @@
     {
       "name": "keel-progress",
       "source": "./mods/keel-progress",
-      "description": "Optional Claude Code mod: shows the live keel run above the prompt and in a /keel-progress pane, read from `keel status --json`. Read-only; needs Claude Code 2.1.287+ with mods enabled."
+      "description": "Optional Claude Code mod: shows the live keel runs above the prompt and in a /keel-progress side panel, read from `keel status --json`. Read-only; needs Claude Code 2.1.287+ with mods enabled."
     }
   ]
 }
