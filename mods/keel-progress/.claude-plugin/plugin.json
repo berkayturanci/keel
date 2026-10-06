@@ -1,6 +1,6 @@
 {
   "name": "keel-progress",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Shows the live keel runs inside Claude Code: one line per run above the prompt (point at its step bar or branch for more) and a /keel-progress side panel, read from `keel status --json` and `keel activity --json`. Read-only; it never drives a run.",
   "author": {
     "name": "Berkay Turancı",

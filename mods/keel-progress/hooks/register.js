@@ -215,7 +215,7 @@ async function activityOf($, path, base, steps, now) {
   const init = path === null ? { timeoutMs: STATUS_TIMEOUT_MS } : { cwd: path, timeoutMs: STATUS_TIMEOUT_MS }
   try {
     const run = await $.process.run(argv, init)
-    if (run.exitCode !== 0 || run.isStdoutTruncated) return { dir: null, entries: [] }
+    if (run.exitCode !== 0 || run.isStdoutTruncated) return { dir: null, entries: [], failed: true }
     const { dir, runs } = activityRuns(run.stdout, steps)
     const where = dir ?? `${base}/${activityRel}`
     const entries = []
@@ -225,7 +225,7 @@ async function activityOf($, path, base, steps, now) {
     }
     return { dir, entries }
   } catch {
-    return { dir: null, entries: [] }
+    return { dir: null, entries: [], failed: true }
   }
 }
 
@@ -347,9 +347,14 @@ async function scan($) {
   const ownActM = await mtimeOf($, `${cwd}/${activityRel}`)
   if (!activityRelKnown || (ownActM !== null && now - ownActM < FRESH_MS)) {
     const mineAct = activityRelKnown ? await activityFiles($, cwd, steps, now) : await activityOf($, null, cwd, steps, now)
-    if (mineAct.dir !== null && !activityRelKnown) {
+    if (!activityRelKnown && (mineAct.dir !== null || mineAct.failed)) {
+      // A `keel activity` that failed (keel < 1.6.0, a project file that won't load, a timeout)
+      // also settles the location on the default: otherwise every scan would spawn the process
+      // again, and reading the files is what every later scan does anyway (#1461).
       activityRelKnown = true
-      if (mineAct.dir.startsWith(`${here}/`)) activityRel = mineAct.dir.slice(here.length + 1)
+      // A directory outside the session's real path (a symlinked activity dir) cannot be made
+      // relative to a worktree, so the default stays.
+      if (mineAct.dir?.startsWith(`${here}/`)) activityRel = mineAct.dir.slice(here.length + 1)
     }
     for (const entry of mineAct.entries) candidates.push({ ...ownFields, ...entry })
   }
