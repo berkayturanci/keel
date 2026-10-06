@@ -24,8 +24,8 @@ const ACTIVITY_FRESH_MS = 6 * 60 * 60 * 1000
 let activityRel = ACTIVITY_DIR
 let activityRelKnown = false
 const PANE = 'keel-progress'
-// With keel status cached and activity read from its files, a scan starts no process unless
-// something changed, so every 2 s is cheap.
+// With keel status cached and activity read from its files, a scan's only process is the cheap
+// `git worktree list`; keel itself starts only when something changed, so every 2 s is cheap.
 const POLL_MS = 2_000
 // With no live run the timer still ticks every POLL_MS but polls only every IDLE_EVERY ticks (10 s).
 const IDLE_EVERY = 5
@@ -257,7 +257,9 @@ async function statusCached($, path, mtimeMs, now, force) {
   const hit = statusCache.get(key)
   // Unchanged checkpoint: reuse the answer. The 30 s re-read applies only while a run is live, so
   // an idle session starts no keel process at all.
-  if (!force && hit && hit.mtimeMs === mtimeMs && (runs.length === 0 || now - hit.at < STATUS_TTL_MS)) return hit.result
+  // A failed read is never kept past the TTL: one timeout under load must not hide a waiting run.
+  const fresh = now - hit?.at < STATUS_TTL_MS
+  if (!force && hit && hit.mtimeMs === mtimeMs && (fresh || (runs.length === 0 && hit.result.failure === undefined))) return hit.result
   const result = await statusOf($, path)
   statusCache.set(key, { mtimeMs, at: now, result })
   return result

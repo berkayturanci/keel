@@ -1404,3 +1404,23 @@ test("with all_sessions on, other sessions' runs show too", { options: { all_ses
   expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
   expect(await band.find({ type: 'Button', text: '#22' })).toBeDefined()
 })
+
+test('one failed keel status does not stick: the run comes back on a later read', async ($, on) => {
+  const clock = mock.clock(on)
+  let fail = false
+  const calls = stubEngine(on, {
+    project: true,
+    // The checkpoint stays as it was the whole time: only keel status fails, once.
+    worktrees: [{ path: '/work', branch: 'main', mtime: 5, exitCode: () => (fail ? 1 : 0) }],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.status).toBe(1)
+  fail = true
+  await $.tool.call({ tool: 'Bash', command: 'keel status .keel/project.yaml' })
+  await clock.settle()
+  fail = false
+  await clock.advance(40_000)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
+})

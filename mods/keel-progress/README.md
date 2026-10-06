@@ -53,7 +53,7 @@ Set these in `/config` (or with `/plugin configure keel-progress@keel`):
 | Setting | Default | What it does |
 | --- | --- | --- |
 | Show other sessions' runs | off | Every recently active worktree of the repository, not only this session's own (a read per worktree). |
-| Refresh every (seconds) | 2 | How often keel's state is read while a run is live; five times less often with none. `keel status` itself runs only when a checkpoint changed (or every 30 s), activity is read from its files |
+| Refresh every (seconds) | 2 | How often keel's state is read while a run is live; five times less often with none. `keel status` itself runs only when a checkpoint changed (or every 30 s while a run is live); activity is read from its files |
 | Runs above the prompt | 3 | How many runs the band shows before `+N more` |
 | Notifications | on | Toasts for a stopped run, a run waiting for you, a run that left |
 | Sound | off | A short sound with those toasts |
@@ -94,8 +94,10 @@ still shows the session's project: no active run, its history counts and next is
 It scans:
 
 - once when the session starts
-- every five seconds while a run is live (or this session's own `keel status` is failing),
-  every 30 seconds when there is none
+- every two seconds while a run is live (or this session's own `keel status` is failing), every
+  ten when there is none. A read lists the worktrees with `git` and reads the activity files;
+  `keel status` itself runs only when a checkpoint changed, at most every 30 s while a run is
+  live, and not at all in an idle session whose checkpoint has not moved
 - right after any Bash call that runs `keel`
 
 Only one scan runs at a time. A read asked for after a keel command, by the pane or
@@ -148,5 +150,5 @@ cd mods/keel-progress && claude plugin test
   the session (`keel init`) shows after `/reload-plugins` or a new session.
 - A run in another worktree left behind without a pull request keeps showing for 24 hours
   after its checkpoint last changed.
-- While no run is live it scans every 30 seconds, so a run started from another terminal
-  (or by Codex) can take that long to appear. A keel command in this session scans at once.
+- While no run is live it scans every ten seconds, so a run started from another terminal
+  (or by Codex) in this session's folder can take that long to appear. A keel command in this session scans at once.
