@@ -104,12 +104,14 @@ function stubEngine(
     slowMs?: number
     remote?: string // origin URL `git remote get-url origin` answers
     panes?: 'fail' | 'behind' // panes() rejects, or lists the panel as a tab behind another
+    activityFails?: 'exit' | 'throw' | 'truncated' // `keel activity --json` exits 2 (keel older than 1.6.0), times out (rejects), or cuts its output
   },
 ) {
   const own: Worktree = { path: '/work', branch: 'main', stdout: opts.stdout, exitCode: opts.exitCode }
   const worktrees = opts.worktrees ?? [own]
   const calls = {
     status: 0,
+    activity: 0,
     byPath: {} as Record<string, number>,
     gh: 0,
     running: 0,
@@ -188,6 +190,10 @@ function stubEngine(
       return { value: { exitCode: 0, stdout: JSON.stringify(prs.map((number) => ({ number }))), stderr: '' } }
     }
     if (e.argv[1] === 'activity') {
+      calls.activity += 1
+      if (opts.activityFails === 'throw') return { deny: 'timed out' }
+      if (opts.activityFails === 'truncated') return { value: { exitCode: 0, stdout: '{"activity":', stderr: '', isStdoutTruncated: true } }
+      if (opts.activityFails) return { value: { exitCode: 2, stdout: '', stderr: 'invalid choice: activity' } }
       const at = e.argv[e.argv.indexOf('--root') + 1]
       const w = worktrees.find((x) => x.path === (at === '.' ? '/work' : at))
       return {
@@ -1104,6 +1110,43 @@ test('an older checkpoint without a run id and the activity of the same issue ar
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#6' })).length).toBe(1)
   expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
+})
+
+for (const mode of ['exit', 'throw', 'truncated'] as const) {
+test(`a failing keel activity (${mode}) is not spawned again on every scan (#1461)`, async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const calls = stubEngine(on, {
+    project: true,
+    activityFails: mode,
+    worktrees: [{ path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: () => statusJson({ current: { run_id: 'ship-6', command: 'ship', issue: 6, pull_request: 1027, step: 's6', wait_reason: '' } }), activityMtime: 2.9 * HOURS, activity: [act('ship-6', 6, 's8', { pr: 1027 })] }],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.activity).toBe(1)
+  for (let i = 0; i < 4; i++) await clock.advance(5_000)
+  expect(calls.activity).toBe(1)
+  // the files are read instead: the run's activity still shows
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
+})
+}
+
+test('a checkpoint without a run id joins the newest of its issue\u2019s runs (#1461)', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const ck = () => statusJson({ current: { command: 'ship', issue: 6, pull_request: 1027, step: 's6', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 2.5 * HOURS, stdout: ck, activityMtime: 1 * HOURS, activity: [act('ship-6a', 6, 's7', { pr: 1027 })] },
+      { path: '/work/wt/6', branch: 'fix/6', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-6b', 6, 's8', { pr: 1027 })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  // the checkpoint is newer than both, and hides the newest run (6b), not whichever was seen first
+  expect(await band.find({ type: 'Text', text: /next s9/ })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: /next s8/ })).toBeDefined()
 })
 
 test('a run id with capitals is found under keel\u2019s lowercase file name', async ($, on) => {

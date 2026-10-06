@@ -49,11 +49,17 @@ export function parseWorktrees(porcelain) {
 // Returns { kept, superseded }.
 export function latestPerRun(entries) {
   // A run id names the run; an entry without one (an older checkpoint) joins the run that shares
-  // its issue, so an activity record and an older checkpoint of the same run meet.
+  // its issue, so an activity record and an older checkpoint of the same run meet. With several
+  // run ids for one issue it joins the one written last; runs written at the same moment keep the first seen.
   const runOfIssue = new Map()
+  const newestOfIssue = new Map()
   for (const e of entries) {
     const c = e.snapshot.current
-    if (c.run_id && c.issue != null && !runOfIssue.has(c.issue)) runOfIssue.set(c.issue, `run:${c.run_id}`)
+    if (!c.run_id || c.issue == null) continue
+    if (!(newestOfIssue.get(c.issue) >= e.mtimeMs)) {
+      newestOfIssue.set(c.issue, e.mtimeMs)
+      runOfIssue.set(c.issue, `run:${c.run_id}`)
+    }
   }
   const keyOf = (e) => {
     const c = e.snapshot.current
