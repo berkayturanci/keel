@@ -571,6 +571,24 @@ window.KEEL = {
       source: "https://github.com/berkayturanci/keel/blob/main/keel-visual/README.md",
     },
     {
+      group: "Visualize", title: "keel-progress", slug: "keel-progress",
+      summary: "An optional Claude Code mod that shows your session's live keel runs above the prompt, with a side panel for every step.",
+      body:
+        "<p>keel-progress is an <b>optional Claude Code mod</b> that shows your session's live keel runs inside Claude Code, so you do not need a second terminal running <code>keel-visual dash</code>. It only reads: it never writes the checkpoint or ledger and never drives a run.</p>" +
+        "<pre class='doc-pre' tabindex='0' role='region' aria-label='Install keel-progress'><code>/plugin marketplace add berkayturanci/keel\n/plugin install keel-progress@keel</code></pre>" +
+        "<p>You need keel installed first, and Claude Code <b>2.1.287 or newer</b> with mods enabled for your account. Start Claude Code in the directory that holds <code>.keel/project.yaml</code>, with <code>keel</code> on your <code>PATH</code>. Other hosts are not affected.</p>" +
+        "<p><b>The band.</b> A card above the prompt with one row per live run: the issue, the backbone as a step bar (done green, the current step blue, red where the run stopped, the rest grey), the current step, why the run is held, the pull request, and how long since keel last wrote. With more than one run each row starts with its branch. Nothing is drawn when no run is live.</p>" +
+        "<figure class='doc-fig'><img src='assets/progress/band.svg' alt='Three parallel keel runs above the Claude Code prompt: a ship in review, one stopped with its gates blocked, and a pr-loop' loading='lazy'><figcaption>Three parallel runs above the prompt.</figcaption></figure>" +
+        "<p><b>Hover.</b> Point at a run for more, at the right end of its row: at the step bar, how far along it is and the next step; at a branch, the whole branch and its worktree. The run's name also lights in the side panel. The terminal draws this on its own, so no hook runs as the pointer moves.</p>" +
+        "<figure class='doc-fig'><img src='assets/progress/band-hover.svg' alt='Pointing at a run's branch in the band shows its whole branch and worktree, and lights the run in the side panel' loading='lazy'><figcaption>Pointing at a branch.</figcaption></figure>" +
+        "<p><b>The side panel.</b> <code>/keel-progress</code> opens it, and closes it when it is open. Runs are listed under <b>NEEDS YOU</b> (stopped, or waiting for input) and <b>RUNNING</b>. Click a run to open it in full: its branch and worktree, links to the PR and the issue, the step bar, every backbone step, the history counts, the next queued issue and when keel last wrote. A toast tells you when a run stops, waits for you, or leaves the board.</p>" +
+        "<figure class='doc-fig'><img src='assets/progress/panel.svg' alt='The /keel-progress side panel: a stopped run under NEEDS YOU, two running runs, one open in full with every backbone step' loading='lazy'><figcaption>The side panel with one run open.</figcaption></figure>" +
+        "<p><b>Whose runs.</b> A session shows its own keel runs only: the ones in its folder and in the worktrees keel made under it. Other sessions' runs are neither shown nor read. Turn on <i>Show other sessions' runs</i> in <code>/config</code> to see every recently active worktree of the repository.</p>" +
+        "<p><b>How it reads state.</b> It reads the checkpoint with <code>keel status --json</code> and the activity record (<code>.keel/activity/&lt;run-id&gt;.json</code>) with <code>keel activity --json</code>, and shows whichever was written last. <code>keel status</code> runs only when a checkpoint changed, or every 30 seconds while a run is live; activity is read from its files. It scans every two seconds while a run is live and every ten when none is, and right after any Bash call that runs <code>keel</code>.</p>" +
+        "<p><b>Settings</b> (in <code>/config</code>): show other sessions' runs (off), refresh every N seconds (2), runs above the prompt (3), notifications (on), sound (off).</p>",
+      source: "https://github.com/berkayturanci/keel/blob/main/mods/keel-progress/README.md",
+    },
+    {
       group: "Visualize", title: "Ship in 2D & 3D", slug: "visual-ship",
       summary: "The flagship ship run drawn two ways \u2014 the 2D flow with the cross-vendor jury on review, and a 3D scene with five selectable styles.",
       body:

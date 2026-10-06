@@ -510,6 +510,8 @@ and a `/keel-progress` side panel, read from `keel status --json`. Install it wi
 
 ![keel-progress above the Claude Code prompt: three parallel runs, each with its branch, step bar and PR](mods/keel-progress/docs/band.svg)
 
+![The /keel-progress side panel: a stopped run under NEEDS YOU, two running runs, one open in full with every backbone step](mods/keel-progress/docs/panel.svg)
+
 ## Docs
 
 - 🌐 **[Website + live coverage report](https://keel-ship.dev/)** — the

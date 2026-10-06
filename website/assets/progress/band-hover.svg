@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1154" height="100" viewBox="0 0 1154 100">
+<rect width="100%" height="100%" rx="8" fill="#0D1117"/>
+<g font-family="Menlo, Monaco, Consolas, monospace" font-size="14">
+<text x="14.0" y="27.0" fill="#8787af" textLength="1092.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮</text>
+<text x="1114.4" y="27.0" fill="#949494" textLength="25.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">[-]</text>
+<text x="14.0" y="45.0" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="30.8" y="45.0" fill="#E6EDF3" font-weight="bold" textLength="50.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">◆ keel</text>
+<text x="89.6" y="45.0" fill="#E6EDF3" font-weight="bold" textLength="201.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">▸ feat/1022-progress-ba…</text>
+<text x="291.2" y="45.0" fill="#E6EDF3" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> #1022 </text>
+<rect x="350.0" y="32.0" width="117.6" height="18" fill="#5f875f"/>
+<rect x="467.6" y="32.0" width="16.8" height="18" fill="#5f87ff"/>
+<rect x="484.4" y="32.0" width="84.0" height="18" fill="#8787af"/>
+<text x="576.8" y="45.0" fill="#E6EDF3" font-weight="bold" textLength="75.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">s7 review</text>
+<text x="660.8" y="45.0" fill="#949494" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">PR #1027</text>
+<text x="736.4" y="45.0" fill="#949494" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">6m</text>
+<text x="753.2" y="45.0" fill="#E6EDF3" textLength="344.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> more                                    </text>
+<text x="1097.6" y="45.0" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="14.0" y="63.0" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="89.6" y="63.0" fill="#949494" textLength="201.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  fix/1029-ledger-lock  </text>
+<rect x="299.6" y="50.0" width="42.0" height="18" fill="#E6EDF3"/>
+<text x="299.6" y="63.0" fill="#0D1117" textLength="42.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">#1029</text>
+<rect x="350.0" y="50.0" width="134.4" height="18" fill="#5f875f"/>
+<rect x="484.4" y="50.0" width="16.8" height="18" fill="#d75f5f"/>
+<rect x="501.2" y="50.0" width="50.4" height="18" fill="#8787af"/>
+<rect x="551.6" y="50.0" width="537.6" height="18" fill="#E6EDF3"/>
+<text x="551.6" y="63.0" fill="#0D1117" textLength="537.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> fix/1029-ledger-lock · /private/tmp/keel-demo/worktrees/ledger </text>
+<text x="1097.6" y="63.0" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="14.0" y="81.0" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+<text x="89.6" y="81.0" fill="#949494" textLength="201.6" lengthAdjust="spacingAndGlyphs" xml:space="preserve">  feat/1031-retry-flaky…</text>
+<text x="291.2" y="81.0" fill="#E6EDF3" textLength="58.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve"> #1031 </text>
+<rect x="350.0" y="68.0" width="151.2" height="18" fill="#5f875f"/>
+<rect x="501.2" y="68.0" width="16.8" height="18" fill="#5f87ff"/>
+<rect x="518.0" y="68.0" width="50.4" height="18" fill="#8787af"/>
+<text x="576.8" y="81.0" fill="#E6EDF3" font-weight="bold" textLength="84.0" lengthAdjust="spacingAndGlyphs" xml:space="preserve">s9 fixloop</text>
+<text x="669.2" y="81.0" fill="#949494" textLength="67.2" lengthAdjust="spacingAndGlyphs" xml:space="preserve">PR #1033</text>
+<text x="744.8" y="81.0" fill="#949494" textLength="16.8" lengthAdjust="spacingAndGlyphs" xml:space="preserve">5m</text>
+<text x="1097.6" y="81.0" fill="#8787af" textLength="8.4" lengthAdjust="spacingAndGlyphs" xml:space="preserve">│</text>
+</g></svg>
