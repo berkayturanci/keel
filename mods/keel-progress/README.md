@@ -82,11 +82,15 @@ places, and the mod reads both:
 - **the checkpoint** (`.keel/state/checkpoint.json`, or wherever the project's status contract
   says), written at keel's safe boundaries, read with `keel status --json`
 - **the activity record** (`.keel/activity/<run-id>.json`), stamped at every phase a command
-  passes through, read with `keel activity --json`. It is often newer than the checkpoint, and
-  some runs never write a checkpoint at all.
+  passes through, read from its files (the first read asks `keel activity --json` where they
+  live; if that fails, the default `.keel/activity` is used and keel is not asked again). It is
+  often newer than the checkpoint, and some runs never write a checkpoint at all.
 
 For each run, whichever of the two was written last is shown. Activity from other commands
-(`pr-loop`, `review-cycle`, …) shows too, with its phase name and command.
+(`pr-loop`, `review-cycle`, …) shows too, with its phase name and command. A newer completed
+checkpoint hides that run's older `running` activity record, so a finished run does not linger. A
+checkpoint without a run id (an older keel) joins the run of its issue; with several runs for one
+issue, the one written last.
 
 The mod always reads the session's own folder, then lists the repository's worktrees with
 `git worktree list` and reads each other worktree whose checkpoint or activity changed in the
