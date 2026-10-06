@@ -192,7 +192,7 @@
                 <span class="ov-companion-ic" aria-hidden="true">◱</span>
                 Inside Claude Code —
                 <a href="docs.html#keel-progress">keel-progress</a>:
-                an optional mod that shows every live run above your prompt, with a side panel for each step.
+                an optional mod that shows your session's live runs above the prompt, and one <code>/keel-progress</code> panel that lists every step of the run you open.
               </p>
             </div>
             <div class="kpis reveal" data-d="1">
@@ -293,7 +293,7 @@
           </figure>
           <div class="invs">
             <div class="inv"><b>Your session's runs</b><span>The runs in your folder and in the worktrees keel made under it. Other sessions' runs stay out unless you turn them on in <code>/config</code>.</span></div>
-            <div class="inv"><b>Read-only and cheap</b><span>It reads <code>keel status --json</code> and the activity records, and runs <code>keel status</code> only when a checkpoint changed. It never writes state or drives a run.</span></div>
+            <div class="inv"><b>Read-only and cheap</b><span>It reads <code>keel status --json</code> and the activity records, and runs <code>keel status</code> only when a checkpoint changed, at most every 30 seconds while a run is live, and at once after a keel Bash call, when the panel opens, or on Refresh. It never writes state or drives a run.</span></div>
             <div class="inv"><b>Install</b><span>Needs Claude Code 2.1.287 or newer. In Claude Code: <code>/plugin marketplace add berkayturanci/keel</code>, then <code>/plugin install keel-progress@keel</code>.</span></div>
           </div>
           <p class="view-kicker prog-more">Learn more</p>

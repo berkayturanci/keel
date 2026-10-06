@@ -26,7 +26,8 @@ Start Claude Code in the directory that holds `.keel/project.yaml`, with `keel` 
 `interrupted`). A row shows the issue, the backbone as a segmented step bar (done green, the
 current step blue, or red where the run stopped, the rest grey), the current step, why the
 run is held as a chip (amber while waiting, red when stopped), the pull request, and how
-long since keel last wrote. With more than one run each row starts with its branch. Nothing
+long since keel last wrote. A run whose phase is not a backbone step (a pr-loop, say) shows a one-step bar named
+like `review (pr-loop)`. With more than one run each row starts with its branch. Nothing
 is drawn when no run is live.
 
 **Hover.** Point at a run for more, at the right end of its row. At the step bar you see how
@@ -64,9 +65,10 @@ keel records a run in two places, and the mod reads both:
   where the records live
 
 For each run, whichever was written last is shown. `keel status` runs only when a checkpoint
-changed (or every 30 seconds while a run is live); activity is read from its files. The mod
-scans every two seconds while a run is live and every ten when none is, and right after any
-Bash call that runs `keel`. Only one scan runs at a time. The step names come from the
+changed, or at most every 30 seconds while a run is live, and at once after a keel Bash
+call, when the panel opens, or on Refresh; activity is read from its files. The mod scans
+every two seconds while a run is live and five times less often (10 seconds at the default)
+when none is, and right after any Bash call that runs `keel`. Only one scan runs at a time. The step names come from the
 status contract (`keel.progress-status.v1`), so a renamed or added step shows up without a
 mod release.
 
