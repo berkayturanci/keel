@@ -1659,3 +1659,24 @@ test('a checkpoint newer than the activity record still shows who the record say
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: '7 of 13 steps · next s7 review · PR #1027 · claude · opus · /work' })).toBeDefined()
 })
+
+test('a newer checkpoint takes who from the newest activity copy, not from an older worktree copy', async ($, on) => {
+  const clock = mock.clock(on, { now: 4 * HOURS })
+  const ck = () => statusJson({ current: { run_id: 'ship-9', command: 'ship', issue: 9, pull_request: 2001, step: 's8', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [2001],
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 3 * HOURS, stdout: ck },
+      { path: '/work/wt/new', branch: 'new', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-9', 9, 's7', { pr: 2001, agent: 'claude', model: 'opus' })] },
+      { path: '/work/wt/old', branch: 'old', mtime: null, activityMtime: 1 * HOURS, activity: [act('ship-9', 9, 's6', { pr: 2001, agent: 'codex', model: 'gpt-5' })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /claude · opus/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /codex/ })).toBeUndefined()
+})

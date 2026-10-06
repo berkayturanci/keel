@@ -53,7 +53,8 @@ class TestIdentity(unittest.TestCase):
         activity.validate_activity(rec)
 
     def test_identity_is_validated(self):
-        for bad in ("", "  ", "x" * 65, "a\x07b", "a\nb"):
+        bads = ("", "  ", "x" * 65, "a\x07b", "a\nb", " a", "a ", "a\u2028b", "a\u2029b", "a\x85b")
+        for bad in bads:
             with self.assertRaises(activity.ActivityError):
                 _record(agent=bad)
         for field in activity.IDENTITY_FIELDS:
@@ -64,11 +65,21 @@ class TestIdentity(unittest.TestCase):
 
     def test_carry_identity_fills_only_omitted_fields(self):
         existing = _record(agent="claude", model="opus")
-        carried = activity.carry_identity(_record(model="sonnet"), existing)
-        self.assertEqual((carried["agent"], carried["model"]), ("claude", "sonnet"))
+        carried = activity.carry_identity(_record(effort="low"), existing)
+        got = tuple(carried[k] for k in ("agent", "model", "effort"))
+        self.assertEqual(got, ("claude", "opus", "low"))
         bare = _record()
         self.assertIs(activity.carry_identity(bare, None), bare)
         self.assertIs(activity.carry_identity(bare, _record()), bare)
+
+    def test_a_new_agent_or_model_replaces_the_identity_but_keeps_the_host(self):
+        existing = _record(host="Codex", agent="claude", model="opus", effort="high")
+        for new in ({"agent": "codex"}, {"model": "gpt-5"}):
+            carried = activity.carry_identity(_record(**new), existing)
+            self.assertEqual(carried["host"], "Codex")
+            self.assertNotIn("effort", carried)
+            got = {k: carried.get(k) for k in ("agent", "model")}
+            self.assertEqual(got, {"agent": None, "model": None} | new)
 
     def test_contract_lists_identity_fields(self):
         self.assertEqual(

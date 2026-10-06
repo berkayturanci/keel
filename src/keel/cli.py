@@ -5111,7 +5111,7 @@ def _cmd_activity(args: argparse.Namespace) -> int:
                 issue=args.issue,
                 pr=args.pull_request,
                 note=args.note,
-                host=args.host or _detect_host(),
+                host=args.host,
                 agent=args.agent,
                 model=args.model,
                 effort=args.effort,
@@ -5119,6 +5119,8 @@ def _cmd_activity(args: argparse.Namespace) -> int:
             with activity.record_lock(_lock_root(args.root), path, owner="activity-write"):
                 existing = _readable_activity(path)
                 record = activity.carry_identity(record, existing)
+                if "host" not in record and (detected := _detect_host()):
+                    record["host"] = detected  # only when neither the flag nor the record has one
                 record = activity.carry_usage(record, existing)
                 activity.write_activity(path, record)
             _emit_activity(args, [record], path=str(path))

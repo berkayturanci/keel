@@ -22,6 +22,7 @@ import contextlib
 import json
 import re
 import time
+import unicodedata
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -198,19 +199,28 @@ def identity_issue(value: Any) -> str | None:
         return "must be a non-empty string"
     if len(value) > IDENTITY_MAX_LEN:
         return f"must be at most {IDENTITY_MAX_LEN} characters"
-    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
-        return "must not contain control characters"
+    if value != value.strip():
+        return "must not start or end with whitespace"
+    # Cc: C0, DEL and C1 (incl. NEL); Zl/Zp: U+2028/U+2029 — anything that breaks a line.
+    if any(unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in value):
+        return "must not contain control characters or line breaks"
     return None
 
 
 def carry_identity(record: dict[str, Any], existing: dict[str, Any] | None) -> dict[str, Any]:
-    """``record`` with any identity field it omits taken from ``existing``.
+    """``record`` with the identity ``existing`` held, where the stamp does not restate it.
 
-    A later stamp that does not repeat ``--agent`` / ``--model`` must not erase them.
+    A later stamp that names neither ``agent`` nor ``model`` keeps all four fields (it may
+    still change one, e.g. ``effort``). A stamp that names an ``agent`` or a ``model`` is a
+    new driver: it replaces the whole set it names and drops what it does not restate (the
+    old effort belonged to the old model), so a delegate's identity never leaks into the next
+    phase. Only ``host`` — where the run lives, whoever drives it — is always kept.
     """
+    new_driver = "agent" in record or "model" in record
+    names = ("host",) if new_driver else IDENTITY_FIELDS
     carried = {
         name: existing[name]
-        for name in IDENTITY_FIELDS
+        for name in names
         if name not in record and existing and name in existing
     }
     return {**record, **carried} if carried else record

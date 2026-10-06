@@ -17,8 +17,8 @@ go**. This command's phases are: `config` → `find` → `open` → `read` → `
 
 - **Right now, before the work below**, stamp the first phase:
   `keel activity .keel/project.yaml --root . --write --command pr-loop --run-id "$RUN" --phase config --agent <your own name> --model <your model id> --effort <your reasoning effort, if known>`
-  (the board shows who is driving the run; later stamps keep these, so pass them once).
-  Where this command hands implement or fix work to another provider with `keel delegate run`, stamp that phase again with `--agent <that provider> --model <its model id>`, so the board shows who did it.
+  (the board shows who is driving the run; later stamps that name no `--agent` or `--model` keep these).
+  Where this command hands implement or fix work to another provider with `keel delegate run`, stamp that phase again with `--agent <that provider> --model <its model id>`, so the board shows who did it (a stamp that names an agent or model replaces the whole identity), and **re-stamp your own `--agent`, `--model` and `--effort` as soon as the delegated phase ends**, so later phases do not show the delegate.
 - Re-run with the next `--phase` (`find`, …) **as you advance** through the flow.
 - At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
@@ -233,4 +233,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates`, but redirec
 state-changing `git`/`gh` write to a logged `DRY-RUN: <action>` line. No push, no PR, no
 merge.
 
-<!-- keel-generated: surface=skills command=pr-loop keel_version=1.30.0 source_sha256=23a8bd9c673d120b46adc24a53195fa697f74f2d49fafae3facb40bf5a720fe1 generated_sha256=f1c6dadfdee2bc812a5aba0769cf5e1399826653cb71ac9fca650f1d29695db7 -->
+<!-- keel-generated: surface=skills command=pr-loop keel_version=1.30.0 source_sha256=58b96c6f7d607bc272a57d6930cc126a7c3f2153c3e66b8e4a81ce8a243ac5f4 generated_sha256=85cfe1d74b24881e52f536074be825a1ab0432b28f475ef5580beabfd1c90172 -->

@@ -388,8 +388,17 @@ async function scan($) {
   const { kept, superseded: dupes } = latestPerRun(candidates.filter((run) => run.snapshot.current))
   const live = kept.filter((run) => isLive(run.snapshot))
   // A checkpoint can win over the activity record of the same run, but only the record says who drives it.
+  // Of a run's copies (one per worktree), the newest record's who: an older copy's must not show.
   const recordWho = new Map()
-  for (const run of candidates) if (run.who && Object.keys(run.who).length > 0) recordWho.set(identity(run), run.who)
+  const whoAt = new Map()
+  for (const run of candidates) {
+    if (!run.who || Object.keys(run.who).length === 0) continue
+    const key = identity(run)
+    if (!whoAt.has(key) || (run.mtimeMs ?? 0) >= whoAt.get(key)) {
+      whoAt.set(key, run.mtimeMs ?? 0)
+      recordWho.set(key, run.who)
+    }
+  }
   for (const run of live) if (!run.who && recordWho.has(identity(run))) run.who = recordWho.get(identity(run))
   const withPr = live.some((run) => run.snapshot.current.pull_request != null)
   let prs = withPr ? await loadOpenPrs($, now, false) : null

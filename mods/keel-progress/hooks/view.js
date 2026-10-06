@@ -163,7 +163,7 @@ const WHO_MAX = 64
 function whoValue(v) {
   if (typeof v !== 'string') return null
   const t = v.trim()
-  return t && t.length <= WHO_MAX && !/[\u0000-\u001f\u007f]/.test(t) ? t : null
+  return t && t.length <= WHO_MAX && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(t) ? t : null
 }
 
 export function whoFromRecord(record) {

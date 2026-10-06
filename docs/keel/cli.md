@@ -1761,8 +1761,11 @@ to a safe filename. `--verdict pass|blocked` records the phase outcome verdict i
 `--host`, `--agent`, `--model` and `--effort` record who is driving the run (#1482): the host
 (`Claude Code`, `Codex`…), the agent or delegate (`claude`, `codex`…), its model id and its reasoning effort. Each is a
 short single-line string (at most 64 characters, no control characters), additive to
-`keel.activity.v1` and left out of the record when not given; a later stamp that omits them keeps the
-values already recorded. `--host` defaults to `Claude Code` when `CLAUDECODE=1` is set (the marker Claude Code puts in
+`keel.activity.v1` and left out of the record when not given; a later stamp that names neither `--agent` nor `--model` keeps the
+values already recorded (it may change one, e.g. `--effort`). A stamp that names an `--agent` or `--model` is a new
+driver: it replaces the whole identity and drops what it does not restate, so a delegate's identity does not
+outlive its phase (only `--host` is always kept); re-stamp the orchestrator's own identity afterwards. Values must be
+single-line, without leading or trailing whitespace. `--host` defaults to `Claude Code` when `CLAUDECODE=1` is set and the record has no host yet (the marker Claude Code puts in
 its shells); no other host is detected. `keel-progress` shows them.
 Every stamp keeps the record's `delegate_usage` — the token counts a hosted-API delegate
 added with `keel delegate run --activity-run-id` (#1373) — so a later phase never erases them.

@@ -40,8 +40,9 @@ All three are captures of Claude Code running the mod over three demo runs, rend
   side-panel row's dim line, in the open run's card and in the band's branch hover, never as a
   new chip in the band. It comes from two places: the run's `keel activity` record (`host`,
   `agent`, `model`, `effort`, written by `keel activity --write --host … --agent … --model …
-  --effort …` and by the ship, pr-loop and implement commands), which wins; and, for a run that
-  has a PR, the PR's `agent:<name>` and `model:<name>` labels, read from the same `gh pr list`
+  --effort …` and by the ship, pr-loop and implement commands), which wins field by field; and, for a
+  run that has a PR, the PR's `agent:<name>` and `model:<name>` labels, which fill any field the
+  record lacks, read from the same `gh pr list`
   the mod already runs once a minute (no extra process).
 - **`/keel-progress`:** opens a side panel, and closes it when it is open. It docks beside a
   wide fullscreen transcript and sits above the prompt otherwise, laid out like the agents panel
