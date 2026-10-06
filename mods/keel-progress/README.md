@@ -45,8 +45,8 @@ All three are captures of Claude Code running the mod over three demo runs, rend
     is held; under it, dim, how far along it is, the PR and the worktree
   - the run you click opens in full under its row: its branch and worktree, links to the PR and
     issue, the step bar, every step, the history counts (shipped, blocked, deferred, skipped),
-    the next queued issue and when keel last wrote. With none picked, the first opens when it
-    fits in the panel's rows, so the header stays in sight; pressing the open run closes it
+    the next queued issue and when keel last wrote. With none picked, the first one listed (a run that needs you
+    before one that runs) opens when it fits in the panel's rows, so the header stays in sight; pressing the open run closes it
   - a footer: other worktrees with recent keel state, the hint, and **Refresh** and **Close**.
     A worktree whose `keel status` fails is listed with its error and left out of the band until
     a read succeeds again.

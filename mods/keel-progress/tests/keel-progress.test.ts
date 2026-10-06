@@ -1499,7 +1499,7 @@ test('in a short panel the run is not opened by itself, so the header stays in s
   expect(await again.find({ type: 'Text', text: '▸ this session · main' })).toBeDefined()
 })
 
-test('a panel behind another tab is brought forward, not closed; panes() failing still opens it', async ($, on) => {
+test('a panel behind another tab is brought forward, not closed', async ($, on) => {
   const clock = mock.clock(on)
   const calls = stubEngine(on, { project: true, stdout: () => statusJson(), panes: 'behind' })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1534,4 +1534,48 @@ test('pressing the open run again closes it, and no run then opens by itself', a
   const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await again.find({ type: 'Text', text: '▸ this session · main' })).toBeUndefined()
   expect(await again.find({ type: 'Text', text: '›' })).toBeDefined()
+})
+
+test('a run waiting for input is under NEEDS YOU and opens first; one waiting for the merge window stays under RUNNING, yellow', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/work/wt/a', branch: 'fix/a', stdout: runAt(11, 2001, 's4', 'needs-input') },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '◌ 1 running · 1 need you' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'NEEDS YOU' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'RUNNING' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' waiting: needs-input ' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' waiting: merge-window ' })).toBeDefined()
+  // The session's own run waits for the merge window: a yellow dot, not blue.
+  expect((await pane.findAll({ type: 'Text', text: '●' })).map((t: any) => t.props?.color)).toEqual(['yellow', 'yellow'])
+  // The run that needs you is the one open in full, though the session's own run comes first.
+  expect(await pane.find({ type: 'Text', text: 'fix/a' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeUndefined()
+})
+
+test('with several runs, pointing at a branch shows the whole branch and its worktree', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/work/wt/a', branch: 'fix/a', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' fix/a · /work/wt/a ' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' main · /work ' })).toBeDefined()
 })

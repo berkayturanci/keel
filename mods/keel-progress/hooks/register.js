@@ -920,13 +920,15 @@ export function register(on, options = {}) {
           ],
         }),
       )
-      // The run picked is open in full; with none picked, the first is, when its card fits in the
-      // rows the panel shows (the engine owns the scroll, so an overflow would push the header
-      // out of sight).
+      // The run picked is open in full; with none picked, the first one listed (one that needs you
+      // before one that runs) is, when its card fits in the rows the panel shows (the engine owns
+      // the scroll, so an overflow would push the header out of sight). A row of slack for a long
+      // branch name that wraps beside a wide chip.
       const picked = runs.find((run) => runKey(run) === selected)
-      const listRows = 1 + failures.length + [held, moving].filter((g) => g.length > 0).length + runs.length * 2 + 3
+      const first = held[0] ?? moving[0]
+      const listRows = 1 + failures.length + [held, moving].filter((g) => g.length > 0).length + runs.length * 2 + 3 + 1
       const room = e.props.scroll?.bodyRows ?? Infinity
-      const focus = picked ?? (selected !== COLLAPSED && runs[0] && listRows + runCardRows(ui, e, runs[0]).length + 2 <= room ? runs[0] : undefined)
+      const focus = picked ?? (selected !== COLLAPSED && first && listRows + runCardRows(ui, e, first).length + 2 <= room ? first : undefined)
       for (const [title, group] of [['NEEDS YOU', held], ['RUNNING', moving]]) {
         if (group.length === 0) continue
         children.push(Box({ flexDirection: 'row', columnGap: 1, children: [chip(Text, title, 'title'), chip(Text, `· ${group.length}`, 'dim')] }))
@@ -962,7 +964,7 @@ export function register(on, options = {}) {
         key: 'keel-progress-actions',
         flexDirection: 'column',
         children: [
-          chip(Text, 'click a run for its steps · /keel-progress to hide', 'dim'),
+          ...(runs.length > 0 ? [chip(Text, 'click a run for its steps · /keel-progress to hide', 'dim')] : []),
           Box({
             flexDirection: 'row',
             columnGap: 2,
