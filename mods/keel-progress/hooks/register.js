@@ -255,7 +255,9 @@ async function listWorktrees($) {
 async function statusCached($, path, mtimeMs, now, force) {
   const key = path ?? ''
   const hit = statusCache.get(key)
-  if (!force && hit && hit.mtimeMs === mtimeMs && now - hit.at < STATUS_TTL_MS) return hit.result
+  // Unchanged checkpoint: reuse the answer. The 30 s re-read applies only while a run is live, so
+  // an idle session starts no keel process at all.
+  if (!force && hit && hit.mtimeMs === mtimeMs && (runs.length === 0 || now - hit.at < STATUS_TTL_MS)) return hit.result
   const result = await statusOf($, path)
   statusCache.set(key, { mtimeMs, at: now, result })
   return result
@@ -281,6 +283,8 @@ async function activityFiles($, base, steps, now) {
     } catch {
       continue // being rewritten, or not a record: the next scan reads it
     }
+    // Only keel's own records, as `keel activity` reads them.
+    if (record?.schema_version !== 'keel.activity.v1' || record?.record_type !== 'command_activity') continue
     const { runs: found } = activityRuns(JSON.stringify({ activity: [record], path: dir }), steps)
     for (const entry of found) if (entry.fileName === f.name) entries.push({ ...entry, mtimeMs: f.mtimeMs })
   }

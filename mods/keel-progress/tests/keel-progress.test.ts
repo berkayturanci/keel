@@ -133,7 +133,7 @@ function stubEngine(
     if (act) {
       const name = e.path.slice(`${act.path}/.keel/activity/`.length)
       const rec = (act.activity ?? []).find((r: any) => `${slug(r.run_id)}.json` === name)
-      return rec ? { value: JSON.stringify(rec) } : { deny: 'ENOENT' }
+      return rec ? { value: JSON.stringify({ schema_version: 'keel.activity.v1', record_type: 'command_activity', ...rec }) } : { deny: 'ENOENT' }
     }
     const w = worktrees.find((x) => e.path === `${x.path}/.keel/state/checkpoint.json`)
     return w?.state ? { value: JSON.stringify({ state: w.state }) } : { deny: 'ENOENT' }
@@ -314,22 +314,21 @@ test('keel status runs again only when the checkpoint changed, after 30 s, or af
   expect(calls.status).toBe(4)
 })
 
-test('with no live run keel status still runs only every 30 s, however often the timer ticks', async ($, on) => {
+test('with no live run an unchanged checkpoint starts no keel process; a keel command does', async ($, on) => {
   const clock = mock.clock(on)
   const calls = stubEngine(on, { project: true, stdout: () => statusJson({ status: 'no-active-run', current: null }) })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   expect(calls.status).toBe(1)
 
-  await clock.advance(25_000)
+  // An idle session reuses its answer for as long as the checkpoint stays as it was.
+  await clock.advance(120_000)
   expect(calls.status).toBe(1)
-  await clock.advance(5_000)
-  expect(calls.status).toBe(2)
 
   // A keel command still refreshes at once, so a run that just started shows up.
   await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 1' })
   await clock.settle()
-  expect(calls.status).toBe(3)
+  expect(calls.status).toBe(2)
 })
 
 test('a refresh asked for while one runs shares it instead of starting another keel status', async ($, on) => {
