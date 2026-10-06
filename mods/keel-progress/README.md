@@ -6,10 +6,11 @@ terminal running `keel-visual dash`.
 
 ![Three parallel keel runs above the Claude Code prompt: a ship in review, one stopped with its gates blocked, and a pr-loop](docs/band.svg)
 
-![The /keel-progress pane: one run's worktree, issue and PR, every backbone step, and when keel last wrote](docs/pane.svg)
+![The /keel-progress side panel: a stopped run under NEEDS YOU, two running runs, one open in full with every backbone step](docs/panel.svg)
 
-Both are captures of Claude Code 2.1.288 running the mod over three demo runs, rendered as SVG.
-The pane shows the run as a card too: the same step bar, then every step with its state.
+![Pointing at a run's branch in the band shows its whole branch and worktree at the row's right end, and lights the run in the side panel](docs/band-hover.svg)
+
+All three are captures of Claude Code running the mod over three demo runs, rendered as SVG.
 
 - **Whose runs:** a session shows its own keel runs only: the ones in its folder and in the
   worktrees keel made under it (keel ship puts a run's worktree inside the session's checkout).
@@ -28,13 +29,27 @@ The pane shows the run as a card too: the same step bar, then every step with it
   is live.
   - **Click a run's issue** to open the pane on that run. There is no digit hotkey: a passive
     band must not take the first key of a prompt.
+  - **Point at a run** for more, at the right end of its row: at the step bar, how far along it
+    is and the next step (`8 of 13 steps · next s8 test`); at a branch, the whole branch and its
+    worktree. The run's name also lights in the side panel. The terminal draws this on its own:
+    no hook runs as the pointer moves, and the band never changes height.
   - **`more` / `less`** lists every run, not just the first three, each with a second line
     holding the whole branch name and the worktree path.
-- **`/keel-progress`:** opens a pane on one run: its whole branch name and worktree, every
-  step, the history counts (shipped, blocked, deferred, skipped) and the next queued issue.
-  The other live runs are listed below it as buttons to switch to, with **Refresh** and
-  **Close**. A worktree whose `keel status` fails is listed in the pane with its error and
-  left out of the band until a read succeeds again.
+- **`/keel-progress`:** opens a side panel, and closes it when it is open. It docks beside a
+  wide fullscreen transcript and sits above the prompt otherwise, laid out like the agents panel
+  from Claude Code's mods video:
+  - a header: `✦ Keel in this session`, how many runs are running and how many need you
+  - **NEEDS YOU** (stopped, or waiting for input) and **RUNNING**, each with its count, then one
+    row per run: a colored dot (red stopped, yellow waiting or quiet, blue running), the branch
+    and issue as a button, and on the right the step and its age (`◌ s7 review · 6m`) or why it
+    is held; under it, dim, how far along it is, the PR and the worktree
+  - the run you click opens in full under its row: its branch and worktree, links to the PR and
+    issue, the step bar, every step, the history counts (shipped, blocked, deferred, skipped),
+    the next queued issue and when keel last wrote. With none picked, the first opens when it
+    fits in the panel's rows, so the header stays in sight; pressing the open run closes it
+  - a footer: other worktrees with recent keel state, the hint, and **Refresh** and **Close**.
+    A worktree whose `keel status` fails is listed with its error and left out of the band until
+    a read succeeds again.
 
 - **How fresh it is:** each line ends with how long ago keel last wrote anything for that run
   (`· 4m`). A live run nothing has been written for in 45 minutes reads `· quiet 1h`, in the

@@ -5,7 +5,7 @@
 // consumer-neutral keel.progress-status.v1 contract) about each worktree whose checkpoint
 // changed recently. It draws:
 //   - one line per live run in the band above the prompt (at most BAND_MAX, then "+N more")
-//   - a `/keel-progress` pane with every live run's steps, history counts and next issue
+//   - a `/keel-progress` side panel: every live run as a row, the one picked in full
 // It never writes to a checkpoint or ledger and never drives a run.
 
 import { FALLBACK_STEPS, activityRuns, ago, cells, checkpointDetails, fitCells, githubBase, isLive, latestPerRun, paneLines, parseStatus, parseWorktrees, safeHref, stepName, stepStates } from './view.js'
@@ -65,6 +65,8 @@ const TONES = {
   ok: { color: 'green' },
   wait: { color: 'yellow' },
   bad: { color: 'red' },
+  live: { color: 'blue' },
+  runChip: { backgroundColor: '#1F6FEB', color: '#FFFFFF', bold: true },
   dim: { dimColor: true },
   plain: {},
   // the step bar: one two-cell chip per backbone step
@@ -538,9 +540,12 @@ async function openRun($, key) {
   selected = key
   // No focus: a digit typed into an empty prompt (to answer something else) also presses the
   // band's buttons, and must not take the keyboard away from the prompt.
-  await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true })
+  await $.ui.open(PANE_OPEN)
   $.ui.invalidate('ui.render')
 }
+
+// What `selected` holds after the open run's row is pressed again: no run open, none opened by itself.
+const COLLAPSED = Symbol('collapsed')
 
 function selectRun($, key) {
   selected = key
@@ -573,12 +578,12 @@ function stepBar(ui, run, cellsPerStep = 2) {
 
 // What a band row shows after the issue button: the step bar, the step, why it is held, the PR
 // and how long since keel last wrote.
-function bandRow(ui, run, cellsPerStep) {
+function bandRow(ui, run, cellsPerStep, found = []) {
   const { Box, Text } = ui
   const c = run.snapshot.current
   // The step name never shrinks; the bar is left out on a band too narrow for it.
   const parts = [
-    ...(cellsPerStep > 0 ? [stepBar(ui, run, cellsPerStep)] : []),
+    ...(cellsPerStep > 0 ? [hoverPart(ui, `bar-${hoverScope(run)}`.slice(0, 64), stepBar(ui, run, cellsPerStep), stepProgress(run), found)] : []),
     Box({ flexShrink: 0, children: [chip(Text, stepName(run.steps, c.step), 'title')] }),
   ]
   if (c.wait_reason) {
@@ -604,6 +609,169 @@ function prHref(n) {
 
 function issueHref(n) {
   return repoBase !== null && Number.isInteger(n) ? safeHref(`${repoBase}/issues/${n}`) : null
+}
+
+// A run in full, one element per line (a card is these plus its two border lines): its branch,
+// worktree, links, the step bar and step, what keel last wrote, and the checkpoint's details.
+function runCardRows(ui, e, focus) {
+  const { Box, Text, Link } = ui
+  const rows = []
+  const cline = (part) => rows.push(Text(textProps(part)))
+  cline({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
+  cline({ text: focus.path, tone: 'dim' })
+  const c = focus.snapshot.current
+  // Links to the PR and the issue, when the repository is on GitHub.
+  if (repoBase !== null && (c.pull_request != null || c.issue != null)) {
+    rows.push(
+      Box({
+        key: 'keel-progress-links',
+        flexDirection: 'row',
+        columnGap: 2,
+        children: [
+          ...(prHref(c.pull_request) ? [Link({ href: prHref(c.pull_request), label: `PR #${c.pull_request}` })] : []),
+          ...(issueHref(c.issue) ? [Link({ href: issueHref(c.issue), label: `issue #${c.issue}` })] : []),
+        ],
+      }),
+    )
+  }
+  // The card sizes the bar to the panel's width, as the band does: the bar, the card's chrome and
+  // a step name must fit.
+  const paneCols = (e.props.bodyColumns ?? 0) - 6
+  const paneCells = paneCols >= 50 ? 2 : paneCols >= 36 ? 1 : 0
+  rows.push(
+    Box({
+      flexDirection: 'row',
+      columnGap: 1,
+      children: [
+        ...(paneCells > 0 ? [stepBar(ui, focus, paneCells)] : []),
+        Box({ flexShrink: 0, children: [chip(Text, stepName(focus.steps, c.step), 'title')] }),
+      ],
+    }),
+  )
+  for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) cline(part)
+  const since = focus.mtimeMs > 0 && scanAt > 0 ? ago(scanAt - focus.mtimeMs) : null
+  if (since !== null) {
+    const from = focus.snapshot.source === 'activity' ? 'activity record' : 'checkpoint'
+    const quiet = scanAt - focus.mtimeMs >= QUIET_MS
+    cline({ text: `last written ${since === 'now' ? 'just now' : `${since} ago`} (${from})${quiet ? ' · quiet' : ''}`, tone: quiet ? 'wait' : 'dim' })
+  }
+  for (const [name, value] of focus.details ?? []) cline({ text: `${name}: ${value}`, tone: 'plain' })
+  if (focus.snapshot.note) cline({ text: `note: ${focus.snapshot.note}`, tone: 'plain' })
+  return rows
+}
+
+// A part that says more while the pointer is on it. The part sits in a Box that joins a hover
+// group of its own; the detail is a hidden Box in the same group, drawn by `reveals` as the band
+// row's last child, at the row's right end (absolute: nothing moves, the band keeps its height).
+// Drawn last, it paints over what is under it rather than under the parts after it. Inverse
+// text reads on a dark and a light theme alike. No hook runs as the pointer moves.
+function hoverPart(ui, scope, shown, detail, found) {
+  const { Box } = ui
+  if (!detail) return shown
+  found.push({ scope, detail })
+  return Box({ flexShrink: 0, hover: { scope }, children: [shown] })
+}
+
+// The hidden details of a band row's parts, each shown while its part is pointed at.
+function reveals(ui, list) {
+  const { Box, Text } = ui
+  return list.map((r) =>
+    Box({
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      display: 'none',
+      hover: { scope: r.scope, display: 'flex' },
+      children: [Text({ inverse: true, wrap: 'truncate', children: [` ${r.detail} `] })],
+    }),
+  )
+}
+
+// Where a run is on the backbone: "5 of 13 steps · next s5 classify", for the bar's hover and the panel.
+function stepProgress(run) {
+  const at = run.steps.findIndex((st) => st.id === run.snapshot.current.step)
+  if (at < 0) return null
+  const after = run.steps[at + 1]
+  return `${at + 1} of ${run.steps.length} steps${after ? ` · next ${stepName(run.steps, after.id)}` : ''}`
+}
+
+// The hover group a run's band row and panel row share (1-64 characters).
+function hoverScope(run) {
+  const c = run.snapshot.current
+  return `run-${c.run_id ?? c.issue ?? c.pull_request ?? run.label}`.slice(0, 64)
+}
+
+// The pane: the side panel's width when it docks beside a fullscreen transcript.
+const PANE_OPEN = { id: PANE, title: 'keel', closeOnEscape: true, columns: 64 }
+
+// Whether a run needs a person: it stopped, or it waits for input.
+function needsYou(run) {
+  return run.snapshot.status === 'interrupted' || NEEDS_YOU.has(run.snapshot.current.wait_reason)
+}
+
+// A run's dot: red when it stopped, yellow when it waits or has gone quiet, blue while it runs.
+function runDot(run) {
+  if (run.snapshot.status === 'interrupted') return 'bad'
+  if (run.snapshot.current.wait_reason || (run.mtimeMs > 0 && scanAt - run.mtimeMs >= QUIET_MS)) return 'wait'
+  return 'live'
+}
+
+// The right-hand side of a panel row: the step and how long since keel wrote, or why it is held.
+function runStatus(ui, run) {
+  const { Text } = ui
+  const c = run.snapshot.current
+  if (run.snapshot.status === 'interrupted') return chip(Text, ` stopped${c.wait_reason ? `: ${c.wait_reason}` : ''} `, 'stopChip')
+  if (c.wait_reason) return chip(Text, ` waiting: ${c.wait_reason} `, 'waitChip')
+  const age = agePart(run)[0]?.text.replace(/^ · /, '')
+  return chip(Text, `◌ ${stepName(run.steps, c.step)}${age ? ` · ${age}` : ''}`, 'runChip')
+}
+
+// The dim line under a panel row: how far along, the PR, and where it runs.
+function runSummary(run) {
+  const c = run.snapshot.current
+  return [stepProgress(run), c.pull_request != null ? `PR #${c.pull_request}` : null, run.path].filter(Boolean).join(' · ')
+}
+
+// One run in the side panel, as the agents panel draws an agent: a colored dot, the run's name
+// (a button that opens it in full below), its step or why it is held on the right, and under it,
+// dim, how far along it is.
+function paneRow($, ui, run, open) {
+  const { Box, Text, Button } = ui
+  const c = run.snapshot.current
+  return Box({
+    key: `keel-progress-row-${runKey(run)}`,
+    flexDirection: 'column',
+    paddingX: 1,
+    hover: { scope: hoverScope(run) },
+    children: [
+      Box({
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        columnGap: 1,
+        children: [
+          Box({
+            flexDirection: 'row',
+            columnGap: 1,
+            flexShrink: 1,
+            children: [
+              chip(Text, '●', runDot(run)),
+              Button({
+                key: `keel-progress-pick-${runKey(run)}`,
+                label: `${run.own ? '▸ ' : ''}${run.branch ?? run.label}${c.issue != null ? ` · #${c.issue}` : ''}`,
+                plain: true,
+                // Lit (inverse) while this run is pointed at, here or in the band.
+                hover: { scope: hoverScope(run), inverse: true },
+                onPress: () => selectRun($, open ? COLLAPSED : runKey(run)),
+              }),
+              chip(Text, open ? '⌄' : '›', 'dim'),
+            ],
+          }),
+          Box({ flexShrink: 0, children: [runStatus(ui, run)] }),
+        ],
+      }),
+      Box({ paddingLeft: 2, children: [chip(Text, runSummary(run), 'dim')] }),
+    ],
+  })
 }
 
 export function register(on, options = {}) {
@@ -642,10 +810,23 @@ export function register(on, options = {}) {
     return result
   })
 
+  // The command toggles the side panel: it opens it, or closes it when it is open.
   on('command.run', { command: 'keel-progress' }, async ($) => {
+    // A panel already shown closes; one behind another tab is brought forward by the open below.
+    let panes = []
+    try {
+      // An engine without panes() throws here too, and the panel just opens.
+      panes = await $.ui.panes()
+    } catch {
+      panes = []
+    }
+    if (panes.some((p) => p.id === PANE && p.isShown)) {
+      await $.ui.close({ id: PANE })
+      return {}
+    }
     // Open first: a slow scan must not delay the pane; the scan redraws it.
     selected = null
-    await $.ui.open({ id: PANE, title: 'keel', closeOnEscape: true })
+    await $.ui.open(PANE_OPEN)
     $.clock.after(0, () => refresh($, true))
     return {}
   })
@@ -665,9 +846,12 @@ export function register(on, options = {}) {
     const rows = []
     shown.forEach((run, i) => {
       const issue = run.snapshot.current.issue
+      const found = []
       rows.push(
         Box({
           key: `keel-progress-${runKey(run)}`,
+          // Pointing at a run here lights its name in the side panel, and the other way round.
+          hover: { scope: hoverScope(run) },
           flexDirection: 'row',
           columnGap: 1,
           children: [
@@ -675,7 +859,7 @@ export function register(on, options = {}) {
             Box({ flexShrink: 0, children: [chip(Text, i === 0 ? '◆ keel' : '      ', 'title')] }),
             // The label keeps its padded width, so the issue and bar columns line up row to row;
             // only the trailing chips give way on a narrow band.
-            ...(labelled ? [Box({ flexShrink: 0, children: [Text(textProps(labelPart(run, width)))] })] : []),
+            ...(labelled ? [Box({ flexShrink: 0, children: [hoverPart(ui, `label-${hoverScope(run)}`.slice(0, 64), Text(textProps(labelPart(run, width))), `${run.branch ?? run.label} · ${run.path}`, found)] })] : []),
             // The issue is a button: click it to open the pane on this run. No digit hotkey: a
             // passive band must not take the first key of a prompt (#1466).
             Box({
@@ -685,14 +869,17 @@ export function register(on, options = {}) {
                   key: `keel-progress-open-${runKey(run)}`,
                   label: issue != null ? `#${issue}` : run.snapshot.current.step ?? 'run',
                   plain: true,
+                  hover: { scope: hoverScope(run), inverse: true },
                   onPress: () => openRun($, runKey(run)),
                 }),
               ],
             }),
-            ...bandRow(ui, run, barCells),
+            ...bandRow(ui, run, barCells, found),
             ...(i === 0 && toggle
               ? [Button({ key: 'keel-progress-toggle', label: expanded ? 'less' : 'more', plain: true, onPress: () => toggleExpanded($) })]
               : []),
+            // Last, so each detail paints over the row rather than under the parts after it.
+            ...reveals(ui, found),
           ],
         }),
       )
@@ -719,78 +906,46 @@ export function register(on, options = {}) {
     if (!hasProject) {
       line({ text: `No ${PROJECT} in this directory, so there is no keel run to show.`, tone: 'dim' })
     } else {
+      const held = runs.filter(needsYou)
+      const moving = runs.filter((run) => !needsYou(run))
+      // The header, as the agents panel heads its list: what this is, and how many are running.
+      const count = [moving.length > 0 ? `◌ ${moving.length} running` : null, held.length > 0 ? `${held.length} need you` : null].filter(Boolean).join(' · ')
+      children.push(
+        Box({
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          children: [
+            Box({ flexDirection: 'row', columnGap: 1, children: [chip(Text, '✦ Keel', 'title'), chip(Text, settings.allSessions ? 'in this repository' : 'in this session', 'dim')] }),
+            chip(Text, count || 'idle', held.length > 0 ? 'wait' : runs.length > 0 ? 'live' : 'dim'),
+          ],
+        }),
+      )
+      // The run picked is open in full; with none picked, the first is, when its card fits in the
+      // rows the panel shows (the engine owns the scroll, so an overflow would push the header
+      // out of sight).
+      const picked = runs.find((run) => runKey(run) === selected)
+      const listRows = 1 + failures.length + [held, moving].filter((g) => g.length > 0).length + runs.length * 2 + 3
+      const room = e.props.scroll?.bodyRows ?? Infinity
+      const focus = picked ?? (selected !== COLLAPSED && runs[0] && listRows + runCardRows(ui, e, runs[0]).length + 2 <= room ? runs[0] : undefined)
+      for (const [title, group] of [['NEEDS YOU', held], ['RUNNING', moving]]) {
+        if (group.length === 0) continue
+        children.push(Box({ flexDirection: 'row', columnGap: 1, children: [chip(Text, title, 'title'), chip(Text, `· ${group.length}`, 'dim')] }))
+        for (const run of group) {
+          children.push(paneRow($, ui, run, run === focus))
+          if (run === focus) {
+            children.push(
+              Box({
+                paddingLeft: 2,
+                children: [Box({ flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1, flexGrow: 1, children: runCardRows(ui, e, run) })],
+              }),
+            )
+          }
+        }
+      }
       const hiddenNote =
         (closedPr > 0 ? ` · ${closedPr} hidden (PR closed)` : '') +
         (superseded > 0 ? ` · ${superseded} stale copy(ies) of a run` : '')
-      line({
-        text: `${runs.length} live keel run(s) · ${scanned} other worktree(s) with recent keel state${hiddenNote}`,
-        tone: 'title',
-      })
-      // The run picked in the band (or the first) in full; the others as buttons to switch to.
-      const focus = runs.find((run) => runKey(run) === selected) ?? runs[0]
-      if (focus) {
-        line({ text: ' ', tone: 'plain' })
-        // The run in full, as a card: what the band shows, then every step and what keel last wrote.
-        const rows = []
-        const cline = (part) => rows.push(Text(textProps(part)))
-        cline({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
-        cline({ text: focus.path, tone: 'dim' })
-        const c = focus.snapshot.current
-        // Links to the PR and the issue, when the repository is on GitHub.
-        if (repoBase !== null && (c.pull_request != null || c.issue != null)) {
-          rows.push(
-            Box({
-              key: 'keel-progress-links',
-              flexDirection: 'row',
-              columnGap: 2,
-              children: [
-                ...(prHref(c.pull_request) ? [Link({ href: prHref(c.pull_request), label: `PR #${c.pull_request}` })] : []),
-                ...(issueHref(c.issue) ? [Link({ href: issueHref(c.issue), label: `issue #${c.issue}` })] : []),
-              ],
-            }),
-          )
-        }
-        // The pane sizes the bar to its own width, as the band does: the bar, the card's chrome and
-        // a step name must fit.
-        const paneCols = e.props.bodyColumns ?? 0
-        const paneCells = paneCols >= 50 ? 2 : paneCols >= 36 ? 1 : 0
-        rows.push(
-          Box({
-            flexDirection: 'row',
-            columnGap: 1,
-            children: [
-              ...(paneCells > 0 ? [stepBar(ui, focus, paneCells)] : []),
-              Box({ flexShrink: 0, children: [chip(Text, stepName(focus.steps, c.step), 'title')] }),
-            ],
-          }),
-        )
-        for (const part of paneLines(focus.snapshot, focus.steps).slice(1)) cline(part)
-        const since = focus.mtimeMs > 0 && scanAt > 0 ? ago(scanAt - focus.mtimeMs) : null
-        if (since !== null) {
-          const from = focus.snapshot.source === 'activity' ? 'activity record' : 'checkpoint'
-          const quiet = scanAt - focus.mtimeMs >= QUIET_MS
-          cline({ text: `last written ${since === 'now' ? 'just now' : `${since} ago`} (${from})${quiet ? ' · quiet' : ''}`, tone: quiet ? 'wait' : 'dim' })
-        }
-        for (const [name, value] of focus.details ?? []) cline({ text: `${name}: ${value}`, tone: 'plain' })
-        if (focus.snapshot.note) cline({ text: `note: ${focus.snapshot.note}`, tone: 'plain' })
-        children.push(Box({ flexDirection: 'column', borderStyle: 'round', borderColor: BORDER, paddingX: 1, children: rows }))
-      }
-      const others = runs.filter((run) => run !== focus)
-      if (others.length > 0) {
-        line({ text: ' ', tone: 'plain' })
-        line({ text: 'Other runs:', tone: 'dim' })
-        for (const run of others) {
-          const c = run.snapshot.current
-          children.push(
-            Button({
-              key: `keel-progress-pick-${runKey(run)}`,
-              label: `${run.own ? '▸ ' : ''}${run.branch ?? run.label} · #${c.issue ?? '-'} ${c.step ?? ''}`,
-              plain: true,
-              onPress: () => selectRun($, runKey(run)),
-            }),
-          )
-        }
-      }
+      line({ text: `${scanned} other worktree(s) with recent keel state${hiddenNote}`, tone: 'dim' })
       if (runs.length === 0 && own !== null) {
         // No live run: the session's own project, as it is (no active run, history, next issue).
         line({ text: ' ', tone: 'plain' })
@@ -805,11 +960,17 @@ export function register(on, options = {}) {
     children.push(
       Box({
         key: 'keel-progress-actions',
-        flexDirection: 'row',
-        columnGap: 2,
+        flexDirection: 'column',
         children: [
-          Button({ key: 'refresh', label: 'Refresh', onPress: () => refresh($, true) }),
-          Button({ key: 'close', label: 'Close', onPress: () => $.ui.close({ id: PANE }) }),
+          chip(Text, 'click a run for its steps · /keel-progress to hide', 'dim'),
+          Box({
+            flexDirection: 'row',
+            columnGap: 2,
+            children: [
+              Button({ key: 'refresh', label: 'Refresh', onPress: () => refresh($, true) }),
+              Button({ key: 'close', label: 'Close', onPress: () => $.ui.close({ id: PANE }) }),
+            ],
+          }),
         ],
       }),
     )
