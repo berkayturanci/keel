@@ -69,7 +69,7 @@ OS_JUNK = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
 
 
 def _files_under(root: Path, rel_dir: str, *, skip_os_junk: bool = True) -> list[str]:
-    """Every regular file under ``root/rel_dir``, repo-relative, sorted.
+    """Every file and symlink (even a broken one) under ``root/rel_dir``, repo-relative, sorted.
 
     Junk is skipped when listing *sources*, so a ``.DS_Store`` beside a command is never
     copied. The bundle's own listing passes ``skip_os_junk=False``: a ``.DS_Store``
@@ -80,8 +80,13 @@ def _files_under(root: Path, rel_dir: str, *, skip_os_junk: bool = True) -> list
     return sorted(
         path.relative_to(root).as_posix()
         for path in base.rglob("*")
-        if path.is_file() and not (skip_os_junk and path.name in OS_JUNK)
+        if (path.is_file() or path.is_symlink()) and not (skip_os_junk and path.name in OS_JUNK)
     )
+
+
+def _refuse_symlink(root: Path, source: str) -> None:
+    if (root / source).is_symlink():
+        raise ValueError(f"{source} is a symlink; the ZIP packs regular files only")
 
 
 def bundle_copies(root: Path) -> dict[str, str]:
@@ -104,13 +109,17 @@ def drift(root: Path) -> list[str]:
     expected = bundle_copies(root)
     for dest, source in expected.items():
         dest_path = root / dest
-        if not dest_path.is_file():
+        if dest_path.is_symlink():
+            problems.append(f"symlink: {dest} (a bundle holds regular files only)")
+        elif not dest_path.is_file():
             problems.append(f"missing: {dest} (copy of {source})")
         elif dest_path.read_bytes() != (root / source).read_bytes():
             problems.append(f"differs: {dest} != {source}")
     allowed = set(expected) | set(HANDWRITTEN)
     for present in _files_under(root, BUNDLE_DIR, skip_os_junk=False):
-        if present not in allowed:
+        if (root / present).is_symlink() and present not in expected:
+            problems.append(f"symlink: {present} (a bundle holds regular files only)")
+        elif present not in allowed:
             problems.append(f"unexpected: {present} (not generated, not hand-written)")
     for handwritten in HANDWRITTEN:
         if not (root / handwritten).is_file():
@@ -126,6 +135,8 @@ def sync(root: Path) -> tuple[list[str], list[str]]:
     for dest, source in expected.items():
         dest_path = root / dest
         data = (root / source).read_bytes()
+        if dest_path.is_symlink():
+            dest_path.unlink()
         if dest_path.is_file() and dest_path.read_bytes() == data:
             continue
         dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -154,9 +165,11 @@ def zip_entries(root: Path) -> dict[str, str]:
         "assets/logo.svg": "website/favicon.svg",
     }
     for source in _files_under(root, "skills"):
+        _refuse_symlink(root, source)
         entries[source] = source
     for skill_dir in sorted((root / AGENT_SKILLS_DIR).glob(AGENT_SKILLS_GLOB)):
         for source in _files_under(root, skill_dir.relative_to(root).as_posix()):
+            _refuse_symlink(root, source)
             archive = "skills/" + source[len(AGENT_SKILLS_DIR) + 1 :]
             if archive in entries:
                 raise ValueError(f"two skills write {archive}: {entries[archive]} and {source}")
@@ -178,8 +191,19 @@ def build_zip(root: Path, out: Path | None = None) -> Path:
     """Write the deterministic OpenAI ZIP (LF line endings) and return its path."""
     target = out or root / "dist" / f"keel-plugin-{portable_version(root)}.zip"
     target.parent.mkdir(parents=True, exist_ok=True)
+    entries = zip_entries(root)  # raises on a clash before anything is written
+    partial = target.with_name(target.name + ".part")
+    try:
+        _write_zip(root, entries, partial)
+        partial.replace(target)
+    finally:
+        partial.unlink(missing_ok=True)
+    return target
+
+
+def _write_zip(root: Path, entries: dict[str, str], target: Path) -> None:
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for name, source in sorted(zip_entries(root).items()):
+        for name, source in sorted(entries.items()):
             info = zipfile.ZipInfo(name, date_time=ZIP_EPOCH)
             info.compress_type = zipfile.ZIP_DEFLATED
             # ZipInfo defaults create_system to 0 (MS-DOS) on win32 and 3 (Unix)
@@ -188,7 +212,6 @@ def build_zip(root: Path, out: Path | None = None) -> Path:
             info.create_system = 3
             info.external_attr = 0o100644 << 16
             archive.writestr(info, _lf((root / source).read_bytes()))
-    return target
 
 
 def main(argv: list[str] | None = None) -> int:

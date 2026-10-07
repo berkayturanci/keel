@@ -37,24 +37,29 @@ CLI `gh` signed in with `gh auth login`. Then run the `keel-onboard` skill, or
 
 ## What this plugin runs, sends and fetches
 
-The plugin contains only Markdown instructions: no hooks, no MCP servers, no binaries,
-and nothing that runs when it is installed. When you invoke a command or skill, the
+The plugin is Markdown instructions plus its manifest, license and logo: no hooks, no MCP
+servers, no binaries, and nothing that runs when it is installed. When you invoke a command or skill, the
 agent runs these programs on your machine, with your credentials:
 
 - **`keel`** — reads `.keel/project.yaml` and writes run state under `.keel/state/` in
   the repository, and calls `git` and `gh` as described below. Beyond those and the
-  opt-in API delegates at the end of this list, the only address it contacts is PyPI:
+  opt-in delegates at the end of this list, the only address it contacts is PyPI:
   `keel doctor` asks `https://pypi.org/pypi/keel-workflow/json` for the latest released
   version unless you pass `--offline`.
-- **`git`** — creates branches and worktrees, commits, and **pushes** branches to your
-  `origin` remote.
+- **`git`** — creates branches and worktrees, commits, **fetches** from and **pushes**
+  branches to your `origin` remote.
+- **`pip` / `pipx`** — only the `keel-onboard` skill, and only when the `keel` CLI is
+  missing: it runs `pip install keel-workflow`, which contacts PyPI and your configured
+  package index.
 - **`gh`** (GitHub CLI), or an authenticated GitHub MCP server when `gh` is not
   available — reads issues, pull requests and CI runs, and **writes** to GitHub as you:
   opens and edits pull requests, posts review and status comments, adds and removes
   labels, opens issues for findings, and **merges** pull requests when the configured
   merge window and evidence gates allow it. Commands that only report (for example
   `/keel:morning`, `/keel:ci-check`) do not merge. `/keel:ship` and most other
-  commands accept `--dry-run` to preview a run without writing anything.
+  commands accept `--dry-run`: it pushes nothing, writes nothing to GitHub and merges nothing, but
+  it still runs local steps such as the project's gates (`keel run-gates`, which can write
+  local build artifacts) and, for `/keel:ship`, the reviewers.
 - **Your project's own commands** — the build, lint and test commands, gates and
   extensions named in `.keel/project.yaml`. keel runs what that file lists; review it
   as you would a Makefile.
@@ -62,7 +67,13 @@ agent runs these programs on your machine, with your credentials:
   seats can be delegated to another agent CLI (`claude`, `codex`, `agy`, a local
   `ollama` model, or a CLI profile you define) and the optional cross-vendor review to
   the `jury` CLI (ai-jury). Each receives the issue, the diff and repository context.
-  The hosted-API delegates (`anthropic-api:`, `openai-api:`, `google-api:`) read
+  keel's own HTTP client also sends the prompt to any `vendor: openai-compatible`
+  delegate profile in `.keel/project.yaml` and any `api` entry in
+  `~/.keel/providers.yaml`: the endpoint is loopback by default, and any other host only
+  once you set `KEEL_ALLOW_REMOTE_ENDPOINT` (a host list, or `1`); the key is read from
+  the env var that profile names. Registry and profile CLI delegates (for example
+  `cursor-agent`) are separate programs you install and configure; they send what they
+  send. The hosted-API delegates (`anthropic-api:`, `openai-api:`, `google-api:`) read
   `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GEMINI_API_KEY` from your environment and
   send the prompt to that vendor's own API (`api.anthropic.com`, `api.openai.com`,
   `generativelanguage.googleapis.com`); they are off unless you select them and grant

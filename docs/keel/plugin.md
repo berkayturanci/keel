@@ -89,8 +89,8 @@ loads, built by `scripts/plugin_bundle.py` from the same root sources:
 `make plugin` re-syncs `plugin/` after regenerating `commands/`; `make plugin-zip` runs
 `make adapters` and `make plugin` first, because the ZIP reads the generated
 `.agents/skills/keel-*` directly and the drift check covers `plugin/` only. `assets/logo.svg`
-is named by no manifest field: it is the square icon to upload in the directory listing
-form. `tests/test_plugin_bundle.py` fails on any drift, on anything a directory would refuse or
+is the square listing icon: the Claude manifest has no logo field, so you upload it in the
+directory form, while the OpenAI manifest names it as `logo` and `composerIcon`. `tests/test_plugin_bundle.py` fails on any drift, on anything a directory would refuse or
 hold (symlinks, binaries, oversized files, a non-string `description`, a short README) and
 on a listing field past its limit. Both new manifests are release surfaces, so
 `make release-bump` moves their version with the rest.
@@ -99,6 +99,8 @@ on a listing field past its limit. Both new manifests are release surfaces, so
 repository `berkayturanci/keel` with the path `plugin`.
 
 **OpenAI** (ChatGPT and Codex share one directory): after platform verification, open
-**Plugins → Upload ZIP** and upload the file `make plugin-zip` writes
-(`python3 scripts/plugin_bundle.py zip`). A skills-only plugin needs no privacy, terms or
+**Plugins → Upload ZIP** and upload the file `make plugin-zip` writes. `make plugin-zip` is the submit command: it runs
+`make adapters` and `make plugin` first. The raw `python3 scripts/plugin_bundle.py zip` only
+refuses a drifted `plugin/` and packs whatever `.agents/skills/` holds, so it can pack stale
+skills. A skills-only plugin needs no privacy, terms or
 support URLs, test cases or demo video.

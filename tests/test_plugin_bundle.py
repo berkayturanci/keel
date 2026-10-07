@@ -166,7 +166,23 @@ class TheClaudeBundlePassesTheDirectoryChecks(unittest.TestCase):
         """The directory's security scan compares the README with what the plugin does."""
         readme = (BUNDLE / "README.md").read_text(encoding="utf-8")
 
-        for disclosed in ("`gh`", "`git`", "pushes", "merges", "ANTHROPIC_API_KEY", "pypi.org"):
+        for disclosed in (
+            "`gh`",
+            "`git`",
+            "pushes",
+            "merges",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "api.openai.com",
+            "generativelanguage.googleapis.com",
+            "`jury`",
+            "openai-compatible",
+            "providers.yaml",
+            "KEEL_ALLOW_REMOTE_ENDPOINT",
+            "pypi.org",
+            "pip",
+        ):
             with self.subTest(disclosed=disclosed):
                 self.assertIn(disclosed, readme)
 
@@ -450,8 +466,47 @@ class SyncCheckAndZipOnAFixtureTree(unittest.TestCase):
 
             code, _, err = self._run("zip", "--root", tmp)
 
+            leftovers = (
+                sorted(p.name for p in (root / "dist").glob("*"))
+                if (root / "dist").exists()
+                else []
+            )
+
         self.assertEqual(1, code)
         self.assertIn("two skills write skills/keel-onboard/SKILL.md", err)
+        self.assertEqual([], leftovers, "a refused build must leave no archive behind")
+
+    def test_a_symlink_in_the_bundle_is_drift_even_when_it_points_at_good_bytes(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture_root(root)
+            plugin_bundle.sync(root)
+            copy = root / "plugin" / "LICENSE"
+            copy.unlink()
+            copy.symlink_to(root / "LICENSE")
+            link = root / "plugin" / "dangling.md"
+            link.symlink_to(root / "nowhere.md")
+
+            problems = plugin_bundle.drift(root)
+            plugin_bundle.sync(root)
+            after = plugin_bundle.drift(root)
+
+        self.assertTrue(any(p.startswith("symlink: plugin/LICENSE") for p in problems), problems)
+        self.assertTrue(
+            any(p.startswith("symlink: plugin/dangling.md") for p in problems), problems
+        )
+        self.assertEqual([], after)
+
+    def test_a_symlinked_skill_source_is_refused_by_the_zip(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture_root(root)
+            skill = root / ".agents" / "skills" / "keel-x" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.symlink_to(root / "LICENSE")
+
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                plugin_bundle.zip_entries(root)
 
     def test_a_missing_readme_is_drift(self):
         with TemporaryDirectory() as tmp:
