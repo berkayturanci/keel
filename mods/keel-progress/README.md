@@ -30,11 +30,20 @@ All three are captures of Claude Code running the mod over three demo runs, rend
   - **Click a run's issue** to open the pane on that run. There is no digit hotkey: a passive
     band must not take the first key of a prompt.
   - **Point at a run** for more, at the right end of its row: at the step bar, how far along it
-    is and the next step (`8 of 13 steps · next s8 test`); at a branch, the whole branch and its
-    worktree. The run's name also lights in the side panel. The terminal draws this on its own:
+    is and the next step (`8 of 13 steps · next s8 test`); at a branch, the whole branch, its
+    worktree and who drives the run. The run's name also lights in the side panel. The terminal draws this on its own:
     no hook runs as the pointer moves, and the band never changes height.
   - **`more` / `less`** lists every run, not just the first three, each with a second line
     holding the whole branch name and the worktree path.
+- **Who drives a run** (0.7.0): the host, the agent, the model and the reasoning effort, as
+  `Claude Code · claude · opus · high` (only the parts known; nothing when none is). It is in each
+  side-panel row's dim line, in the open run's card and in the band's branch hover, never as a
+  new chip in the band. It comes from two places: the run's `keel activity` record (`host`,
+  `agent`, `model`, `effort`, written by `keel activity --write --host … --agent … --model …
+  --effort …` and by the ship, pr-loop and implement commands), which wins field by field; and, for a
+  run that has a PR, the PR's `agent:<name>` and `model:<name>` labels, which fill any field the
+  record lacks, read from the same `gh pr list`
+  the mod already runs once a minute (no extra process).
 - **`/keel-progress`:** opens a side panel, and closes it when it is open. It docks beside a
   wide fullscreen transcript and sits above the prompt otherwise, laid out like the agents panel
   from Claude Code's mods video:

@@ -14511,6 +14511,59 @@ class TestActivityCli(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertTrue(err.strip())
 
+    def test_identity_flags_are_recorded_kept_and_host_detected(self):
+        import tempfile
+
+        base = ["--command", "triage", "--run-id", "t-1", "--phase", "classify"]
+        with tempfile.TemporaryDirectory() as d, patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("CLAUDECODE", None)
+            cfg_path = self._cfg()
+            show = ["activity", cfg_path, "--root", d, "--json"]
+
+            def stamp(*extra):
+                return run(["activity", cfg_path, "--root", d, "--write", *base, *extra])
+
+            def rec():
+                return json.loads(run(show)[1])["activity"][0]
+
+            def who(*names):
+                return tuple(rec().get(n) for n in names)
+
+            first = stamp("--agent", "claude", "--model", "opus", "--effort", "high")
+            self.assertEqual(first[0], 0)
+            self.assertEqual(who("agent", "model", "effort"), ("claude", "opus", "high"))
+            self.assertNotIn("host", rec())  # no CLAUDECODE, no --host: unknown stays unset
+            # A stamp naming neither agent nor model keeps them, and may change one field.
+            stamp("--effort", "low")
+            self.assertEqual(who("agent", "model", "effort"), ("claude", "opus", "low"))
+            # A delegate's stamp replaces the whole identity: the old effort is dropped.
+            stamp("--agent", "codex", "--model", "gpt-5")
+            self.assertEqual((rec()["agent"], rec()["model"]), ("codex", "gpt-5"))
+            self.assertNotIn("effort", rec())
+            stamp("--model", "gpt-6")  # naming only the model drops the agent too
+            self.assertNotIn("agent", rec())
+            # The orchestrator re-stamps its own identity afterwards.
+            stamp("--agent", "claude", "--model", "opus", "--effort", "high")
+            self.assertEqual(who("agent", "model", "effort"), ("claude", "opus", "high"))
+            rc, _, _ = run(["activity", cfg_path, "--root", d, "--done", "--run-id", "t-1"])
+            self.assertEqual(rc, 0)
+            self.assertEqual((rec()["status"], rec()["agent"]), ("done", "claude"))
+            # Claude Code's own marker names the host; --host overrides it, and is then kept.
+            os.environ["CLAUDECODE"] = "1"
+            stamp()
+            self.assertEqual(rec()["host"], "Claude Code")
+            stamp("--host", "Codex")
+            self.assertEqual(rec()["host"], "Codex")
+            stamp()  # CLAUDECODE=1 must not overwrite a host the record already has
+            self.assertEqual(rec()["host"], "Codex")
+            # A bad value is refused, not written.
+            rc, _, err = stamp("--agent", "a\nb")
+            self.assertEqual(rc, 1)
+            self.assertIn("control characters", err)
+            rc, _, err = stamp("--agent", " padded")
+            self.assertEqual(rc, 1)
+            self.assertIn("whitespace", err)
+
 
 class TestRenderReport(unittest.TestCase):
     def _payload(self, value):

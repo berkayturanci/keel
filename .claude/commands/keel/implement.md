@@ -13,7 +13,9 @@ go**. This command's phases are: `config` → `fetch` → `branch` → `resolve`
 (e.g. `implement-<issue-or-pr>`):
 
 - **Right now, before the work below**, stamp the first phase:
-  `keel activity .keel/project.yaml --root . --write --command implement --run-id "$RUN" --phase config`
+  `keel activity .keel/project.yaml --root . --write --command implement --run-id "$RUN" --phase config --agent <your own name> --model <your model id> --effort <your reasoning effort, if known>`
+  (the board shows who is driving the run; later stamps that name no `--agent` or `--model` keep these).
+  Where this command hands implement or fix work to another provider with `keel delegate run`, stamp that phase again with `--agent <that provider> --model <its model id>`, so the board shows who did it (a stamp that names an agent or model replaces the whole identity), and **re-stamp your own `--agent`, `--model` and `--effort` as soon as the delegated phase ends**, so later phases do not show the delegate.
 - Re-run with the next `--phase` (`fetch`, …) **as you advance** through the flow.
 - At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
 
@@ -215,4 +217,4 @@ review / CI / merge.
 Fail over to the host agent on delegate quota errors; attribute the **effective**
 agent.
 
-<!-- keel-generated: surface=claude command=implement keel_version=1.30.0 source_sha256=9104c0b91216fc29729a47131bd083ddbc680347e28a9d5b1460fc9fe12a47ca generated_sha256=9104c0b91216fc29729a47131bd083ddbc680347e28a9d5b1460fc9fe12a47ca -->
+<!-- keel-generated: surface=claude command=implement keel_version=1.30.0 source_sha256=062ae4e82997f800a5d0a3668e917f7901c897174f11e41b82a93411e2549278 generated_sha256=062ae4e82997f800a5d0a3668e917f7901c897174f11e41b82a93411e2549278 -->
