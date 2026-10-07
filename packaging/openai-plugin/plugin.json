@@ -1,0 +1,39 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "keel",
+  "version": "1.30.0",
+  "description": "Project-neutral, multi-agent workflow core: a fixed backbone of steps that drives an issue from backlog to done, customised per project via config + add-only Lego extensions.",
+  "author": {
+    "name": "Berkay Turancı",
+    "url": "https://github.com/berkayturanci"
+  },
+  "homepage": "https://keel-ship.dev/",
+  "repository": "https://github.com/berkayturanci/keel",
+  "license": "Apache-2.0",
+  "keywords": [
+    "workflow",
+    "github",
+    "automation",
+    "multi-agent",
+    "codex"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "keel",
+        "shortDescription": "GitHub issue to merged PR",
+        "longDescription": "keel drives a GitHub issue end-to-end through a fixed backbone (select, branch, implement, CI, review, test, merge, capture, close) so a coding agent's work reaches a real done, not just a first draft. Project-neutral: every project-specific value is read from .keel/project.yaml via the keel CLI, which must be installed separately (pipx install keel-workflow). The skills drive git and the GitHub CLI in your repository: they create branches and worktrees, push, open, review and merge pull requests, and comment on and label issues.",
+        "developerName": "Berkay Turancı",
+        "category": "Developer Tools",
+        "capabilities": [],
+        "defaultPrompt": [
+          "Set up keel in this repository",
+          "Ship issue #1 with keel, dry run first",
+          "Give me keel's morning briefing for this repository"
+        ],
+        "logo": "./assets/logo.svg",
+        "composerIcon": "./assets/logo.svg"
+      }
+    }
+  }
+}

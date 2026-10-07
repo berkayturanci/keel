@@ -9,6 +9,18 @@ All notable changes to keel are documented here. The format follows
 ### Added
 - **The activity record says who is driving a run; keel-progress 0.7.0 shows it** (#1482). `keel activity --write` takes `--host`, `--agent`, `--model` and `--effort` (short single-line strings, additive to `keel.activity.v1`, kept by later stamps unless they name a new `--agent` or `--model`, which replaces the whole identity; `--host` defaults to `Claude Code` when `CLAUDECODE=1`). The ship, pr-loop and implement commands pass their own agent, model and effort on the first stamp, and record a delegate's provider and model for the phase it did. keel-progress shows `Claude Code · claude · opus · high` in the panel row, the open run's card and the band's branch hover; the PR's `agent:` and `model:` labels, read from the `gh pr list` it already runs, fill any field the activity record lacks (the record wins field by field).
 - **keel-progress 0.6.0: a side panel and hover details** (#1477). Modelled on the agents panel from Claude Code's mods video, as jury-progress 0.6.0 does. `/keel-progress` now toggles a side panel (docked beside a wide fullscreen transcript, above the prompt otherwise): a header (`✦ Keel in this session` on the left, `◌ N running · M need you` on the right), then NEEDS YOU and RUNNING sections with one row per run (a colored dot, branch and issue as a button, the step and age or why it is held on the right, and under it how far along it is, the PR and the worktree). The run you click opens in full under its row; with none picked, the first one listed (one that needs you first) opens only when it fits, so the header stays in sight, and pressing the open run closes it. In the band, pointing at the step bar shows how far along the run is and the next step, and pointing at a branch its whole name and worktree, at the row's right end in inverse text; the run's name lights in the panel and the band together. The terminal draws the hover, so no hook runs as the pointer moves.
+- **Plugin-directory bundles for Claude and OpenAI.** The marketplace plugin is the whole
+  repository (`"source": "./"`): over 500 files, dozens of binaries and several files past
+  256 KiB, which both directories hold for review. `plugin/` is now a slim Claude plugin
+  directory bundle — the root manifest, the seventeen `commands/`, `skills/keel-onboard/`,
+  `LICENSE`, a logo and a README that discloses what keel runs, sends and fetches — built
+  from the root sources by `scripts/plugin_bundle.py` (`sync`, `check`, `zip`); `make plugin`
+  re-syncs it. `make plugin-zip` writes a deterministic `dist/keel-plugin-<version>.zip` for
+  the OpenAI (ChatGPT + Codex) directory: the portable `packaging/openai-plugin/plugin.json`
+  plus every keel skill, no commands and no hooks. Both new manifests are release surfaces,
+  and `tests/test_plugin_bundle.py` pins drift, the directories' file limits, frontmatter,
+  listing-field lengths, the logo and the ZIP's contents. Existing installs are unchanged.
+  How to submit: `docs/keel/plugin.md`.
 
 ### Fixed
 - **The keel-progress docs test pins the read rules to the mod, and parses every tag** (#1484). `test_activity_is_read_from_files` and `test_newest_live_record_wins` only compared the docs page with `website/content.js`; they now also read `hooks/register.js` and `hooks/view.js`, so dropping the activity-file reads, letting a done activity record through, or filtering by liveness before the newest copy of a run is chosen fails them. The attribute-parsing test checks every opening tag in `website/content.js`, not a fixed list (it missed `pre` and `i`), and the band-hover figure's alt reads "a run's branch" like the site and the page.

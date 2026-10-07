@@ -105,9 +105,10 @@ at all. The sibling pushes as a fast path and keeps the pull as a fallback. Both
 work; this design has one less secret, that one has less latency.
 
 `make release-bump` regenerates 60-odd surfaces that carry a `keel_version`
-marker — `commands/`, `.claude/commands/keel/`, `.agents/skills/keel-*`, the three
-plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`), `keel-ship.yml`,
-the website. Hand-editing the version is how
+marker — `commands/`, `.claude/commands/keel/`, `.agents/skills/keel-*`, the five
+plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`, and the
+directory-submission bundles' `plugin/.claude-plugin/` and `packaging/openai-plugin/`),
+`keel-ship.yml`, the website. Hand-editing the version is how
 those go stale; the script is the only supported route. The formula is no longer
 among them, and `scripts/release_surfaces.py` says why at the point where it used
 to be listed.

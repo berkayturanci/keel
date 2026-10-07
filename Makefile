@@ -8,7 +8,10 @@
 #   make adapters  (re)install keel's own /keel:* adapters — both surfaces
 #                  (.claude/commands/keel/ + the shared .agents/skills/keel-* skill set)
 #   make plugin    regenerate the committed Claude Code plugin command files (commands/*.md)
-#                  from src/keel/adapters/commands/ — the drift test locks these byte-for-byte
+#                  from src/keel/adapters/commands/ — the drift test locks these byte-for-byte —
+#                  and re-sync the directory-submission bundle plugin/ from them
+#   make plugin-zip
+#                  build dist/keel-plugin-<version>.zip, the OpenAI plugin directory upload
 #   make site-params
 #                  regenerate website/params.js (the site's argument hints + flag chips) from
 #                  the same adapter frontmatter — also locked byte-for-byte by a drift test
@@ -43,7 +46,7 @@ PY = $(error no usable Python — see the find_python message above, or set PY=/
 endif
 endif
 
-.PHONY: test lint coverage validate site site-params adapters plugin release-check release-bump doctor-python clean
+.PHONY: test lint coverage validate site site-params adapters plugin plugin-zip release-check release-bump doctor-python clean
 
 test:
 	PYTHONPATH=src $(PY) -m unittest discover -s tests -v
@@ -71,6 +74,12 @@ adapters:
 
 plugin:
 	PYTHONPATH=src $(PY) -m keel install-adapter plugin --root . --force
+	$(PY) scripts/plugin_bundle.py sync
+
+# The ZIP carries .agents/skills/keel-*, which only `adapters` regenerates and the
+# bundle drift check cannot see; rebuild both before zipping.
+plugin-zip: adapters plugin
+	$(PY) scripts/plugin_bundle.py zip
 
 site-params:
 	PYTHONPATH=src $(PY) -m keel install-adapter site --root . --force

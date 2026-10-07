@@ -1,0 +1,288 @@
+---
+description: Multi-reviewer review→fix cycle over one or more open PRs — parallel reviewers, structured findings, inline-vs-summary posting, capped fix rounds (s7+s9, standalone). Does not merge.
+argument-hint: "[pr number ...] [--review-delegate <...>] [--review-comments <inline|summary>] [--dry-run]"
+allowed-tools: Bash(keel:*), Bash(git:*), Bash(gh:*), Bash(jury:*), Read, Edit, Agent
+---
+
+# /keel:review-cycle
+
+## Live progress — stamp this run (required)
+
+So this run shows live on `keel-visual`'s board, record it with `keel activity` **as you
+go**. This command's phases are: `config` → `validate` → `loop` → `reviewers` → `post` → `fixloop` → `report`. Pick one stable `--run-id` for the whole run
+(e.g. `review-cycle-<issue-or-pr>`):
+
+- **Right now, before the work below**, stamp the first phase:
+  `keel activity .keel/project.yaml --root . --write --command review-cycle --run-id "$RUN" --phase config`
+- Re-run with the next `--phase` (`validate`, …) **as you advance** through the flow.
+- At the end: `keel activity .keel/project.yaml --root . --run-id "$RUN" --done`
+
+Treat this like any other contractual step — do not skip it. The one allowed exception is a
+core too old to ship `keel activity` (keel < 1.6.0): then skip it silently and never block
+the command.
+
+## Command step evidence
+
+Every numbered step in this command is contractual. Complete the step, record the
+evidence it asks for, or explicitly mark it `N/A — <reason>` before moving on. If a step
+has an external side effect such as a GitHub comment, issue, review, report, branch, or
+PR, the side effect must be posted or written through the selected transport and cited in
+the final summary. Never silently skip a step because the runtime, agent, or prompt feels
+obvious.
+
+## Artifact hygiene — never scribble in the consumer's checkout (required)
+
+The repo root is the consumer's, not your scratchpad. Any staging file you need — a PR diff
+(`gh pr diff > …`), a review/comment dump, draft prose, a one-off patch — goes in the
+keel-owned, gitignored scratch dir, **never** the repo root:
+`SCRATCH="$(keel scratch-dir --root .)"` (= `.keel/scratch`), then write under `$SCRATCH`.
+Prefer piping over temp files; honour an explicit operator `--output` path verbatim. Never
+leave `pr_<n>_review.md`, `pr<n>.diff`, `issue.md`, or similar at the root.
+
+The standalone review→fix loop (`s7` + `s9`) over one or more existing PRs. For each PR, a
+set of reviewers reviews the same diff **in parallel**, findings are posted per the chosen
+posting mode, blocking findings drive a capped fix loop, and the loop exits clean or at the
+budget. **Project-neutral** — every project specific (`base_branch`, `build_gate_cmd`,
+`lint_cmd`, `ci_workflows`, `tier3_globs`, `team`) is read from
+`.keel/project.yaml` via the `keel` CLI. Never inline a branch name, build command, CI
+workflow name, or agent here.
+
+This command **does not merge**, never opens/closes PRs, and never pushes outside its own
+fix loop on the PR's own branch. Hand a clean PR back to `/keel:ship` (or `/keel:pr-loop`)
+for the windowed, locked merge.
+
+## Step 0 — Resolve config + parse args
+
+```bash
+keel validate .keel/project.yaml --root .
+keel plan     .keel/project.yaml --root .    # read tier3_globs, ci_workflows, gates
+keel plan     .keel/project.yaml --root . --command review-cycle --live --json
+```
+
+The live plan is the operator-consent preflight. Before posting reviews/comments,
+committing/pushing fixes, using secrets, publishing, or calling production-adjacent systems,
+parse `contract.operator_consent`; if `requires_operator_consent` is true, STOP and ask the
+operator to rerun with the required `--approve-scope` values. Pass
+`operator_consent.delegated_agent_scope` into every reviewer/fixer brief. Delegates may use
+only `approved_mutation_scopes`; scope expansion blocks or escalates.
+
+Argument grammar: zero or more PR numbers (positive integers, space-separated). Reject any
+non-integer / negative / zero argument and comma-separated lists. With **no PR argument**,
+default to the open PR for the current branch. State the parsed PR list in your first
+user-facing line.
+
+Resolve GitHub access through the shared runtime contract (`keel capabilities --json` →
+`github_transport`). Use the selected transport for PR reads, comments, reviews, file
+lists, and check data. If an operation is listed in `github_transport.degraded`, surface
+that limitation and avoid hidden best-effort behavior.
+
+## Step 1 — Validate PRs
+
+For each PR number, confirm it exists and is open through the selected GitHub transport,
+reading `number`, `state`, `isDraft`, `headRefName`, `baseRefName`, `title`, and `url`.
+Drop already-merged/closed PRs — warn and list them under "Skipped" in the final report.
+Continue with the remaining open or draft PRs. If the selected transport returns a network,
+auth, or rate-limit error, stop and surface the error; the final report still covers what
+completed.
+
+## Step 2 — Per-PR loop (sequential across PRs)
+
+Process PRs **sequentially** — only one PR in active review at a time, so the timeline stays
+readable and rate-limit pressure is bounded. Within a single PR the reviewer fan-out at
+Step 3 is genuinely parallel. State the current PR and a one-line title as you start each
+one. Do not advance to the next PR until Steps 3–6 complete (or the PR is marked failed and
+skipped per Stop conditions).
+
+## Step 3 — Run the reviewers (parallel, single Agent-tool message)
+
+Resolve the **reviewer count** and risk tier from `keel ship .keel/project.yaml --root .
+--pr <P>` (uses `tier3_globs`). Spawn that many reviewers (host agent, or the agent from
+`--review-delegate`) **in a single Agent-tool message** so they run concurrently, plus any
+`reviewers` Lego extensions. Split focus across reviewers (e.g. code-quality &
+architecture; bugs & security; tests & regression) — the exact split scales with the
+reviewer count; reviewers draw their full rubric (severity vocabulary, return format,
+PR-head-SHA verification) from the canonical reviewer rubric, not from inline heuristics
+here.
+
+A non-host reviewer is dispatched with `keel delegate run --role review` — the one
+executor for every transport, which picks the vendor's read-only invocation for that role
+and returns the JSON contract ship.md s4 documents (`text` is the verdict, `attribution`
+is what you record per reviewer, `error_code` is what you branch on). Do not hand-build
+the invocation, and do not read a vendor's flags out of this file. Check
+**`read_only_backed`** before trusting a reviewer: `read_only` is the role you asked for,
+that field is whether anything enforces it, and for a configured profile with no
+`review_args` the answer is no. For a panel that will outlive your turn, start each
+reviewer with `--timeout <s> --detach --run-id <id>` and collect them with
+`keel delegate wait <id> --timeout <s>`: a sleep-and-poll loop cannot survive the turn
+ending, and the state file under `.keel/state/delegate/` can.
+
+Each reviewer prompt MUST carry:
+
+- The **reviewer stance** from the canonical rubric (ship.md s7): refute rather than
+  approve, a finding you cannot demonstrate is not a finding, finish the trace to where the
+  defect lands, and "I checked X, Y and Z and found nothing" is a complete review. Carry all
+  four — the stance without its counterweights invites manufactured findings.
+- The project's own **failure family**, verbatim:
+  `review_merge_contract.reviewers.project_additions` (from `policy_pack.review.additions`),
+  plus `required_sections` for what the review body must contain. The stance is
+  project-neutral; these are the part that names what *this* codebase keeps getting wrong,
+  and they are what makes a reviewer finish the trace rather than stop at the symptom.
+  Absent for most projects — pass nothing then, never invent entries.
+- A **fresh codename** per reviewer (unique per PR and per cycle), used as the audit-trail
+  identifier on its findings.
+- The **no-cross-reading** rule: a reviewer must be fully independent and must NOT read any
+  other reviewer's output. When a reviewer reads PR context, it skips every comment whose
+  body carries this command's codename prefix — that prefix covers both the current cycle's
+  sibling reviewers and every prior cycle on the same PR. The shared codename prefix is the
+  canonical isolation pin; do not rely on heading-text matching, since prior summaries reuse
+  the same heading format.
+- The **posting contract** for the chosen `--review-comments` mode (see Step 4) — stated
+  explicitly so a reviewer never silently inherits a different default.
+- **PR-head-SHA verification**: the reviewer confirms it reviewed the current PR head SHA.
+
+Each reviewer returns the **same findings** to the orchestrator in a machine-readable block
+(codename · focus · verdict · per-severity counts `blocker/major/minor/nit` · clean areas ·
+`severity | file:line | description | suggested fix` rows) so the orchestrator can build the
+consolidated summary without re-parsing GitHub.
+
+### Severity mapping
+
+critical/blocker ≡ must-fix; SUGGESTION ≡ should-fix splits into **major** (not fixing it
+meaningfully degrades maintainability / robustness / test confidence) vs **minor**
+(otherwise); **nit** is advisory. A reviewer commits to one classification per finding —
+the comment table and the returned counts use the same split, no parallel taxonomies.
+
+## Step 4 — Post findings (per `--review-comments`, inline-hybrid default)
+
+- **inline** (default, "inline-hybrid"): anchor every **critical/major** finding as an
+  inline comment on its `file:line`, plus the single rendered consolidated comment from
+  Step 4b (which carries each reviewer's own section). critical/major = **block**;
+  minor = **suggest**; nit = **advisory**.
+- **summary**: skip the inline anchors; every reviewer's findings land in the one rendered
+  consolidated comment from Step 4b.
+
+In both modes the per-reviewer finding tables and the summary are produced by the
+`keel review-cycle-summary` renderer (Step 4b) and posted verbatim — never hand-write the
+severity tables or the histogram.
+
+**Who posts** is a project policy knob (project-specific; stays in the project):
+
+- By default keel uses **orchestrator-only-writes** — reviewers return findings, the
+  orchestrator posts them (one timeline entry per reviewer, then the consolidated summary).
+- A project MAY opt into **reviewer-posts-directly** via a `reviewers` Lego / config flag,
+  where each reviewer posts its own findings comment directly and the orchestrator posts
+  only the consolidated summary. When this mode is active it MUST be stated explicitly in
+  every reviewer prompt; a reviewer that silently inherits orchestrator-only-writes is a
+  contract violation — surface it in the PR's failed-reviewer note.
+
+Also run `keel run-gates .keel/project.yaml --root .` (build / lint / **jury** / tester) so
+gate findings join the reviewer findings on the same severity scale.
+
+## Step 4b — Consolidated summary
+
+After all reviewers finish, collect each reviewer's returned block into **one** structured
+findings array — one object per reviewer — and write it to a file (e.g. `cycle.json`):
+
+```json
+[
+  { "codename": "<reviewer codename>", "focus": "<focus>",
+    "verdict": "LGTM | LGTM-with-suggestions | needs fixes",
+    "findings": [
+      { "severity": "blocker|major|minor|nit", "location": "file:line",
+        "description": "...", "suggested_fix": "..." }
+    ],
+    "clean_areas": ["..."] }
+]
+```
+
+Do **not** hand-write the per-reviewer tables, the severity histogram, or the merge
+recommendation. The renderer is the single source of truth for the layout; render the whole
+comment deterministically and post it **verbatim**:
+
+```bash
+keel review-cycle-summary --findings cycle.json --head-sha "$SHA" \
+  --run-id "$RUN:cycle-summary" > summary.md
+keel post-comment .keel/project.yaml --root . --target pr:<PR> \
+  --artifact review-cycle-summary --body-file summary.md --run-id "$RUN:cycle-summary"
+```
+
+The rendered comment carries one section per reviewer (codename · focus · verdict · a
+`Severity | File:Line | Description | Suggested Fix` table) followed by the **Consolidated
+Summary**: a severity histogram (column-wise sum of every reviewer's findings; `critical`
+folds into `blocker`), aggregated clean areas, per-reviewer verdicts, and a merge
+recommendation the renderer derives from the histogram — not the verdict strings:
+
+| Histogram condition | Recommendation |
+|---|---|
+| any verdict not `LGTM*` OR `blocker > 0` | ❌ block |
+| `blocker == 0` AND `major + minor > 0` | ⚠️ request changes |
+| `blocker + major + minor == 0` AND `nit > 0` | ✅ approve (cosmetic nits) |
+| `blocker + major + minor + nit == 0` | ✅ approve |
+
+So a reviewer returning LGTM while still emitting a `minor` finding downgrades to ⚠️ via the
+count clause; a non-zero `major + minor` is never an approve. This command is review-only, so
+resolution/deferral is the operator's follow-up. Because `--run-id` is embedded in the
+rendered body, a re-post **edits the existing summary in place** instead of appending a
+duplicate.
+
+Then apply the project's "review-cycle-complete" marker (label) **only after** the summary
+is posted (project-specific label name; stays in the project) — never pre-apply it before
+reviewers finish.
+
+## Step 5 — Fix loop (s9, capped)
+
+While **blocking findings** (critical/major) remain and the **round budget** (≤3 rounds by
+default) is not spent: fix the smallest change first → re-run the relevant gates
+(`keel run-gates`) → self-review the diff against `base_branch` → push → re-review (Step 3).
+Stop when the diff is clean or the budget is exhausted; report the verdict either way. (If
+this command is being driven in pure review-only mode for read-only PRs, skip the fix loop
+and leave resolution to the operator.)
+
+## Step 6 — Final report
+
+After the PR queue drains, print a terse report: PRs requested / reviewed / skipped
+(not open) / failed (with reason), and per-PR `recommendation` + `blocker/major/minor/nit`
+counts, with links to the consolidated summary comments where practical.
+
+## Stop conditions
+
+- A reviewer fails to return its block AND fails to post (timeout / agent error) ⇒ mark
+  THIS PR failed, skip its summary, continue with the next PR. Never abort the whole run.
+- Reviewer posted but did not return its block (crash after the post) ⇒ re-fetch its comment
+  and parse it with the same severity-table layout; success ⇒ treat as a successful
+  reviewer, else failed.
+- Reviewer returned its block but the post failed (rate limit / transient 5xx) ⇒ the
+  orchestrator re-attempts the post from the returned block, up to 3 retries with
+  exponential backoff (2s/4s/8s); still failing ⇒ failed reviewer.
+- Partial reviewer failure (some succeed) ⇒ post the consolidated summary from the survivors
+  with a clear "Reviewer N (focus …) failed: <reason>; histogram may be incomplete" note.
+  Apply the completion marker only if a majority of reviewers succeeded; otherwise skip it
+  and mark the PR failed.
+- `gh` reports `403: API rate limit exceeded` ⇒ stop processing further PRs; list the
+  remaining ones under "Not started (rate-limited)" so the user can re-run later.
+- A PR is found merged/closed on the live re-check ⇒ skip it (already filtered at Step 1).
+- User cancels.
+
+Always print the final report on exit, even if partial.
+
+## Invariants (never overridable)
+
+- **Read-only w.r.t. git** outside its own fix loop on the PR branch: never `git checkout`
+  another branch, `git merge`, or `git rebase` as a side effect.
+- **Read-only w.r.t. PR state**: never `gh pr merge`, `gh pr close`, `gh pr ready`, or formal
+  `gh pr review --approve` / `--request-changes`. Reviewers post regular comments only — the
+  human owns the merge gate.
+- **No-cross-reading** + per-reviewer codenames (the codename-prefix isolation pin).
+- The completion marker is applied **only after** the consolidated summary posts; never
+  pre-applied.
+- Concurrent runs on the same PR are unsupported (no orchestrator-side per-PR mutex); the
+  operator serialises.
+- Fail-soft per PR (one PR's failure never aborts the queue); deterministic ordering.
+
+## `--dry-run`
+
+Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the reviewer fan-out,
+but redirect every state-changing `gh` write (comments, label) to a logged
+`DRY-RUN: <action>` line.
+
+<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.30.0 source_sha256=7fefc25d4921ad741fdb56d372c2255263496c6b4d4178ba521d16ec23ec7d2c generated_sha256=7fefc25d4921ad741fdb56d372c2255263496c6b4d4178ba521d16ec23ec7d2c -->

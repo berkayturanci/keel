@@ -23,7 +23,7 @@ import tempfile
 import tomllib
 import unittest
 import unittest.mock
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from keel import cli, evidence, runtime, ship
 from keel import config as cfg
@@ -540,7 +540,9 @@ class TheReleasePagesNameTheReleaseSurfaces(unittest.TestCase):
     def test_the_bump_list_names_every_registered_surface(self):
         block = _between(_page("release.md"), "It updates:", "Historical version mentions")
         for path in sorted({surface.path for surface in release_surfaces.RELEASE_SURFACES}):
-            candidates = (path, Path(path).name, f"{Path(path).parent}/")
+            # Surface paths are POSIX strings; `Path` would spell a nested parent with
+            # backslashes on Windows and miss the docs' `plugin/.claude-plugin/`.
+            candidates = (path, PurePosixPath(path).name, f"{PurePosixPath(path).parent}/")
             with self.subTest(surface=path):
                 self.assertTrue(any(f"`{c}" in block for c in candidates), path)
 
@@ -555,7 +557,7 @@ class TheReleasePagesNameTheReleaseSurfaces(unittest.TestCase):
         self.assertTrue(claim in text, f"homebrew-release-chain.md does not say {claim!r}")
         for manifest in manifests:
             with self.subTest(manifest=manifest):
-                self.assertIn(f"`{Path(manifest).parent}/`", text)
+                self.assertIn(f"`{PurePosixPath(manifest).parent}/`", text)
 
     def test_no_release_page_cuts_a_lightweight_tag(self):
         release = _page("release.md")

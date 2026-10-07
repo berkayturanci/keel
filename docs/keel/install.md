@@ -219,6 +219,8 @@ them.
 ## See also
 
 - [`docs/keel/plugin.md`](plugin.md) — what the plugin contains and how it is generated.
+- [Submitting to the plugin directories](plugin.md#submitting-to-the-plugin-directories) —
+  the slim `plugin/` bundle and the OpenAI ZIP built from it.
 - [`docs/keel/editors.md`](editors.md) — the **VS Code / Cursor editor extension**,
   which is a different product from the agent plugin this page is about: it installs
   with `code --install-extension` and does not give you the skills or the
