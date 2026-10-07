@@ -582,28 +582,58 @@ class TestActionReferences(unittest.TestCase):
     def test_the_release_pr_own_pin_is_in_flight_until_it_is_published(self):
         # Hermetic: the decision, not the network. The release PR's bump rewrites the
         # pin to v<this version>, whose tag can only be pushed after that PR merges
-        # (#1491). That one pin is let through while PyPI has no such version, and
-        # held to "the tag must exist" once it does.
+        # (#1493). That one pin is let through while its tag is absent and PyPI has no
+        # such version, and held to "the tag must exist" otherwise.
         own = f"v{__version__}"
+        tag_url = f"https://api.github.com/repos/berkayturanci/keel/git/ref/tags/{own}"
+        pypi_url = f"https://pypi.org/pypi/keel-workflow/{__version__}/json"
         cases = {
             # (repo, ref, tag exists, on PyPI) -> in flight
             ("berkayturanci/keel", own, False, False): True,
             ("berkayturanci/keel", own, False, True): False,
+            ("berkayturanci/keel", own, True, False): False,
             ("berkayturanci/keel", own, True, True): False,
             ("berkayturanci/keel", "v1.0.0", False, False): False,
             ("berkayturanci/other", own, False, False): False,
         }
         for (repo, ref, tag, pypi), expected in cases.items():
             with self.subTest(repo=repo, ref=ref, tag=tag, pypi=pypi):
-                answers = {"tag": tag, "pypi": pypi}
+                # Only the two exact URLs answer, so asking anything else (the
+                # project-wide PyPI page, a commits/ path) fails the case.
+                answers = {tag_url: tag, pypi_url: pypi}
 
                 def fake(url, *, headers=None, answers=answers):
-                    return answers["pypi" if "pypi.org" in url else "tag"]
+                    self.assertIn(url, answers, f"unexpected probe {url}")
+                    return answers[url]
 
                 with unittest.mock.patch.object(
                     sys.modules[__name__], "_reachable", side_effect=fake
                 ):
                     self.assertIs(_release_in_flight(repo, ref), expected)
+
+    def test_the_pin_check_lets_an_in_flight_pin_through_and_no_other(self):
+        # The call site: the waiver in test_first_party_actions_are_pinned_to_a_tag_that_exists
+        # must skip the tag lookup for an in-flight pin, and only for one.
+        module = sys.modules[__name__]
+        pin = {("berkayturanci/keel", f"v{__version__}")}
+        for in_flight, failures in ((True, 0), (False, 1)):
+            with self.subTest(in_flight=in_flight):
+                outcome = unittest.TestResult()
+                with (
+                    unittest.mock.patch.object(module, "ONLINE", True),
+                    unittest.mock.patch.object(TestActionReferences, "_refs", return_value=pin),
+                    unittest.mock.patch.object(
+                        module, "_github_resolves", side_effect=lambda repo, ref=None: ref is None
+                    ),
+                    unittest.mock.patch.object(
+                        module, "_release_in_flight", return_value=in_flight
+                    ),
+                ):
+                    TestActionReferences(
+                        "test_first_party_actions_are_pinned_to_a_tag_that_exists"
+                    ).run(outcome)
+                self.assertEqual(outcome.errors, [])
+                self.assertEqual(len(outcome.failures), failures, outcome.failures)
 
 
 class TestHomebrewPromise(unittest.TestCase):
