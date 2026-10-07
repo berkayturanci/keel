@@ -13,6 +13,7 @@ runs on itself, and the keel-visual companion.
 - [The backbone](#the-backbone)
 - [Dogfooding](#dogfooding)
 - [keel-visual](#keel-visual)
+- [keel-progress](#keel-progress)
 
 ## From "I opened a PR" to merged
 
@@ -247,3 +248,11 @@ a closed-out run; runs whose `--run-id` ends in their issue/PR (`ship-585`) are 
 Depends on this core (`keel-workflow >= 1.15.0`); the core never depends on it (it only
 reads records, and probes `shutil.which("jury")` — never imports ai-jury). See
 [`keel-visual/README.md`](../../keel-visual/README.md).
+
+## keel-progress
+
+[`keel-progress`](keel-progress.md) is an **optional Claude Code mod** that shows your
+session's live keel runs inside Claude Code: a band above the prompt with each run's
+branch, step bar and PR, and a `/keel-progress` side panel with every step. It only reads
+`keel status --json` and the activity records. Install it with
+`/plugin install keel-progress@keel`; it needs Claude Code 2.1.287 or newer.
