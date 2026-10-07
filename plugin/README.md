@@ -48,9 +48,10 @@ agent runs these programs on your machine, with your credentials:
   version unless you pass `--offline`.
 - **`git`** — creates branches and worktrees, commits, **fetches** from and **pushes**
   branches to your `origin` remote.
-- **`pip` / `pipx`** — only the `keel-onboard` skill, and only when the `keel` CLI is
-  missing: it runs `pip install keel-workflow`, which contacts PyPI and your configured
-  package index.
+- **`pip` / `pipx`** — only the `keel-onboard` skill: when the `keel` CLI is missing it
+  runs `pip install keel-workflow`, and to upgrade an installed one it runs
+  `pipx upgrade keel-workflow` or `python -m pip install --upgrade keel-workflow`. Each
+  contacts PyPI (or your configured package index).
 - **`gh`** (GitHub CLI), or an authenticated GitHub MCP server when `gh` is not
   available — reads issues, pull requests and CI runs, and **writes** to GitHub as you:
   opens and edits pull requests, posts review and status comments, adds and removes

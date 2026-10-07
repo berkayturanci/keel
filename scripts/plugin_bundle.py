@@ -84,9 +84,20 @@ def _files_under(root: Path, rel_dir: str, *, skip_os_junk: bool = True) -> list
     )
 
 
+def _symlink_on_path(root: Path, source: str) -> str | None:
+    """The first component of ``source`` (a file or any directory above it) that is a symlink."""
+    current = root
+    for part in Path(source).parts:
+        current = current / part
+        if current.is_symlink():
+            return current.relative_to(root).as_posix()
+    return None
+
+
 def _refuse_symlink(root: Path, source: str) -> None:
-    if (root / source).is_symlink():
-        raise ValueError(f"{source} is a symlink; the ZIP packs regular files only")
+    link = _symlink_on_path(root, source)
+    if link is not None:
+        raise ValueError(f"{link} is a symlink; bundles pack regular files only")
 
 
 def bundle_copies(root: Path) -> dict[str, str]:
@@ -109,6 +120,9 @@ def drift(root: Path) -> list[str]:
     expected = bundle_copies(root)
     for dest, source in expected.items():
         dest_path = root / dest
+        link = _symlink_on_path(root, source)
+        if link is not None:
+            problems.append(f"symlink: {link} (source of {dest}; bundles pack regular files only)")
         if dest_path.is_symlink():
             problems.append(f"symlink: {dest} (a bundle holds regular files only)")
         elif not dest_path.is_file():
@@ -132,6 +146,8 @@ def sync(root: Path) -> tuple[list[str], list[str]]:
     written: list[str] = []
     removed: list[str] = []
     expected = bundle_copies(root)
+    for source in expected.values():
+        _refuse_symlink(root, source)
     for dest, source in expected.items():
         dest_path = root / dest
         data = (root / source).read_bytes()
@@ -164,10 +180,13 @@ def zip_entries(root: Path) -> dict[str, str]:
         "LICENSE": "LICENSE",
         "assets/logo.svg": "website/favicon.svg",
     }
+    for source in entries.values():
+        _refuse_symlink(root, source)
     for source in _files_under(root, "skills"):
         _refuse_symlink(root, source)
         entries[source] = source
     for skill_dir in sorted((root / AGENT_SKILLS_DIR).glob(AGENT_SKILLS_GLOB)):
+        _refuse_symlink(root, skill_dir.relative_to(root).as_posix())
         for source in _files_under(root, skill_dir.relative_to(root).as_posix()):
             _refuse_symlink(root, source)
             archive = "skills/" + source[len(AGENT_SKILLS_DIR) + 1 :]

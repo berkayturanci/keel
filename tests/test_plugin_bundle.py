@@ -182,6 +182,8 @@ class TheClaudeBundlePassesTheDirectoryChecks(unittest.TestCase):
             "KEEL_ALLOW_REMOTE_ENDPOINT",
             "pypi.org",
             "pip",
+            "pipx upgrade keel-workflow",
+            "pip install --upgrade keel-workflow",
         ):
             with self.subTest(disclosed=disclosed):
                 self.assertIn(disclosed, readme)
@@ -496,6 +498,59 @@ class SyncCheckAndZipOnAFixtureTree(unittest.TestCase):
             any(p.startswith("symlink: plugin/dangling.md") for p in problems), problems
         )
         self.assertEqual([], after)
+
+    def test_a_symlinked_skill_directory_is_refused_by_the_zip(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture_root(root)
+            elsewhere = root / "elsewhere"
+            elsewhere.mkdir()
+            (elsewhere / "SKILL.md").write_text("---\nname: keel-x\ndescription: z\n---\n", "utf-8")
+            (root / ".agents" / "skills").mkdir(parents=True, exist_ok=True)
+            (root / ".agents" / "skills" / "keel-x").symlink_to(elsewhere, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "keel-x is a symlink"):
+                plugin_bundle.zip_entries(root)
+
+            # An empty target has no file to trip over: the directory itself is refused.
+            (root / ".agents" / "skills" / "keel-x").unlink()
+            (root / "empty").mkdir()
+            (root / ".agents" / "skills" / "keel-x").symlink_to(
+                root / "empty", target_is_directory=True
+            )
+            with self.assertRaisesRegex(ValueError, "keel-x is a symlink"):
+                plugin_bundle.zip_entries(root)
+
+    def test_each_fixed_zip_member_must_be_a_regular_file(self):
+        for member in (
+            "website/favicon.svg",
+            "LICENSE",
+            "plugin/README.md",
+            "packaging/openai-plugin/plugin.json",
+        ):
+            with self.subTest(member=member), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _fixture_root(root)
+                real = root / (member + ".real")
+                (root / member).rename(real)
+                (root / member).symlink_to(real)
+
+                with self.assertRaisesRegex(ValueError, "is a symlink"):
+                    plugin_bundle.zip_entries(root)
+
+    def test_sync_refuses_a_symlinked_source_and_check_names_it(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _fixture_root(root)
+            real = root / "LICENSE.real"
+            (root / "LICENSE").rename(real)
+            (root / "LICENSE").symlink_to(real)
+
+            with self.assertRaisesRegex(ValueError, "LICENSE is a symlink"):
+                plugin_bundle.sync(root)
+            problems = plugin_bundle.drift(root)
+
+        self.assertTrue(any(p.startswith("symlink: LICENSE") for p in problems), problems)
 
     def test_a_symlinked_skill_source_is_refused_by_the_zip(self):
         with TemporaryDirectory() as tmp:
