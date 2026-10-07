@@ -14512,7 +14512,6 @@ class TestActivityCli(unittest.TestCase):
             self.assertTrue(err.strip())
 
     def test_identity_flags_are_recorded_kept_and_host_detected(self):
-        import json
         import tempfile
 
         base = ["--command", "triage", "--run-id", "t-1", "--phase", "classify"]
