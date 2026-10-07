@@ -8,7 +8,7 @@
 //   - a `/keel-progress` side panel: every live run as a row, the one picked in full
 // It never writes to a checkpoint or ledger and never drives a run.
 
-import { FALLBACK_STEPS, activityRuns, ago, cells, checkpointDetails, fitCells, githubBase, isLive, latestPerRun, paneLines, parseStatus, parseWorktrees, safeHref, stepName, stepStates } from './view.js'
+import { FALLBACK_STEPS, activityRuns, ago, cells, checkpointDetails, fitCells, githubBase, isLive, latestPerRun, paneLines, parseStatus, parseWorktrees, safeHref, stepName, stepStates, whoFromLabels, whoText } from './view.js'
 
 // Relative paths resolve against the session's working directory.
 const PROJECT = '.keel/project.yaml'
@@ -90,6 +90,7 @@ let superseded = 0 // stale copies of a run another worktree holds a newer check
 let closedPr = 0 // runs hidden because their pull request is no longer open
 let openPrs = null // Set of open PR numbers, or null when `gh` could not say
 let openPrsAt = -Infinity
+let prWho = new Map() // PR number -> { agent, model } from its `agent:` / `model:` labels (same `gh` call)
 // PRs a forced refetch already found closed. Timer scans do not refetch for them again (a merged run's
 // PR never reappears, and refetching for it every scan would call GitHub every few seconds);
 // the regular once-a-minute read still checks them.
@@ -173,12 +174,15 @@ async function loadOpenPrs($, now, force) {
   if (!force && now - openPrsAt < PR_CACHE_MS) return openPrs
   openPrsAt = now
   try {
-    const run = await $.process.run(['gh', 'pr', 'list', '--state', 'open', '--limit', '500', '--json', 'number'], {
+    const run = await $.process.run(['gh', 'pr', 'list', '--state', 'open', '--limit', '500', '--json', 'number,labels'], {
       timeoutMs: STATUS_TIMEOUT_MS,
     })
-    openPrs = run.exitCode === 0 ? new Set(JSON.parse(run.stdout).map((pr) => pr.number)) : null
+    const list = run.exitCode === 0 ? JSON.parse(run.stdout) : null
+    openPrs = list ? new Set(list.map((pr) => pr.number)) : null
+    prWho = new Map(list ? list.map((pr) => [pr.number, whoFromLabels(pr.labels)]) : [])
   } catch {
-    openPrs = null // no gh, no auth, no network: nothing is hidden on PR grounds
+    openPrs = null
+    prWho = new Map() // no gh, no auth, no network: nothing is hidden on PR grounds
   }
   return openPrs
 }
@@ -386,8 +390,22 @@ async function scan($) {
   // resumed run): the most recently written one is the run's state, the rest are stale copies.
   // Dedupe before the live filter, so a newer finished checkpoint hides an older "running"
   // activity record of the same run (a session that ended without `keel activity --done`).
-  const { kept, superseded: dupes } = latestPerRun(candidates.filter((run) => run.snapshot.current))
+  const { kept, superseded: dupes, keyOf } = latestPerRun(candidates.filter((run) => run.snapshot.current))
   const live = kept.filter((run) => isLive(run.snapshot))
+  // A checkpoint can win over the activity record of the same run, but only the record says who drives it.
+  // Joined by the key latestPerRun names a run with (run id first), so two runs of one issue keep
+  // their own. Of a run's activity copies the newest decides, even one with no identity fields.
+  const recordWho = new Map()
+  const whoAt = new Map()
+  for (const run of candidates) {
+    if (!run.who) continue
+    const key = keyOf(run)
+    if (!whoAt.has(key) || (run.mtimeMs ?? 0) >= whoAt.get(key)) {
+      whoAt.set(key, run.mtimeMs ?? 0)
+      recordWho.set(key, run.who)
+    }
+  }
+  for (const run of live) if (!run.who && recordWho.has(keyOf(run))) run.who = recordWho.get(keyOf(run))
   const withPr = live.some((run) => run.snapshot.current.pull_request != null)
   let prs = withPr ? await loadOpenPrs($, now, false) : null
   const recheck = recheckClosed
@@ -624,6 +642,7 @@ function runCardRows(ui, e, focus) {
   const cline = (part) => rows.push(Text(textProps(part)))
   cline({ text: `${focus.own ? '▸ this session · ' : ''}${focus.branch ?? focus.label}`, tone: 'title' })
   cline({ text: focus.path, tone: 'dim' })
+  if (runWho(focus)) cline({ text: runWho(focus), tone: 'dim' })
   const c = focus.snapshot.current
   // Links to the PR and the issue, when the repository is on GitHub.
   if (repoBase !== null && (c.pull_request != null || c.issue != null)) {
@@ -731,10 +750,17 @@ function runStatus(ui, run) {
   return chip(Text, `◌ ${stepName(run.steps, c.step)}${age ? ` · ${age}` : ''}`, 'runChip')
 }
 
-// The dim line under a panel row: how far along, the PR, and where it runs.
+// Who drives a run: `Claude Code · claude · opus · high`, only the parts known. The activity
+// record's fields win over the PR's labels; empty when nothing is known.
+function runWho(run) {
+  const pr = run.snapshot.current.pull_request
+  return whoText(pr != null ? prWho.get(pr) : null, run.who)
+}
+
+// The dim line under a panel row: how far along, the PR, who drives it, and where it runs.
 function runSummary(run) {
   const c = run.snapshot.current
-  return [stepProgress(run), c.pull_request != null ? `PR #${c.pull_request}` : null, run.path].filter(Boolean).join(' · ')
+  return [stepProgress(run), c.pull_request != null ? `PR #${c.pull_request}` : null, runWho(run), run.path].filter(Boolean).join(' · ')
 }
 
 // One run in the side panel, as the agents panel draws an agent: a colored dot, the run's name
@@ -864,7 +890,7 @@ export function register(on, options = {}) {
             Box({ flexShrink: 0, children: [chip(Text, i === 0 ? '◆ keel' : '      ', 'title')] }),
             // The label keeps its padded width, so the issue and bar columns line up row to row;
             // only the trailing chips give way on a narrow band.
-            ...(labelled ? [Box({ flexShrink: 0, children: [hoverPart(ui, `label-${hoverScope(run)}`.slice(0, 64), Text(textProps(labelPart(run, width))), `${run.branch ?? run.label} · ${run.path}`, found)] })] : []),
+            ...(labelled ? [Box({ flexShrink: 0, children: [hoverPart(ui, `label-${hoverScope(run)}`.slice(0, 64), Text(textProps(labelPart(run, width))), [`${run.branch ?? run.label} · ${run.path}`, runWho(run)].filter(Boolean).join(' · '), found)] })] : []),
             // The issue is a button: click it to open the pane on this run. No digit hotkey: a
             // passive band must not take the first key of a prompt (#1466).
             Box({

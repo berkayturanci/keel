@@ -1338,7 +1338,8 @@ Read or stamp the additive command-activity channel under `.keel/activity/<run-i
 keel activity <project.yaml> [--root DIR] [--write|--done|--clear]
              [--command CMD] [--run-id ID] [--phase PHASE]
              [--status running|done|merged] [--verdict pass|blocked]
-             [--issue N] [--pull-request N] [--note TEXT] [--json]
+             [--issue N] [--pull-request N] [--note TEXT]
+             [--host NAME] [--agent NAME] [--model ID] [--effort LEVEL] [--json]
 ```
 
 | Flag | Type / values | Default | Effect |
@@ -1356,6 +1357,10 @@ keel activity <project.yaml> [--root DIR] [--write|--done|--clear]
 | `--issue N` | positive int | `None` | Issue number to record. |
 | `--pull-request N` | positive int | `None` | Pull request number to record. |
 | `--note TEXT` | string | `None` | Optional free-text note. |
+| `--host NAME` | string (≤ 64 chars) | `Claude Code` when `CLAUDECODE=1`, else unset | Host driving the run (`--write`). Kept when omitted; detected only when the record has none. |
+| `--agent NAME` | string (≤ 64 chars) | `None` | Agent or delegate doing the work, e.g. `claude`, `codex` (`--write`). Kept when omitted, unless the stamp names `--agent` or `--model` (then the whole identity is replaced). |
+| `--model ID` | string (≤ 64 chars) | `None` | Model id, e.g. `opus` (`--write`). Kept when omitted, unless the stamp names `--agent` or `--model` (then the whole identity is replaced). |
+| `--effort LEVEL` | string (≤ 64 chars) | `None` | Reasoning effort, e.g. `high` (`--write`). Kept when omitted, unless the stamp names `--agent` or `--model` (then the whole identity is replaced). |
 | `--json` | flag | off | Emit structured JSON. |
 
 ### Examples

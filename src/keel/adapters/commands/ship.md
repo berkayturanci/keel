@@ -37,7 +37,9 @@ merge → capture → close). Use **the same `--run-id`** you pass to `keel ship
 checkpoint` (e.g. `ship-<issue-or-pr>`) so the board treats them as one run:
 
 - **Right now, before Step 0 below**, stamp the first phase:
-  `keel activity .keel/project.yaml --root . --write --command ship --run-id "$RUN_ID" --phase s0`
+  `keel activity .keel/project.yaml --root . --write --command ship --run-id "$RUN_ID" --phase s0 --agent <your own name> --model <your model id> --effort <your reasoning effort, if known>`
+  (the board shows who is driving the run; later stamps that name no `--agent` or `--model` keep these).
+  Where this command hands implement or fix work to another provider with `keel delegate run`, stamp that phase again with `--agent <that provider> --model <its model id>`, so the board shows who did it (a stamp that names an agent or model replaces the whole identity), and **re-stamp your own `--agent`, `--model` and `--effort` as soon as the delegated phase ends**, so later phases do not show the delegate.
 - Re-run with the next `--phase` (`s1`, `s2`, …) **as you advance** through the backbone,
   adding `--issue <N>` once the issue is selected (s1) and `--pull-request <PR>` once the PR
   exists (s2+) so the board can pair this with the checkpoint/ledger records and never
