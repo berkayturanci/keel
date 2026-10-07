@@ -11,7 +11,7 @@ SITE = (ROOT / "website/content.js").read_text(encoding="utf-8")
 
 
 def const(name):
-    m = re.search(r"const %s\s*=\s*([\d_]+)" % name, REGISTER)
+    m = re.search(rf"const {name}\s*=\s*([\d_]+)", REGISTER)
     assert m, name
     return int(m.group(1).replace("_", ""))
 
@@ -34,8 +34,8 @@ class TestKeelProgressDocs(unittest.TestCase):
 
     def test_idle_interval_in_seconds_is_stated(self):
         secs = const("POLL_MS") * const("IDLE_EVERY") // 1000
-        self.assertIn("(%d seconds at the default)" % secs, PAGE)
-        self.assertIn("(%d seconds at the default)" % secs, SITE)
+        self.assertIn(f"({secs} seconds at the default)", PAGE)
+        self.assertIn(f"({secs} seconds at the default)", SITE)
 
     def test_activity_is_read_from_files(self):
         self.assertIn("read straight from its file", PAGE)
@@ -48,13 +48,13 @@ class TestKeelProgressDocs(unittest.TestCase):
         self.assertIn("never replaces an older live checkpoint", SITE)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheSiteArticleMarkupIsWellFormed(unittest.TestCase):
     def test_no_single_quoted_attribute_holds_an_apostrophe(self):
         """content.js builds HTML in single-quoted attributes; an apostrophe ends one early."""
         text = (ROOT / "website" / "content.js").read_text(encoding="utf-8")
         broken = re.findall(r"(?:alt|title|aria-label)='[^']*'[a-z]", text)
         self.assertEqual(broken, [], "an apostrophe inside a single-quoted attribute")
+
+
+if __name__ == "__main__":
+    unittest.main()
