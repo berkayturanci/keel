@@ -42,8 +42,9 @@ under **NEEDS YOU** (stopped, or waiting for input) and **RUNNING**. Click a run
 in full: its branch and worktree, links to the PR and the issue, the step bar, every
 backbone step, the history counts (shipped, blocked, deferred, skipped), the next queued
 issue and when keel last wrote. For a run whose phase is not a backbone step (a pr-loop,
-say), the card lists one step named like `review (pr-loop)` instead; the history counts and
-the next issue come from the checkpoint of the run that won.
+say), the run comes from its activity record: the card lists one step named like
+`review (pr-loop)`, and since an activity record carries no history or queue, the counts
+read 0 and next reads `-`.
 
 ![The /keel-progress side panel: a stopped run under NEEDS YOU, two running runs, one open in full with every backbone step](../../mods/keel-progress/docs/panel.svg)
 
@@ -54,8 +55,7 @@ closed or finished). There are none for what was already there when the session 
 
 A session shows its own keel runs only: the ones in its folder and in the worktrees keel
 made under it (`keel ship` puts a run's worktree inside the session's checkout). Other
-sessions' runs are not shown; the panel only counts the other worktrees with recent keel
-state. Turn on "Show other sessions' runs" in `/config` to see every recently active
+sessions' runs are neither shown nor read; the panel's count of other worktrees covers only the ones inside this session's folder. Turn on "Show other sessions' runs" in `/config` to see every recently active
 worktree of the repository.
 
 ## How it reads state, and why that is cheap

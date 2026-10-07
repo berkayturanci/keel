@@ -52,7 +52,19 @@ class TheSiteArticleMarkupIsWellFormed(unittest.TestCase):
     def test_no_single_quoted_attribute_holds_an_apostrophe(self):
         """content.js builds HTML in single-quoted attributes; an apostrophe ends one early."""
         text = (ROOT / "website" / "content.js").read_text(encoding="utf-8")
-        broken = re.findall(r"(?:alt|title|aria-label)='[^']*'[a-z]", text)
+        # Every tag's attribute list must parse as name='value', name="value" or a bare name.
+        # An apostrophe inside a single-quoted value ends it early and leaves a stray token
+        # ("users' runs" -> a token runs'), which this refuses.
+        attrs = re.compile(
+            r"""(?:\s+[A-Za-z_:][-\w:.]*(?:\s*=\s*(?:'[^']*'|"[^"]*"|[^\s'">=`]+))?)*\s*/?"""
+        )
+        broken = [
+            tag
+            for tag in re.findall(
+                r"<(?:img|a|figure|figcaption|code|div|span|p|b)\b([^<>]*)>", text
+            )
+            if not attrs.fullmatch(tag)
+        ]
         self.assertEqual(broken, [], "an apostrophe inside a single-quoted attribute")
 
 
