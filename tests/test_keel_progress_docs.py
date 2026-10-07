@@ -50,3 +50,11 @@ class TestKeelProgressDocs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSiteArticleMarkupIsWellFormed(unittest.TestCase):
+    def test_no_single_quoted_attribute_holds_an_apostrophe(self):
+        """content.js builds HTML in single-quoted attributes; an apostrophe ends one early."""
+        text = (ROOT / "website" / "content.js").read_text(encoding="utf-8")
+        broken = re.findall(r"(?:alt|title|aria-label)='[^']*'[a-z]", text)
+        self.assertEqual(broken, [], "an apostrophe inside a single-quoted attribute")

@@ -27,7 +27,7 @@ Start Claude Code in the directory that holds `.keel/project.yaml`, with `keel` 
 current step blue, or red where the run stopped, the rest grey), the current step, why the
 run is held as a chip (amber while waiting, red when stopped), the pull request, and how
 long since keel last wrote. A run whose phase is not a backbone step (a pr-loop, say) shows a one-step bar named
-like `review (pr-loop)`. With more than one run each row starts with its branch. Nothing
+like `review (pr-loop)`. With more than one run each row starts with its branch, and the first row ends with a `more` / `less` toggle that lists every run (each with its whole branch and worktree); past the row limit the band also says `+N more`. Nothing
 is drawn when no run is live.
 
 **Hover.** Point at a run for more, at the right end of its row. At the step bar you see how
@@ -35,7 +35,7 @@ far along it is and the next step; at a branch, the whole branch and its worktre
 name also lights in the side panel. The terminal draws this on its own, so no hook runs as
 the pointer moves.
 
-![The band with the pointer on a run's branch: the whole branch and its worktree appear at the right end of the row, and the run's issue lights](../../mods/keel-progress/docs/band-hover.svg)
+![The band with the pointer on a run's branch: the whole branch and its worktree appear at the right end of the row, and the issue of that run lights](../../mods/keel-progress/docs/band-hover.svg)
 
 **The side panel.** `/keel-progress` opens it, and closes it when it is open. It lists runs
 under **NEEDS YOU** (stopped, or waiting for input) and **RUNNING**. Click a run to open it
