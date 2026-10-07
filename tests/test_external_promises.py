@@ -212,6 +212,28 @@ def _github_resolves(repo: str, ref: str | None = None) -> bool:
     return _reachable(f"https://api.github.com/{path}", headers=headers)
 
 
+def _release_in_flight(repo: str, ref: str) -> bool:
+    """Whether ``repo@ref`` is the pin a release PR wrote for the version it releases.
+
+    ``make release-bump`` rewrites every ``berkayturanci/keel@v<x.y.z>`` to the version
+    being released, and that tag is pushed only after the release PR merges, so on the
+    release PR itself the pin cannot resolve yet: `external promises` failed on every
+    release PR (1.30.0, 1.31.0, #1491). That pin is in flight while its tag is absent
+    and PyPI has no such version; once the version is published, a missing tag is a
+    real broken promise again and the normal check applies.
+    """
+    if repo != "berkayturanci/keel" or ref != f"v{__version__}":
+        return False
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "keel-tests"}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    tag = f"https://api.github.com/repos/{repo}/git/ref/tags/{ref}"
+    if _reachable(tag, headers=headers):
+        return False
+    return not _reachable(f"https://pypi.org/pypi/keel-workflow/{__version__}/json")
+
+
 #: The tarball the stub formula points at, and the url the PyPI check reads, so
 #: a simulated HTTP status names the artifact the real check would have fetched.
 _STUB_TARBALL = "https://github.com/berkayturanci/keel/archive/refs/tags/v1.0.0.tar.gz"
@@ -550,10 +572,38 @@ class TestActionReferences(unittest.TestCase):
                     _github_resolves(repo),
                     f"{repo} is referenced in the docs but the repository does not exist",
                 )
+                if _release_in_flight(repo, ref):
+                    continue
                 self.assertTrue(
                     _github_resolves(repo, ref),
                     f"{repo} exists but has no {ref} ref — `uses: {repo}@{ref}` will fail",
                 )
+
+    def test_the_release_pr_own_pin_is_in_flight_until_it_is_published(self):
+        # Hermetic: the decision, not the network. The release PR's bump rewrites the
+        # pin to v<this version>, whose tag can only be pushed after that PR merges
+        # (#1491). That one pin is let through while PyPI has no such version, and
+        # held to "the tag must exist" once it does.
+        own = f"v{__version__}"
+        cases = {
+            # (repo, ref, tag exists, on PyPI) -> in flight
+            ("berkayturanci/keel", own, False, False): True,
+            ("berkayturanci/keel", own, False, True): False,
+            ("berkayturanci/keel", own, True, True): False,
+            ("berkayturanci/keel", "v1.0.0", False, False): False,
+            ("berkayturanci/other", own, False, False): False,
+        }
+        for (repo, ref, tag, pypi), expected in cases.items():
+            with self.subTest(repo=repo, ref=ref, tag=tag, pypi=pypi):
+                answers = {"tag": tag, "pypi": pypi}
+
+                def fake(url, *, headers=None, answers=answers):
+                    return answers["pypi" if "pypi.org" in url else "tag"]
+
+                with unittest.mock.patch.object(
+                    sys.modules[__name__], "_reachable", side_effect=fake
+                ):
+                    self.assertIs(_release_in_flight(repo, ref), expected)
 
 
 class TestHomebrewPromise(unittest.TestCase):
