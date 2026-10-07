@@ -8,7 +8,7 @@ All notable changes to keel are documented here. The format follows
 
 ## [1.31.0] - 2026-10-07
 
-- keel-progress (0.7.0) shows who is driving each run: host, agent, model and effort. `keel activity --write` takes `--host`, `--agent`, `--model` and `--effort`, and the PR's `agent:` / `model:` labels fill in what a record lacks. The `/keel-progress` panel docks beside the transcript and reveals details on hover.
+- keel-progress (0.7.0) shows who is driving each run: host, agent, model and effort. `keel activity --write` takes `--host`, `--agent`, `--model` and `--effort`, and the PR's `agent:` / `model:` labels fill in what a record lacks. Since 0.6.0 the `/keel-progress` panel docks beside the transcript and reveals details on hover.
 - Slim plugin bundles for the Claude and OpenAI plugin directories (`plugin/`, `make plugin-zip`), and `keel ship` no longer blocks a PR on a CI workflow whose paths it never touches.
 
 ### Added
