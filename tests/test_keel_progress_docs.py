@@ -32,12 +32,18 @@ class TestKeelProgressDocs(unittest.TestCase):
         self.assertIn("every two seconds", PAGE)
         self.assertIn("every two seconds", SITE)
 
+    def test_idle_interval_in_seconds_is_stated(self):
+        secs = const("POLL_MS") * const("IDLE_EVERY") // 1000
+        self.assertIn("(%d seconds at the default)" % secs, PAGE)
+        self.assertIn("(%d seconds at the default)" % secs, SITE)
+
     def test_activity_is_read_from_files(self):
         self.assertIn("read straight from its file", PAGE)
         self.assertIn("read straight from its file", SITE)
 
     def test_newest_live_record_wins(self):
         self.assertIn("the newest wins", PAGE)
+        self.assertIn("the newest of a run's live records", SITE)
         self.assertIn("never replaces an older live checkpoint", PAGE)
         self.assertIn("never replaces an older live checkpoint", SITE)
 

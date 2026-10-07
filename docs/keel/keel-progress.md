@@ -35,7 +35,7 @@ far along it is and the next step; at a branch, the whole branch and its worktre
 name also lights in the side panel. The terminal draws this on its own, so no hook runs as
 the pointer moves.
 
-![Pointing at a run's branch in the band shows its whole branch and worktree, and lights the run in the side panel](../../mods/keel-progress/docs/band-hover.svg)
+![The band with the pointer on a run's branch: the whole branch and its worktree appear at the right end of the row](../../mods/keel-progress/docs/band-hover.svg)
 
 **The side panel.** `/keel-progress` opens it, and closes it when it is open. It lists runs
 under **NEEDS YOU** (stopped, or waiting for input) and **RUNNING**. Click a run to open it
