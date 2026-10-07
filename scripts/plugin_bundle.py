@@ -127,7 +127,9 @@ def drift(root: Path) -> list[str]:
             problems.append(f"symlink: {dest} (a bundle holds regular files only)")
         elif not dest_path.is_file():
             problems.append(f"missing: {dest} (copy of {source})")
-        elif dest_path.read_bytes() != (root / source).read_bytes():
+        elif link is None and dest_path.read_bytes() != (root / source).read_bytes():
+            # A symlinked source is already reported above; reading through it would
+            # raise on a dangling link or a directory instead of reporting it (#1487).
             problems.append(f"differs: {dest} != {source}")
     allowed = set(expected) | set(HANDWRITTEN)
     for present in _files_under(root, BUNDLE_DIR, skip_os_junk=False):
