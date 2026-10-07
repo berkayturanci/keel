@@ -552,6 +552,43 @@ class SyncCheckAndZipOnAFixtureTree(unittest.TestCase):
 
         self.assertTrue(any(p.startswith("symlink: LICENSE") for p in problems), problems)
 
+    def _symlinked_license_with_a_regular_copy(self, root: Path, make_target) -> None:
+        _fixture_root(root)
+        plugin_bundle.sync(root)  # plugin/LICENSE is now a regular file
+        (root / "LICENSE").unlink()
+        (root / "LICENSE").symlink_to(make_target(root))
+
+    def test_a_dangling_symlink_source_is_reported_not_a_traceback(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._symlinked_license_with_a_regular_copy(root, lambda r: r / "nowhere")
+
+            problems = plugin_bundle.drift(root)
+            check = self._run("check", "--root", tmp)
+            zipped = self._run("zip", "--root", tmp)
+
+        self.assertTrue(any(p.startswith("symlink: LICENSE") for p in problems), problems)
+        for code, _, err in (check, zipped):
+            self.assertEqual(1, code)
+            self.assertIn("symlink: LICENSE", err)
+            self.assertNotIn("Traceback", err)
+
+    def test_a_directory_symlink_source_is_reported_not_a_traceback(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "elsewhere").mkdir()
+            self._symlinked_license_with_a_regular_copy(root, lambda r: r / "elsewhere")
+
+            problems = plugin_bundle.drift(root)
+            check = self._run("check", "--root", tmp)
+            zipped = self._run("zip", "--root", tmp)
+
+        self.assertTrue(any(p.startswith("symlink: LICENSE") for p in problems), problems)
+        for code, _, err in (check, zipped):
+            self.assertEqual(1, code)
+            self.assertIn("symlink: LICENSE", err)
+            self.assertNotIn("Traceback", err)
+
     def test_a_symlinked_skill_source_is_refused_by_the_zip(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
