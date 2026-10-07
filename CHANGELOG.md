@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`external promises` no longer fails every release PR on its own pin** (#1493). `make release-bump` rewrites `berkayturanci/keel@v<x.y.z>` to the version being released, and that tag is pushed only after the release PR merges, so the check could never pass on the PR that needs it (1.30.0 and 1.31.0 both merged red). That one pin is now accepted while its tag is absent and PyPI has no such version; once the version is published, a missing tag fails as before.
+
 ## [1.31.0] - 2026-10-07
 
 - keel-progress (0.7.0) shows who is driving each run: host, agent, model and effort. `keel activity --write` takes `--host`, `--agent`, `--model` and `--effort`, and the PR's `agent:` / `model:` labels fill in what a record lacks. Since 0.6.0 the `/keel-progress` panel docks beside the transcript and reveals details on hover.
