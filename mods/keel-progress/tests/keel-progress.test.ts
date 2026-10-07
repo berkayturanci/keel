@@ -1723,3 +1723,45 @@ test('a newer checkpoint takes who from the newest activity copy, not from an ol
   expect(await pane.find({ type: 'Text', text: /claude · opus/ })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /codex/ })).toBeUndefined()
 })
+
+test('two live runs on one issue keep their own agent, joined by run id', async ($, on) => {
+  const clock = mock.clock(on, { now: 4 * HOURS })
+  const ck = (id: string, step: string) => () => statusJson({ current: { run_id: id, command: 'ship', issue: 9, pull_request: 2001, step, wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [2001],
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+      { path: '/work/wt/a', branch: 'a', mtime: 3 * HOURS, stdout: ck('ship-9-a', 's5'), activityMtime: 1 * HOURS, activity: [act('ship-9-a', 9, 's4', { pr: 2001, agent: 'codex', model: 'gpt-5' })] },
+      { path: '/work/wt/b', branch: 'b', mtime: 3 * HOURS, stdout: ck('ship-9-b', 's6'), activityMtime: 2 * HOURS, activity: [act('ship-9-b', 9, 's5', { pr: 2001, agent: 'claude', model: 'opus' })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /PR #2001 · codex · gpt-5 · \/work\/wt\/a/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /PR #2001 · claude · opus · \/work\/wt\/b/ })).toBeDefined()
+})
+
+test('the newest activity copy decides who: one with no identity shows none, not an older copy’s', async ($, on) => {
+  const clock = mock.clock(on, { now: 4 * HOURS })
+  const ck = () => statusJson({ current: { run_id: 'ship-9', command: 'ship', issue: 9, pull_request: 2001, step: 's8', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [2001],
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 3 * HOURS, stdout: ck },
+      { path: '/work/wt/new', branch: 'new', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-9', 9, 's7', { pr: 2001 })] },
+      { path: '/work/wt/old', branch: 'old', mtime: null, activityMtime: 1 * HOURS, activity: [act('ship-9', 9, 's6', { pr: 2001, agent: 'codex' })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /PR #2001/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /codex/ })).toBeUndefined()
+})

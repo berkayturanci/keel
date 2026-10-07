@@ -390,21 +390,22 @@ async function scan($) {
   // resumed run): the most recently written one is the run's state, the rest are stale copies.
   // Dedupe before the live filter, so a newer finished checkpoint hides an older "running"
   // activity record of the same run (a session that ended without `keel activity --done`).
-  const { kept, superseded: dupes } = latestPerRun(candidates.filter((run) => run.snapshot.current))
+  const { kept, superseded: dupes, keyOf } = latestPerRun(candidates.filter((run) => run.snapshot.current))
   const live = kept.filter((run) => isLive(run.snapshot))
   // A checkpoint can win over the activity record of the same run, but only the record says who drives it.
-  // Of a run's copies (one per worktree), the newest record's who: an older copy's must not show.
+  // Joined by the key latestPerRun names a run with (run id first), so two runs of one issue keep
+  // their own. Of a run's activity copies the newest decides, even one with no identity fields.
   const recordWho = new Map()
   const whoAt = new Map()
   for (const run of candidates) {
-    if (!run.who || Object.keys(run.who).length === 0) continue
-    const key = identity(run)
+    if (!run.who) continue
+    const key = keyOf(run)
     if (!whoAt.has(key) || (run.mtimeMs ?? 0) >= whoAt.get(key)) {
       whoAt.set(key, run.mtimeMs ?? 0)
       recordWho.set(key, run.who)
     }
   }
-  for (const run of live) if (!run.who && recordWho.has(identity(run))) run.who = recordWho.get(identity(run))
+  for (const run of live) if (!run.who && recordWho.has(keyOf(run))) run.who = recordWho.get(keyOf(run))
   const withPr = live.some((run) => run.snapshot.current.pull_request != null)
   let prs = withPr ? await loadOpenPrs($, now, false) : null
   const recheck = recheckClosed

@@ -85,7 +85,7 @@ export function latestPerRun(entries) {
     if (entry.own) kept.unshift(entry)
     else kept.push(entry)
   }
-  return { kept, superseded: entries.length - kept.length }
+  return { kept, superseded: entries.length - kept.length, keyOf }
 }
 
 // Terminal cells a character takes: East Asian wide and fullwidth characters and emoji take

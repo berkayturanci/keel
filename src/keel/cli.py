@@ -10218,15 +10218,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--pull-request", type=_positive_int, default=None, help="pull request number to record"
     )
     p_activity.add_argument("--note", default=None, help="optional free-text note")
+    _rule = (
+        "a stamp naming --agent or --model replaces the identity and drops what it does not "
+        "restate; one naming neither keeps all (--write)"
+    )
     for _flag, _what in (
-        ("host", "host driving the run, e.g. 'Claude Code' (default: detected from the env)"),
-        ("agent", "agent or delegate doing the work, e.g. claude, codex"),
-        ("model", "model id, e.g. opus"),
-        ("effort", "reasoning effort, e.g. high"),
+        ("host", "host driving the run, e.g. 'Claude Code' (default: detected; always kept)"),
+        ("agent", f"agent or delegate doing the work, e.g. claude, codex; {_rule}"),
+        ("model", "model id, e.g. opus; replaces the identity like --agent"),
+        ("effort", "reasoning effort, e.g. high; dropped by a stamp naming --agent or --model"),
     ):
-        p_activity.add_argument(
-            f"--{_flag}", default=None, help=f"{_what}; kept from the record when omitted (--write)"
-        )
+        p_activity.add_argument(f"--{_flag}", default=None, help=_what)
     p_activity.add_argument("--json", action="store_true", help="emit structured JSON")
     p_activity.set_defaults(func=_cmd_activity)
 
