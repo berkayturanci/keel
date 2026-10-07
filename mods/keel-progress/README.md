@@ -4,7 +4,7 @@ An optional [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overv
 shows this repository's live keel runs inside Claude Code, so you don't need a second
 terminal running `keel-visual dash`.
 
-![Three parallel keel runs above the Claude Code prompt: a ship in review, one stopped with its gates blocked, and a pr-loop](docs/band.svg)
+![Three parallel keel runs above the Claude Code prompt: a ship in review, one stopped with its gates blocked, and one in its fix loop](docs/band.svg)
 
 ![The /keel-progress side panel: a stopped run under NEEDS YOU, two running runs, one open in full with every backbone step](docs/panel.svg)
 
@@ -14,7 +14,7 @@ All three are captures of Claude Code running the mod over three demo runs, rend
 
 - **Whose runs:** a session shows its own keel runs only: the ones in its folder and in the
   worktrees keel made under it (keel ship puts a run's worktree inside the session's checkout).
-  Other sessions' runs are neither shown nor read. Turn on "Show other sessions' runs" in
+  Other sessions' runs are not shown; the panel only counts the other worktrees with recent keel state. Turn on "Show other sessions' runs" in
   `/config` to see every recently active worktree of the repository.
 - **Above the prompt:** a rounded card with one row per live run (`active`, `waiting` or
   `interrupted`). Each row shows the issue, the backbone as a segmented bar of chips (done green,

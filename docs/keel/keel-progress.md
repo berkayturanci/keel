@@ -5,7 +5,7 @@ runs inside Claude Code, so you do not need a second terminal running `keel-visu
 It only reads: it never writes the checkpoint or ledger and never drives a run. The full
 reference is [`mods/keel-progress/README.md`](../../mods/keel-progress/README.md).
 
-![Three parallel keel runs above the Claude Code prompt: a ship in review, one stopped with its gates blocked, and a pr-loop](../../mods/keel-progress/docs/band.svg)
+![Three parallel keel runs above the Claude Code prompt: a ship in review, one stopped with its gates blocked, and one in its fix loop](../../mods/keel-progress/docs/band.svg)
 
 ## Install
 
@@ -35,7 +35,7 @@ far along it is and the next step; at a branch, the whole branch and its worktre
 name also lights in the side panel. The terminal draws this on its own, so no hook runs as
 the pointer moves.
 
-![The band with the pointer on a run's branch: the whole branch and its worktree appear at the right end of the row](../../mods/keel-progress/docs/band-hover.svg)
+![The band with the pointer on a run's branch: the whole branch and its worktree appear at the right end of the row, and the run's issue lights](../../mods/keel-progress/docs/band-hover.svg)
 
 **The side panel.** `/keel-progress` opens it, and closes it when it is open. It lists runs
 under **NEEDS YOU** (stopped, or waiting for input) and **RUNNING**. Click a run to open it
@@ -54,8 +54,9 @@ closed or finished). There are none for what was already there when the session 
 
 A session shows its own keel runs only: the ones in its folder and in the worktrees keel
 made under it (`keel ship` puts a run's worktree inside the session's checkout). Other
-sessions' runs are neither shown nor read. Turn on "Show other sessions' runs" in `/config`
-to see every recently active worktree of the repository.
+sessions' runs are not shown; the panel only counts the other worktrees with recent keel
+state. Turn on "Show other sessions' runs" in `/config` to see every recently active
+worktree of the repository.
 
 ## How it reads state, and why that is cheap
 
