@@ -504,11 +504,13 @@ keel run from the ledger/checkpoint keel already writes — it never drives one 
 [its surfaces](docs/keel/overview.md#keel-visual).
 
 Inside Claude Code, the optional [`keel-progress`](mods/keel-progress/README.md) mod shows
-the same run without a second terminal: a step bar above the prompt and a
-`/keel-progress` pane, read from `keel status --json`. Install it with
+the same run without a second terminal: a step bar above the prompt (point at it for more)
+and a `/keel-progress` side panel, read from `keel status --json` and the activity records. Install it with
 `/plugin install keel-progress@keel`; other hosts are unaffected.
 
 ![keel-progress above the Claude Code prompt: three parallel runs, each with its branch, step bar and PR](mods/keel-progress/docs/band.svg)
+
+![The /keel-progress side panel: a stopped run under NEEDS YOU, two running runs, one open in full with every backbone step](mods/keel-progress/docs/panel.svg)
 
 ## Docs
 

@@ -142,6 +142,7 @@ body { padding-top: 0; overflow: hidden; }
 .vis-hero > a { display: block; }
 .vis-hero img { display: block; width: 100%; height: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); transition: border-color .15s; }
 .vis-hero > a:hover img { border-color: var(--accent-line); }
+.prog-more { margin: 2rem 0 .8rem; }
 .vis-hero figcaption { margin-top: .55rem; font-size: .86rem; color: var(--muted); }
 .ov-companion a { color: var(--accent-2); font-weight: 600; }
 .ov-companion code { font-family: var(--font-mono); font-size: .85rem; color: var(--text); }
@@ -191,3 +192,6 @@ body { padding-top: 0; overflow: hidden; }
   .ov-install { flex-wrap: wrap; max-width: 100%; }
   .ov-install code { white-space: normal; min-width: 0; flex: 1 1 auto; }
 }
+
+/* keel-progress: the side-panel capture is tall and narrow, so it is drawn narrower than the bands. */
+#view-progress .prog-panel { max-width: 560px; }

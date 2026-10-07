@@ -49,11 +49,17 @@ export function parseWorktrees(porcelain) {
 // Returns { kept, superseded }.
 export function latestPerRun(entries) {
   // A run id names the run; an entry without one (an older checkpoint) joins the run that shares
-  // its issue, so an activity record and an older checkpoint of the same run meet.
+  // its issue, so an activity record and an older checkpoint of the same run meet. With several
+  // run ids for one issue it joins the one written last; runs written at the same moment keep the first seen.
   const runOfIssue = new Map()
+  const newestOfIssue = new Map()
   for (const e of entries) {
     const c = e.snapshot.current
-    if (c.run_id && c.issue != null && !runOfIssue.has(c.issue)) runOfIssue.set(c.issue, `run:${c.run_id}`)
+    if (!c.run_id || c.issue == null) continue
+    if (!(newestOfIssue.get(c.issue) >= e.mtimeMs)) {
+      newestOfIssue.set(c.issue, e.mtimeMs)
+      runOfIssue.set(c.issue, `run:${c.run_id}`)
+    }
   }
   const keyOf = (e) => {
     const c = e.snapshot.current
@@ -79,7 +85,7 @@ export function latestPerRun(entries) {
     if (entry.own) kept.unshift(entry)
     else kept.push(entry)
   }
-  return { kept, superseded: entries.length - kept.length }
+  return { kept, superseded: entries.length - kept.length, keyOf }
 }
 
 // Terminal cells a character takes: East Asian wide and fullwidth characters and emoji take
@@ -148,9 +154,48 @@ export function activityRuns(stdout, steps) {
         source: 'activity',
         note: r.note ? String(r.note) : null,
       },
+      who: whoFromRecord(r),
     })
   }
   return { dir, runs }
+}
+
+// Who drives a run (#1482): the host, agent, model and effort an activity record carries, and the
+// `agent:` / `model:` labels of the run's PR. Only what is known, in that order; activity wins over
+// labels. `labels` is the gh label list ([{ name }]); null/undefined when there is none.
+export const WHO_FIELDS = ['host', 'agent', 'model', 'effort']
+const WHO_MAX = 64
+
+function whoValue(v) {
+  if (typeof v !== 'string') return null
+  const t = v.trim()
+  return t && t.length <= WHO_MAX && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(t) ? t : null
+}
+
+export function whoFromRecord(record) {
+  const who = {}
+  for (const f of WHO_FIELDS) {
+    const v = whoValue(record?.[f])
+    if (v !== null) who[f] = v
+  }
+  return who
+}
+
+export function whoFromLabels(labels) {
+  const who = {}
+  for (const l of Array.isArray(labels) ? labels : []) {
+    const name = typeof l?.name === 'string' ? l.name : ''
+    for (const f of ['agent', 'model']) {
+      const v = name.startsWith(`${f}:`) ? whoValue(name.slice(f.length + 1)) : null
+      if (v !== null && who[f] === undefined) who[f] = v
+    }
+  }
+  return who
+}
+
+export function whoText(...sources) {
+  const who = Object.assign({}, ...sources)
+  return WHO_FIELDS.map((f) => who[f]).filter(Boolean).join(' · ')
 }
 
 // "now", "4m", "2h", "3d": how long ago `ms` milliseconds is, for the band and the pane.
@@ -165,9 +210,32 @@ export function ago(ms) {
 }
 
 // https://github.com/<owner>/<repo> from a git remote URL (https or ssh), else null.
+// Only github.com itself (an ssh host alias such as `github.com-work` included), and only names
+// GitHub allows, so a link built from it is always a valid href (a refused href would make the
+// engine refuse the whole band).
+const GH_NAME = '[A-Za-z0-9_.-]+'
+const GH_REMOTES = [
+  new RegExp(`^(?:ssh://)?[A-Za-z0-9_.-]+@github\\.com(?:-[A-Za-z0-9_.-]+)?[:/](${GH_NAME})/(${GH_NAME}?)(?:\\.git)?/?$`),
+  new RegExp(`^https?://(?:[^@/\\s]+@)?github\\.com/(${GH_NAME})/(${GH_NAME}?)(?:\\.git)?/?$`),
+]
+
 export function githubBase(remote) {
-  const m = /(?:^|[@/])github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(remote).trim())
-  return m ? `https://github.com/${m[1]}/${m[2]}` : null
+  const text = String(remote ?? '').trim()
+  for (const re of GH_REMOTES) {
+    const m = text.match(re)
+    if (m && !['.', '..'].includes(m[1]) && !['.', '..', ''].includes(m[2])) return `https://github.com/${m[1]}/${m[2]}`
+  }
+  return null
+}
+
+// An href the mod API accepts: https, printable ASCII, no '@', spelled exactly as URL spells it.
+export function safeHref(h) {
+  if (typeof h !== 'string' || !/^https:\/\/[\x21-\x7e]+$/.test(h) || h.includes('@')) return null
+  try {
+    return typeof URL === 'function' && new URL(h).href === h ? h : null
+  } catch {
+    return null
+  }
 }
 
 // What a checkpoint says about the run's last gate, review and check, for the pane.
@@ -197,33 +265,9 @@ export function stepStates(steps, currentStep) {
   }))
 }
 
-export function bar(steps, currentStep) {
-  return stepStates(steps, currentStep)
-    .map((s) => (s.state === 'done' ? '▰' : s.state === 'current' ? '▶' : '▱'))
-    .join('')
-}
-
 export function stepName(steps, id) {
   const found = steps.find((s) => s.id === id)
   return found ? `${id} ${found.name}` : String(id ?? '-')
-}
-
-// The band line's parts, in order. `tone` picks a colour in register.js.
-export function bandParts(snapshot, steps) {
-  const c = snapshot.current
-  const parts = [
-    { text: 'keel', tone: 'title' },
-    { text: c.issue != null ? ` #${c.issue} ` : ' ', tone: 'plain' },
-    { text: bar(steps, c.step), tone: 'bar' },
-    { text: ` ${stepName(steps, c.step)}`, tone: 'plain' },
-  ]
-  if (c.wait_reason) {
-    const tone = snapshot.status === 'interrupted' ? 'bad' : 'wait'
-    const label = snapshot.status === 'interrupted' ? 'stopped' : 'waiting'
-    parts.push({ text: ` · ${label}: ${c.wait_reason}`, tone })
-  }
-  if (c.pull_request != null) parts.push({ text: ` · PR #${c.pull_request}`, tone: 'dim' })
-  return parts
 }
 
 // The pane's lines, top to bottom, each { text, tone }.
@@ -237,7 +281,7 @@ export function paneLines(snapshot, steps) {
       tone: 'plain',
     })
     for (const s of stepStates(steps, c.step)) {
-      if (s.state === 'done') lines.push({ text: `  ✓ ${s.id} ${s.name}`, tone: 'dim' })
+      if (s.state === 'done') lines.push({ text: `  ✓ ${s.id} ${s.name}`, tone: 'ok' })
       else if (s.state === 'current') {
         const why = c.wait_reason ? ` — ${c.wait_reason}` : ''
         lines.push({ text: `  ▶ ${s.id} ${s.name}${why}`, tone: snapshot.status === 'interrupted' ? 'bad' : 'bar' })

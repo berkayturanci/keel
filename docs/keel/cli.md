@@ -1732,7 +1732,7 @@ hazard (a PR/branch keel has no covering state for). This is **advisory**: orpha
 reported but never block. The decision is pure
 ([`keel.checkpoint.find_orphans`](../../src/keel/checkpoint.py)).
 
-## `keel activity <project.yaml> [--root DIR] [--write|--done|--clear] [--command CMD] [--run-id ID] [--phase PHASE] [--status running|done|merged] [--verdict pass|blocked] [--issue N] [--pull-request N] [--note TEXT] [--json]`
+## `keel activity <project.yaml> [--root DIR] [--write|--done|--clear] [--command CMD] [--run-id ID] [--phase PHASE] [--status running|done|merged] [--verdict pass|blocked] [--issue N] [--pull-request N] [--note TEXT] [--host NAME] [--agent NAME] [--model ID] [--effort LEVEL] [--json]`
 
 Read or stamp the **additive command-activity** channel — a lightweight, checkpoint-free
 record per run under `.keel/activity/<run-id>.json` (path resolved under `--root DIR`,
@@ -1758,6 +1758,15 @@ lists records, whatever else it is given. `--write` validates that `--command` i
 that command's phase ids (`build_activity_record`); records are keyed by `--run-id` (one file
 each), so two commands in the same repo never clobber one another, and the run-id is slugged
 to a safe filename. `--verdict pass|blocked` records the phase outcome verdict into the activity record.
+`--host`, `--agent`, `--model` and `--effort` record who is driving the run (#1482): the host
+(`Claude Code`, `Codex`…), the agent or delegate (`claude`, `codex`…), its model id and its reasoning effort. Each is a
+short single-line string (at most 64 characters, no control characters), additive to
+`keel.activity.v1` and left out of the record when not given; a later stamp that names neither `--agent` nor `--model` keeps the
+values already recorded (it may change one, e.g. `--effort`). A stamp that names an `--agent` or `--model` is a new
+driver: it replaces the whole identity and drops what it does not restate, so a delegate's identity does not
+outlive its phase (only `--host` is always kept); re-stamp the orchestrator's own identity afterwards. Values must be
+single-line, without leading or trailing whitespace. `--host` defaults to `Claude Code` when `CLAUDECODE=1` is set and the record has no host yet (the marker Claude Code puts in
+its shells); no other host is detected. `keel-progress` shows them.
 Every stamp keeps the record's `delegate_usage` — the token counts a hosted-API delegate
 added with `keel delegate run --activity-run-id` (#1373) — so a later phase never erases them.
 Stamps and delegates take a short per-record lock for the read and write, so two writers

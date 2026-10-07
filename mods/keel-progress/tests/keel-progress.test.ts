@@ -28,6 +28,21 @@ function statusJson(overrides: Record<string, unknown> = {}): string {
   })
 }
 
+// The step bar's chips: Texts colored as a step (done, current, stopped, to come).
+const STEP_COLORS = new Set(['#2D7D46', '#1F6FEB', '#B62324', '#6E7681'])
+async function stepSegments(view: any): Promise<{ bg: string; text: string }[]> {
+  return (await view.findAll({ type: 'Text' }))
+    .filter((el: any) => STEP_COLORS.has(el.props?.backgroundColor) && /^ +$/.test((el.children ?? []).join('')))
+    .map((el: any) => ({ bg: el.props.backgroundColor, text: (el.children ?? []).join('') }))
+}
+
+// `find` matches type, key and text only (ElementQuery); this also holds the element's props to
+// what the test names, so a color or border assertion really checks the color or border.
+async function styled(view: any, query: { type: string; text?: string | RegExp }, props: Record<string, unknown>): Promise<any> {
+  const hits = await view.findAll(query)
+  return hits.find((el: any) => Object.entries(props).every(([k, v]) => el.props?.[k] === v))
+}
+
 const BAND = {
   plugin: 'keel-progress',
   component: 'AbovePrompt',
@@ -45,7 +60,7 @@ const PANE = {
     isFocused: true,
     bodyColumns: 60,
     placement: 'inline',
-    scroll: { offset: 0, bodyRows: 20 },
+    scroll: { offset: 0, bodyRows: 40 },
     view: {},
   },
 } as const
@@ -81,24 +96,32 @@ function stubEngine(
     stderr?: string
     worktrees?: Worktree[]
     openPrs?: number[] | null | (() => number[] | null) // null: gh fails
+    prLabels?: Record<number, string[]> // label names per open PR, as `gh pr list --json labels`
     gitFails?: boolean
     gitRejects?: boolean
     realPaths?: Record<string, string> // what fs.stat({ resolve }) answers per path
     checkpointRel?: string // where the project keeps its checkpoint
     clock?: { sleep: (ms: number) => Promise<void> }
     slowMs?: number
+    remote?: string // origin URL `git remote get-url origin` answers
+    panes?: 'fail' | 'behind' // panes() rejects, or lists the panel as a tab behind another
+    activityFails?: 'exit' | 'throw' | 'truncated' // `keel activity --json` exits 2 (keel older than 1.6.0), times out (rejects), or cuts its output
   },
 ) {
   const own: Worktree = { path: '/work', branch: 'main', stdout: opts.stdout, exitCode: opts.exitCode }
   const worktrees = opts.worktrees ?? [own]
   const calls = {
     status: 0,
+    activity: 0,
     byPath: {} as Record<string, number>,
     gh: 0,
+    ghJson: "",
     running: 0,
     most: 0,
     opened: [] as string[],
     closed: [] as string[],
+    panes: [] as string[],
+    openArgs: [] as Record<string, unknown>[],
     toasts: [] as string[],
     sounds: [] as string[],
   }
@@ -110,9 +133,24 @@ function stubEngine(
     calls.sounds.push(e.clip.asset)
     return { value: undefined }
   })
+  // keel names an activity file by run_id_slug (view.js runIdSlug).
+  const slug = (id: string) => String(id).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '')
   on('fs.read', ($: unknown, e: { path: string }) => {
+    const act = worktrees.find((x) => e.path.startsWith(`${x.path}/.keel/activity/`))
+    if (act) {
+      const name = e.path.slice(`${act.path}/.keel/activity/`.length)
+      const rec = (act.activity ?? []).find((r: any) => `${slug(r.run_id)}.json` === name)
+      return rec ? { value: JSON.stringify({ schema_version: 'keel.activity.v1', record_type: 'command_activity', ...rec }) } : { deny: 'ENOENT' }
+    }
     const w = worktrees.find((x) => e.path === `${x.path}/.keel/state/checkpoint.json`)
     return w?.state ? { value: JSON.stringify({ state: w.state }) } : { deny: 'ENOENT' }
+  })
+  on('fs.list', ($: unknown, e: { path: string }) => {
+    const w = worktrees.find((x) => e.path === `${x.path}/.keel/activity`)
+    if (!w?.activity) return { deny: 'ENOENT' }
+    return {
+      value: w.activity.map((r: any) => ({ name: `${slug(r.run_id)}.json`, kind: 'file', size: 10, mtimeMs: w.activityMtime ?? 0, isLink: false })),
+    }
   })
   on('fs.exists', () => ({ value: opts.project }))
   on('command.register', () => ({ value: undefined }))
@@ -129,13 +167,18 @@ function stubEngine(
     }
     const rel = opts.checkpointRel ?? '.keel/state/checkpoint.json'
     const w = worktrees.find((x) => e.path === `${x.path}/${rel}`)
-    const mtime = w?.mtime === undefined ? 0 : w.mtime
+    // Unless a test sets it, the checkpoint's mtime follows what keel status says about it, as a
+    // real checkpoint's does: a changed status is a changed (rewritten) checkpoint.
+    const said = w ? `${w.exitCode ? w.exitCode() : 0}:${w.stdout ? w.stdout() : ''}` : ''
+    let h = 0
+    for (const ch of said) h = (h * 31 + ch.charCodeAt(0)) % 997
+    const mtime = w?.mtime === undefined ? -h : w.mtime
     if (!w || mtime === null) return { deny: 'ENOENT' }
     return { value: { kind: 'file', size: 10, mtimeMs: mtime, isLink: false } }
   })
   on('process.run', async ($: unknown, e: { argv: string[]; init?: { cwd?: string } }) => {
     if (e.argv[0] === 'git' && e.argv[1] === 'remote') {
-      return { value: { exitCode: 0, stdout: 'git@github.com:acme/widgets.git\n', stderr: '' } }
+      return { value: { exitCode: 0, stdout: `${opts.remote ?? 'git@github.com:acme/widgets.git'}\n`, stderr: '' } }
     }
     if (e.argv[0] === 'git') {
       if (opts.gitRejects) return { deny: 'spawn git ENOENT' }
@@ -144,11 +187,16 @@ function stubEngine(
     }
     if (e.argv[0] === 'gh') {
       calls.gh += 1
+      calls.ghJson = e.argv[e.argv.indexOf('--json') + 1]
       const prs = opts.openPrs === undefined ? [1027] : typeof opts.openPrs === 'function' ? opts.openPrs() : opts.openPrs
       if (prs === null) return { value: { exitCode: 1, stdout: '', stderr: 'gh: not logged in' } }
-      return { value: { exitCode: 0, stdout: JSON.stringify(prs.map((number) => ({ number }))), stderr: '' } }
+      return { value: { exitCode: 0, stdout: JSON.stringify(prs.map((number) => ({ number, labels: (opts.prLabels?.[number] ?? []).map((name) => ({ name })) }))), stderr: '' } }
     }
     if (e.argv[1] === 'activity') {
+      calls.activity += 1
+      if (opts.activityFails === 'throw') return { deny: 'timed out' }
+      if (opts.activityFails === 'truncated') return { value: { exitCode: 0, stdout: '{"activity":', stderr: '', isStdoutTruncated: true } }
+      if (opts.activityFails) return { value: { exitCode: 2, stdout: '', stderr: 'invalid choice: activity' } }
       const at = e.argv[e.argv.indexOf('--root') + 1]
       const w = worktrees.find((x) => x.path === (at === '.' ? '/work' : at))
       return {
@@ -184,11 +232,18 @@ function stubEngine(
   })
   on('ui.open', ($: unknown, e: { id: string }) => {
     calls.opened.push(e.id)
+    calls.openArgs.push({ ...e })
+    if (!calls.panes.includes(e.id)) calls.panes.push(e.id)
     return { value: { isPlaced: true } }
   })
   on('ui.close', ($: unknown, e: { id: string }) => {
     calls.closed.push(e.id)
+    calls.panes = calls.panes.filter((id) => id !== e.id)
     return { value: undefined }
+  })
+  on('ui.panes', () => {
+    if (opts.panes === 'fail') throw new Error('no panes here')
+    return { value: calls.panes.map((id) => ({ id, title: 'keel', isShown: opts.panes !== 'behind', isPlaced: true })) }
   })
   on('tool.call', () => ({ result: 'ok' }))
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn by Claude Code'] }))
@@ -215,10 +270,19 @@ test('a waiting run draws its step bar above the prompt on both surfaces', async
   for (const surface of ['terminal', 'desktop'] as const) {
     const band = await $.ui.mount({ ...BAND, surface })
     expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: '▰▰▰▰▰▰▰▰▰▰▶▱▱' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: ' s10 merge' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: ' · waiting: merge-window' })).toBeDefined()
-    expect(await band.find({ type: 'Text', text: ' · PR #1027' })).toBeDefined()
+    // A rounded card headed by the keel mark; the backbone as a segmented bar of chips:
+    // ten steps done (green), s10 current (blue), two to come (grey).
+    expect(await styled(band, { type: 'Box' }, { borderStyle: 'round' })).toBeDefined()
+    expect(await band.find({ type: 'Text', text: '◆ keel' })).toBeDefined()
+    // 118 columns: one cell per step.
+    const segments = await stepSegments(band)
+    expect(segments.map((s) => s.bg)).toEqual([...Array(10).fill('#2D7D46'), '#1F6FEB', '#6E7681', '#6E7681'])
+    expect(new Set(segments.map((s) => s.text))).toEqual(new Set([' ']))
+    // No digit hotkey on the band's buttons: it must not take the first key of a prompt (#1466).
+    for (const button of await band.findAll({ type: 'Button' })) expect((button as any).props?.hotkey).toBeUndefined()
+    expect(await band.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
+    expect(await styled(band, { type: 'Text', text: ' waiting: merge-window ' }, { backgroundColor: '#9A6700' })).toBeDefined()
+    expect(await band.find({ type: 'Link', text: 'PR #1027' })).toBeDefined()
     // The other mods' band drawing is kept under keel's line.
     expect(await band.find({ type: 'Text', text: 'drawn by Claude Code' })).toBeDefined()
     await band.unmount()
@@ -235,42 +299,55 @@ test('a finished run leaves the band alone', async ($, on) => {
   expect(await band.find({ text: /#1022/ })).toBeUndefined()
 })
 
-test('the status is polled on a timer and refreshed after a keel Bash call only', async ($, on) => {
+test('keel status runs again only when the checkpoint changed, after 30 s, or after a keel Bash call', async ($, on) => {
   const clock = mock.clock(on)
-  const calls = stubEngine(on, { project: true })
+  let step = 's10'
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson({ current: { command: 'ship', issue: 1022, pull_request: 1027, step } }) })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   expect(calls.status).toBe(1)
 
+  // Nothing changed: the timer reuses the answer instead of starting keel (a Python start).
+  await clock.advance(5_000)
+  expect(calls.status).toBe(1)
+
+  // The checkpoint was rewritten: the next tick reads it, and the band follows.
+  step = 's11'
   await clock.advance(5_000)
   expect(calls.status).toBe(2)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: 's11 capture' })).toBeDefined()
+  await band.unmount()
 
+  // Unchanged for 30 s: read once more anyway.
+  await clock.advance(30_000)
+  expect(calls.status).toBe(3)
+
+  // Other commands do not force a read; a keel command does.
   await $.tool.call({ tool: 'Bash', command: 'ls -la' })
   await $.tool.call({ tool: 'Bash', command: 'cat .keel/project.yaml && keel-visual --help' })
   await clock.settle()
-  expect(calls.status).toBe(2)
-
+  expect(calls.status).toBe(3)
   await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 1022' })
   await clock.settle()
-  expect(calls.status).toBe(3)
+  expect(calls.status).toBe(4)
 })
 
-test('with no live run the timer polls every 30 s, not every 5 s', async ($, on) => {
+test('with no live run an unchanged checkpoint starts no keel process; a keel command does', async ($, on) => {
   const clock = mock.clock(on)
   const calls = stubEngine(on, { project: true, stdout: () => statusJson({ status: 'no-active-run', current: null }) })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   expect(calls.status).toBe(1)
 
-  await clock.advance(25_000)
+  // An idle session reuses its answer for as long as the checkpoint stays as it was.
+  await clock.advance(120_000)
   expect(calls.status).toBe(1)
-  await clock.advance(5_000)
-  expect(calls.status).toBe(2)
 
   // A keel command still refreshes at once, so a run that just started shows up.
   await $.tool.call({ tool: 'Bash', command: 'keel ship .keel/project.yaml --issue 1' })
   await clock.settle()
-  expect(calls.status).toBe(3)
+  expect(calls.status).toBe(2)
 })
 
 test('a refresh asked for while one runs shares it instead of starting another keel status', async ($, on) => {
@@ -369,8 +446,8 @@ test('an interrupted run with no issue or PR yet still draws, marked stopped', a
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s4 implement' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' · stopped: gate-failed' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's4 implement' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' stopped: gate-failed ' })).toBeDefined()
   expect(await band.find({ type: 'Text', text: /PR #/ })).toBeUndefined()
 
   await $.command.run({ command: 'keel-progress', args: '' })
@@ -429,9 +506,9 @@ test('parallel runs in other worktrees each get a labelled line, the session’s
     project: true,
     openPrs: [1027, 2001, 2002],
     worktrees: [
-      { path: '/wt/a', branch: 'fix/a', stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'fix/a', stdout: runAt(11, 2001) },
       { path: '/work', branch: 'main' },
-      { path: '/wt/b', branch: 'feat/b', stdout: runAt(12, 2002, 's4', '') },
+      { path: '/work/wt/b', branch: 'feat/b', stdout: runAt(12, 2002, 's4', '') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -440,8 +517,8 @@ test('parallel runs in other worktrees each get a labelled line, the session’s
   const labels = await band.findAll({ type: 'Text', text: /^(▸ main|  fix\/a|  feat\/b)\s+$/ })
   expect(labels.map((t: any) => String(t.children[0]).trim())).toEqual(['▸ main', 'fix/a', 'feat/b'])
   expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s4 implement' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' · PR #2002' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's4 implement' })).toBeDefined()
+  expect(await band.find({ type: 'Link', text: 'PR #2002' })).toBeDefined()
 })
 
 test('a stale checkpoint, a worktree without one, and a run whose PR closed are not shown', async ($, on) => {
@@ -451,16 +528,16 @@ test('a stale checkpoint, a worktree without one, and a run whose PR closed are 
     openPrs: [2001],
     worktrees: [
       { path: '/work', branch: 'main', mtime: 0 }, // read whatever its age; its PR 1027 is closed
-      { path: '/wt/live', branch: 'live', mtime: 30 * HOURS, stdout: runAt(11, 2001) },
-      { path: '/wt/stale', branch: 'stale', mtime: 5 * HOURS, stdout: runAt(12, 2001) }, // 25 h old
-      { path: '/wt/none', branch: 'none', mtime: null },
+      { path: '/work/wt/live', branch: 'live', mtime: 30 * HOURS, stdout: runAt(11, 2001) },
+      { path: '/work/wt/stale', branch: 'stale', mtime: 5 * HOURS, stdout: runAt(12, 2001) }, // 25 h old
+      { path: '/work/wt/none', branch: 'none', mtime: null },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   expect(calls.byPath['/work']).toBe(1)
-  expect(calls.byPath['/wt/stale']).toBeUndefined()
-  expect(calls.byPath['/wt/none']).toBeUndefined()
+  expect(calls.byPath['/work/wt/stale']).toBeUndefined()
+  expect(calls.byPath['/work/wt/none']).toBeUndefined()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
   expect(await band.find({ text: /#1022/ })).toBeUndefined()
@@ -471,7 +548,7 @@ test('a stale checkpoint, a worktree without one, and a run whose PR closed are 
   expect(
     await pane.find({
       type: 'Text',
-      text: '1 live keel run(s) · 1 other worktree(s) with recent keel state · 1 hidden (PR closed)',
+      text: '1 other worktree(s) with recent keel state · 1 hidden (PR closed)',
     }),
   ).toBeDefined()
 })
@@ -482,7 +559,7 @@ test('the band shows three runs and counts the rest', async ($, on) => {
   stubEngine(on, {
     project: true,
     openPrs: prs,
-    worktrees: prs.map((pr, i) => ({ path: `/wt/${i}`, branch: `b${i}`, stdout: runAt(10 + i, pr) })),
+    worktrees: prs.map((pr, i) => ({ path: `/work/wt/${i}`, branch: `b${i}`, stdout: runAt(10 + i, pr) })),
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
@@ -524,8 +601,8 @@ test('one failing worktree does not hide the others', async ($, on) => {
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/broken', branch: 'broken', exitCode: () => 1 },
-      { path: '/wt/ok', branch: 'ok', stdout: runAt(11, 2001) },
+      { path: '/work/wt/broken', branch: 'broken', exitCode: () => 1 },
+      { path: '/work/wt/ok', branch: 'ok', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -571,7 +648,7 @@ test('a PR missing from the open list is looked up once more, then on the regula
     openPrs: () => open,
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/new', branch: 'new', stdout: runAt(31, 3001) },
+      { path: '/work/wt/new', branch: 'new', stdout: runAt(31, 3001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -600,12 +677,12 @@ test('other worktrees are found where this project keeps its checkpoint', async 
     checkpointRel: 'var/ck.json',
     worktrees: [
       { path: '/work', branch: 'main', stdout: withPath },
-      { path: '/wt/a', branch: 'a', stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'a', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
-  expect(calls.byPath['/wt/a']).toBe(1)
+  expect(calls.byPath['/work/wt/a']).toBe(1)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
 })
@@ -630,7 +707,7 @@ test('a long branch name is cut with an ellipsis', async ($, on) => {
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/long', branch: 'fix/merge-marks-checkpoint', stdout: runAt(11, 2001) },
+      { path: '/work/wt/long', branch: 'fix/merge-marks-checkpoint', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -668,7 +745,7 @@ test('a step the contract names without a step name shows its id', async ($, on)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s10 s10' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's10 s10' })).toBeDefined()
 })
 
 test('a run whose PR closed costs no extra gh call per scan', async ($, on) => {
@@ -678,7 +755,7 @@ test('a run whose PR closed costs no extra gh call per scan', async ($, on) => {
     openPrs: [2001],
     worktrees: [
       { path: '/work', branch: 'main' }, // live, PR 1027 closed
-      { path: '/wt/live', branch: 'live', stdout: runAt(11, 2001) },
+      { path: '/work/wt/live', branch: 'live', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -702,16 +779,16 @@ test('one run checkpointed in two worktrees shows once, from the newer checkpoin
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/parent', branch: 'claude/workflow', mtime: 1 * HOURS, stdout: run('s7') },
-      { path: '/wt/parent/worktrees/issue-4101', branch: 'fix/issue-4101', mtime: 1.5 * HOURS, stdout: run('s9') },
+      { path: '/work/wt/parent', branch: 'claude/workflow', mtime: 1 * HOURS, stdout: run('s7') },
+      { path: '/work/wt/parent/worktrees/issue-4101', branch: 'fix/issue-4101', mtime: 1.5 * HOURS, stdout: run('s9') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#4101' })).length).toBe(1)
-  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 's9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's7 review' })).toBeUndefined()
   await $.command.run({ command: 'keel-progress', args: '' })
   await clock.settle()
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -726,14 +803,14 @@ test('when the session’s own folder holds the stale copy, the newer one elsewh
     project: true,
     worktrees: [
       { path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: run('s7') },
-      { path: '/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
+      { path: '/work/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 's9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's7 review' })).toBeUndefined()
 })
 
 test('clicking a run in the band opens the pane on that run, with the others to switch to', async ($, on) => {
@@ -743,18 +820,18 @@ test('clicking a run in the band opens the pane on that run, with the others to 
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/a', branch: 'fix/a-really-long-branch-name-that-the-band-cuts', stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'fix/a-really-long-branch-name-that-the-band-cuts', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  await band.press({ key: 'keel-progress-open-/wt/a#11' })
+  await band.press({ key: 'keel-progress-open-/work/wt/a#11' })
   expect(calls.opened).toEqual(['keel-progress'])
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'fix/a-really-long-branch-name-that-the-band-cuts' })).toBeDefined()
-  expect(await pane.find({ type: 'Text', text: '/wt/a' })).toBeDefined()
-  const back = await pane.find({ type: 'Button', text: /▸ main · #1022 s10/ })
+  expect(await pane.find({ type: 'Text', text: '/work/wt/a' })).toBeDefined()
+  const back = await pane.find({ type: 'Button', text: '▸ main · #1022' })
   expect(back).toBeDefined()
   await pane.press({ key: 'keel-progress-pick-/work#1022' })
   expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeDefined()
@@ -766,7 +843,7 @@ test('"more" lists every run with its whole branch; "less" folds it back', async
   stubEngine(on, {
     project: true,
     openPrs: prs,
-    worktrees: prs.map((pr, i) => ({ path: `/wt/${i}`, branch: `feature/branch-number-${i}`, stdout: runAt(10 + i, pr) })),
+    worktrees: prs.map((pr, i) => ({ path: `/work/wt/${i}`, branch: `feature/branch-number-${i}`, stdout: runAt(10 + i, pr) })),
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
@@ -774,7 +851,7 @@ test('"more" lists every run with its whole branch; "less" folds it back', async
   expect(await band.find({ type: 'Button', text: '#13' })).toBeUndefined()
   await band.press({ key: 'keel-progress-toggle' })
   expect(await band.find({ type: 'Button', text: '#13' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: '    feature/branch-number-3 · /wt/3' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: /feature\/branch-number-3 · \/work\/wt\/3$/ })).toBeDefined()
   expect(await band.find({ type: 'Button', text: 'less' })).toBeDefined()
   await band.press({ key: 'keel-progress-toggle' })
   expect(await band.find({ type: 'Button', text: '#13' })).toBeUndefined()
@@ -788,9 +865,9 @@ test('the session’s run keeps its mark when its own folder held the stale copy
     project: true,
     openPrs: [1027, 2001],
     worktrees: [
-      { path: '/wt/other', branch: 'other', stdout: runAt(11, 2001) },
+      { path: '/work/wt/other', branch: 'other', stdout: runAt(11, 2001) },
       { path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: run('s7') },
-      { path: '/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
+      { path: '/work/wt/nested', branch: 'fix/9', mtime: 1.5 * HOURS, stdout: run('s9') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -809,15 +886,15 @@ test('a stale copy written before the PR opened is the same run as the newer one
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/early', branch: 'early', mtime: 1 * HOURS, stdout: copy(null, 's4') },
-      { path: '/wt/late', branch: 'late', mtime: 1.5 * HOURS, stdout: copy(2001, 's7') },
+      { path: '/work/wt/early', branch: 'early', mtime: 1 * HOURS, stdout: copy(null, 's4') },
+      { path: '/work/wt/late', branch: 'late', mtime: 1.5 * HOURS, stdout: copy(2001, 's7') },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#9' })).length).toBe(1)
-  expect(await band.find({ type: 'Text', text: ' s7 review' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's7 review' })).toBeDefined()
 })
 
 test('the band comes back compact after every run is gone', async ($, on) => {
@@ -828,7 +905,7 @@ test('the band comes back compact after every run is gone', async ($, on) => {
     project: true,
     openPrs: prs,
     worktrees: prs.map((pr, i) => ({
-      path: `/wt/${i}`,
+      path: `/work/wt/${i}`,
       branch: `b${i}`,
       stdout: () => (live ? runAt(10 + i, pr)() : statusJson({ status: 'completed', current: null })),
     })),
@@ -856,7 +933,7 @@ test('a wide-character branch name is cut by terminal cells, not characters', as
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/cjk', branch: '機能/進捗表示の改善と修正', stdout: runAt(11, 2001) },
+      { path: '/work/wt/cjk', branch: '機能/進捗表示の改善と修正', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -875,7 +952,7 @@ test('emoji, flags and zero-width marks are measured in cells too', async ($, on
       { path: '/work', branch: 'main' },
       // flag (two regional indicators, 2) + rocket (2) + "fix" (3) + e + U+0301 combining accent (1)
       // = 8 cells: with the two-space prefix 10, padded to 12
-      { path: '/wt/emoji', branch: '\u{1F1F9}\u{1F1F7}\u{1F680}fixe\u0301', stdout: runAt(11, 2001) },
+      { path: '/work/wt/emoji', branch: '\u{1F1F9}\u{1F1F7}\u{1F680}fixe\u0301', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -897,15 +974,15 @@ test('a run that only stamps activity, never a checkpoint, still shows', async (
     openPrs: [1027, 4103],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/release', branch: 'release', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-4102', 4102, 's8', { pr: 4103, verdict: 'blocked' })] },
+      { path: '/work/wt/release', branch: 'release', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-4102', 4102, 's8', { pr: 4103, verdict: 'blocked' })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#4102' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' · stopped: gates blocked' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' stopped: gates blocked ' })).toBeDefined()
 })
 
 test('activity newer than the checkpoint moves the run on; an older one does not', async ($, on) => {
@@ -920,8 +997,8 @@ test('activity newer than the checkpoint moves the run on; an older one does not
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s6 ci' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's6 ci' })).toBeUndefined()
   expect((await band.findAll({ type: 'Button', text: '#7' })).length).toBe(1)
 })
 
@@ -946,13 +1023,13 @@ test('another command\u2019s activity shows with its own phase name', async ($, 
     openPrs: [1027, 2473],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/pr', branch: 'pr-2473', mtime: null, activityMtime: 1.9 * HOURS, activity: [act('review-cycle-2473', 2473, 'review', { command: 'review-cycle', pr: 2473 })] },
+      { path: '/work/wt/pr', branch: 'pr-2473', mtime: null, activityMtime: 1.9 * HOURS, activity: [act('review-cycle-2473', 2473, 'review', { command: 'review-cycle', pr: 2473 })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' review (review-cycle)' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 'review (review-cycle)' })).toBeDefined()
 })
 
 test('a checkpoint newer than the activity keeps the checkpoint\u2019s step', async ($, on) => {
@@ -967,8 +1044,8 @@ test('a checkpoint newer than the activity keeps the checkpoint\u2019s step', as
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s10 merge' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeUndefined()
 })
 
 test('a newer finished checkpoint hides the run\u2019s older "running" activity', async ($, on) => {
@@ -978,7 +1055,7 @@ test('a newer finished checkpoint hides the run\u2019s older "running" activity'
     project: true,
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/8', branch: 'fix/8', mtime: 2.5 * HOURS, stdout: done, activityMtime: 2 * HOURS, activity: [act('ship-8', 8, 's9')] },
+      { path: '/work/wt/8', branch: 'fix/8', mtime: 2.5 * HOURS, stdout: done, activityMtime: 2 * HOURS, activity: [act('ship-8', 8, 's9')] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -994,7 +1071,7 @@ test('an activity run whose PR closed is hidden like any other', async ($, on) =
     openPrs: [],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/9', branch: 'fix/9', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-9', 9, 's8', { pr: 3001 })] },
+      { path: '/work/wt/9', branch: 'fix/9', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('ship-9', 9, 's8', { pr: 3001 })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1011,15 +1088,15 @@ test('a checkpoint in one worktree and newer activity in another are one run', a
     openPrs: [2001],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/parent', branch: 'parent', mtime: 1 * HOURS, stdout: ck },
-      { path: '/wt/parent/nested', branch: 'fix/5', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-5', 5, 's9', { pr: 2001 })] },
+      { path: '/work/wt/parent', branch: 'parent', mtime: 1 * HOURS, stdout: ck },
+      { path: '/work/wt/parent/nested', branch: 'fix/5', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-5', 5, 's9', { pr: 2001 })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#5' })).length).toBe(1)
-  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's9 fixloop' })).toBeDefined()
 })
 
 test('an older checkpoint without a run id and the activity of the same issue are one run', async ($, on) => {
@@ -1035,7 +1112,44 @@ test('an older checkpoint without a run id and the activity of the same issue ar
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await band.findAll({ type: 'Button', text: '#6' })).length).toBe(1)
-  expect(await band.find({ type: 'Text', text: ' s8 test' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
+})
+
+for (const mode of ['exit', 'throw', 'truncated'] as const) {
+test(`a failing keel activity (${mode}) is not spawned again on every scan (#1461)`, async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const calls = stubEngine(on, {
+    project: true,
+    activityFails: mode,
+    worktrees: [{ path: '/work', branch: 'main', mtime: 1 * HOURS, stdout: () => statusJson({ current: { run_id: 'ship-6', command: 'ship', issue: 6, pull_request: 1027, step: 's6', wait_reason: '' } }), activityMtime: 2.9 * HOURS, activity: [act('ship-6', 6, 's8', { pr: 1027 })] }],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.activity).toBe(1)
+  for (let i = 0; i < 4; i++) await clock.advance(5_000)
+  expect(calls.activity).toBe(1)
+  // the files are read instead: the run's activity still shows
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: 's8 test' })).toBeDefined()
+})
+}
+
+test('a checkpoint without a run id joins the newest of its issue\u2019s runs (#1461)', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const ck = () => statusJson({ current: { command: 'ship', issue: 6, pull_request: 1027, step: 's6', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 2.5 * HOURS, stdout: ck, activityMtime: 1 * HOURS, activity: [act('ship-6a', 6, 's7', { pr: 1027 })] },
+      { path: '/work/wt/6', branch: 'fix/6', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-6b', 6, 's8', { pr: 1027 })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  // the checkpoint is newer than both, and hides the newest run (6b), not whichever was seen first
+  expect(await band.find({ type: 'Text', text: /next s9/ })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: /next s8/ })).toBeDefined()
 })
 
 test('a run id with capitals is found under keel\u2019s lowercase file name', async ($, on) => {
@@ -1045,7 +1159,7 @@ test('a run id with capitals is found under keel\u2019s lowercase file name', as
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/cap', branch: 'cap', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('Ship-ABC', 12, 's4', { pr: 2001 })] },
+      { path: '/work/wt/cap', branch: 'cap', mtime: null, activityMtime: 1.5 * HOURS, activity: [act('Ship-ABC', 12, 's4', { pr: 2001 })] },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1062,7 +1176,7 @@ test('two runs in one worktree get their own lines and keys', async ($, on) => {
     worktrees: [
       { path: '/work', branch: 'main' },
       {
-        path: '/wt/pr',
+        path: '/work/wt/pr',
         branch: 'pr-2473',
         mtime: null,
         activityMtime: 1.9 * HOURS,
@@ -1076,10 +1190,10 @@ test('two runs in one worktree get their own lines and keys', async ($, on) => {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  await band.press({ key: 'keel-progress-open-/wt/pr#review-cycle-2473' })
+  await band.press({ key: 'keel-progress-open-/work/wt/pr#review-cycle-2473' })
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await pane.find({ type: 'Text', text: 'issue #2473 · PR #2473 · review-cycle' })).toBeDefined()
-  expect(await pane.find({ type: 'Button', text: /pr-2473 · #2470 s7/ })).toBeDefined()
+  expect(await pane.find({ type: 'Button', text: 'pr-2473 · #2470' })).toBeDefined()
 })
 
 const MIN = 60 * 1000
@@ -1091,14 +1205,14 @@ test('each run says how long ago keel last wrote for it, and a long silence read
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main', mtime: 2 * HOURS - 4 * MIN },
-      { path: '/wt/slow', branch: 'slow', mtime: 2 * HOURS - 70 * MIN, stdout: runAt(11, 2001) },
+      { path: '/work/wt/slow', branch: 'slow', mtime: 2 * HOURS - 70 * MIN, stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' · 4m' })).toBeDefined()
-  expect(await band.find({ type: 'Text', text: ' · quiet 1h' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: '4m' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 'quiet 1h' })).toBeDefined()
 })
 
 test('a run that stops, or leaves the board, raises a toast; the first scan raises none', async ($, on) => {
@@ -1163,7 +1277,7 @@ test('a worktree that fails one read is not announced as gone', async ($, on) =>
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001), exitCode: () => (failing ? 1 : 0) },
+      { path: '/work/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001), exitCode: () => (failing ? 1 : 0) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1183,9 +1297,9 @@ test('a run whose newer copy moves to another worktree is the same run, not a de
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
-      { path: '/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'a', mtime: 2 * HOURS, stdout: runAt(11, 2001) },
       {
-        path: '/wt/a/nested',
+        path: '/work/wt/a/nested',
         branch: 'a2',
         get mtime() {
           return nestedAt
@@ -1199,7 +1313,7 @@ test('a run whose newer copy moves to another worktree is the same run, not a de
   nestedAt = 2.5 * HOURS
   await clock.advance(5_000)
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await band.find({ type: 'Text', text: ' s9 fixloop' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: 's9 fixloop' })).toBeDefined()
   expect(calls.toasts).toEqual([])
 })
 
@@ -1247,7 +1361,7 @@ test('band_rows sets how many runs the band shows before "+N more"', { options: 
     openPrs: [1027, 2001],
     worktrees: [
       { path: '/work', branch: 'main' },
-      { path: '/wt/a', branch: 'a', stdout: runAt(11, 2001) },
+      { path: '/work/wt/a', branch: 'a', stdout: runAt(11, 2001) },
     ],
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
@@ -1255,4 +1369,399 @@ test('band_rows sets how many runs the band shows before "+N more"', { options: 
   const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await band.find({ type: 'Button', text: '#11' })).toBeUndefined()
   expect(await band.find({ type: 'Text', text: '+1 more keel runs · more, or /keel-progress' })).toBeDefined()
+})
+
+test('the step bar fits the band: two cells per step when wide, none when narrow, the issue and step always whole', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+
+  const wide = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 140 } })
+  const segments = await stepSegments(wide)
+  expect(segments.length).toBe(13)
+  expect(new Set(segments.map((s) => s.text))).toEqual(new Set(['  ']))
+  await wide.unmount()
+
+  const narrow = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 60 } })
+  expect((await stepSegments(narrow)).length).toBe(0)
+  expect(await narrow.find({ type: 'Button', text: '#1022' })).toBeDefined()
+  expect(await narrow.find({ type: 'Text', text: 's10 merge' })).toBeDefined()
+})
+
+test('with several runs every row keeps the mark column whole and the issue columns line up', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    worktrees: [
+      { path: '/work', branch: 'feat/a-rather-long-branch-name-for-the-band' },
+      { path: '/work/wt/b', branch: 'fix/b', stdout: () => statusJson({ current: { command: 'ship', issue: 2002, pull_request: 1027, step: 's4' } }) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, bodyColumns: 80 } })
+  expect(await band.find({ type: 'Text', text: '◆ keel' })).toBeDefined()
+  // Every row's label is padded to one width, so the issue buttons start in one column.
+  const labels = (await band.findAll({ type: 'Text' })).filter((el: any) => /^(▸ | {2})(feat|fix)\//.test((el.children ?? []).join('')))
+  expect(labels.length).toBe(2)
+  expect(new Set(labels.map((el: any) => (el.children ?? []).join('').length)).size).toBe(1)
+})
+
+test("a run's PR in the band is a link to it on GitHub", async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const band = await $.ui.mount({ ...BAND, surface })
+    const link = await band.find({ type: 'Link', text: 'PR #1027' })
+    expect(link).toBeDefined()
+    expect((link as any).props?.href).toBe('https://github.com/acme/widgets/pull/1027')
+    await band.unmount()
+  }
+})
+
+test('a remote that would make an invalid link gives no link, and the band still draws', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true, remote: 'git@github.com:acme/ré.git' })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Link' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: 'PR #1027' })).toBeDefined()
+  expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
+})
+
+const OTHER_SESSION: Worktree[] = [
+  { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+  { path: '/work/worktrees/pr-11', branch: 'fix/mine', stdout: () => statusJson({ current: { command: 'ship', issue: 11, pull_request: 1027, step: 's7' } }) },
+  { path: '/elsewhere/other-session', branch: 'feat/theirs', stdout: () => statusJson({ current: { command: 'ship', issue: 22, pull_request: 1027, step: 's4' } }) },
+]
+
+test("a session shows only its own runs: its folder and the worktrees keel made under it", async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, worktrees: OTHER_SESSION })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
+  expect(await band.find({ type: 'Button', text: '#22' })).toBeUndefined()
+  // Another session's worktree is not even read.
+  expect(calls.byPath['/elsewhere/other-session']).toBeUndefined()
+})
+
+test("with all_sessions on, other sessions' runs show too", { options: { all_sessions: true } }, async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, { project: true, worktrees: OTHER_SESSION })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#11' })).toBeDefined()
+  expect(await band.find({ type: 'Button', text: '#22' })).toBeDefined()
+})
+
+test('one failed keel status does not stick: the run comes back on a later read', async ($, on) => {
+  const clock = mock.clock(on)
+  let fail = false
+  const calls = stubEngine(on, {
+    project: true,
+    // The checkpoint stays as it was the whole time: only keel status fails, once.
+    worktrees: [{ path: '/work', branch: 'main', mtime: 5, exitCode: () => (fail ? 1 : 0) }],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  expect(calls.status).toBe(1)
+  fail = true
+  await $.tool.call({ tool: 'Bash', command: 'keel status .keel/project.yaml' })
+  await clock.settle()
+  fail = false
+  await clock.advance(40_000)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Button', text: '#1022' })).toBeDefined()
+})
+
+test('the side panel heads its list like the agents panel: a count, then a row per run under NEEDS YOU or RUNNING', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: 7, pull_request: 1027, step: 's4', wait_reason: 'gate-failed' }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'interrupted', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '✦ Keel' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'in this session' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '1 need you' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'NEEDS YOU' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'RUNNING' })).toBeUndefined()
+  // The run's row: a red dot, its name a button, why it is held on the right, and under it how
+  // far along it is and its PR.
+  expect(await pane.find({ type: 'Box', key: 'keel-progress-row-/work#7' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' stopped: gate-failed ' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '5 of 13 steps · next s5 classify · PR #1027 · /work' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'click a run for its steps · /keel-progress to hide' })).toBeDefined()
+})
+
+test('pointing at the step bar shows how far along the run is; at a label, its whole branch and worktree', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: 7, pull_request: null, step: 's4', wait_reason: null }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'waiting', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  // The detail is drawn hidden in a keyed Box; the surface shows it while hovered (the test view
+  // drops `hover` from props, so the reveal itself is checked in a real session).
+  expect(await band.find({ type: 'Text', text: ' 5 of 13 steps · next s5 classify ' })).toBeDefined()
+})
+
+test('/keel-progress opens the side panel and closes it when it is open', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson() })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  expect(calls.openArgs[0]).toMatchObject({ id: 'keel-progress', columns: 64, closeOnEscape: true })
+  await $.command.run({ command: 'keel-progress', args: '' })
+  expect(calls.opened).toEqual(['keel-progress'])
+  expect(calls.closed).toEqual(['keel-progress'])
+})
+
+test('in a short panel the run is not opened by itself, so the header stays in sight; a picked run opens', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: 7, pull_request: null, step: 's4', wait_reason: null }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'waiting', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const short = { ...PANE, props: { ...PANE.props, scroll: { offset: 0, bodyRows: 8 } } }
+  const pane = await $.ui.mount({ ...short, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '✦ Keel' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeUndefined()
+  await pane.press({ key: 'keel-progress-pick-/work#7' })
+  await pane.unmount()
+  const again = await $.ui.mount({ ...short, surface: 'terminal' })
+  expect(await again.find({ type: 'Text', text: '▸ this session · main' })).toBeDefined()
+})
+
+test('a panel behind another tab is brought forward, not closed', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson(), panes: 'behind' })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await $.command.run({ command: 'keel-progress', args: '' })
+  expect(calls.opened).toEqual(['keel-progress', 'keel-progress'])
+  expect(calls.closed).toEqual([])
+})
+
+test('panes() failing still opens the keel panel', async ($, on) => {
+  const clock = mock.clock(on)
+  const calls = stubEngine(on, { project: true, stdout: () => statusJson(), panes: 'fail' })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  expect(calls.opened).toEqual(['keel-progress'])
+})
+
+test('pressing the open run again closes it, and no run then opens by itself', async ($, on) => {
+  const clock = mock.clock(on)
+  const current = { command: 'ship', issue: 7, pull_request: null, step: 's4', wait_reason: null }
+  stubEngine(on, { project: true, stdout: () => statusJson({ status: 'waiting', current }) })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeDefined()
+  await pane.press({ key: 'keel-progress-pick-/work#7' })
+  await pane.unmount()
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await again.find({ type: 'Text', text: '▸ this session · main' })).toBeUndefined()
+  expect(await again.find({ type: 'Text', text: '›' })).toBeDefined()
+})
+
+test('a run waiting for input is under NEEDS YOU and opens first; one waiting for the merge window stays under RUNNING, yellow', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/work/wt/a', branch: 'fix/a', stdout: runAt(11, 2001, 's4', 'needs-input') },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '◌ 1 running · 1 need you' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'NEEDS YOU' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: 'RUNNING' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' waiting: needs-input ' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: ' waiting: merge-window ' })).toBeDefined()
+  // The session's own run waits for the merge window: a yellow dot, not blue.
+  expect((await pane.findAll({ type: 'Text', text: '●' })).map((t: any) => t.props?.color)).toEqual(['yellow', 'yellow'])
+  // The run that needs you is the one open in full, though the session's own run comes first.
+  expect(await pane.find({ type: 'Text', text: 'fix/a' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: '▸ this session · main' })).toBeUndefined()
+})
+
+test('with several runs, pointing at a branch shows the whole branch and its worktree', async ($, on) => {
+  const clock = mock.clock(on)
+  stubEngine(on, {
+    project: true,
+    openPrs: [1027, 2001],
+    worktrees: [
+      { path: '/work', branch: 'main' },
+      { path: '/work/wt/a', branch: 'fix/a', stdout: runAt(11, 2001) },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await band.find({ type: 'Text', text: ' fix/a · /work/wt/a ' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' main · /work ' })).toBeDefined()
+})
+
+// Who drives a run (#1482): activity fields and the PR's labels, in the panel and the band hover.
+const whoWorktrees = (record: Record<string, unknown>) => [
+  { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+  { path: '/work/wt/who', branch: 'feat/who', mtime: null, activityMtime: 1 * HOURS, activity: [act('ship-9', 9, 's7', { pr: 2001, ...record })] },
+  // A second run, so the band labels each row (and a branch has a hover to show who).
+  { path: '/work/wt/other', branch: 'feat/other', mtime: null, activityMtime: 1 * HOURS, activity: [act('ship-10', 10, 's7', { pr: 2002 })] },
+]
+
+async function whoPane($: any, on: any, opts: { labels?: string[]; record?: Record<string, unknown> }) {
+  const clock = mock.clock(on, { now: 1.5 * HOURS })
+  const calls = stubEngine(on, {
+    project: true,
+    openPrs: [2001, 2002],
+    prLabels: opts.labels ? { 2001: opts.labels } : undefined,
+    worktrees: whoWorktrees(opts.record ?? {}),
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  return { pane, band, calls }
+}
+
+const SUMMARY = (who: string) => `8 of 13 steps · next s8 test · PR #2001${who ? ` · ${who}` : ''} · /work/wt/who`
+
+test('the PR labels say who drives a run, from the same gh call that lists the open PRs', async ($, on) => {
+  const { pane, band, calls } = await whoPane($, on, { labels: ['bug', 'agent:claude', 'model:opus'] })
+  expect(calls.ghJson).toBe('number,labels')
+  expect(calls.gh).toBe(1)
+  expect(await pane.find({ type: 'Text', text: SUMMARY('claude · opus') })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' feat/who · /work/wt/who · claude · opus ' })).toBeDefined()
+})
+
+test('the activity record says who drives a run, and wins over the PR labels', async ($, on) => {
+  const { pane, band } = await whoPane($, on, {
+    labels: ['agent:codex', 'model:gpt'],
+    record: { host: 'Claude Code', agent: 'claude', model: 'opus', effort: 'high' },
+  })
+  expect(await pane.find({ type: 'Text', text: SUMMARY('Claude Code · claude · opus · high') })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' feat/who · /work/wt/who · Claude Code · claude · opus · high ' })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: SUMMARY('codex · gpt') })).toBeUndefined()
+})
+
+test('an activity record fills only the fields it has; the labels give the rest', async ($, on) => {
+  const { pane } = await whoPane($, on, { labels: ['agent:codex', 'model:gpt'], record: { effort: 'high' } })
+  expect(await pane.find({ type: 'Text', text: SUMMARY('codex · gpt · high') })).toBeDefined()
+})
+
+test('the open run card shows who drives it', async ($, on) => {
+  const { pane } = await whoPane($, on, { record: { host: 'Codex', agent: 'codex', model: 'gpt-5' } })
+  await pane.press({ key: 'keel-progress-pick-/work/wt/who#ship-9' })
+  expect(await pane.find({ type: 'Text', text: 'Codex · codex · gpt-5' })).toBeDefined()
+})
+
+test('nothing about who is shown when nothing is known', async ($, on) => {
+  const { pane, band } = await whoPane($, on, { labels: ['bug'], record: { agent: 'bad\u0007agent', model: 42 } })
+  expect(await pane.find({ type: 'Text', text: SUMMARY('') })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: ' feat/who · /work/wt/who ' })).toBeDefined()
+})
+
+test('a checkpoint newer than the activity record still shows who the record says drives the run', async ($, on) => {
+  const clock = mock.clock(on, { now: 3 * HOURS })
+  const ck = () => statusJson({ current: { run_id: 'ship-7', command: 'ship', issue: 7, pull_request: 1027, step: 's6', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    worktrees: [{ path: '/work', branch: 'main', mtime: 2 * HOURS, stdout: ck, activityMtime: 1 * HOURS, activity: [act('ship-7', 7, 's4', { pr: 1027, agent: 'claude', model: 'opus' })] }],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: '7 of 13 steps · next s7 review · PR #1027 · claude · opus · /work' })).toBeDefined()
+})
+
+test('a newer checkpoint takes who from the newest activity copy, not from an older worktree copy', async ($, on) => {
+  const clock = mock.clock(on, { now: 4 * HOURS })
+  const ck = () => statusJson({ current: { run_id: 'ship-9', command: 'ship', issue: 9, pull_request: 2001, step: 's8', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [2001],
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 3 * HOURS, stdout: ck },
+      { path: '/work/wt/new', branch: 'new', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-9', 9, 's7', { pr: 2001, agent: 'claude', model: 'opus' })] },
+      { path: '/work/wt/old', branch: 'old', mtime: null, activityMtime: 1 * HOURS, activity: [act('ship-9', 9, 's6', { pr: 2001, agent: 'codex', model: 'gpt-5' })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /claude · opus/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /codex/ })).toBeUndefined()
+})
+
+test('two live runs on one issue keep their own agent, joined by run id', async ($, on) => {
+  const clock = mock.clock(on, { now: 4 * HOURS })
+  const ck = (id: string, step: string) => () => statusJson({ current: { run_id: id, command: 'ship', issue: 9, pull_request: 2001, step, wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [2001],
+    worktrees: [
+      { path: '/work', branch: 'main', stdout: () => statusJson({ status: 'no-active-run', current: null }) },
+      { path: '/work/wt/a', branch: 'a', mtime: 3 * HOURS, stdout: ck('ship-9-a', 's5'), activityMtime: 1 * HOURS, activity: [act('ship-9-a', 9, 's4', { pr: 2001, agent: 'codex', model: 'gpt-5' })] },
+      { path: '/work/wt/b', branch: 'b', mtime: 3 * HOURS, stdout: ck('ship-9-b', 's6'), activityMtime: 2 * HOURS, activity: [act('ship-9-b', 9, 's5', { pr: 2001, agent: 'claude', model: 'opus' })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /PR #2001 · codex · gpt-5 · \/work\/wt\/a/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /PR #2001 · claude · opus · \/work\/wt\/b/ })).toBeDefined()
+})
+
+test('the newest activity copy decides who: one with no identity shows none, not an older copy’s', async ($, on) => {
+  const clock = mock.clock(on, { now: 4 * HOURS })
+  const ck = () => statusJson({ current: { run_id: 'ship-9', command: 'ship', issue: 9, pull_request: 2001, step: 's8', wait_reason: '' } })
+  stubEngine(on, {
+    project: true,
+    openPrs: [2001],
+    worktrees: [
+      { path: '/work', branch: 'main', mtime: 3 * HOURS, stdout: ck },
+      { path: '/work/wt/new', branch: 'new', mtime: null, activityMtime: 2 * HOURS, activity: [act('ship-9', 9, 's7', { pr: 2001 })] },
+      { path: '/work/wt/old', branch: 'old', mtime: null, activityMtime: 1 * HOURS, activity: [act('ship-9', 9, 's6', { pr: 2001, agent: 'codex' })] },
+    ],
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  await $.command.run({ command: 'keel-progress', args: '' })
+  await clock.settle()
+  const pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /PR #2001/ })).toBeDefined()
+  expect(await pane.find({ type: 'Text', text: /codex/ })).toBeUndefined()
 })
