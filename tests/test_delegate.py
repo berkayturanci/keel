@@ -503,7 +503,9 @@ class ProfileArgvTest(unittest.TestCase):
         provider = delegate.resolve_provider(None, registry, "grok").provider
         implement = delegate.plan_run(provider, "implement", PROMPT)
         review = delegate.plan_run(provider, "review", PROMPT)
+        fix = delegate.plan_run(provider, "fix", PROMPT)
         self.assertEqual(implement.argv, ("cursor-agent", "--trust"))
+        self.assertEqual(fix.argv, ("cursor-agent", "--trust"))
         self.assertEqual(review.argv, ("cursor-agent", "--trust", "--workspace", "/w"))
 
     def test_registry_args_are_never_the_reviewers_fallback(self):
@@ -536,6 +538,38 @@ class ProfileArgvTest(unittest.TestCase):
         with self.assertRaises(delegate.DelegateError) as caught:
             delegate.resolve_provider(None, registry, "cursor")
         self.assertIn("did you mean 'a' or 'b'?", caught.exception.message)
+
+    def _suggestion(self, commands, name):
+        registry = providers.parse_registry(
+            {"providers": {k: v for k, v in commands.items()}}, path="/registry.yaml"
+        )
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(None, registry, name)
+        return caught.exception.message
+
+    def test_the_suggestion_matches_the_binary_name_exactly_and_case_blind(self):
+        cli = {"transport": "cli"}
+        self.assertIn(
+            "did you mean 'g'?", self._suggestion({"g": {**cli, "command": "aider"}}, "aider")
+        )
+        self.assertIn(
+            "did you mean 'g'?",
+            self._suggestion({"g": {**cli, "command": "Cursor-Agent"}}, "cursor"),
+        )
+        self.assertIn(
+            "did you mean 'g'?",
+            self._suggestion({"g": {**cli, "command": "C:\\tools\\cursor-agent"}}, "cursor"),
+        )
+
+    def test_a_bare_prefix_or_a_commandless_entry_is_not_suggested(self):
+        message = self._suggestion(
+            {
+                "g": {"transport": "cli", "command": "cursor-agent"},
+                "api": {"transport": "openai-compatible", "endpoint": "http://127.0.0.1:1/v1"},
+            },
+            "curs",
+        )
+        self.assertNotIn("did you mean", message)
 
     def test_an_unknown_name_with_no_matching_command_gets_no_suggestion(self):
         with self.assertRaises(delegate.DelegateError) as caught:

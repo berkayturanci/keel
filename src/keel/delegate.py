@@ -325,7 +325,8 @@ def _did_you_mean(name: str, profiles, registry: providers_mod.Registry) -> str:
     commands = [(n, p.command) for n, p in profiles.items()]
     commands += [(e.name, e.command) for e in registry.providers]
     for entry_name, command in commands:
-        base = posixpath.basename(command or "").lower()
+        # Windows paths split on backslashes too.
+        base = posixpath.basename((command or "").replace("\\", "/")).lower()
         if base and (base == needle or base.startswith(needle + "-")):
             matches.append(entry_name)
     if not matches:

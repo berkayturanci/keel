@@ -806,8 +806,9 @@ def record_planning_failure(
         state_dir(root).mkdir(parents=True, exist_ok=True)
         # A reused run id must not pair this record with the previous run's pid or crash
         # marker (see `clear_sidecars`).
-        clear_sidecars(root, run_id)
         write_state(root, record)
+        # Only once the new record exists, so a failed write keeps the old markers.
+        clear_sidecars(root, run_id)
     return result
 
 
