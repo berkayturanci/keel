@@ -216,14 +216,15 @@ longer authorizes a merge of a newer head; if no record matches, the merge refus
 **A pull request that is not mergeable says why (#1506).** Any merge state other than `CLEAN`,
 `HAS_HOOKS` or `UNKNOWN` still refuses, with a reason that says what to do instead of GitHub's
 raw word: `BEHIND` -> `branch is behind <base>; update it: gh pr update-branch N`; `DIRTY` ->
-merge conflicts with `<base>`; `DRAFT` -> the PR is a draft; `UNSTABLE` -> read from the CI
-snapshot, `N checks still pending: <names>` when checks have not finished or `N checks failing:
-<names>` when they have failed (names capped at five), and the generic `PR merge state is
-UNSTABLE` only when the snapshot has no check detail; `BLOCKED` -> branch protection (required
-reviews, checks or unresolved conversations), plus the pending or failing checks when known. The
-payload keeps `reason` and adds a machine-readable `reason_code` (`behind`, `conflicts`, `draft`,
-`checks-pending`, `checks-failing`, `unstable`, `blocked`, `merge-state`); its `ci` object carries
-`pending_checks` / `failing_checks` name lists.
+merge conflicts with `<base>`; `DRAFT` -> the PR is a draft, with the `gh pr ready N` hint;
+`UNSTABLE` -> read from the CI snapshot: `N check(s) failing: <names>` when any check failed,
+else `N check(s) still pending: <names>` (names capped at five), and the bare `PR merge state is
+UNSTABLE` only when the snapshot names neither; `BLOCKED` -> always the branch-protection
+sentence (required reviews, checks or unresolved conversations), with `; N check(s)
+failing|still pending: <names>` appended only when the snapshot has them. The payload keeps
+`reason` and adds a machine-readable `reason_code` (`behind`, `conflicts`, `draft`,
+`checks-pending`, `checks-failing`, `unstable`, `blocked`, `merge-state`); its `ci` object always
+carries `pending_checks` and `failing_checks` name lists (empty when none).
 
 Once the merge lands, `keel merge` runs the [`verify-merge`](#keel-verify-merge-projectyaml---root-dir---pr-n---merge-sha-sha---transport-autographqlrest---json)
 drift check on it and reports the result as `merge_verification` in the payload and a

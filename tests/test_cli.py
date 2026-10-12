@@ -19046,9 +19046,10 @@ class TestMergeStateReason(unittest.TestCase):
         self.assertIn("merge conflicts with main", text)
 
     def test_draft(self):
-        code, text = self.reason("DRAFT")
-        self.assertEqual(code, "draft")
-        self.assertIn("is a draft", text)
+        self.assertEqual(
+            self.reason("DRAFT"),
+            ("draft", "PR is a draft; mark it ready for review: gh pr ready 7"),
+        )
 
     def test_unstable_with_pending_checks_says_pending(self):
         code, text = self.reason("UNSTABLE", self._ci(pending=["lint", "test"]))
@@ -19059,7 +19060,7 @@ class TestMergeStateReason(unittest.TestCase):
     def test_unstable_with_failing_checks_names_them(self):
         code, text = self.reason("UNSTABLE", self._ci(pending=["a"], failing=["lint"]))
         self.assertEqual(code, "checks-failing")
-        self.assertEqual(text, "1 checks failing: lint")
+        self.assertEqual(text, "1 check failing: lint")
 
     def test_unstable_names_are_capped(self):
         code, text = self.reason("UNSTABLE", self._ci(pending=[f"c{i}" for i in range(8)]))
@@ -19067,9 +19068,9 @@ class TestMergeStateReason(unittest.TestCase):
 
     def test_unstable_without_ci_detail_falls_back(self):
         for ci in (None, {"state": "pass"}):
-            code, text = self.reason("UNSTABLE", ci)
-            self.assertEqual(code, "unstable")
-            self.assertIn("UNSTABLE", text)
+            self.assertEqual(
+                self.reason("UNSTABLE", ci), ("unstable", "PR merge state is UNSTABLE")
+            )
 
     def test_blocked_names_protection_and_known_checks(self):
         code, text = self.reason("BLOCKED")
@@ -19077,7 +19078,11 @@ class TestMergeStateReason(unittest.TestCase):
         self.assertIn("branch protection", text)
         self.assertNotIn("pending", text)
         _, text = self.reason("BLOCKED", self._ci(pending=["test"]))
-        self.assertIn("1 checks still pending: test", text)
+        self.assertIn("; 1 check still pending: test", text)
+        code, text = self.reason("BLOCKED", self._ci(pending=["a"], failing=["lint", "fmt"]))
+        self.assertEqual(code, "blocked")
+        self.assertTrue(text.endswith("; 2 checks failing: lint, fmt"))
+        self.assertNotIn("pending", text)
 
     def test_unknown_state_keeps_raw_text(self):
         self.assertEqual(self.reason("WEIRD"), ("merge-state", "PR merge state is WEIRD"))
@@ -19095,6 +19100,11 @@ class TestMergeStateReason(unittest.TestCase):
         self.assertEqual(ci["failing_checks"], ["lint", "(unnamed check)"])
         self.assertEqual(ci["pending_checks"], ["test", "ci/x"])
         self.assertEqual(cli._ci_rollup_state(rollup[1:3])["pending_checks"], ["test", "ci/x"])
+        for case in ([], [{"name": "ok", "conclusion": "SUCCESS"}], rollup[1:3], rollup[:1]):
+            state = cli._ci_rollup_state(case)
+            self.assertIsInstance(state["pending_checks"], list)
+            self.assertIsInstance(state["failing_checks"], list)
+        self.assertEqual(cli._ci_rollup_state([])["failing_checks"], [])
 
     def test_merge_command_reports_pending_instead_of_unstable(self):
         with (
@@ -19113,8 +19123,10 @@ class TestMergeStateReason(unittest.TestCase):
             rc, out, _ = run(_merge_args(json_out=True))
         payload = json.loads(out)
         self.assertEqual(rc, 1)
-        self.assertEqual(payload["reason"], "1 checks still pending: test")
+        self.assertEqual(payload["reason"], "1 check still pending: test")
         self.assertEqual(payload["reason_code"], "checks-pending")
+        self.assertEqual(payload["ci"]["pending_checks"], ["test"])
+        self.assertEqual(payload["ci"]["failing_checks"], [])
 
 
 if __name__ == "__main__":

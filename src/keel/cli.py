@@ -5696,9 +5696,10 @@ def _merge_state_reason(merge_state: str, ci: object, base: str, pr: object) -> 
     failing_n, failing_names = _check_names(ci.get("failing_checks"))
     ci_note = ""
     if failing_n:
-        ci_note = f"{failing_n} checks failing: {failing_names}"
+        ci_note = f"{failing_n} {'check' if failing_n == 1 else 'checks'} failing: {failing_names}"
     elif pending_n:
-        ci_note = f"{pending_n} checks still pending: {pending_names}"
+        noun = "check" if pending_n == 1 else "checks"
+        ci_note = f"{pending_n} {noun} still pending: {pending_names}"
     if merge_state == "BEHIND":
         return "behind", f"branch is behind {base}; update it: gh pr update-branch {pr}"
     if merge_state == "DIRTY":
@@ -5708,7 +5709,7 @@ def _merge_state_reason(merge_state: str, ci: object, base: str, pr: object) -> 
     if merge_state == "UNSTABLE":
         if ci_note:
             return ("checks-failing" if failing_n else "checks-pending"), ci_note
-        return "unstable", "PR merge state is UNSTABLE (non-required checks are not passing)"
+        return "unstable", "PR merge state is UNSTABLE"
     if merge_state == "BLOCKED":
         known = f"; {ci_note}" if ci_note else ""
         return (
@@ -5742,21 +5743,17 @@ def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
             failing.append(name)
         elif pending:
             pending_checks.append(name)
+    names: dict[str, object] = {"failing_checks": failing, "pending_checks": pending_checks}
     if failing:
-        return {
-            "state": "fail",
-            "reason": first_failure,
-            "failing_checks": failing,
-            "pending_checks": pending_checks,
-        }
+        return {"state": "fail", "reason": first_failure, **names}
     if pending_checks:
-        return {"state": "pending", "reason": "check-pending", "pending_checks": pending_checks}
+        return {"state": "pending", "reason": "check-pending", **names}
     if saw_check:
-        return {"state": "pass", "reason": "all-checks-passing"}
+        return {"state": "pass", "reason": "all-checks-passing", **names}
     # An empty rollup is not a pass: no check has reported for this head. Kept as its
     # own state so the merge gate can apply the documented docs-only carve-out instead
     # of treating "CI has not run" as "CI is green".
-    return {"state": "no-checks", "reason": "no-checks"}
+    return {"state": "no-checks", "reason": "no-checks", **names}
 
 
 def _verify_merge_evidence(
