@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`keel merge` says why a pull request is not mergeable instead of echoing GitHub's merge state** (#1506). A head whose checks had only not finished reported `PR merge state is UNSTABLE`, which operators read as a failure. The refusal is unchanged; the reason now reads `N check(s) failing: <names>` or `N check(s) still pending: <names>` (names capped at five) for `UNSTABLE`, taken from the CI snapshot, and the bare `PR merge state is UNSTABLE` only when the snapshot names no failing or pending check; `branch is behind <base>; update it: gh pr update-branch N` for `BEHIND`; merge conflicts for `DIRTY`; `gh pr ready N` for `DRAFT`; and for `BLOCKED` always the branch-protection sentence (required reviews, checks or unresolved conversations), with `; N check(s) failing|still pending: <names>` appended only when the snapshot has them. `reason` keeps its place and the payload gains a `reason_code` (`behind`, `conflicts`, `draft`, `checks-pending`, `checks-failing`, `unstable`, `blocked`, `merge-state`); the `ci` object always carries `pending_checks` and `failing_checks` name lists (empty when none).
+
 ## [1.31.1] - 2026-10-12
 
 - `keel review --from-jury` posts an ai-jury panelist's `COMMENT` (its worst upheld finding is minor or nit) as `LGTM`, so a pull request the chair approved is no longer held by panelists' nits. A `COMMENT` carrying a critical or major finding or a finding index that does not resolve, the issue-mode `UNCLEAR`, a host's own `COMMENT`, and a chair's `COMMENT` consensus still hold.
