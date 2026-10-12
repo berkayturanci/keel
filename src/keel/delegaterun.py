@@ -804,6 +804,9 @@ def record_planning_failure(
     }
     with contextlib.suppress(OSError):
         state_dir(root).mkdir(parents=True, exist_ok=True)
+        # A reused run id must not pair this record with the previous run's pid or crash
+        # marker (see `clear_sidecars`).
+        clear_sidecars(root, run_id)
         write_state(root, record)
     return result
 

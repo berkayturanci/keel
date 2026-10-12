@@ -7277,20 +7277,26 @@ def _cmd_delegate_run(args: argparse.Namespace) -> int:
         return 1
     plan, failure = _delegate_plan(args)
     if failure is not None:
-        if not args.child:
-            print(f"keel: error: {failure['error_code']}: {failure['error']}", file=sys.stderr)
-        if args.detach and not args.child:
+        # `--print-argv` is checked first of all: it must have no side effect, so it never
+        # records a failed run, and it wins over `--detach`.
+        if args.detach and not args.child and not args.print_argv:
             # A plan that never became a run still gets a record (#1510): without one the
             # null fields read as a silent start and `delegate status` says nothing ran.
+            # The run id is validated first, so a bad one records nothing.
             run_id = args.run_id or delegaterun.new_run_id()
             try:
                 delegaterun.check_run_id(run_id)
             except delegaterun.RunIdError as exc:
-                print(json.dumps(_delegate_bad_run_id(args, str(exc)), indent=2, sort_keys=True))
+                bad = _delegate_bad_run_id(args, str(exc))
+                print(f"keel: error: {bad['error_code']}: {bad['error']}", file=sys.stderr)
+                print(json.dumps(bad, indent=2, sort_keys=True))
                 return 1
+            print(f"keel: error: {failure['error_code']}: {failure['error']}", file=sys.stderr)
             failure = delegaterun.record_planning_failure(
                 args.root, run_id, failure, provider=args.provider, role=args.role
             )
+        elif not args.child:
+            print(f"keel: error: {failure['error_code']}: {failure['error']}", file=sys.stderr)
         print(json.dumps(failure, indent=2, sort_keys=True))
         return 1
     if args.print_argv:
@@ -10827,7 +10833,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--print-argv",
         action="store_true",
         help="resolve the plan and print it as JSON (argv, read_only, warnings) without "
-        "running anything",
+        "running or recording anything; wins over --detach",
     )
     p_dr.add_argument(
         "--json",

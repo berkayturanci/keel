@@ -135,6 +135,8 @@ class TestProviderRecord(unittest.TestCase):
         self.assertEqual(record["api_key_env"], "ANTHROPIC_API_KEY")
         self.assertEqual(record["effort"], "high")
         self.assertEqual(record["review_args"], ["-p"])
+        self.assertIn("args", record)
+        self.assertEqual(record["args"], [])
         self.assertIn("capabilities", record)
 
 

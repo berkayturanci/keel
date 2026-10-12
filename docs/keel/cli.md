@@ -2378,7 +2378,7 @@ providers:
 `keel delegate run` prints the registry's load warnings (an ignored field, a bad type) and
 any name it shares with a project `knobs.delegate_profiles` entry (the project profile
 wins) on stderr as `keel: warning: …` (#1508). **`--print-argv`** resolves the plan and
-prints it as JSON, `argv` included, without running anything, so you can check which flags
+prints it as JSON, `argv` included, without running or recording anything (it wins over `--detach`), so you can check which flags
 a seat will get. An unknown `--provider` that is the CLI of a configured entry says so:
 `unknown provider 'cursor'; … did you mean 'grok'?` (#1509) — matched on the entry's
 `command`, so there is no alias table to bind a product name to someone else's entry.

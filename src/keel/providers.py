@@ -117,9 +117,9 @@ class Provider:
     #: Flags that make this provider a reviewer rather than an implementer. Their
     #: presence is what ``read_only_mode`` reports for a profile/registry entry.
     review_args: tuple[str, ...] = ()
-    #: Flags the implementer role runs with (``--trust`` for a current ``cursor-agent``).
-    #: Registry entries only (#1508). Never used for a read-only role, and never a
-    #: fallback for ``review_args``: those are the write flags.
+    #: Flags the implementer (write) role runs with, e.g. ``--trust`` for a current
+    #: ``cursor-agent``. Registry entries only (#1508). Reviewers use ``review_args``
+    #: instead; ``args`` is never a fallback for review, because these are the write flags.
     args: tuple[str, ...] = ()
     #: ``builtin`` | ``profile`` | ``registry``.
     source: str = "builtin"

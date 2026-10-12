@@ -528,6 +528,15 @@ class ProfileArgvTest(unittest.TestCase):
             delegate.resolve_provider(_config({"grok": profile}), None, "cursor")
         self.assertIn("did you mean 'grok'?", caught.exception.message)
 
+    def test_several_matching_entries_are_all_suggested(self):
+        registry = providers.parse_registry(
+            {"providers": {n: {"transport": "cli", "command": "cursor-agent"} for n in ("b", "a")}},
+            path="/registry.yaml",
+        )
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(None, registry, "cursor")
+        self.assertIn("did you mean 'a' or 'b'?", caught.exception.message)
+
     def test_an_unknown_name_with_no_matching_command_gets_no_suggestion(self):
         with self.assertRaises(delegate.DelegateError) as caught:
             delegate.resolve_provider(None, self._grok(), "zzz")

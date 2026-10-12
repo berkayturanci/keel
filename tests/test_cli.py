@@ -15033,7 +15033,8 @@ class DelegateCommandTest(unittest.TestCase):
             self.assertIn("failed", out2)
 
     def test_a_child_plan_failure_writes_no_stderr_line_and_no_record(self):
-        """The detached child reports through its state file, not the terminal (#1510)."""
+        """A child plan failure prints no stderr line and writes no record (#1510): the parent
+        already recorded the run; the child does neither."""
         with tempfile.TemporaryDirectory() as root:
             rc, out, err = run(
                 [
@@ -15060,7 +15061,7 @@ class DelegateCommandTest(unittest.TestCase):
 
     def test_a_detached_plan_failure_with_a_bad_run_id_is_a_bad_run_id(self):
         with tempfile.TemporaryDirectory() as root:
-            rc, out, _err = run(
+            rc, out, err = run(
                 [
                     "delegate",
                     "run",
@@ -15077,8 +15078,59 @@ class DelegateCommandTest(unittest.TestCase):
                     "../x",
                 ]
             )
+            _rc, status, _ = run(["delegate", "status", "--root", root])
         self.assertEqual(rc, 1)
         self.assertEqual(json.loads(out)["error_code"], "bad-run-id")
+        self.assertIn("keel: error: bad-run-id", err)
+        self.assertNotIn("unknown-provider", err)
+        self.assertIn("no delegate runs", status)
+
+    def _print_argv_args(self, provider, root, *extra):
+        return [
+            "delegate", "run", "--provider", provider, "--role", "review",
+            "--prompt-file", self._prompt(), "--root", root, "--print-argv", *extra,
+        ]  # fmt: skip
+
+    def test_print_argv_with_a_planning_failure_records_nothing_even_with_detach(self):
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, err = run(self._print_argv_args("nope", root, "--detach"))
+            _rc, status, _ = run(["delegate", "status", "--root", root])
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["error_code"], "unknown-provider")
+        self.assertNotIn("run_id", json.loads(out))
+        self.assertIn("unknown-provider", err)
+        self.assertIn("no delegate runs", status)
+
+    def test_print_argv_wins_over_detach_and_spawns_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                rc, out, _err = run(self._print_argv_args("claude", root, "--detach"))
+            _rc, status, _ = run(["delegate", "status", "--root", root])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["provider"], "claude")
+        popen.assert_not_called()
+        self.assertIn("no delegate runs", status)
+
+    def test_a_reused_run_id_does_not_keep_a_stale_pid_on_a_planning_failure(self):
+        with tempfile.TemporaryDirectory() as root:
+            cli.delegaterun.start_detached(
+                [],
+                root=root,
+                run_id="again",
+                _popen=lambda *a, **k: type("C", (), {"pid": 99999999})(),
+            )
+            cli.delegaterun.crashed_path(root, "again").write_text('{"reason": "old"}', "utf-8")
+            rc, _out, _err = run(
+                ["delegate", "run", "--provider", "nope", "--role", "review",
+                 "--prompt-file", self._prompt(), "--root", root, "--detach",
+                 "--run-id", "again"]
+            )  # fmt: skip
+            _rc, status, _ = run(["delegate", "status", "--root", root, "--json"])
+        self.assertEqual(rc, 1)
+        (record,) = json.loads(status)["runs"]
+        self.assertEqual(record["status"], "done")
+        self.assertIsNone(record["pid"])
+        self.assertFalse(record["result"]["ok"])
 
     def test_the_child_writes_the_authoritative_state_that_wait_reads(self):
         with tempfile.TemporaryDirectory() as root:
