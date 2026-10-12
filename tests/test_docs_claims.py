@@ -41,6 +41,8 @@ import io
 import json
 import re
 import shlex
+import shutil
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -2848,6 +2850,133 @@ class TheWorkflowPageMatchesThisRepositorysJuryPolicy(unittest.TestCase):
                 else:
                     with self.assertRaises(AssertionError):
                         self.test_the_page_names_the_mode_this_repository_sets()
+
+
+class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
+    """The #1289 audit result carries its time qualifier on every surface (#1513).
+
+    Three of 14 closed fixes had tests that passed with the fix removed *at the time their
+    issue was closed*; later audits added tests that catch them. An unqualified "found three
+    whose tests passed with the fix removed" reads as three fixes unguarded today, and a
+    present-tense "all 14 fail without their fix" is a claim nobody re-checks.
+
+    Scanned: every tracked ``*.md``, ``*.html``, ``*.js``, ``*.py``, ``*.yaml``, ``*.yml`` and
+    ``*.toml`` file, except ``CHANGELOG.md`` (history) and ``tests/``. Out of scope on purpose:
+    ``website/revert-check.html`` is a dated article ("In September we reverted each of
+    fourteen..."), so its "Today all fourteen fail" means the article's own date;
+    ``tests/test_revert_check_article.py`` pins it. The article's wording does not match the
+    claim pattern, so it is never read as an undated surface.
+
+    The unit checked is the WHOLE sentence containing the claim, so a leading "Today" is seen
+    and the following sentence is not.
+    """
+
+    CLAIM = re.compile(r"audit\s+of\s+(?:14|fourteen)\s+closed\s+fixes", re.IGNORECASE)
+    QUALIFIER = "at the time their issue was closed"
+    EXTENSIONS = (".md", ".html", ".js", ".py", ".yaml", ".yml", ".toml")
+    BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z(*\[`])")
+    KNOWN = (
+        "docs/keel/configuration.md",
+        "src/keel/revertcheck.py",
+        "src/keel/artifacts.py",
+        "CONTRIBUTING.md",
+        "projects/keel.yaml",
+        ".keel/project.yaml",
+    )
+
+    @classmethod
+    def _paths(cls):
+        git = shutil.which("git")
+        if git is not None:
+            proc = subprocess.run(
+                [git, "-C", str(REPO_ROOT), "ls-files", "-z"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                stdin=subprocess.DEVNULL,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                return [r for r in proc.stdout.split("\0") if r]
+        # Ignored trees (agent worktrees under .claude/, caches, build output) are not
+        # project text; walking them would read every worktree's copy of the repo.
+        skip = {".git", ".claude", "node_modules", ".venv", "venv", "__pycache__", "build", "dist"}
+        found = []
+        for path in REPO_ROOT.rglob("*"):
+            rel = path.relative_to(REPO_ROOT)
+            if skip.intersection(rel.parts) or not path.is_file():
+                continue
+            found.append(rel.as_posix())
+        return found
+
+    @classmethod
+    def sentences(cls, text):
+        """Every whole sentence of ``text`` that states the audit."""
+        flat = re.sub(r"\s*\n\s*(?:#\s*)?", " ", text)
+        cuts = [(m.start(), m.end()) for m in cls.BOUNDARY.finditer(flat)]
+        out = []
+        for m in cls.CLAIM.finditer(flat):
+            start = max((e for _, e in cuts if e <= m.start()), default=0)
+            end = min((c for c, _ in cuts if c >= m.end()), default=len(flat))
+            out.append(flat[start:end])
+        return out
+
+    def _found(self):
+        found = []
+        for name in self._paths():
+            if name == "CHANGELOG.md" or name.startswith("tests/"):
+                continue
+            if not name.endswith(self.EXTENSIONS):
+                continue
+            path = REPO_ROOT / name
+            if path.is_file():
+                text = path.read_text(encoding="utf-8", errors="replace")
+                found.extend((name, sentence) for sentence in self.sentences(text))
+        return found
+
+    def test_every_known_surface_states_the_audit(self):
+        names = {name for name, _ in self._found()}
+        for known in self.KNOWN:
+            with self.subTest(path=known):
+                self.assertIn(known, names)
+
+    def test_every_statement_of_the_audit_says_when(self):
+        for name, sentence in self._found():
+            with self.subTest(path=name):
+                self.assertIn(self.QUALIFIER, sentence)
+
+    def test_no_statement_of_the_audit_is_present_tense(self):
+        found = self._found()
+        self.assertGreater(len(found), 0)
+        for name, sentence in found:
+            with self.subTest(path=name):
+                self.assertNotRegex(sentence, r"(?i)\b(?:today|fails?|failing)\b")
+
+    def test_without_git_the_tree_walk_still_finds_every_known_surface(self):
+        with unittest.mock.patch.object(shutil, "which", return_value=None):
+            names = set(self._paths())
+        for known in self.KNOWN:
+            with self.subTest(path=known):
+                self.assertIn(known, names)
+        self.assertFalse(any(n.startswith(".claude/") for n in names))
+
+    def test_every_known_surface_names_the_audit_it_reports(self):
+        for name, sentence in self._found():
+            if name in self.KNOWN:
+                with self.subTest(path=name):
+                    self.assertIn("#1289", sentence)
+
+    def test_the_sentence_is_whole_and_neighbours_are_excluded(self):
+        bad = "Today an audit of 14 closed fixes found three. All 14 fail today."
+        self.assertEqual(self.sentences(bad), ["Today an audit of 14 closed fixes found three."])
+        ok = (
+            "An audit of 14 closed fixes found three at the time their issue was closed. "
+            "All 14 fail today."
+        )
+        (sentence,) = self.sentences(ok)
+        self.assertNotRegex(sentence, r"(?i)\b(?:today|fails?|failing)\b")
+        # The past tense the surfaces use is not caught as present tense.
+        self.assertNotRegex("all 14 failed without their fix", r"(?i)\b(?:today|fails?|failing)\b")
+        self.assertRegex(self.sentences(bad)[0], r"(?i)\btoday\b")
 
 
 if __name__ == "__main__":
