@@ -534,6 +534,28 @@ class TestBallotVerdict(unittest.TestCase):
                 findings = ({"severity": "nit"}, {"severity": severity})
                 self.assertEqual(jury.ballot_verdict("COMMENT", findings), "COMMENT")
 
+    def test_a_comment_whose_finding_indexes_do_not_resolve_stays_a_comment(self):
+        """Fail closed: an index that resolves to nothing may have pointed at a major."""
+        self.assertEqual(jury.ballot_verdict("COMMENT", (), resolved=False), "COMMENT")
+        for indexes in ([5], ["0"], [0, 7], {"0": 1}):
+            with self.subTest(indexes=indexes):
+                report = {
+                    "schema_version": "1.1",
+                    "findings": [{"severity": "nit", "file": "a.py", "line": 1, "claim": "x"}],
+                    "reviewers": [{"name": "alpha", "verdict": "COMMENT", "findings": indexes}],
+                }
+                self.assertEqual(
+                    jury._ballot(report["reviewers"][0], report["findings"], position=1).verdict,
+                    "COMMENT",
+                )
+        report_ok = [{"severity": "nit", "file": "a.py", "line": 1, "claim": "x"}]
+        for indexes in ([0], [], None):
+            with self.subTest(indexes=indexes):
+                raw = {"name": "alpha", "verdict": "COMMENT"}
+                if indexes is not None:
+                    raw["findings"] = indexes
+                self.assertEqual(jury._ballot(raw, report_ok, position=1).verdict, "LGTM")
+
     def test_every_other_token_maps_as_map_verdict_does(self):
         for token in (
             "APPROVE",

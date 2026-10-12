@@ -606,7 +606,9 @@ def _bool_field(raw: dict[str, Any], key: str) -> bool | None:
 _BLOCKING_SEVERITIES = frozenset({"critical", "major"})
 
 
-def ballot_verdict(verdict: str, findings: tuple[dict[str, Any], ...] = ()) -> str:
+def ballot_verdict(
+    verdict: str, findings: tuple[dict[str, Any], ...] = (), *, resolved: bool = True
+) -> str:
     """A panelist's ballot in keel's vocabulary: :func:`map_verdict`, except ``COMMENT``.
 
     ai-jury derives a code-review ballot from the worst finding the panelist raised that
@@ -617,12 +619,18 @@ def ballot_verdict(verdict: str, findings: tuple[dict[str, Any], ...] = ()) -> s
     panelists with nits held a merge the chair approved (#1500). It stays ``COMMENT`` if
     any finding it carries is critical or major. Only ballots: the panel's consensus is
     read by :func:`map_verdict`, and a consensus of ``COMMENT`` still holds; ``UNCLEAR``
-    (the issue-mode remark) still holds too.
+    (the issue-mode remark) still holds too. ``resolved`` is ``False`` when some of the
+    ballot's finding indexes did not resolve: what they pointed at is unknown, so the
+    ``COMMENT`` is kept rather than read as non-blocking.
     """
     token = (verdict or "").strip().upper().replace(" ", "_").replace("-", "_")
-    if token == "COMMENT" and not any(
-        str(finding.get("severity", "")).strip().lower() in _BLOCKING_SEVERITIES
-        for finding in findings
+    if (
+        token == "COMMENT"
+        and resolved
+        and not any(
+            str(finding.get("severity", "")).strip().lower() in _BLOCKING_SEVERITIES
+            for finding in findings
+        )
     ):
         return "LGTM"
     return map_verdict(verdict)
@@ -637,14 +645,19 @@ def _ballot(raw: Any, findings: list[Any], *, position: int) -> Ballot:
     vendor = raw.get("vendor")
     model = raw.get("model")
     verified = raw.get("verified_count")
-    ballot_findings = _ballot_findings(raw.get("findings"), findings)
+    raw_indexes = raw.get("findings")
+    ballot_findings = _ballot_findings(raw_indexes, findings)
+    # Every index resolved (or none was given): only then is a COMMENT known to be minor.
+    resolved = raw_indexes is None or (
+        isinstance(raw_indexes, list) and len(ballot_findings) == len(raw_indexes)
+    )
     # The chair record is the consensus, not a panelist: its COMMENT still holds.
     is_chair = (raw.get("role") or "") == CHAIR_ROLE
     return Ballot(
         reviewer=name.strip(),
         verdict=map_verdict(raw.get("verdict", ""))
         if is_chair
-        else ballot_verdict(raw.get("verdict", ""), ballot_findings),
+        else ballot_verdict(raw.get("verdict", ""), ballot_findings, resolved=resolved),
         vendor=vendor.strip() if isinstance(vendor, str) and vendor.strip() else None,
         model=model.strip() if isinstance(model, str) and model.strip() else None,
         verified_count=verified
