@@ -527,6 +527,20 @@ not approve (`REQUEST_CHANGES`, `COMMENT`, …): it posts below the count, becau
 holds `keel merge` on its own (#1426) and refusing it would only hide the rejection (#1423).
 `--reviewers` overrides the required count.
 
+### Attribution labels are checked before anything is posted (#1504)
+
+`keel review --live` reads the pull request's labels (it already fetches them) and, when
+the evidence gate is enforced on the PR, runs the presence half of the attribution rule
+that `evidence-verify` and `keel merge` apply later. A PR with no `agent:<vendor>` label is
+refused with exit 1 and **nothing posted**; the message names the fix, for example
+`gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<base>'` (placeholders are
+quoted so the line parses; the real labels appear when the PR's ship_run ledger record, read from the configured
+ledger path, names the implementer; otherwise the quoted placeholders are printed and `keel attribution --model <model>` writes the real labels). "Governed"
+is decided from the PR's labels, its own head ref, its comments and reviews and that
+ledger record, as `evidence-verify` does — except that an unreadable or corrupt ledger reads as no record here (fail-open: review is not refused for it, while `evidence-verify` stops on it). A PR without a `model:<base>` label only gets a warning on stderr.
+A PR the gate does not govern, one carrying the waiver label, and unreadable labels are not
+refused, and `--dry-run` reads no labels, so it never reports this.
+
 ### Jury flags — `keel review` resolves the same contract as every other surface
 
 `--jury` / `--no-jury` / `--jury-advisory` are accepted here and mean exactly what they mean
@@ -1228,6 +1242,11 @@ which is the point — an explicit operator act stays distinguishable from armin
   ledger record (or no recorded implementer) only the presence check runs, and when PR labels
   are unavailable the check is skipped entirely (back-compat). This check engages only when
   the gate is enforced and is suppressed under `--dry-run`.
+  A PR with no `model:<base>` label raises an advisory `attribution-model-label` finding
+  (`minor`, never blocking; #1504). It is not blocking because `keel attribution` writes no
+  `model:` label for an implementer that ran without a recorded model, so a blocking rule
+  would fail PRs that carry exactly what keel produced. The same presence check runs earlier,
+  in `keel review --live` and `keel ship --pr N`, so the operator learns before the CI wait.
 
 For live GitHub payloads, trusted means `author_association` is `OWNER`, `MEMBER`, or
 `COLLABORATOR`. Explicitly untrusted associations are rejected even when the author type is
@@ -2604,6 +2623,17 @@ count), whether the **merge window** is open, optional **CI** status (`--pr N` r
 check-rollup through the selected GitHub transport), each gate's result, and the final
 **merge decision**
 (`MERGE` / `DEFER` / `BLOCK`).
+
+With `--pr N`, `keel ship` also reads the pull request's labels and, when the evidence gate
+governs the PR (the same `gate_decision` as `evidence-verify`, fed the PR's own head ref and reviews from the pulls API, its comments from the issues API, its labels
+(read with `--repo <owner>/<repo>` and retried) and the ledger record; the checkout's branch is never
+used, and a read that fails arms nothing; an ungoverned PR is never refused), checks attribution up front (#1504), so a missing label is found before the CI wait rather than at `keel merge`.
+`--live` refuses (exit 1, the `--json` payload carries `error`) when there is no
+`agent:<vendor>` label, with the exact `gh pr edit N --add-label … --add-label …` command in the message (the real
+labels from `--implementer`, else from the PR's ship_run ledger record). A missing
+`model:<base>` label, and any missing label under `--dry-run`, is only a warning on stderr.
+The waiver label skips the check, and labels `gh` could not read skip it too. Only
+presence is checked here; the vendor cross-check against the ledger stays at `keel merge`.
 
 If `git` cannot produce the changed-file list — a shallow or single-branch clone cannot
 resolve `base...HEAD` — the command prints

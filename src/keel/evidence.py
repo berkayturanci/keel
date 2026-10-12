@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shlex
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -561,6 +562,9 @@ def verify(
     )
     if attribution is not None:
         findings = [*findings, attribution]
+    model_label = _attribution_model_finding(pr_labels=pr_labels, enforced=enforced and not dry_run)
+    if model_label is not None:
+        findings = [*findings, model_label]
     vocabulary = _attribution_vocabulary_finding(
         pr_labels=pr_labels,
         enforced=enforced and not dry_run,
@@ -1612,6 +1616,70 @@ def attribution_check(
     }
 
 
+def attribution_fix_command(
+    pr: int | str,
+    *,
+    need_agent: bool,
+    need_model: bool,
+    implementer: str | None = None,
+) -> str:
+    """The exact ``gh pr edit`` command that supplies the missing attribution labels (#1504).
+
+    Only the missing halves are added, so running it never stacks a second ``agent:*`` on a
+    PR that already has one. When the implementer is known (``vendor`` or ``vendor:model``)
+    the real labels from :func:`keel.agents.attribution_from_implementer` are written;
+    otherwise a quoted ``'agent:<vendor>'`` / ``'model:<base>'`` placeholder stands in
+    (``keel attribution`` prints the real values). Pure.
+    """
+    known = agents.attribution_from_implementer(implementer) or {}
+    parts = ["gh", "pr", "edit", str(pr)]
+    # Quoted: an unquoted `agent:<vendor>` is a shell redirection and the line would not run.
+    if need_agent:
+        label = known.get("agent_label") or f"{AGENT_LABEL_PREFIX}<vendor>"
+        parts += ["--add-label", shlex.quote(label)]
+    if need_model:
+        label = known.get("model_label") or f"{MODEL_LABEL_PREFIX}<base>"
+        parts += ["--add-label", shlex.quote(label)]
+    return " ".join(parts)
+
+
+def early_attribution_check(
+    labels: Sequence[str] | None,
+    *,
+    pr: int | str,
+    implementer: str | None = None,
+) -> dict[str, Any]:
+    """Attribution check run by ``keel review`` / ``keel ship`` before CI is awaited (#1504).
+
+    The same presence rule :func:`attribution_check` applies at ``evidence-verify`` /
+    ``keel merge`` (an ``agent:<vendor>`` label), moved to where the operator can still
+    cheaply fix it. The vendor cross-check is deliberately **not** repeated: it needs the
+    ledger record, which only the merge gate holds.
+
+    A missing ``agent:`` label is an ``error`` (the caller refuses). A missing ``model:``
+    label is only a ``warning``: ``keel attribution`` itself writes no ``model:`` label when
+    the implementer ran without a recorded model, so refusing would break PRs keel
+    produced. Returns ``{ok, errors, warnings, fix_command}``; ``fix_command`` is ``None``
+    when nothing is missing. No I/O.
+    """
+    need_agent = not agent_label_vendors(labels)
+    need_model = not model_label_bases(labels)
+    errors: list[str] = []
+    warnings: list[str] = []
+    if need_agent:
+        errors.append("PR is missing a mandatory agent:<vendor> attribution label.")
+    if need_model:
+        warnings.append("PR has no model:<base> attribution label.")
+    fix = (
+        attribution_fix_command(
+            pr, need_agent=need_agent, need_model=need_model, implementer=implementer
+        )
+        if need_agent or need_model
+        else None
+    )
+    return {"ok": not errors, "errors": errors, "warnings": warnings, "fix_command": fix}
+
+
 def attribution_vocabulary_check(
     labels: Sequence[str] | None,
     *,
@@ -1782,6 +1850,31 @@ def _attribution_finding(
         "severity": "major",
         "kind": "attribution",
         "message": message,
+    }
+
+
+def _attribution_model_finding(
+    *,
+    pr_labels: Sequence[str] | None,
+    enforced: bool,
+) -> dict[str, Any] | None:
+    """Return the advisory ``attribution-model-label`` finding, or ``None`` (#1504).
+
+    ``minor``, never blocking: a missing ``model:<base>`` label was never flagged before,
+    and keel's own attribution writes none for an implementer with no recorded model, so
+    making it blocking would fail PRs that carry exactly what keel produced. Same gating as
+    :func:`_attribution_finding`: only when the gate is enforced and labels were fetched.
+    """
+    if not enforced or pr_labels is None or model_label_bases(pr_labels):
+        return None
+    return {
+        "id": "attribution-model-label",
+        "severity": "minor",
+        "kind": "attribution",
+        "message": (
+            "PR has no model:<base> attribution label; add one "
+            "(`keel attribution --vendor <vendor> --model <model>` prints it)."
+        ),
     }
 
 

@@ -1791,6 +1791,37 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 1
 
+    if args.pr is not None and transport.name == "gh":
+        # #1504: a missing agent:/model: label was first found at `keel merge`, after the
+        # whole CI wait. The label is on the pull request already, so say so now.
+        early_labels = github.pr_labels(
+            args.pr,
+            repo=f"{config.owner}/{config.repo}" if config.owner and config.repo else None,
+            cwd=args.root,
+        )
+        governed, ledger_implementer = (
+            _ship_pr_governance(args, config, early_labels)
+            if early_labels is not None
+            else (False, None)
+        )
+        if governed:
+            early = evidence.early_attribution_check(
+                early_labels, pr=args.pr, implementer=args.implementer or ledger_implementer
+            )
+            if early["errors"] or early["warnings"]:
+                report_text = _attribution_report(early, pr=args.pr)
+                if early["ok"] or not args.live:
+                    print(f"warning: {report_text}", file=sys.stderr)
+                elif args.json:
+                    print(
+                        json.dumps(
+                            {"contract": contract, "error": report_text}, indent=2, sort_keys=True
+                        )
+                    )
+                    return 1
+                else:
+                    print(report_text, file=sys.stderr)
+                    return 1
     # The local base branch may lag behind the remote after a branch merged the
     # current base.  Use the fetched remote tip as the canonical comparison point
     # so ledger/closure files describe this branch's net change, not the commits
@@ -3794,6 +3825,142 @@ def _review_bundle(
     )
 
 
+def _attribution_report(check: dict[str, Any], *, pr: int | str) -> str:
+    """Render an :func:`keel.evidence.early_attribution_check` result for an operator (#1504).
+
+    Only called with a result that has an error or a warning, so ``fix_command`` is set.
+    """
+    lines = [*check["errors"], *check["warnings"], f"Fix: {check['fix_command']}"]
+    return f"PR #{pr} attribution: " + " ".join(lines)
+
+
+def _soft_fetch(fetch: Callable[[], Any]) -> Any:
+    """Run a GitHub read; any failure reads as "nothing fetched" (``None``).
+
+    The early attribution check is advisory plumbing around a ship run. A label check must
+    never abort ship, so no failure of the context reads it needs (a missing owner, ``gh``
+    failing, a malformed payload) is allowed to escape.
+    """
+    try:
+        return fetch()
+    except Exception:
+        return None
+
+
+def _ship_pr_governance(
+    args: argparse.Namespace, config: cfg.ProjectConfig, labels: list[str]
+) -> tuple[bool, str | None]:
+    """Whether the evidence gate governs ``keel ship --pr N``'s PR, and its implementer (#1504).
+
+    The same decision `keel review` reaches for the same pull request: the PR's *own* head
+    ref (from the pulls API, not the checkout, which may be any branch), its comments and
+    reviews, its labels and the ship_run ledger record (``--ledger-jsonl`` when given).
+    Reads that fail arm nothing, so they never turn an ungoverned PR into a refused one.
+    The implementer is the ledger record's, for the fix command when ``--implementer`` is
+    not given.
+    """
+    pr_ref = ["repos", _soft_fetch(lambda: _owner_repo(config)), "pulls", str(args.pr)]
+    owner_known = pr_ref[1] is not None
+    pr = _soft_fetch(lambda: _gh_json(pr_ref, cwd=args.root)) if owner_known else None
+    head = pr.get("head") if isinstance(pr, dict) else None
+    head_ref = head.get("ref") if isinstance(head, dict) else None
+    comments = (
+        _soft_fetch(
+            lambda: _gh_json_list(
+                ["repos", pr_ref[1], "issues", str(args.pr), "comments"], cwd=args.root
+            )
+        )
+        if owner_known
+        else None
+    )
+    reviews = (
+        _soft_fetch(lambda: _gh_json_list([*pr_ref, "reviews"], cwd=args.root))
+        if owner_known
+        else None
+    )
+    record = _merge_ledger_record(args, config)
+    governed = _attribution_gate_enforced(
+        config,
+        labels,
+        head_ref=head_ref if isinstance(head_ref, str) else None,
+        pr_comments=comments,
+        pr_reviews=reviews,
+        ledger_record=record,
+    )
+    return governed, evidence.ledger_implementer(record)
+
+
+def _attribution_gate_enforced(
+    config: cfg.ProjectConfig,
+    labels: list[str],
+    *,
+    head_ref: str | None,
+    pr_comments: list[dict[str, Any]] | None,
+    pr_reviews: list[dict[str, Any]] | None,
+    ledger_record: dict[str, object] | None,
+) -> bool:
+    """Whether the evidence gate governs this pull request, as `evidence-verify` decides it.
+
+    The attribution rule only bites on a governed PR (#1504), so every early check asks
+    this before refusing: a PR keel does not govern, or one carrying the waiver label,
+    is never refused.
+    """
+    return bool(
+        evidence.gate_decision(
+            labels,
+            config.knobs.evidence_gate_label,
+            waiver_label=evidence.DEFAULT_WAIVER_LABEL,
+            head_ref=head_ref,
+            pr_comments=pr_comments,
+            pr_reviews=pr_reviews,
+            ledger_records=_ship_run_records(ledger_record),
+        )["enforced"]
+    )
+
+
+def _review_attribution_problem(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    artifacts_ctx: dict[str, Any],
+) -> str | None:
+    """The refusal ``keel review --live`` prints when the PR has no ``agent:`` label (#1504).
+
+    Mirrors where the same rule bites later: ``evidence-verify`` / ``keel merge`` only
+    check attribution on a pull request the evidence gate is enforced on, so a PR keel is
+    not governing is never refused here. Labels that are absent or ``None`` are *unknown*,
+    not empty: ``None`` means "go on". A missing ``model:`` label only warns on stderr.
+    The fix command carries the real labels when the PR's ship_run ledger record names
+    the implementer.
+    """
+    # `.get`: a hand-built artifacts mapping (`swarm-review`'s tests) may carry no labels or
+    # comments at all, which reads as "nothing to gate on", not as an error.
+    labels = artifacts_ctx.get("pr_labels")
+    if labels is None:
+        return None
+    record = _merge_ledger_record(args, config)
+    if not _attribution_gate_enforced(
+        config,
+        labels,
+        head_ref=artifacts_ctx.get("head_ref"),
+        pr_comments=artifacts_ctx.get("pr_comments"),
+        pr_reviews=artifacts_ctx.get("pr_reviews"),
+        ledger_record=record,
+    ):
+        return None
+    check = evidence.early_attribution_check(
+        labels, pr=args.pr, implementer=evidence.ledger_implementer(record)
+    )
+    if check["ok"]:
+        if check["warnings"]:
+            print(f"warning: {_attribution_report(check, pr=args.pr)}", file=sys.stderr)
+        return None
+    # The fix command stays the last line on its own, so it can be copied as is.
+    return (
+        "refused, nothing is posted: apply the labels, then re-run keel review.\n"
+        + _attribution_report(check, pr=args.pr)
+    )
+
+
 def _review_evidence_args(args: argparse.Namespace, dry_run: bool) -> argparse.Namespace:
     """The evidence reader's arguments for one ``keel review`` run."""
     return argparse.Namespace(
@@ -3959,6 +4126,11 @@ def _cmd_review(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    if not dry_run:
+        attribution_problem = _review_attribution_problem(args, config, artifacts_ctx)
+        if attribution_problem is not None:
+            print(attribution_problem, file=sys.stderr)
+            return 1
     # `swarm-review` posts what its seats reviewed at one head (#1423): a pull request
     # whose head moved since is not posted to. `keel review`'s own parser sets no pin.
     expected_head = getattr(args, "expected_head_sha", None)

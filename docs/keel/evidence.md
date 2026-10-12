@@ -100,6 +100,8 @@ Every agentic mutation (implementation in `s4`, review in `s7`) is permanently s
 
 Attribution is captured both in the git commit metadata, the PR labels, and Keel's durable run ledger.
 
+A missing `agent:<vendor>` label blocks at `evidence-verify` / `keel merge`, and is also caught earlier by `keel review --live` and `keel ship --pr N` (#1504), which print the `gh pr edit` command that fixes it. A missing `model:<base>` label is an advisory (`minor`) `attribution-model-label` finding, not a block.
+
 **The labels come from core, never from prose.** `keel.agents.attribution()` is the only
 definition of what a vendor/model pair is labelled, and `keel attribution` is how an
 adapter asks for it:

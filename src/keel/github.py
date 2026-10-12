@@ -246,6 +246,28 @@ def list_prs(
     return run_argv(argv, cwd=cwd, **_kw(_run))
 
 
+def pr_labels(
+    pr: int | str,
+    *,
+    repo: str | None = None,
+    cwd: str | None = None,
+    _run=None,
+    _sleep=None,
+) -> list[str] | None:
+    """The label names currently on ``pr``, or ``None`` when ``gh`` could not be asked.
+
+    ``None`` is a fact about the runner, not the PR: callers that gate on a label must
+    treat it as "unknown" and go on, never as "no labels" (#1504). ``repo``
+    (``owner/name``) pins the read to the repository the caller's other reads use, so a
+    fork's PR with the same number is never read instead; the read is retried like
+    :func:`pr_files`, since a single ``gh`` blip would otherwise skip the early check.
+    """
+    argv = ["gh", "pr", "view", str(pr), "--json", "labels", "--jq", ".labels[].name"]
+    if repo:
+        argv += ["--repo", repo]
+    return _lines(argv, cwd=cwd, _run=_run, _sleep=_sleep)
+
+
 def pr_state(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
     """Live PR state as ``open`` / ``merged`` / ``closed``, or ``None`` when unreadable.
 

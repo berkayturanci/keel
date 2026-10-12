@@ -1469,6 +1469,141 @@ class TestAttributionCheck(unittest.TestCase):
         self.assertTrue(result["ok"])
 
 
+class TestEarlyAttributionCheck(unittest.TestCase):
+    """The check `keel review` / `keel ship` run before CI is awaited (#1504)."""
+
+    def test_complete_labels_are_clean(self):
+        result = evidence.early_attribution_check(["agent:claude", "model:opus"], pr=7)
+        self.assertEqual(result, {"ok": True, "errors": [], "warnings": [], "fix_command": None})
+
+    def test_missing_agent_label_is_an_error_with_the_fix_command(self):
+        result = evidence.early_attribution_check(["bug"], pr=7)
+        self.assertFalse(result["ok"])
+        self.assertEqual(
+            result["errors"], ["PR is missing a mandatory agent:<vendor> attribution label."]
+        )
+        self.assertEqual(
+            result["fix_command"],
+            "gh pr edit 7 --add-label 'agent:<vendor>' --add-label 'model:<base>'",
+        )
+
+    def test_missing_model_label_is_only_a_warning(self):
+        result = evidence.early_attribution_check(["agent:claude"], pr=7)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["warnings"], ["PR has no model:<base> attribution label."])
+        self.assertEqual(result["fix_command"], "gh pr edit 7 --add-label 'model:<base>'")
+
+    def test_known_implementer_writes_the_real_labels(self):
+        result = evidence.early_attribution_check([], pr=7, implementer="claude:opus")
+        self.assertEqual(
+            result["fix_command"], "gh pr edit 7 --add-label agent:claude --add-label model:opus"
+        )
+
+    def test_implementer_without_a_model_keeps_the_model_placeholder(self):
+        result = evidence.early_attribution_check([], pr="7", implementer="codex")
+        self.assertEqual(
+            result["fix_command"],
+            "gh pr edit 7 --add-label agent:codex --add-label 'model:<base>'",
+        )
+
+    def test_fix_command_adds_only_the_agent_label_when_a_model_label_exists(self):
+        self.assertEqual(
+            evidence.attribution_fix_command(7, need_agent=True, need_model=False),
+            "gh pr edit 7 --add-label 'agent:<vendor>'",
+        )
+
+    def test_every_fix_command_parses_as_a_shell_line(self):
+        import shlex
+
+        for need_agent, need_model, implementer in (
+            (True, True, None),
+            (True, False, None),
+            (False, True, None),
+            (True, True, "claude:opus"),
+        ):
+            command = evidence.attribution_fix_command(
+                7, need_agent=need_agent, need_model=need_model, implementer=implementer
+            )
+            tokens = shlex.split(command)
+            self.assertEqual(tokens[:4], ["gh", "pr", "edit", "7"])
+            self.assertEqual(tokens.count("--add-label"), need_agent + need_model)
+            self.assertFalse(any(token.startswith("<") for token in tokens))
+
+    def test_blank_labels_do_not_count(self):
+        result = evidence.early_attribution_check(["agent:", "model:"], pr=7)
+        self.assertFalse(result["ok"])
+        self.assertEqual(len(result["warnings"]), 1)
+
+    def test_none_labels_read_as_none_present(self):
+        self.assertFalse(evidence.early_attribution_check(None, pr=7)["ok"])
+
+
+class TestAttributionModelFinding(unittest.TestCase):
+    def _findings(self, labels):
+        report = evidence.verify(
+            _review_contract(reviewers=1), pr_labels=labels, **_satisfied_evidence_kwargs()
+        )
+        return report, [f for f in report["findings"] if f["id"] == "attribution-model-label"]
+
+    def test_missing_model_label_is_advisory_and_does_not_fail(self):
+        report, found = self._findings(["agent:claude"])
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual([f["severity"] for f in found], ["minor"])
+
+    def test_model_label_present_is_clean(self):
+        _, found = self._findings(["agent:claude", "model:opus"])
+        self.assertEqual(found, [])
+
+    def test_labels_not_fetched_skips_the_finding(self):
+        _, found = self._findings(None)
+        self.assertEqual(found, [])
+
+    def test_unenforced_gate_skips_the_finding(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=["agent:claude"],
+            enforced=False,
+            **_satisfied_evidence_kwargs(),
+        )
+        self.assertNotIn("attribution-model-label", [f["id"] for f in report["findings"]])
+
+
+class TestAttributionModelFindingPhases(unittest.TestCase):
+    def test_pre_merge_phase_still_raises_the_advisory(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=["agent:claude"],
+            phase=evidence.PHASE_PRE_MERGE,
+            **_satisfied_evidence_kwargs(),
+        )
+        self.assertIn("attribution-model-label", [f["id"] for f in report["findings"]])
+
+    def test_dry_run_with_an_enforced_gate_skips_both_attribution_findings(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=[],
+            dry_run=True,
+            enforced=True,
+            **_satisfied_evidence_kwargs(),
+        )
+        ids = [f["id"] for f in report["findings"]]
+        self.assertNotIn("attribution-label", ids)
+        self.assertNotIn("attribution-model-label", ids)
+
+    def test_neither_label_is_a_blocking_and_an_advisory_finding_together(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1), pr_labels=[], **_satisfied_evidence_kwargs()
+        )
+        severities = {
+            f["id"]: f["severity"] for f in report["findings"] if f["id"].startswith("attribution-")
+        }
+        self.assertEqual(
+            severities, {"attribution-label": "major", "attribution-model-label": "minor"}
+        )
+        self.assertEqual(report["status"], "fail")
+
+
 class TestAttributionVerifyWiring(unittest.TestCase):
     def test_present_and_matching_passes(self):
         # Cross-check matching is exercised at the pure layer; here we confirm the
@@ -1476,7 +1611,7 @@ class TestAttributionVerifyWiring(unittest.TestCase):
         # ledger_record is passed so closure-fidelity matching stays out of scope.
         report = evidence.verify(
             _review_contract(reviewers=1),
-            pr_labels=["agent:claude"],
+            pr_labels=["agent:claude", "model:opus"],
             **_satisfied_evidence_kwargs(),
         )
         self.assertEqual(report["status"], "pass")
@@ -1489,7 +1624,7 @@ class TestAttributionVerifyWiring(unittest.TestCase):
         body = closure.render_closure_comment(record)
         report = evidence.verify(
             _review_contract(reviewers=1),
-            pr_labels=["agent:codex"],
+            pr_labels=["agent:codex", "model:gpt"],
             ledger_record=record,
             pr_comments=[
                 _trusted_comment(body),
@@ -1541,7 +1676,7 @@ class TestAttributionVerifyWiring(unittest.TestCase):
     def test_no_ledger_record_is_presence_only(self):
         report = evidence.verify(
             _review_contract(reviewers=1),
-            pr_labels=["agent:codex"],
+            pr_labels=["agent:codex", "model:gpt"],
             ledger_record=None,
             **_satisfied_evidence_kwargs(),
         )
@@ -1899,7 +2034,7 @@ class TestEvidenceArming(unittest.TestCase):
             _review_contract(reviewers=1),
             pr_comments=[_verdict("a", head="abc")],
             head_sha="abc",
-            pr_labels=["agent:claude"],
+            pr_labels=["agent:claude", "model:opus"],
             phase=evidence.PHASE_PRE_MERGE,
             require_armed=True,
         )
@@ -2149,7 +2284,7 @@ class TestEvidenceThreeWayStatus(unittest.TestCase):
             issue_comments=[],
             pr_reviews=[],
             head_sha="abc1234",
-            pr_labels=["agent:codex"],
+            pr_labels=["agent:codex", "model:gpt"],
         )
         self.assertEqual(report["status"], evidence.STATUS_WAITING)
         self.assertEqual(
@@ -2175,7 +2310,7 @@ class TestEvidenceThreeWayStatus(unittest.TestCase):
                 ),
             ],
             issue_comments=[_trusted_comment(closure.COMMENT_MARKER)],
-            pr_labels=["agent:codex"],
+            pr_labels=["agent:codex", "model:gpt"],
         )
         self.assertEqual(report["status"], evidence.STATUS_PASS)
         self.assertEqual(report["missing"], [])

@@ -1411,6 +1411,22 @@ class TestReviewCli(unittest.TestCase):
             )
 
 
+def _live_fetch_with_labels(*labels, branch=None):
+    """`_live_fetch`, but the pull request carries ``labels`` (and so can be gated)."""
+
+    def fetch(argv, **kw):
+        if argv[-1].endswith("/pulls/42"):
+            head = {"sha": "abc123", **({"ref": branch} if branch else {})}
+            return _proc(
+                json.dumps(
+                    {"body": "", "head": head, "labels": [{"name": name} for name in labels]}
+                )
+            )
+        return _live_fetch(argv, **kw)
+
+    return fetch
+
+
 def _live_fetch(argv, **_kw):
     """Offline stand-in for the gh reads/writes the live review path performs."""
     if "POST" in argv or "PATCH" in argv:
@@ -1441,6 +1457,151 @@ def _config_without_owner() -> str:
         line for line in lines if not line.startswith("owner:") and not line.startswith("repo:")
     ]
     return "\n".join(kept) + "\n"
+
+
+class TestReviewEarlyAttribution(unittest.TestCase):
+    """`keel review --live` refuses a gated PR with no agent: label before posting (#1504)."""
+
+    def _live(self, fetch, *extra):
+        reviews = _write(_two_reviews())
+        calls = []
+
+        def fake_run(argv, **kw):
+            calls.append(argv)
+            return fetch(argv, **kw)
+
+        with (
+            patch("keel.cli.runtime.detect", return_value=_capable_report()),
+            patch("keel.cli.run_argv", side_effect=fake_run),
+            patch("keel.github.run_argv", side_effect=fake_run),
+        ):
+            rc, out, err = run(
+                [
+                    "review",
+                    ANDROID,
+                    "--pr",
+                    "42",
+                    "--reviews",
+                    reviews,
+                    "--live",
+                    "--approve-scope",
+                    "github",
+                    "--operator",
+                    "tester",
+                    *extra,
+                ]
+            )
+        return rc, out, err, calls
+
+    def test_gated_pr_without_agent_label_posts_nothing_and_names_the_fix(self):
+        rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship"))
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+        self.assertIn("gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<base>'", err)
+        self.assertIn("nothing is posted", err)
+        self.assertFalse(any("POST" in argv for argv in calls))
+
+    def test_the_fix_line_is_only_the_command(self):
+        """Pasting the line after ``Fix:`` runs gh and nothing else (#1504)."""
+        import shlex
+
+        _, _, err, _ = self._live(_live_fetch_with_labels("keel:ship"))
+        fix = err.split("Fix: ", 1)[1].splitlines()[0]
+        self.assertEqual(
+            shlex.split(fix),
+            [
+                "gh",
+                "pr",
+                "edit",
+                "42",
+                "--add-label",
+                "agent:<vendor>",
+                "--add-label",
+                "model:<base>",
+            ],
+        )
+
+    def test_gated_pr_with_agent_label_warns_about_model_and_posts(self):
+        rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship", "agent:claude"))
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: PR #42 attribution: PR has no model:<base>", err)
+        self.assertIn("gh pr edit 42 --add-label 'model:<base>'", err)
+        self.assertTrue(any("POST" in argv for argv in calls))
+
+    def test_gated_pr_with_both_labels_is_silent(self):
+        rc, _, err, _ = self._live(
+            _live_fetch_with_labels("keel:ship", "agent:claude", "model:opus")
+        )
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_ungated_pr_is_not_refused(self):
+        rc, _, err, calls = self._live(_live_fetch_with_labels("bug"))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+        self.assertTrue(any("POST" in argv for argv in calls))
+
+    def test_waived_pr_is_not_refused(self):
+        rc, _, err, _ = self._live(_live_fetch_with_labels("keel:ship", "keel:evidence-waived"))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_the_prs_head_ref_arms_the_check(self):
+        rc, _, err, calls = self._live(_live_fetch_with_labels("bug", branch="fix/issue-42-x"))
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+        self.assertFalse(any("POST" in argv for argv in calls))
+
+    def test_a_provenance_comment_arms_the_check(self):
+        comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}
+        base = _live_fetch_with_labels("bug")
+
+        def fetch(argv, **kw):
+            if argv[-1].endswith("/issues/42/comments"):
+                return _proc(json.dumps([comment]))
+            return base(argv, **kw)
+
+        rc, _, err, calls = self._live(fetch)
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+        self.assertFalse(any("POST" in argv for argv in calls))
+
+    def test_unreadable_labels_on_a_gated_pr_are_not_refused(self):
+        comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}
+        original = cli._load_evidence_artifacts
+
+        def unreadable(args, config):
+            ctx = original(args, config)
+            return {**ctx, "pr_labels": None, "pr_comments": [comment]}
+
+        with patch("keel.cli._load_evidence_artifacts", unreadable):
+            rc, _, err, calls = self._live(_live_fetch_with_labels())
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+        self.assertTrue(any("POST" in argv for argv in calls))
+
+    def test_the_ledger_implementer_supplies_the_real_labels(self):
+        import tempfile
+
+        record = {
+            "type": "ship_run",
+            "pr": 42,
+            "actors": {"implementer": "claude:opus"},
+        }
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.cli._merge_ledger_record", return_value=record),
+        ):
+            rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship"), "--root", d)
+        self.assertEqual(rc, 1)
+        self.assertIn("gh pr edit 42 --add-label agent:claude --add-label model:opus", err)
+
+    def test_dry_run_never_reads_labels(self):
+        reviews = _write(_two_reviews())
+        with patch("keel.cli.runtime.detect", return_value=_capable_report()):
+            rc, _, err = run(["review", ANDROID, "--pr", "42", "--reviews", reviews])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
 
 
 class TestParseCycleReviewers(unittest.TestCase):

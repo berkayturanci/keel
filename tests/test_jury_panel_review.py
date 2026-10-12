@@ -238,6 +238,8 @@ class TestTheJuryIsTheReviewPanel(unittest.TestCase):
                 "keel:ship",
                 "--pr-label",
                 "agent:anthropic",
+                "--pr-label",
+                "model:opus",
                 "--pr-body-file",
                 str(self.root / "body.md"),
                 "--pr-comments-json",

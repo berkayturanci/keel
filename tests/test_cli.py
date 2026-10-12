@@ -84,6 +84,7 @@ def run(argv):
 _NO_REAL_JURY = None
 _NO_GH_AUTH_PROBE = None
 _NO_REAL_PROVIDER_PROBE = None
+_NO_REAL_PR_LABELS = None
 
 #: The provider report every ``--wizard`` test in this module sees (#1018). Two
 #: providers, one of them listing a model, so the offered choices are the same on CI
@@ -177,6 +178,7 @@ def setUpModule():
     through their injection seams.
     """
     global _NO_REAL_JURY, _NO_GH_AUTH_PROBE, _NO_REAL_PROVIDER_PROBE, _NO_REAL_JURY_RUNNER
+    global _NO_REAL_PR_LABELS
     _NO_REAL_JURY = patch("keel.jury.available", return_value=False)
     _NO_REAL_JURY.start()
     _NO_GH_AUTH_PROBE = patch("keel.runtime.detect", _detect_without_probing_gh)
@@ -192,9 +194,14 @@ def setUpModule():
     # subject, and it failed on CI while passing on a workstation.
     _NO_REAL_JURY_RUNNER = patch("keel.providerprobe.probe_jury_runner", lambda **_kw: _RUNNER)
     _NO_REAL_JURY_RUNNER.start()
+    # `ship --pr N` reads the PR's labels (#1504). `None` is "gh could not be asked" — what
+    # a hermetic runner reports — so no test here reaches the real GitHub by accident.
+    _NO_REAL_PR_LABELS = patch("keel.github.pr_labels", lambda *_a, **_kw: None)
+    _NO_REAL_PR_LABELS.start()
 
 
 def tearDownModule():
+    _NO_REAL_PR_LABELS.stop()
     _NO_REAL_JURY_RUNNER.stop()
     _NO_REAL_PROVIDER_PROBE.stop()
     _NO_GH_AUTH_PROBE.stop()
@@ -10902,6 +10909,245 @@ class TestSingleVendorBenchCanLandATierThreeChange(unittest.TestCase):
             [f["message"] for f in self._distinctness_findings(payload)],
             ["require_distinct_vendors: review verdicts share a vendor: anthropic."],
         )
+
+
+class TestShipEarlyAttribution(unittest.TestCase):
+    """`keel ship --pr N` checks the attribution labels before CI is awaited (#1504)."""
+
+    GH_UP = runtime.CapabilityReport(
+        (
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", True, "ok", "test"),
+            runtime.Capability("gh-auth", True, "ok", "test"),
+            runtime.Capability("github-mcp", False, "missing", "test"),
+        )
+    )
+    LIVE = ["--live", "--approve-scope", "filesystem,git,github", "--operator", "tester"]
+
+    GATED = "keel:ship"
+
+    def _ship(
+        self,
+        labels,
+        *extra,
+        implementer=None,
+        head_ref="main",
+        comments=None,
+        reviews=None,
+        record=None,
+        owner="acme/widget",
+        list_error=None,
+        pr_error=None,
+    ):
+        import tempfile
+
+        argv = ["--implementer", implementer] if implementer else []
+        self.requests = []
+
+        def gh_list(args, *, cwd):
+            self.requests.append("/".join(args))
+            if list_error is not None:
+                raise list_error
+            return (reviews if args[-1] == "reviews" else comments) or []
+
+        def gh_json(args, *, cwd):
+            self.requests.append("/".join(args))
+            if pr_error is not None:
+                raise pr_error
+            return {"head": {"ref": head_ref}}
+
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.cli.runtime.detect", return_value=self.GH_UP),
+            patch("keel.cli.github.pr_labels", return_value=labels),
+            patch("keel.cli.github.ci_conclusion", return_value="SUCCESS"),
+            patch("keel.cli.github.ci_check_names", return_value=["CI"]),
+            patch("keel.cli.github.ci_workflow_names", return_value=None),
+            # The checkout is on a keel-shaped branch whatever the PR is: it must not count.
+            patch("keel.cli.git.current_branch", return_value="fix/issue-7-checkout"),
+            patch("keel.cli.git.changed_files", return_value=[]),
+            patch("keel.cli.git.diff", return_value=""),
+            patch("keel.cli._gh_json_list", side_effect=gh_list),
+            patch("keel.cli._gh_json", side_effect=gh_json),
+            patch("keel.cli._merge_ledger_record", return_value=record),
+            patch(
+                "keel.cli._owner_repo",
+                side_effect=(lambda _c: owner) if owner else ValueError("no owner"),
+            ),
+        ):
+            return run(["ship", _write_config("'true'"), "--root", d, "--pr", "7", *argv, *extra])
+
+    def test_live_refuses_without_an_agent_label_and_names_the_fix(self):
+        rc, _, err = self._ship([self.GATED], *self.LIVE)
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+        line = "gh pr edit 7 --add-label 'agent:<vendor>' --add-label 'model:<base>'"
+        self.assertIn(line, err)
+
+    def test_the_printed_fix_command_parses_as_a_shell_line(self):
+        import shlex
+
+        _, _, err = self._ship([self.GATED], *self.LIVE)
+        fix = err.split("Fix: ", 1)[1].splitlines()[0]
+        self.assertEqual(
+            shlex.split(fix),
+            [
+                "gh",
+                "pr",
+                "edit",
+                "7",
+                "--add-label",
+                "agent:<vendor>",
+                "--add-label",
+                "model:<base>",
+            ],
+        )
+
+    def test_fix_command_uses_the_implementers_real_labels(self):
+        rc, _, err = self._ship([self.GATED], *self.LIVE, implementer="claude:opus")
+        self.assertEqual(rc, 1)
+        self.assertIn("gh pr edit 7 --add-label agent:claude --add-label model:opus", err)
+
+    def test_live_json_refusal_is_an_error_payload(self):
+        rc, out, _ = self._ship([self.GATED], *self.LIVE, "--json")
+        self.assertEqual(rc, 1)
+        self.assertIn("gh pr edit 7", json.loads(out)["error"])
+
+    def test_an_ungoverned_pr_is_not_refused_on_live(self):
+        rc, _, err = self._ship(["bug"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_the_prs_own_head_arms_the_check(self):
+        rc, _, err = self._ship(["bug"], *self.LIVE, head_ref="fix/issue-7-x")
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+
+    def test_the_checkout_branch_never_arms_the_check(self):
+        # The checkout is `fix/issue-7-checkout` (see `_ship`); the PR's head is not keel's.
+        rc, _, err = self._ship(["bug"], *self.LIVE, head_ref="feature/other")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_a_provenance_comment_arms_the_check_and_comments_are_requested(self):
+        comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}
+        rc, _, err = self._ship(["bug"], *self.LIVE, comments=[comment])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+        self.assertIn("repos/acme/widget/issues/7/comments", self.requests)
+        self.assertIn("repos/acme/widget/pulls/7/reviews", self.requests)
+        self.assertIn("repos/acme/widget/pulls/7", self.requests)
+
+    def test_a_review_verdict_on_the_pr_arms_the_check(self):
+        review = {"body": "keel.review-verdict.v1\nVerdict: LGTM\n", "author_association": "OWNER"}
+        rc, _, err = self._ship(["bug"], *self.LIVE, reviews=[review])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+
+    def test_the_ledger_implementer_supplies_the_real_labels(self):
+        record = {"type": "ship_run", "pr": 7, "actors": {"implementer": "codex:gpt-5"}}
+        rc, _, err = self._ship([self.GATED], *self.LIVE, record=record)
+        self.assertEqual(rc, 1)
+        self.assertIn("gh pr edit 7 --add-label agent:codex --add-label model:gpt-5", err)
+
+    def test_the_implementer_flag_wins_over_the_ledger(self):
+        record = {"type": "ship_run", "pr": 7, "actors": {"implementer": "codex:gpt-5"}}
+        _, _, err = self._ship([self.GATED], *self.LIVE, implementer="claude:opus", record=record)
+        self.assertIn("--add-label agent:claude --add-label model:opus", err)
+
+    def test_failing_context_reads_never_abort_a_ship_with_both_labels(self):
+        for kwargs in (
+            {"list_error": ValueError("gh failed")},
+            {"list_error": RuntimeError("boom")},
+            {"pr_error": OSError("no gh")},
+            {"owner": None},
+        ):
+            with self.subTest(**{k: type(v).__name__ for k, v in kwargs.items()}):
+                rc, _, err = self._ship(
+                    [self.GATED, "agent:claude", "model:opus"], *self.LIVE, **kwargs
+                )
+                self.assertEqual(rc, 0)
+                self.assertNotIn("attribution", err)
+
+    def test_unreadable_context_arms_nothing_but_the_labels_still_do(self):
+        rc, _, _ = self._ship(["bug"], *self.LIVE, list_error=RuntimeError("boom"))
+        self.assertEqual(rc, 0)
+        rc, _, err = self._ship([self.GATED], *self.LIVE, list_error=RuntimeError("boom"))
+        self.assertEqual(rc, 1)
+
+    def test_ship_and_review_reach_the_same_governed_decision_for_one_pr(self):
+        import tempfile
+
+        comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}
+        fixtures = (
+            ("bug", [], [], "feature/other"),
+            ("bug", [], [], "fix/issue-7-x"),
+            ("bug", [comment], [], "feature/other"),
+            ("keel:ship", [], [], "feature/other"),
+            ("keel:evidence-waived", [comment], [], "fix/issue-7-x"),
+        )
+        with tempfile.TemporaryDirectory() as d:
+            config = cli.cfg.load_config(_write_config("'true'"))
+            args = Namespace(pr=7, root=d)
+            for label, comments, reviews, head_ref in fixtures:
+                labels = [label]
+                ctx = {
+                    "pr_labels": labels,
+                    "head_ref": head_ref,
+                    "pr_comments": comments,
+                    "pr_reviews": reviews,
+                }
+                pulls = {"head": {"ref": head_ref}}
+                with (
+                    self.subTest(label=label, head_ref=head_ref, comments=len(comments)),
+                    patch("keel.cli._owner_repo", return_value="acme/widget"),
+                    patch("keel.cli._gh_json", return_value=pulls),
+                    patch(
+                        "keel.cli._gh_json_list",
+                        side_effect=lambda a, *, cwd, r=reviews, c=comments: (
+                            r if a[-1] == "reviews" else c
+                        ),
+                    ),
+                ):
+                    reviewed = cli._review_attribution_problem(args, config, ctx) is not None
+                    shipped, _ = cli._ship_pr_governance(args, config, labels)
+                    self.assertEqual(reviewed, shipped)
+
+    def test_dry_run_reports_but_does_not_fail(self):
+        rc, _, err = self._ship([self.GATED])
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: PR #7 attribution:", err)
+        self.assertIn("gh pr edit 7", err)
+
+    def test_dry_run_with_only_the_model_label_missing_warns(self):
+        rc, _, err = self._ship([self.GATED, "agent:claude"])
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: PR #7 attribution: PR has no model:<base>", err)
+        self.assertNotIn("dry-run:", err)
+
+    def test_missing_model_label_only_warns_on_live(self):
+        rc, _, err = self._ship([self.GATED, "agent:claude"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: PR #7 attribution: PR has no model:<base>", err)
+        self.assertIn("gh pr edit 7 --add-label 'model:<base>'", err)
+        self.assertNotIn("--add-label 'agent:", err)
+
+    def test_complete_labels_are_silent(self):
+        rc, _, err = self._ship([self.GATED, "agent:claude", "model:opus"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_unreadable_labels_do_not_refuse(self):
+        rc, _, err = self._ship(None, *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_the_waiver_label_skips_the_check(self):
+        rc, _, err = self._ship([self.GATED, "keel:evidence-waived"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
 
 
 class TestShipCiVisibility(unittest.TestCase):
