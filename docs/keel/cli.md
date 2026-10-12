@@ -2375,6 +2375,10 @@ providers:
     review_args: ["-p", "--trust", "--workspace", "/path/to/checkout"]
 ```
 
+The brief goes on stdin, which `cursor-agent -p` reads; registry entries have no
+`prompt_mode`, so a CLI that only takes its prompt as an argument needs a project
+`knobs.delegate_profiles` entry with `prompt_mode: arg` instead.
+
 `keel delegate run` prints the registry's load warnings (an ignored field, a bad type) and
 any name it shares with a project `knobs.delegate_profiles` entry (the project profile
 wins) on stderr as `keel: warning: …` (#1508). **`--print-argv`** resolves the plan and

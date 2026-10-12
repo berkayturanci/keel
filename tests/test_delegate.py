@@ -571,6 +571,42 @@ class ProfileArgvTest(unittest.TestCase):
         )
         self.assertNotIn("did you mean", message)
 
+    def test_a_shadowed_name_is_never_suggested(self):
+        # `claude` is a built-in, so resolving it would not run this cursor-agent entry.
+        message = self._suggestion(
+            {"claude": {"transport": "cli", "command": "cursor-agent"}}, "cursor"
+        )
+        self.assertNotIn("did you mean", message)
+        profile = cfg.DelegateProfile(vendor="cli", command="aider")
+        registry = providers.parse_registry(
+            {"providers": {"grok": {"transport": "cli", "command": "cursor-agent"}}},
+            path="/registry.yaml",
+        )
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(_config({"grok": profile}), registry, "cursor")
+        self.assertNotIn("did you mean", caught.exception.message)
+
+    def test_the_documented_cursor_agent_recipe_sends_the_prompt_on_stdin(self):
+        """docs/keel/cli.md's registry block: flags in argv, the brief on stdin (`-p` reads it)."""
+        registry = providers.parse_registry(
+            {
+                "providers": {
+                    "grok": {
+                        "transport": "cli",
+                        "command": "cursor-agent",
+                        "args": ["-p", "--trust"],
+                        "review_args": ["-p", "--trust", "--workspace", "/w"],
+                    }
+                }
+            },
+            path="/registry.yaml",
+        )
+        provider = delegate.resolve_provider(None, registry, "grok").provider
+        plan = delegate.plan_run(provider, "implement", PROMPT)
+        self.assertEqual(plan.argv, ("cursor-agent", "-p", "--trust"))
+        self.assertEqual(plan.stdin_mode, "text")
+        self.assertNotIn(PROMPT, plan.argv)
+
     def test_an_unknown_name_with_no_matching_command_gets_no_suggestion(self):
         with self.assertRaises(delegate.DelegateError) as caught:
             delegate.resolve_provider(None, self._grok(), "zzz")

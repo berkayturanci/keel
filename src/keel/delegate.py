@@ -322,8 +322,16 @@ def _did_you_mean(name: str, profiles, registry: providers_mod.Registry) -> str:
     """
     needle = name.lower()
     matches = []
-    commands = [(n, p.command) for n, p in profiles.items()]
-    commands += [(e.name, e.command) for e in registry.providers]
+    # Suggest only names that resolve to the entry that matched: `_lookup` prefers a
+    # built-in, then a project profile, then the registry, so a shadowed name would run
+    # something else.
+    builtins = {e.name for e in providers_mod.builtin_providers()}
+    commands = [(n, p.command) for n, p in profiles.items() if n not in builtins]
+    commands += [
+        (e.name, e.command)
+        for e in registry.providers
+        if e.name not in builtins and e.name not in profiles
+    ]
     for entry_name, command in commands:
         # Windows paths split on backslashes too.
         base = posixpath.basename((command or "").replace("\\", "/")).lower()
