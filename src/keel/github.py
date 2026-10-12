@@ -246,6 +246,22 @@ def list_prs(
     return run_argv(argv, cwd=cwd, **_kw(_run))
 
 
+def pr_labels(pr: int | str, *, cwd: str | None = None, _run=None) -> list[str] | None:
+    """The label names currently on ``pr``, or ``None`` when ``gh`` could not be asked.
+
+    ``None`` is a fact about the runner, not the PR: callers that gate on a label must
+    treat it as "unknown" and go on, never as "no labels" (#1504).
+    """
+    result = run_argv(
+        ["gh", "pr", "view", str(pr), "--json", "labels", "--jq", ".labels[].name"],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    if not result.ok:
+        return None
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 def pr_state(pr: int | str, *, cwd: str | None = None, _run=None) -> str | None:
     """Live PR state as ``open`` / ``merged`` / ``closed``, or ``None`` when unreadable.
 

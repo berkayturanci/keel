@@ -1789,6 +1789,31 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(message, file=sys.stderr)
         return 1
 
+    if args.pr is not None and transport.name == "gh":
+        # #1504: a missing agent:/model: label was first found at `keel merge`, after the
+        # whole CI wait. The label is on the pull request already, so say so now.
+        early_labels = github.pr_labels(args.pr, cwd=args.root)
+        if early_labels is not None and evidence.DEFAULT_WAIVER_LABEL not in early_labels:
+            early = evidence.early_attribution_check(
+                early_labels, pr=args.pr, implementer=args.implementer
+            )
+            if early["errors"] or early["warnings"]:
+                report_text = _attribution_report(early, pr=args.pr)
+                if early["ok"] or not args.live:
+                    print(
+                        f"{'warning' if early['ok'] else 'dry-run'}: {report_text}",
+                        file=sys.stderr,
+                    )
+                elif args.json:
+                    print(
+                        json.dumps(
+                            {"contract": contract, "error": report_text}, indent=2, sort_keys=True
+                        )
+                    )
+                    return 1
+                else:
+                    print(report_text, file=sys.stderr)
+                    return 1
     # The local base branch may lag behind the remote after a branch merged the
     # current base.  Use the fetched remote tip as the canonical comparison point
     # so ledger/closure files describe this branch's net change, not the commits
@@ -3792,6 +3817,53 @@ def _review_bundle(
     )
 
 
+def _attribution_report(check: dict[str, Any], *, pr: int | str) -> str:
+    """Render an :func:`keel.evidence.early_attribution_check` result for an operator (#1504).
+
+    Only called with a result that has an error or a warning, so ``fix_command`` is set.
+    """
+    lines = [*check["errors"], *check["warnings"], f"Fix: {check['fix_command']}"]
+    return f"PR #{pr} attribution: " + " ".join(lines)
+
+
+def _review_attribution_problem(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    artifacts_ctx: dict[str, Any],
+) -> str | None:
+    """The refusal ``keel review --live`` prints when the PR has no ``agent:`` label (#1504).
+
+    Mirrors where the same rule bites later: ``evidence-verify`` / ``keel merge`` only
+    check attribution on a pull request the evidence gate is enforced on, so a PR keel is
+    not governing is never refused here. ``None`` means "go on" — including when the labels
+    could not be read. A missing ``model:`` label only warns on stderr.
+    """
+    # `.get`: a hand-built artifacts mapping (`swarm-review`'s tests) may carry no labels or
+    # comments at all, which reads as "nothing to gate on", not as an error.
+    labels = artifacts_ctx.get("pr_labels") or []
+    ledger_args = argparse.Namespace(pr=args.pr, root=args.root, ledger_jsonl=None)
+    gate = evidence.gate_decision(
+        labels,
+        config.knobs.evidence_gate_label,
+        waiver_label=evidence.DEFAULT_WAIVER_LABEL,
+        head_ref=artifacts_ctx.get("head_ref"),
+        pr_comments=artifacts_ctx.get("pr_comments"),
+        pr_reviews=artifacts_ctx.get("pr_reviews"),
+        ledger_records=_ship_run_records(_merge_ledger_record(ledger_args, config)),
+    )
+    if not gate["enforced"]:
+        return None
+    check = evidence.early_attribution_check(labels, pr=args.pr)
+    if check["ok"]:
+        if check["warnings"]:
+            print(_attribution_report(check, pr=args.pr), file=sys.stderr)
+        return None
+    return (
+        _attribution_report(check, pr=args.pr)
+        + "; nothing is posted. Apply the labels, then re-run `keel review`."
+    )
+
+
 def _review_evidence_args(args: argparse.Namespace, dry_run: bool) -> argparse.Namespace:
     """The evidence reader's arguments for one ``keel review`` run."""
     return argparse.Namespace(
@@ -3957,6 +4029,11 @@ def _cmd_review(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    if not dry_run:
+        attribution_problem = _review_attribution_problem(args, config, artifacts_ctx)
+        if attribution_problem is not None:
+            print(attribution_problem, file=sys.stderr)
+            return 1
     # `swarm-review` posts what its seats reviewed at one head (#1423): a pull request
     # whose head moved since is not posted to. `keel review`'s own parser sets no pin.
     expected_head = getattr(args, "expected_head_sha", None)

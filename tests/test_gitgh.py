@@ -487,6 +487,20 @@ class TestGitHub(unittest.TestCase):
         self.assertIn("--base", argv)
         self.assertIn("feature", argv)
 
+    def test_pr_labels_argv_and_parse(self):
+        rec = _Recorder(out="agent:claude\n\nbug\n")
+        self.assertEqual(github.pr_labels(7, _run=rec), ["agent:claude", "bug"])
+        self.assertEqual(
+            rec.calls[0],
+            ["gh", "pr", "view", "7", "--json", "labels", "--jq", ".labels[].name"],
+        )
+
+    def test_pr_labels_no_labels_is_empty_not_none(self):
+        self.assertEqual(github.pr_labels(7, _run=_Recorder(out="")), [])
+
+    def test_pr_labels_failsoft(self):
+        self.assertIsNone(github.pr_labels(7, _run=_Recorder(code=1)))
+
     def test_ci_conclusion_parsed(self):
         self.assertEqual(github.ci_conclusion(7, _run=_Recorder(out="SUCCESS\n")), "SUCCESS")
 

@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **A missing `agent:` label is found when you review or ship, not after the CI wait** (#1504). The label was first checked at `keel evidence-verify` / `keel merge`, so an operator learned of it only after all of CI (one session lost 57 minutes across 7 PRs). `keel review --live` now refuses a pull request the evidence gate governs when it has no `agent:<vendor>` label, posting nothing and exiting 1, and `keel ship --pr N --live` refuses the same way. Both messages carry the exact fix, for example `gh pr edit 42 --add-label agent:claude --add-label model:opus` (placeholders where the implementer is unknown). `--dry-run` runs only report it: `keel ship --pr N` prints a warning and `keel review` reads no labels. The waiver label, a PR the gate does not govern and unreadable labels are not refused. A missing `model:<base>` label is now flagged too, but as a warning: an advisory `attribution-model-label` finding at `evidence-verify` / `keel merge` (severity `minor`) and a stderr warning in review and ship. It is not a block because `keel attribution` writes no `model:` label for an implementer with no recorded model and there is no knob to opt out, so a blocking rule would fail PRs carrying exactly what keel produced. The extra `minor` finding changes the `findings` list of a PR with no `model:` label; its `status` is unchanged.
+
 ## [1.31.1] - 2026-10-12
 
 - `keel review --from-jury` posts an ai-jury panelist's `COMMENT` (its worst upheld finding is minor or nit) as `LGTM`, so a pull request the chair approved is no longer held by panelists' nits. A `COMMENT` carrying a critical or major finding or a finding index that does not resolve, the issue-mode `UNCLEAR`, a host's own `COMMENT`, and a chair's `COMMENT` consensus still hold.

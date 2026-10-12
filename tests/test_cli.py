@@ -84,6 +84,7 @@ def run(argv):
 _NO_REAL_JURY = None
 _NO_GH_AUTH_PROBE = None
 _NO_REAL_PROVIDER_PROBE = None
+_NO_REAL_PR_LABELS = None
 
 #: The provider report every ``--wizard`` test in this module sees (#1018). Two
 #: providers, one of them listing a model, so the offered choices are the same on CI
@@ -177,6 +178,7 @@ def setUpModule():
     through their injection seams.
     """
     global _NO_REAL_JURY, _NO_GH_AUTH_PROBE, _NO_REAL_PROVIDER_PROBE, _NO_REAL_JURY_RUNNER
+    global _NO_REAL_PR_LABELS
     _NO_REAL_JURY = patch("keel.jury.available", return_value=False)
     _NO_REAL_JURY.start()
     _NO_GH_AUTH_PROBE = patch("keel.runtime.detect", _detect_without_probing_gh)
@@ -192,9 +194,14 @@ def setUpModule():
     # subject, and it failed on CI while passing on a workstation.
     _NO_REAL_JURY_RUNNER = patch("keel.providerprobe.probe_jury_runner", lambda **_kw: _RUNNER)
     _NO_REAL_JURY_RUNNER.start()
+    # `ship --pr N` reads the PR's labels (#1504). `None` is "gh could not be asked" — what
+    # a hermetic runner reports — so no test here reaches the real GitHub by accident.
+    _NO_REAL_PR_LABELS = patch("keel.github.pr_labels", lambda *_a, **_kw: None)
+    _NO_REAL_PR_LABELS.start()
 
 
 def tearDownModule():
+    _NO_REAL_PR_LABELS.stop()
     _NO_REAL_JURY_RUNNER.stop()
     _NO_REAL_PROVIDER_PROBE.stop()
     _NO_GH_AUTH_PROBE.stop()
@@ -10902,6 +10909,80 @@ class TestSingleVendorBenchCanLandATierThreeChange(unittest.TestCase):
             [f["message"] for f in self._distinctness_findings(payload)],
             ["require_distinct_vendors: review verdicts share a vendor: anthropic."],
         )
+
+
+class TestShipEarlyAttribution(unittest.TestCase):
+    """`keel ship --pr N` checks the attribution labels before CI is awaited (#1504)."""
+
+    GH_UP = runtime.CapabilityReport(
+        (
+            runtime.Capability("shell", True, "ok", "test"),
+            runtime.Capability("git", True, "ok", "test"),
+            runtime.Capability("worktree", True, "ok", "test"),
+            runtime.Capability("gh", True, "ok", "test"),
+            runtime.Capability("gh-auth", True, "ok", "test"),
+            runtime.Capability("github-mcp", False, "missing", "test"),
+        )
+    )
+    LIVE = ["--live", "--approve-scope", "filesystem,git,github", "--operator", "tester"]
+
+    def _ship(self, labels, *extra, implementer=None):
+        import tempfile
+
+        argv = ["--implementer", implementer] if implementer else []
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.cli.runtime.detect", return_value=self.GH_UP),
+            patch("keel.cli.github.pr_labels", return_value=labels),
+            patch("keel.cli.github.ci_conclusion", return_value="SUCCESS"),
+            patch("keel.cli.github.ci_check_names", return_value=["CI"]),
+            patch("keel.cli.github.ci_workflow_names", return_value=None),
+        ):
+            return run(["ship", _write_config("'true'"), "--root", d, "--pr", "7", *argv, *extra])
+
+    def test_live_refuses_without_an_agent_label_and_names_the_fix(self):
+        rc, _, err = self._ship(["bug"], *self.LIVE)
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+        self.assertIn("gh pr edit 7 --add-label agent:<vendor> --add-label model:<model>", err)
+
+    def test_fix_command_uses_the_implementers_real_labels(self):
+        rc, _, err = self._ship(["bug"], *self.LIVE, implementer="claude:opus")
+        self.assertEqual(rc, 1)
+        self.assertIn("gh pr edit 7 --add-label agent:claude --add-label model:opus", err)
+
+    def test_live_json_refusal_is_an_error_payload(self):
+        rc, out, _ = self._ship(["bug"], *self.LIVE, "--json")
+        self.assertEqual(rc, 1)
+        self.assertIn("gh pr edit 7", json.loads(out)["error"])
+
+    def test_dry_run_reports_but_does_not_fail(self):
+        rc, _, err = self._ship(["bug"])
+        self.assertEqual(rc, 0)
+        self.assertIn("dry-run: PR #7 attribution:", err)
+        self.assertIn("gh pr edit 7", err)
+
+    def test_missing_model_label_only_warns_on_live(self):
+        rc, _, err = self._ship(["agent:claude"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: PR #7 attribution: PR has no model:<base>", err)
+        self.assertIn("gh pr edit 7 --add-label model:<model>", err)
+        self.assertNotIn("--add-label agent:", err)
+
+    def test_complete_labels_are_silent(self):
+        rc, _, err = self._ship(["agent:claude", "model:opus"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_unreadable_labels_do_not_refuse(self):
+        rc, _, err = self._ship(None, *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_the_waiver_label_skips_the_check(self):
+        rc, _, err = self._ship(["keel:evidence-waived"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
 
 
 class TestShipCiVisibility(unittest.TestCase):
