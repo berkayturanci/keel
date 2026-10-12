@@ -8687,7 +8687,7 @@ class TestCoreMerge(unittest.TestCase):
         self.assertEqual(rc_snapshot, 1)
         self.assertIn("unable to read", json.loads(out_snapshot)["reason"])
         self.assertEqual(rc_dirty, 1)
-        self.assertIn("DIRTY", json.loads(out_dirty)["reason"])
+        self.assertIn("merge conflicts with", json.loads(out_dirty)["reason"])
 
     def test_merge_hotfix_records_window_bypass(self):
         fake_report = _merge_capability_report()
@@ -19207,6 +19207,115 @@ class ShipReusesTheHeadsPostedPanel(unittest.TestCase):
         with patch("keel.cli._gh_json_list") as fetch:
             self.assertIsNone(cli._posted_panel(args, None, [spec], transport, gating=True))
         fetch.assert_not_called()
+
+
+class TestMergeStateReason(unittest.TestCase):
+    """#1506: a non-mergeable merge state names what to do, not GitHub's raw word."""
+
+    @staticmethod
+    def _ci(pending=(), failing=()):
+        return {
+            "state": "pending",
+            "pending_checks": list(pending),
+            "failing_checks": list(failing),
+        }
+
+    def reason(self, state, ci=None):
+        return cli._merge_state_reason(state, ci, "main", 7)
+
+    def test_behind(self):
+        self.assertEqual(
+            self.reason("BEHIND"),
+            ("behind", "branch is behind main; update it: gh pr update-branch 7"),
+        )
+
+    def test_dirty(self):
+        code, text = self.reason("DIRTY")
+        self.assertEqual(code, "conflicts")
+        self.assertIn("merge conflicts with main", text)
+
+    def test_draft(self):
+        self.assertEqual(
+            self.reason("DRAFT"),
+            ("draft", "PR is a draft; mark it ready for review: gh pr ready 7"),
+        )
+
+    def test_unstable_with_pending_checks_says_pending(self):
+        code, text = self.reason("UNSTABLE", self._ci(pending=["lint", "test"]))
+        self.assertEqual(code, "checks-pending")
+        self.assertEqual(text, "2 checks still pending: lint, test")
+        self.assertNotIn("UNSTABLE", text)
+
+    def test_unstable_with_failing_checks_names_them(self):
+        code, text = self.reason("UNSTABLE", self._ci(pending=["a"], failing=["lint"]))
+        self.assertEqual(code, "checks-failing")
+        self.assertEqual(text, "1 check failing: lint")
+
+    def test_unstable_names_are_capped(self):
+        code, text = self.reason("UNSTABLE", self._ci(pending=[f"c{i}" for i in range(8)]))
+        self.assertEqual(text, "8 checks still pending: c0, c1, c2, c3, c4, and 3 more")
+
+    def test_unstable_without_ci_detail_falls_back(self):
+        for ci in (None, {"state": "pass"}):
+            self.assertEqual(
+                self.reason("UNSTABLE", ci), ("unstable", "PR merge state is UNSTABLE")
+            )
+
+    def test_blocked_names_protection_and_known_checks(self):
+        code, text = self.reason("BLOCKED")
+        self.assertEqual(code, "blocked")
+        self.assertIn("branch protection", text)
+        self.assertNotIn("pending", text)
+        _, text = self.reason("BLOCKED", self._ci(pending=["test"]))
+        self.assertIn("; 1 check still pending: test", text)
+        code, text = self.reason("BLOCKED", self._ci(pending=["a"], failing=["lint", "fmt"]))
+        self.assertEqual(code, "blocked")
+        self.assertTrue(text.endswith("; 2 checks failing: lint, fmt"))
+        self.assertNotIn("pending", text)
+
+    def test_unknown_state_keeps_raw_text(self):
+        self.assertEqual(self.reason("WEIRD"), ("merge-state", "PR merge state is WEIRD"))
+
+    def test_rollup_collects_check_names(self):
+        rollup = [
+            {"name": "lint", "conclusion": "FAILURE"},
+            {"name": "test", "status": "IN_PROGRESS"},
+            {"context": "ci/x", "state": "PENDING"},
+            {"name": "ok", "conclusion": "SUCCESS"},
+            {"conclusion": "FAILURE"},
+        ]
+        ci = cli._ci_rollup_state(rollup)
+        self.assertEqual(ci["state"], "fail")
+        self.assertEqual(ci["failing_checks"], ["lint", "(unnamed check)"])
+        self.assertEqual(ci["pending_checks"], ["test", "ci/x"])
+        self.assertEqual(cli._ci_rollup_state(rollup[1:3])["pending_checks"], ["test", "ci/x"])
+        for case in ([], [{"name": "ok", "conclusion": "SUCCESS"}], rollup[1:3], rollup[:1]):
+            state = cli._ci_rollup_state(case)
+            self.assertIsInstance(state["pending_checks"], list)
+            self.assertIsInstance(state["failing_checks"], list)
+        self.assertEqual(cli._ci_rollup_state([])["failing_checks"], [])
+
+    def test_merge_command_reports_pending_instead_of_unstable(self):
+        with (
+            patch("keel.cli.runtime.detect", return_value=_merge_capability_report()),
+            patch("keel.cli.window.is_merge_open", return_value=True),
+            patch(
+                "keel.cli.github.pr_merge_snapshot",
+                return_value=_json_result(
+                    {
+                        "mergeStateStatus": "UNSTABLE",
+                        "statusCheckRollup": [{"name": "test", "status": "IN_PROGRESS"}],
+                    }
+                ),
+            ),
+        ):
+            rc, out, _ = run(_merge_args(json_out=True))
+        payload = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["reason"], "1 check still pending: test")
+        self.assertEqual(payload["reason_code"], "checks-pending")
+        self.assertEqual(payload["ci"]["pending_checks"], ["test"])
+        self.assertEqual(payload["ci"]["failing_checks"], [])
 
 
 if __name__ == "__main__":
