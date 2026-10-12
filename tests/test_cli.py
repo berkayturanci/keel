@@ -11081,7 +11081,6 @@ class TestShipEarlyAttribution(unittest.TestCase):
         import tempfile
 
         comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}
-        pulls = {"head": {"ref": "fix/issue-7-x"}}
         fixtures = (
             ("bug", [], [], "feature/other"),
             ("bug", [], [], "fix/issue-7-x"),
