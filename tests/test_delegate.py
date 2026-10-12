@@ -564,6 +564,9 @@ class ProfileArgvTest(unittest.TestCase):
             "did you mean 'g'?",
             self._suggestion({"g": {**cli, "command": "C:\\tools\\aider.EXE"}}, "aider"),
         )
+        self.assertIn(
+            "did you mean 'g'?", self._suggestion({"g": {**cli, "command": "aider"}}, "aider.exe")
+        )
 
     def test_a_bare_prefix_or_a_commandless_entry_is_not_suggested(self):
         message = self._suggestion(

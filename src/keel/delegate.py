@@ -320,7 +320,7 @@ def _did_you_mean(name: str, profiles, registry: providers_mod.Registry) -> str:
     keel does not ship; matching on the configured *command* names the operator's own
     entry instead (#1509).
     """
-    needle = name.lower()
+    needle = name.lower().removesuffix(".exe")
     matches = []
     # Suggest only names that resolve to the entry that matched: `_lookup` prefers a
     # built-in, then a project profile, then the registry, so a shadowed name would run
