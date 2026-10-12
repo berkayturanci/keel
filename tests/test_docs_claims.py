@@ -2890,7 +2890,10 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
         if git is not None:
             proc = subprocess.run(
                 [git, "-C", str(REPO_ROOT), "ls-files", "-z"],
-                capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                stdin=subprocess.DEVNULL,
             )
             if proc.returncode == 0 and proc.stdout:
                 return [r for r in proc.stdout.split("\0") if r]
@@ -2964,9 +2967,7 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
 
     def test_the_sentence_is_whole_and_neighbours_are_excluded(self):
         bad = "Today an audit of 14 closed fixes found three. All 14 fail today."
-        self.assertEqual(
-            self.sentences(bad), ["Today an audit of 14 closed fixes found three."]
-        )
+        self.assertEqual(self.sentences(bad), ["Today an audit of 14 closed fixes found three."])
         ok = (
             "An audit of 14 closed fixes found three at the time their issue was closed. "
             "All 14 fail today."
