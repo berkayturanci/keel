@@ -46,18 +46,41 @@ def _run(argv: list[str], *, cwd: Path | None = None) -> str:
     try:
         result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, check=True)
     except subprocess.CalledProcessError as exc:
-        print(f"command failed (exit {exc.returncode}): {' '.join(argv)}", file=sys.stderr)
+        print(
+            f"command failed (exit {exc.returncode}): {' '.join(argv)}", file=sys.stderr, flush=True
+        )
         if exc.stdout:
-            print(f"--- stdout ---\n{exc.stdout}", file=sys.stderr)
+            print(f"--- stdout ---\n{exc.stdout}", file=sys.stderr, flush=True)
         if exc.stderr:
-            print(f"--- stderr ---\n{exc.stderr}", file=sys.stderr)
+            print(f"--- stderr ---\n{exc.stderr}", file=sys.stderr, flush=True)
         raise
     return result.stdout
 
 
-def _is_not_found(exc: subprocess.CalledProcessError) -> bool:
+def _normalise(text: str) -> str:
+    """Lower-case and fold ``-``/``_``/``.`` runs, as PEP 503 does for names."""
+    return re.sub(r"[-_.]+", "-", text.lower())
+
+
+def _distribution_name(requirement: str) -> str:
+    return _normalise(re.split(r"[\s=<>!~\[;@(]", requirement.strip(), maxsplit=1)[0])
+
+
+def _is_not_found(exc: subprocess.CalledProcessError, requirement: str) -> bool:
+    """True when pip says the *requested* distribution is not on the index yet.
+
+    A missing dependency, or a Requires-Python exclusion, names another package
+    and is a real defect, so the sentence must name ``requirement``'s own name.
+    """
+    name = _distribution_name(requirement)
+    own = re.compile(rf"(?<![a-z0-9-]){re.escape(name)}(?![a-z0-9-])")
     output = f"{exc.stdout or ''}\n{exc.stderr or ''}"
-    return any(marker in output for marker in NOT_FOUND_MARKERS)
+    for line in output.splitlines():
+        if any(marker.lower() in line.lower() for marker in NOT_FOUND_MARKERS) and own.search(
+            _normalise(line)
+        ):
+            return True
+    return False
 
 
 def _pip_install(
@@ -65,6 +88,7 @@ def _pip_install(
     install_args: list[str],
     *,
     retry: bool,
+    requirement: str = "",
     attempts: int = INSTALL_ATTEMPTS,
     interval: int = INSTALL_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
@@ -83,13 +107,14 @@ def _pip_install(
             _run(argv)
             return
         except subprocess.CalledProcessError as exc:
-            if not _is_not_found(exc):
+            if not _is_not_found(exc, requirement):
                 raise
         if attempt < attempts:
             print(
                 f"index cannot resolve the requirement yet (attempt {attempt}/{attempts}); "
                 f"retrying in {interval}s",
                 file=sys.stderr,
+                flush=True,
             )
             sleep(interval)
     raise SystemExit(
@@ -168,7 +193,12 @@ def smoke(args: argparse.Namespace) -> dict[str, object]:
         keel = _venv_bin(venv, "keel")
 
         install_args, target = _install_target(args)
-        _pip_install(pip, install_args, retry=_installs_published(args))
+        _pip_install(
+            pip,
+            install_args,
+            retry=_installs_published(args),
+            requirement=args.requirement or "",
+        )
 
         help_text = _run([str(keel), "--help"])
         version_text = _run([str(keel), "version"]).strip()

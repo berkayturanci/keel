@@ -528,11 +528,10 @@ jobs:
 
             echo "== release_smoke.py against the published package =="
             # This builds its own venv and resolves "$req" from the index a
-            # second time, and carries no retry of its own. That is deliberate,
-            # but not for the reason it used to be: the retry above passes
-            # `--no-cache-dir`, so it leaves nothing in pip's HTTP cache and this
-            # resolve is a genuinely independent request rather than a replay of
-            # the page the canary already read. It is a stronger check for it.
+            # second time. The retry above passes `--no-cache-dir`, so it leaves
+            # nothing in pip's HTTP cache and this resolve is a genuinely
+            # independent request rather than a replay of the page the canary
+            # already read. It is a stronger check for it.
             #
             # It retries a not-yet-indexed install itself (#1526): 6 attempts, 20s
             # apart, only when pip says the version is not found. The earlier
