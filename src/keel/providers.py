@@ -496,6 +496,7 @@ def profile_providers(config) -> tuple[Provider, ...]:
                 api_key_env=profile.api_key_env,
                 model=profile.model,
                 review_args=profile.role_args(review=True) if profile.review_args else (),
+                args=tuple(profile.args or ()),
                 source="profile",
                 model_arg=None if api else (profile.model_arg or None),
                 vendor_label=profile.vendor_label,

@@ -517,6 +517,8 @@ class ProfileArgvTest(unittest.TestCase):
         review = delegate.plan_run(provider, "review", PROMPT)
         self.assertEqual(review.argv, ("x",))
         self.assertFalse(review.read_only_backed)
+        self.assertEqual(delegate.plan_run(provider, "implement", PROMPT).argv, ("x", "--force"))
+        self.assertEqual(delegate.plan_run(provider, "fix", PROMPT).argv, ("x", "--force"))
 
     def test_an_unknown_name_suggests_the_entry_that_drives_that_cli(self):
         registry = self._grok()

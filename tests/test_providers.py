@@ -496,6 +496,8 @@ class TestClashesAndPlan(unittest.TestCase):
         )
         planned = {p.name: p for p in providers.profile_providers(config)}
         self.assertEqual(planned["cursor"].review_args, ("-p",))
+        self.assertEqual(planned["cursor"].args, ("-p", "--force"))
+        self.assertEqual(planned["cursor"].as_dict()["args"], ["-p", "--force"])
         self.assertEqual(planned["cursor"].model_arg, "--llm")
         self.assertTrue(planned["cursor"].capabilities()["read_only_mode"])
         self.assertEqual(planned["plain"].review_args, ())

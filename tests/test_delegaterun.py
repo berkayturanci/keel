@@ -1261,6 +1261,15 @@ class RecordPlanningFailureTest(unittest.TestCase):
         self.assertEqual(result["run_id"], "r1")
         self.assertFalse(result["ok"])
 
+    def test_a_failed_write_keeps_the_old_markers(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen(11))
+            with patch.object(delegaterun, "write_state", side_effect=OSError("disk full")):
+                delegaterun.record_planning_failure(
+                    root, "r1", self.FAILURE, provider="nope", role="review"
+                )
+            self.assertEqual(delegaterun.read_pid(root, "r1"), 11)
+
     def test_an_unsafe_run_id_is_refused(self):
         with self.assertRaises(delegaterun.RunIdError):
             delegaterun.record_planning_failure(".", "../x", self.FAILURE, provider=None, role=None)
