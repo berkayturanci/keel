@@ -2894,7 +2894,9 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
             )
             if proc.returncode == 0 and proc.stdout:
                 return [r for r in proc.stdout.split("\0") if r]
-        skip = {".git", "node_modules", ".venv", "venv", "__pycache__", "build", "dist"}
+        # Ignored trees (agent worktrees under .claude/, caches, build output) are not
+        # project text; walking them would read every worktree's copy of the repo.
+        skip = {".git", ".claude", "node_modules", ".venv", "venv", "__pycache__", "build", "dist"}
         found = []
         for path in REPO_ROOT.rglob("*"):
             rel = path.relative_to(REPO_ROOT)
@@ -2946,6 +2948,20 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
             with self.subTest(path=name):
                 self.assertNotRegex(sentence, r"(?i)\b(?:today|fails?|failing)\b")
 
+    def test_without_git_the_tree_walk_still_finds_every_known_surface(self):
+        with unittest.mock.patch.object(shutil, "which", return_value=None):
+            names = set(self._paths())
+        for known in self.KNOWN:
+            with self.subTest(path=known):
+                self.assertIn(known, names)
+        self.assertFalse(any(n.startswith(".claude/") for n in names))
+
+    def test_every_known_surface_names_the_audit_it_reports(self):
+        for name, sentence in self._found():
+            if name in self.KNOWN:
+                with self.subTest(path=name):
+                    self.assertIn("#1289", sentence)
+
     def test_the_sentence_is_whole_and_neighbours_are_excluded(self):
         bad = "Today an audit of 14 closed fixes found three. All 14 fail today."
         self.assertEqual(
@@ -2956,7 +2972,9 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
             "All 14 fail today."
         )
         (sentence,) = self.sentences(ok)
-        self.assertNotRegex(sentence, r"(?i)\btoday\b|\bfail")
+        self.assertNotRegex(sentence, r"(?i)\b(?:today|fails?|failing)\b")
+        # The past tense the surfaces use is not caught as present tense.
+        self.assertNotRegex("all 14 failed without their fix", r"(?i)\b(?:today|fails?|failing)\b")
         self.assertRegex(self.sentences(bad)[0], r"(?i)\btoday\b")
 
 
