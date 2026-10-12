@@ -213,6 +213,18 @@ longer authorizes a merge of a newer head; if no record matches, the merge refus
 `no gates-pass recorded for the current head <sha>`. The decision is reported in the
 `gates_sha` block of the JSON payload (`matched`, `head_sha`, `run_id`).
 
+**A pull request that is not mergeable says why (#1506).** Any merge state other than `CLEAN`,
+`HAS_HOOKS` or `UNKNOWN` still refuses, with a reason that says what to do instead of GitHub's
+raw word: `BEHIND` -> `branch is behind <base>; update it: gh pr update-branch N`; `DIRTY` ->
+merge conflicts with `<base>`; `DRAFT` -> the PR is a draft; `UNSTABLE` -> read from the CI
+snapshot, `N checks still pending: <names>` when checks have not finished or `N checks failing:
+<names>` when they have failed (names capped at five), and the generic `PR merge state is
+UNSTABLE` only when the snapshot has no check detail; `BLOCKED` -> branch protection (required
+reviews, checks or unresolved conversations), plus the pending or failing checks when known. The
+payload keeps `reason` and adds a machine-readable `reason_code` (`behind`, `conflicts`, `draft`,
+`checks-pending`, `checks-failing`, `unstable`, `blocked`, `merge-state`); its `ci` object carries
+`pending_checks` / `failing_checks` name lists.
+
 Once the merge lands, `keel merge` runs the [`verify-merge`](#keel-verify-merge-projectyaml---root-dir---pr-n---merge-sha-sha---transport-autographqlrest---json)
 drift check on it and reports the result as `merge_verification` in the payload and a
 `drift :` line in human output. Exit codes: **0** merged and clean, **1** the merge did not

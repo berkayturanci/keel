@@ -1315,9 +1315,11 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         payload["transport"] = transport
         payload["ci"] = snapshot["ci"]
         if snapshot["merge_state"] not in {"CLEAN", "HAS_HOOKS", "UNKNOWN"}:
-            return _finish_merge(
-                args, payload, f"PR merge state is {snapshot['merge_state']}", code=1
+            reason_code, reason_text = _merge_state_reason(
+                str(snapshot["merge_state"]), snapshot["ci"], config.base_branch, args.pr
             )
+            payload["reason_code"] = reason_code
+            return _finish_merge(args, payload, reason_text, code=1)
         ci_state = snapshot["ci"]["state"]
         if ci_state not in ("pass", "no-checks"):
             return _finish_merge(args, payload, f"CI is {ci_state}", code=1)
@@ -5670,6 +5672,53 @@ def _dedupe_rollup(rollup: list[object]) -> list[dict]:
     return [latest[key] for key in order]
 
 
+_CHECK_NAME_CAP = 5
+
+
+def _check_names(names: object) -> tuple[int, str]:
+    """``(count, "a, b, c, and N more")`` for a list of check names, capped for display."""
+    listed = [str(n) for n in names] if isinstance(names, list) else []
+    shown = ", ".join(listed[:_CHECK_NAME_CAP])
+    extra = len(listed) - _CHECK_NAME_CAP
+    return len(listed), f"{shown}, and {extra} more" if extra > 0 else shown
+
+
+def _merge_state_reason(merge_state: str, ci: object, base: str, pr: object) -> tuple[str, str]:
+    """``(reason_code, reason)`` for a merge state that is not mergeable.
+
+    Pure: a function of GitHub's ``mergeStateStatus`` and the CI snapshot. The refusal is
+    unchanged; only the words are. ``UNSTABLE`` and ``BLOCKED`` read the CI snapshot first,
+    because a head whose checks have merely not finished reports ``UNSTABLE`` and reads as
+    a failure otherwise.
+    """
+    ci = ci if isinstance(ci, dict) else {}
+    pending_n, pending_names = _check_names(ci.get("pending_checks"))
+    failing_n, failing_names = _check_names(ci.get("failing_checks"))
+    ci_note = ""
+    if failing_n:
+        ci_note = f"{failing_n} checks failing: {failing_names}"
+    elif pending_n:
+        ci_note = f"{pending_n} checks still pending: {pending_names}"
+    if merge_state == "BEHIND":
+        return "behind", f"branch is behind {base}; update it: gh pr update-branch {pr}"
+    if merge_state == "DIRTY":
+        return "conflicts", f"PR has merge conflicts with {base}; resolve them and push"
+    if merge_state == "DRAFT":
+        return "draft", f"PR is a draft; mark it ready for review: gh pr ready {pr}"
+    if merge_state == "UNSTABLE":
+        if ci_note:
+            return ("checks-failing" if failing_n else "checks-pending"), ci_note
+        return "unstable", "PR merge state is UNSTABLE (non-required checks are not passing)"
+    if merge_state == "BLOCKED":
+        known = f"; {ci_note}" if ci_note else ""
+        return (
+            "blocked",
+            "merge is blocked by branch protection (required reviews, required checks "
+            f"or unresolved conversations){known}",
+        )
+    return "merge-state", f"PR merge state is {merge_state}"
+
+
 def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
     failures = {
         "ACTION_REQUIRED",
@@ -5680,17 +5729,28 @@ def _ci_rollup_state(rollup: list[object]) -> dict[str, object]:
         "STALE",
         "TIMED_OUT",
     }
-    saw_pending = False
     saw_check = False
+    first_failure = ""
+    failing: list[str] = []
+    pending_checks: list[str] = []
     for item in _dedupe_rollup(rollup):
         saw_check = True
         conclusion, pending = _rollup_verdict(item)
+        name = str(item.get("context") or item.get("name") or "(unnamed check)")
         if conclusion in failures:
-            return {"state": "fail", "reason": conclusion}
-        if pending:
-            saw_pending = True
-    if saw_pending:
-        return {"state": "pending", "reason": "check-pending"}
+            first_failure = first_failure or conclusion
+            failing.append(name)
+        elif pending:
+            pending_checks.append(name)
+    if failing:
+        return {
+            "state": "fail",
+            "reason": first_failure,
+            "failing_checks": failing,
+            "pending_checks": pending_checks,
+        }
+    if pending_checks:
+        return {"state": "pending", "reason": "check-pending", "pending_checks": pending_checks}
     if saw_check:
         return {"state": "pass", "reason": "all-checks-passing"}
     # An empty rollup is not a pass: no check has reported for this head. Kept as its
