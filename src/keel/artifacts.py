@@ -108,8 +108,11 @@ def render_pr_body(
     # A fix's own section, rendered as a prompt rather than a claim. Coverage cannot say
     # whether a test *guards* a change — `fail_under = 100` is enforced, so "maintained 100%
     # coverage" is true of every merged PR before it is written. An audit of 14 closed fixes
-    # found three whose tests passed with the fix removed, all three offering coverage as
-    # evidence (#1289). The unit is the behaviour, not the git hunk: #871's guarded and
+    # found three whose tests still passed with the fix removed at the time their issue was closed
+    # (#877, and one arm each of #871 and #879); later audits added tests that catch them, and
+    # when #1289 recorded the audit on 2026-09-22 all 14 failed without their fix. All three
+    # offered coverage as evidence (#1289).
+    # The unit is the behaviour, not the git hunk: #871's guarded and
     # unguarded arms shared one hunk, so a per-hunk claim passed while half the fix was
     # unpinned. No caller supplies `fix_evidence` yet — the only one,
     # `contracts.ship_result_as_dict`, does not pass it — so from `keel ship --json` this is

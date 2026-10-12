@@ -250,7 +250,9 @@ policy_pack:
   review:
     # Reviewer rubric, not a PR form field. The question below is the one that
     # distinguishes a test which *guards* a fix from one that merely runs through it,
-    # and an audit of 14 closed fixes found three where nobody asked it (#1289).
+    # and an audit of 14 closed fixes found three where nobody asked it at the time
+    # their issue was closed (#877, and one arm each of #871 and #879); when #1289 recorded
+    # the audit on 2026-09-22 all 14 failed without their fix.
     # Coverage cannot answer it: `fail_under = 100` is enforced, so "maintained 100%
     # coverage" is true of every merged PR before it is written.
     additions:
