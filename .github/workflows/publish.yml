@@ -371,12 +371,12 @@ jobs:
     #   - the install retry, wrapped whole at 900s — its own budget is
     #     20 x (attempt + `sleep 15`), and only the wrapper is countable
     #     because pip's `--timeout` bounds a read rather than a call;
-    #   - `release_smoke.py`, wrapped at 300s: it builds a venv and resolves
+    #   - `release_smoke.py`, wrapped at 480s: it builds a venv and resolves
     #     from the index a second time;
     #   - the release cross-check: `timeout 120` + `timeout 60` = 180s;
     #   - the `if: failure()` report: four `timeout 60` `gh` calls = 240s.
     #
-    # That is 2880s. `tests/test_workflow_ceilings.py` recomputes it from this
+    # That is 3060s. `tests/test_workflow_ceilings.py` recomputes it from this
     # file rather than reading this comment, and checks the other two jobs the
     # same way, so a wait added later cannot quietly outgrow its ceiling.
     # Twenty measured runs put the job at 0.3 minutes when nothing waits; the
@@ -534,13 +534,12 @@ jobs:
             # resolve is a genuinely independent request rather than a replay of
             # the page the canary already read. It is a stronger check for it.
             #
-            # No retry, because the two failures mean different things. The
-            # install above does not return until this runner has resolved this
-            # version through the simple index at least once; a miss here would
-            # mean the index answered the same runner two different ways seconds
-            # apart — a regression, not the lag #1111 is about, and one that
-            # should fail the release loudly rather than be waited out.
-            timeout 300 python scripts/release_smoke.py --requirement "$req"
+            # It retries a not-yet-indexed install itself (#1526): 6 attempts, 20s
+            # apart, only when pip says the version is not found. The earlier
+            # install does not prove the index is ready for this fresh venv's
+            # resolve: v1.32.0 passed that install and then failed here twice
+            # with the version missing. Any other failure fails at once.
+            timeout 480 python scripts/release_smoke.py --requirement "$req"
 
             echo "== secondary: the GitHub Release SHA256SUMS =="
             # Secondary, and tolerant of exactly one history. Both sides now refuse to

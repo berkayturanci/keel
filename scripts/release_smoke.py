@@ -8,6 +8,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 CONSUMER_SPECIFIC_TERMS = (
@@ -25,9 +27,75 @@ CONSUMER_SPECIFIC_TERMS = (
 )
 
 
+# pip's wording when the index does not (yet) list the requested version. Only
+# these mean "wait and try again"; any other failure is a real defect (#1526).
+NOT_FOUND_MARKERS = (
+    "No matching distribution found",
+    "Could not find a version that satisfies",
+)
+INSTALL_ATTEMPTS = 6
+INSTALL_INTERVAL_SECONDS = 20
+
+
 def _run(argv: list[str], *, cwd: Path | None = None) -> str:
-    result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, check=True)
+    """Run a command; on failure print it and its output before raising (#1526).
+
+    With ``capture_output=True`` a ``CalledProcessError`` traceback carries only
+    the exit status, so the job log never said why ``pip install`` failed.
+    """
+    try:
+        result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"command failed (exit {exc.returncode}): {' '.join(argv)}", file=sys.stderr)
+        if exc.stdout:
+            print(f"--- stdout ---\n{exc.stdout}", file=sys.stderr)
+        if exc.stderr:
+            print(f"--- stderr ---\n{exc.stderr}", file=sys.stderr)
+        raise
     return result.stdout
+
+
+def _is_not_found(exc: subprocess.CalledProcessError) -> bool:
+    output = f"{exc.stdout or ''}\n{exc.stderr or ''}"
+    return any(marker in output for marker in NOT_FOUND_MARKERS)
+
+
+def _pip_install(
+    pip: Path,
+    install_args: list[str],
+    *,
+    retry: bool,
+    attempts: int = INSTALL_ATTEMPTS,
+    interval: int = INSTALL_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Install, retrying only a published requirement the index cannot find yet.
+
+    A just-uploaded release can be missing from the runner's view of the simple
+    index for a while; a local wheel never is, so ``retry`` is False for those.
+    """
+    if not retry:
+        _run([str(pip), "install", *install_args])
+        return
+    argv = [str(pip), "install", "--no-cache-dir", *install_args]
+    for attempt in range(1, attempts + 1):
+        try:
+            _run(argv)
+            return
+        except subprocess.CalledProcessError as exc:
+            if not _is_not_found(exc):
+                raise
+        if attempt < attempts:
+            print(
+                f"index cannot resolve the requirement yet (attempt {attempt}/{attempts}); "
+                f"retrying in {interval}s",
+                file=sys.stderr,
+            )
+            sleep(interval)
+    raise SystemExit(
+        f"TIMEOUT: pip could not find the requirement in {attempts} attempts "
+        f"over about {(attempts - 1) * interval}s"
+    )
 
 
 def _venv_bin(root: Path, name: str) -> Path:
@@ -55,6 +123,11 @@ def _install_target(args: argparse.Namespace) -> tuple[list[str], str]:
         return pip_args + [args.requirement], args.requirement
     wheel = Path(args.wheel) if args.wheel else _find_wheel(Path(args.dist_dir))
     return pip_args + [str(wheel)], str(wheel)
+
+
+def _installs_published(args: argparse.Namespace) -> bool:
+    """True when the target comes from an index (retry-worthy), not a local file."""
+    return bool(args.requirement)
 
 
 def _adapter_count(python: Path) -> int:
@@ -95,7 +168,7 @@ def smoke(args: argparse.Namespace) -> dict[str, object]:
         keel = _venv_bin(venv, "keel")
 
         install_args, target = _install_target(args)
-        _run([str(pip), "install", *install_args])
+        _pip_install(pip, install_args, retry=_installs_published(args))
 
         help_text = _run([str(keel), "--help"])
         version_text = _run([str(keel), "version"]).strip()
