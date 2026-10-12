@@ -768,6 +768,46 @@ def _detached_failure(record: dict[str, Any], *, code: str, message: str) -> dic
     }
 
 
+def record_planning_failure(
+    root: str | Path,
+    run_id: str,
+    failure: dict[str, Any],
+    *,
+    provider: str | None,
+    role: str | None,
+    _clock: Callable[[], datetime.datetime] = _utc_now,
+) -> dict[str, Any]:
+    """Persist a ``--detach`` run whose plan could not be made, so ``status`` lists it (#1510).
+
+    There is no child and no pid: the record is born ``done`` with the failure document
+    as its result, which is the shape :func:`_failed_spawn_record` already gives a run
+    that never started. Best-effort like it, because an unwritable root must not turn a
+    reported failure into a traceback. Returns the failure document carrying ``run_id``.
+    """
+    check_run_id(run_id)
+    now = _now_iso(_clock)
+    result = {**failure, "run_id": run_id, "out_path": None}
+    record = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "provider": provider,
+        "role": role,
+        "started_at": now,
+        "finished_at": now,
+        "timeout": None,
+        "deadline_at": None,
+        "status": "done",
+        "pid": None,
+        "argv": [],
+        "out_path": None,
+        "result": result,
+    }
+    with contextlib.suppress(OSError):
+        state_dir(root).mkdir(parents=True, exist_ok=True)
+        write_state(root, record)
+    return result
+
+
 def finish_detached(
     root: str | Path,
     run_id: str,

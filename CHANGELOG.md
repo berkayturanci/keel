@@ -6,6 +6,11 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`keel delegate` registry entries take `args`, and `delegate run` shows what it ignored** (#1508). `args` in `~/.keel/providers.yaml` is now a key (the implementer's flags; `review_args` still serves read-only roles and `args` is never its fallback), so `--trust` for a current `cursor-agent` reaches `--role implement`. `delegate run` prints the registry's load warnings and any shadowing by a project `delegate_profiles` entry on stderr, and `--print-argv` prints the resolved plan (argv included) without running it. The docs state the `--trust` / `--trust --workspace` requirement.
+- **An unknown `--provider` suggests the entry that drives that CLI** (#1509). `unknown provider 'cursor'` now ends `did you mean 'grok'?` when a profile or registry entry's command is `cursor-agent`. A suggestion rather than an alias table: the entry's name is the operator's, so a fixed `cursor` alias would point at nothing or at the wrong entry.
+- **A failed `delegate run --detach` leaves a record** (#1510). A plan that cannot be made now prints the error on stderr, writes a `done`/failed state record with a `run_id` and exits 1, so `keel delegate status` lists the failure instead of "no delegate runs".
+
 ## [1.31.1] - 2026-10-12
 
 - `keel review --from-jury` posts an ai-jury panelist's `COMMENT` (its worst upheld finding is minor or nit) as `LGTM`, so a pull request the chair approved is no longer held by panelists' nits. A `COMMENT` carrying a critical or major finding or a finding index that does not resolve, the issue-mode `UNCLEAR`, a host's own `COMMENT`, and a chair's `COMMENT` consensus still hold.

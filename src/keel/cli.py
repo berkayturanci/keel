@@ -7187,6 +7187,14 @@ def _delegate_config(args: argparse.Namespace):
 def _delegate_plan(args: argparse.Namespace):
     """``(plan, failure)`` — exactly one of the two is ``None``."""
     registry = providers_mod.load_registry(args.registry)
+    config = _delegate_config(args)
+    if not args.child:
+        # The registry is read-and-forgiven: a typo'd key or a clashing name is dropped
+        # with a warning. `delegate run` was the one reader that never showed it, so an
+        # ignored `args` or a project profile shadowing the entry went unseen (#1508).
+        clashes = providers_mod.registry_clashes(registry, config)
+        for message in (*registry.warnings, *clashes):
+            print(f"keel: warning: {message}", file=sys.stderr)
     # Resolved here rather than in the planner, which is pure and whose output is a frozen
     # document: `abspath` reads this process's working directory, which is a property of
     # the invocation, not of the plan. It matters because a delegate may be *given* the
@@ -7195,7 +7203,7 @@ def _delegate_plan(args: argparse.Namespace):
     # (#1134).
     cwd = os.path.abspath(args.cwd) if args.cwd else args.cwd
     try:
-        resolution = delegate.resolve_provider(_delegate_config(args), registry, args.provider)
+        resolution = delegate.resolve_provider(config, registry, args.provider)
         plan = delegate.plan_run(
             resolution.provider,
             args.role,
@@ -7269,8 +7277,25 @@ def _cmd_delegate_run(args: argparse.Namespace) -> int:
         return 1
     plan, failure = _delegate_plan(args)
     if failure is not None:
+        if not args.child:
+            print(f"keel: error: {failure['error_code']}: {failure['error']}", file=sys.stderr)
+        if args.detach and not args.child:
+            # A plan that never became a run still gets a record (#1510): without one the
+            # null fields read as a silent start and `delegate status` says nothing ran.
+            run_id = args.run_id or delegaterun.new_run_id()
+            try:
+                delegaterun.check_run_id(run_id)
+            except delegaterun.RunIdError as exc:
+                print(json.dumps(_delegate_bad_run_id(args, str(exc)), indent=2, sort_keys=True))
+                return 1
+            failure = delegaterun.record_planning_failure(
+                args.root, run_id, failure, provider=args.provider, role=args.role
+            )
         print(json.dumps(failure, indent=2, sort_keys=True))
         return 1
+    if args.print_argv:
+        print(json.dumps(plan.as_dict(), indent=2, sort_keys=True))
+        return 0
     if args.detach:
         run_id = args.run_id or delegaterun.new_run_id()
         try:
@@ -10797,6 +10822,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="start the run in the background and return immediately; collect it with "
         "keel delegate wait <run-id>",
+    )
+    p_dr.add_argument(
+        "--print-argv",
+        action="store_true",
+        help="resolve the plan and print it as JSON (argv, read_only, warnings) without "
+        "running anything",
     )
     p_dr.add_argument(
         "--json",

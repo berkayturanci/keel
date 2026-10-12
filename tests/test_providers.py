@@ -386,6 +386,28 @@ class TestRegistryEntries(unittest.TestCase):
         self.assertEqual(registry.providers[0].review_args, ())
         self.assertIn("must be a list of strings", registry.warnings[0])
 
+    def test_args_are_a_registry_key_for_the_implementer_role(self):
+        registry = _registry(
+            "providers:\n"
+            "  grok:\n"
+            "    transport: cli\n"
+            "    command: cursor-agent\n"
+            "    args: ['--trust']\n"
+        )
+        self.assertEqual(registry.providers[0].args, ("--trust",))
+        self.assertEqual(registry.warnings, ())  # no longer 'ignoring unknown field(s) args'
+
+    def test_args_that_are_not_a_list_of_strings_are_ignored_and_named(self):
+        registry = _registry(
+            "providers:\n"
+            "  grok:\n"
+            "    transport: cli\n"
+            "    command: cursor-agent\n"
+            "    args: '--trust'\n"
+        )
+        self.assertEqual(registry.providers[0].args, ())
+        self.assertIn("'args' must be a list of strings", registry.warnings[0])
+
     def test_blank_strings_read_as_unset(self):
         registry = _registry(
             "providers:\n"
