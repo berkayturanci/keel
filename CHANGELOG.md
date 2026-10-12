@@ -8,7 +8,7 @@ All notable changes to keel are documented here. The format follows
 
 ## [1.31.1] - 2026-10-12
 
-- An ai-jury panelist whose only findings are minor or nit (`COMMENT`) now counts as approving, so a pull request the chair approved is no longer held by panelists' nits. A `COMMENT` carrying a critical or major finding, and a chair's `COMMENT` consensus, still hold.
+- `keel review --from-jury` posts an ai-jury panelist's `COMMENT` (its worst upheld finding is minor or nit) as `LGTM`, so a pull request the chair approved is no longer held by panelists' nits. A `COMMENT` carrying a critical or major finding or a finding index that does not resolve, the issue-mode `UNCLEAR`, a host's own `COMMENT`, and a chair's `COMMENT` consensus still hold.
 
 ### Fixed
 - **A jury panelist with only minor remarks no longer holds the merge** (#1500). ai-jury casts `COMMENT` for a panelist whose worst upheld finding is minor or nit, and `keel review --from-jury` posted it as `Verdict: COMMENT`, which the evidence gate (#1426) does not count as approving. So a pull request whose chair approved, with no shared finding, stayed unmerged because two panelists had left nits. `jury.ballot_verdict` now posts such a ballot as `LGTM` with its findings listed, as a host's `APPROVE — minor nits` already counts. A `COMMENT` ballot carrying a critical or major finding (or a finding index that does not resolve), the issue-mode `UNCLEAR`, a host's own `COMMENT`, and a chair's `COMMENT` consensus still hold.
