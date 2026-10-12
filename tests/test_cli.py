@@ -14943,6 +14943,195 @@ class DelegateCommandTest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(json.loads(out)["result"]["error_code"], "spawn-failed")
 
+    def _registry_file(self, body):
+        path = Path(_TMP.name) / f"reg-{next(_TMP_COUNTER)}.yaml"
+        path.write_text(body, encoding="utf-8")
+        return str(path)
+
+    def test_print_argv_shows_the_resolved_argv_and_runs_nothing(self):
+        registry = self._registry_file(
+            "providers:\n  grok:\n    transport: cli\n    command: cursor-agent\n"
+            "    args: ['--trust']\n"
+        )
+        with patch("keel.runner.run_argv") as ran:
+            rc, out, err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "grok",
+                    "--role",
+                    "implement",
+                    "--prompt-file",
+                    self._prompt(),
+                    "--registry",
+                    registry,
+                    "--print-argv",
+                ]
+            )
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["argv"], ["cursor-agent", "--trust"])
+        ran.assert_not_called()
+        self.assertEqual(err, "")
+
+    def test_run_shows_registry_warnings_and_shadowing_clashes_on_stderr(self):
+        registry = self._registry_file(
+            "providers:\n  grok:\n    transport: cli\n    command: cursor-agent\n    bogus: 1\n"
+        )
+        profile = Path(_TMP.name) / f"proj-{next(_TMP_COUNTER)}.yaml"
+        profile.write_text(
+            "extends: keel\ncore_version: '^1.0'\nbase_branch: main\n"
+            "knobs:\n  build_gate_cmd: 'true'\n  delegate_profiles:\n"
+            "    grok: {vendor: cli, command: cursor-agent}\n",
+            encoding="utf-8",
+        )
+        rc, _out, err = run(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "grok",
+                "--role",
+                "implement",
+                "--prompt-file",
+                self._prompt(),
+                "--registry",
+                registry,
+                "--project",
+                str(profile),
+                "--print-argv",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("ignoring unknown field(s) bogus", err)
+        self.assertIn("clashes with the project profile", err)
+
+    def test_a_detached_plan_failure_is_recorded_and_stated_on_stderr(self):
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "nope",
+                    "--role",
+                    "review",
+                    "--prompt-file",
+                    self._prompt(),
+                    "--root",
+                    root,
+                    "--detach",
+                ]
+            )
+            doc = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(doc["error_code"], "unknown-provider")
+            self.assertTrue(doc["run_id"])
+            self.assertIn("unknown-provider", err)
+            rc2, out2, _ = run(["delegate", "status", "--root", root])
+            self.assertIn(doc["run_id"], out2)
+            self.assertIn("failed", out2)
+
+    def test_a_child_plan_failure_writes_no_stderr_line_and_no_record(self):
+        """A child plan failure prints no stderr line and writes no record (#1510): the parent
+        already recorded the run; the child does neither."""
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "nope",
+                    "--role",
+                    "review",
+                    "--prompt-file",
+                    self._prompt(),
+                    "--root",
+                    root,
+                    "--run-id",
+                    "child-run",
+                    "--_child",
+                ]
+            )
+            self.assertEqual(rc, 1)
+            self.assertEqual(json.loads(out)["error_code"], "unknown-provider")
+            self.assertNotIn("keel: error:", err)
+            _rc, status, _ = run(["delegate", "status", "--root", root])
+            self.assertNotIn("child-run", status)
+
+    def test_a_detached_plan_failure_with_a_bad_run_id_is_a_bad_run_id(self):
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, err = run(
+                [
+                    "delegate",
+                    "run",
+                    "--provider",
+                    "nope",
+                    "--role",
+                    "review",
+                    "--prompt-file",
+                    self._prompt(),
+                    "--root",
+                    root,
+                    "--detach",
+                    "--run-id",
+                    "../x",
+                ]
+            )
+            _rc, status, _ = run(["delegate", "status", "--root", root])
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["error_code"], "bad-run-id")
+        self.assertIn("keel: error: bad-run-id", err)
+        self.assertNotIn("unknown-provider", err)
+        self.assertIn("no delegate runs", status)
+
+    def _print_argv_args(self, provider, root, *extra):
+        return [
+            "delegate", "run", "--provider", provider, "--role", "review",
+            "--prompt-file", self._prompt(), "--root", root, "--print-argv", *extra,
+        ]  # fmt: skip
+
+    def test_print_argv_with_a_planning_failure_records_nothing_even_with_detach(self):
+        with tempfile.TemporaryDirectory() as root:
+            rc, out, err = run(self._print_argv_args("nope", root, "--detach"))
+            _rc, status, _ = run(["delegate", "status", "--root", root])
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["error_code"], "unknown-provider")
+        self.assertNotIn("run_id", json.loads(out))
+        self.assertIn("unknown-provider", err)
+        self.assertIn("no delegate runs", status)
+
+    def test_print_argv_wins_over_detach_and_spawns_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch("keel.delegaterun.subprocess.Popen") as popen:
+                rc, out, _err = run(self._print_argv_args("claude", root, "--detach"))
+            _rc, status, _ = run(["delegate", "status", "--root", root])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["provider"], "claude")
+        popen.assert_not_called()
+        self.assertIn("no delegate runs", status)
+
+    def test_a_reused_run_id_does_not_keep_a_stale_pid_on_a_planning_failure(self):
+        with tempfile.TemporaryDirectory() as root:
+            cli.delegaterun.start_detached(
+                [],
+                root=root,
+                run_id="again",
+                _popen=lambda *a, **k: type("C", (), {"pid": 99999999})(),
+            )
+            cli.delegaterun.crashed_path(root, "again").write_text('{"reason": "old"}', "utf-8")
+            rc, _out, _err = run(
+                ["delegate", "run", "--provider", "nope", "--role", "review",
+                 "--prompt-file", self._prompt(), "--root", root, "--detach",
+                 "--run-id", "again"]
+            )  # fmt: skip
+            _rc, status, _ = run(["delegate", "status", "--root", root, "--json"])
+        self.assertEqual(rc, 1)
+        (record,) = json.loads(status)["runs"]
+        self.assertEqual(record["status"], "done")
+        self.assertIsNone(record["pid"])
+        self.assertFalse(record["result"]["ok"])
+
     def test_the_child_writes_the_authoritative_state_that_wait_reads(self):
         with tempfile.TemporaryDirectory() as root:
             result = CommandResult(True, 0, "done", stdout="done")

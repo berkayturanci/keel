@@ -1224,5 +1224,56 @@ class TheFailureSignalIsBoundedAndIsTheVendors(unittest.TestCase):
         self.assertIn("boom", signal)
 
 
+class RecordPlanningFailureTest(unittest.TestCase):
+    FAILURE = {"ok": False, "error_code": "unknown-provider", "error": "nope"}
+
+    def test_it_writes_a_done_failed_record_that_status_lists(self):
+        with tempfile.TemporaryDirectory() as root:
+            result = delegaterun.record_planning_failure(
+                root, "r1", self.FAILURE, provider="nope", role="review"
+            )
+            record = delegaterun.run_record(root, "r1")
+        self.assertEqual(result["run_id"], "r1")
+        self.assertEqual(result["error_code"], "unknown-provider")
+        self.assertEqual(record["status"], "done")
+        self.assertIsNone(record["pid"])
+        self.assertEqual(record["provider"], "nope")
+        self.assertFalse(record["result"]["ok"])
+
+    def test_it_clears_a_previous_runs_pid_and_crash_marker(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen(11))
+            delegaterun.crashed_path(root, "r1").write_text('{"reason": "old"}', "utf-8")
+            delegaterun.record_planning_failure(
+                root, "r1", self.FAILURE, provider="nope", role="review"
+            )
+            self.assertIsNone(delegaterun.read_pid(root, "r1"))
+            self.assertIsNone(delegaterun.read_crash(root, "r1"))
+            self.assertEqual(delegaterun.run_record(root, "r1")["status"], "done")
+
+    def test_an_unwritable_root_still_returns_the_failure_document(self):
+        with tempfile.TemporaryDirectory() as root:
+            blocker = Path(root) / "blocked"
+            blocker.write_text("a file, so the state dir cannot be created", "utf-8")
+            result = delegaterun.record_planning_failure(
+                blocker, "r1", self.FAILURE, provider="nope", role="review"
+            )
+        self.assertEqual(result["run_id"], "r1")
+        self.assertFalse(result["ok"])
+
+    def test_a_failed_write_keeps_the_old_markers(self):
+        with tempfile.TemporaryDirectory() as root:
+            delegaterun.start_detached([], root=root, run_id="r1", _popen=_FakePopen(11))
+            with patch.object(delegaterun, "write_state", side_effect=OSError("disk full")):
+                delegaterun.record_planning_failure(
+                    root, "r1", self.FAILURE, provider="nope", role="review"
+                )
+            self.assertEqual(delegaterun.read_pid(root, "r1"), 11)
+
+    def test_an_unsafe_run_id_is_refused(self):
+        with self.assertRaises(delegaterun.RunIdError):
+            delegaterun.record_planning_failure(".", "../x", self.FAILURE, provider=None, role=None)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

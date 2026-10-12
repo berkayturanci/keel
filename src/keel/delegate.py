@@ -305,9 +305,42 @@ def resolve_provider(
     resolution = _lookup(name, config, profiles, registry)
     if resolution is None:
         known = ", ".join(sorted({*profiles, *registry.names(), *agents.BUILTIN_DELEGATE_VENDORS}))
-        raise DelegateError("unknown-provider", f"unknown provider {name!r}; known: {known}")
+        hint = _did_you_mean(name, profiles, registry)
+        raise DelegateError("unknown-provider", f"unknown provider {name!r}; known: {known}{hint}")
     _check_model(resolution.provider, model)
     return Resolution(resolution.provider, resolution.profile, model)
+
+
+def _did_you_mean(name: str, profiles, registry: providers_mod.Registry) -> str:
+    """``; did you mean 'grok'?`` for a profile/registry entry whose command is ``name``'s CLI.
+
+    People type the product (``cursor``), the binary is ``cursor-agent``, and the entry
+    that drives it carries an operator-chosen name (``grok``). A fixed alias table would
+    bind ``cursor`` to whatever the operator happened to name their entry, or to a CLI
+    keel does not ship; matching on the configured *command* names the operator's own
+    entry instead (#1509).
+    """
+    needle = name.lower().removesuffix(".exe")
+    matches = []
+    # Suggest only names that resolve to the entry that matched: `_lookup` prefers a
+    # built-in, then a project profile, then the registry, so a shadowed name would run
+    # something else.
+    builtins = {e.name for e in providers_mod.builtin_providers()}
+    commands = [(n, p.command) for n, p in profiles.items() if n not in builtins]
+    commands += [
+        (e.name, e.command)
+        for e in registry.providers
+        if e.name not in builtins and e.name not in profiles
+    ]
+    for entry_name, command in commands:
+        # Windows paths split on backslashes too.
+        base = posixpath.basename((command or "").replace("\\", "/")).lower()
+        base = base.removesuffix(".exe")
+        if base and (base == needle or base.startswith(needle + "-")):
+            matches.append(entry_name)
+    if not matches:
+        return ""
+    return "; did you mean " + " or ".join(repr(m) for m in sorted(set(matches))) + "?"
 
 
 def _lookup(name, config, profiles, registry: providers_mod.Registry) -> Resolution | None:
@@ -666,9 +699,10 @@ def _profile_argv(
         configured = profile.review_args is not None
         prompt_mode = profile.prompt_mode
     else:
-        # A registry entry has no implementer `args` to fall back to, so an empty tuple
-        # here really is "nothing configured" rather than a fallback in disguise.
-        role_args = provider.review_args if read_only else ()
+        # A registry entry's `args` are the implementer's flags (#1508): applied to a
+        # write role only, and never as a fallback for `review_args`, so an empty
+        # review_args still reads as "nothing configured" rather than a fallback in disguise.
+        role_args = provider.review_args if read_only else provider.args
         configured = bool(provider.review_args)
         prompt_mode = DEFAULT_PROMPT_MODE
     argv = [command, *role_args]

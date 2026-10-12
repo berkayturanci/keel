@@ -90,6 +90,7 @@ _ENTRY_KEYS = frozenset(
         "model",
         "model_arg",
         "effort",
+        "args",
         "review_args",
         "vendor_label",
     }
@@ -116,6 +117,10 @@ class Provider:
     #: Flags that make this provider a reviewer rather than an implementer. Their
     #: presence is what ``read_only_mode`` reports for a profile/registry entry.
     review_args: tuple[str, ...] = ()
+    #: Flags the implementer (write) role runs with, e.g. ``--trust`` for a current
+    #: ``cursor-agent``. Registry entries only (#1508). Reviewers use ``review_args``
+    #: instead; ``args`` is never a fallback for review, because these are the write flags.
+    args: tuple[str, ...] = ()
     #: ``builtin`` | ``profile`` | ``registry``.
     source: str = "builtin"
     #: How a model reaches a CLI (``<model_arg> <model>``); ``None`` when the provider
@@ -174,6 +179,7 @@ class Provider:
             "api_key_env": self.api_key_env,
             "model": self.model,
             "effort": self.effort,
+            "args": list(self.args),
             "review_args": list(self.review_args),
             "capabilities": self.capabilities(),
         }
@@ -322,6 +328,8 @@ def _parse_entry(
         return None, warnings
     review_args, arg_warnings = _string_tuple(entry.get("review_args"), where=where)
     warnings.extend(arg_warnings)
+    impl_args, impl_warnings = _string_tuple(entry.get("args"), where=where, key="args")
+    warnings.extend(impl_warnings)
     # Fail-soft like every other registry rule: a bad label is dropped with a warning
     # rather than skipping the whole entry. The provider still works; it just keeps the
     # generic label it had before, which is the state this field improves on.
@@ -341,6 +349,7 @@ def _parse_entry(
         "model": _text(entry.get("model")),
         "effort": _text(entry.get("effort")),
         "review_args": review_args,
+        "args": impl_args,
         "vendor_label": vendor_label,
         "source": "registry",
     }
@@ -422,11 +431,13 @@ def _text(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _string_tuple(value: Any, *, where: str) -> tuple[tuple[str, ...], list[str]]:
+def _string_tuple(
+    value: Any, *, where: str, key: str = "review_args"
+) -> tuple[tuple[str, ...], list[str]]:
     if value is None:
         return (), []
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        return (), [f"{where}: 'review_args' must be a list of strings — ignored"]
+        return (), [f"{where}: '{key}' must be a list of strings — ignored"]
     return tuple(value), []
 
 
@@ -485,6 +496,7 @@ def profile_providers(config) -> tuple[Provider, ...]:
                 api_key_env=profile.api_key_env,
                 model=profile.model,
                 review_args=profile.role_args(review=True) if profile.review_args else (),
+                args=tuple(profile.args or ()),
                 source="profile",
                 model_arg=None if api else (profile.model_arg or None),
                 vendor_label=profile.vendor_label,

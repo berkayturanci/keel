@@ -483,6 +483,150 @@ class ProfileArgvTest(unittest.TestCase):
         self.assertTrue(plan.read_only_backed)
         self.assertEqual(plan.attribution["delegate_profile"], "aider")
 
+    def _grok(self):
+        return providers.parse_registry(
+            {
+                "providers": {
+                    "grok": {
+                        "transport": "cli",
+                        "command": "cursor-agent",
+                        "args": ["--trust"],
+                        "review_args": ["--trust", "--workspace", "/w"],
+                    }
+                }
+            },
+            path="/registry.yaml",
+        )
+
+    def test_a_registry_entrys_args_reach_the_implementer_and_not_the_reviewer(self):
+        registry = self._grok()
+        provider = delegate.resolve_provider(None, registry, "grok").provider
+        implement = delegate.plan_run(provider, "implement", PROMPT)
+        review = delegate.plan_run(provider, "review", PROMPT)
+        fix = delegate.plan_run(provider, "fix", PROMPT)
+        self.assertEqual(implement.argv, ("cursor-agent", "--trust"))
+        self.assertEqual(fix.argv, ("cursor-agent", "--trust"))
+        self.assertEqual(review.argv, ("cursor-agent", "--trust", "--workspace", "/w"))
+
+    def test_registry_args_are_never_the_reviewers_fallback(self):
+        registry = providers.parse_registry(
+            {"providers": {"g": {"transport": "cli", "command": "x", "args": ["--force"]}}},
+            path="/registry.yaml",
+        )
+        provider = delegate.resolve_provider(None, registry, "g").provider
+        review = delegate.plan_run(provider, "review", PROMPT)
+        self.assertEqual(review.argv, ("x",))
+        self.assertFalse(review.read_only_backed)
+        self.assertEqual(delegate.plan_run(provider, "implement", PROMPT).argv, ("x", "--force"))
+        self.assertEqual(delegate.plan_run(provider, "fix", PROMPT).argv, ("x", "--force"))
+
+    def test_an_unknown_name_suggests_the_entry_that_drives_that_cli(self):
+        registry = self._grok()
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(None, registry, "cursor")
+        self.assertIn("did you mean 'grok'?", caught.exception.message)
+
+    def test_an_unknown_name_suggests_a_project_profile_too(self):
+        profile = cfg.DelegateProfile(vendor="cli", command="/usr/bin/cursor-agent")
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(_config({"grok": profile}), None, "cursor")
+        self.assertIn("did you mean 'grok'?", caught.exception.message)
+
+    def test_several_matching_entries_are_all_suggested(self):
+        registry = providers.parse_registry(
+            {"providers": {n: {"transport": "cli", "command": "cursor-agent"} for n in ("b", "a")}},
+            path="/registry.yaml",
+        )
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(None, registry, "cursor")
+        self.assertIn("did you mean 'a' or 'b'?", caught.exception.message)
+
+    def _suggestion(self, commands, name):
+        registry = providers.parse_registry(
+            {"providers": {k: v for k, v in commands.items()}}, path="/registry.yaml"
+        )
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(None, registry, name)
+        return caught.exception.message
+
+    def test_the_suggestion_matches_the_binary_name_exactly_and_case_blind(self):
+        cli = {"transport": "cli"}
+        self.assertIn(
+            "did you mean 'g'?", self._suggestion({"g": {**cli, "command": "aider"}}, "aider")
+        )
+        self.assertIn(
+            "did you mean 'g'?",
+            self._suggestion({"g": {**cli, "command": "Cursor-Agent"}}, "cursor"),
+        )
+        self.assertIn(
+            "did you mean 'g'?",
+            self._suggestion({"g": {**cli, "command": "C:\\tools\\cursor-agent"}}, "cursor"),
+        )
+        self.assertIn(
+            "did you mean 'g'?",
+            self._suggestion({"g": {**cli, "command": "C:\\tools\\aider.EXE"}}, "aider"),
+        )
+        self.assertIn(
+            "did you mean 'g'?", self._suggestion({"g": {**cli, "command": "aider"}}, "aider.exe")
+        )
+
+    def test_a_bare_prefix_or_a_commandless_entry_is_not_suggested(self):
+        message = self._suggestion(
+            {
+                "g": {"transport": "cli", "command": "cursor-agent"},
+                "api": {
+                    "transport": "api",
+                    "endpoint": "http://127.0.0.1:1/v1",
+                    "api_key_env": "LOCAL_TEST_KEY",
+                },
+            },
+            "curs",
+        )
+        self.assertNotIn("did you mean", message)
+        # The command-less entry must really be in the registry for this to test anything.
+        self.assertIn("api", message)
+
+    def test_a_shadowed_name_is_never_suggested(self):
+        # `claude` is a built-in, so resolving it would not run this cursor-agent entry.
+        message = self._suggestion(
+            {"claude": {"transport": "cli", "command": "cursor-agent"}}, "cursor"
+        )
+        self.assertNotIn("did you mean", message)
+        profile = cfg.DelegateProfile(vendor="cli", command="aider")
+        registry = providers.parse_registry(
+            {"providers": {"grok": {"transport": "cli", "command": "cursor-agent"}}},
+            path="/registry.yaml",
+        )
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(_config({"grok": profile}), registry, "cursor")
+        self.assertNotIn("did you mean", caught.exception.message)
+
+    def test_the_documented_cursor_agent_recipe_sends_the_prompt_on_stdin(self):
+        """docs/keel/cli.md's registry block: flags in argv, the brief on stdin (`-p` reads it)."""
+        registry = providers.parse_registry(
+            {
+                "providers": {
+                    "grok": {
+                        "transport": "cli",
+                        "command": "cursor-agent",
+                        "args": ["-p", "--trust"],
+                        "review_args": ["-p", "--trust", "--workspace", "/w"],
+                    }
+                }
+            },
+            path="/registry.yaml",
+        )
+        provider = delegate.resolve_provider(None, registry, "grok").provider
+        plan = delegate.plan_run(provider, "implement", PROMPT)
+        self.assertEqual(plan.argv, ("cursor-agent", "-p", "--trust"))
+        self.assertEqual(plan.stdin_mode, "text")
+        self.assertNotIn(PROMPT, plan.argv)
+
+    def test_an_unknown_name_with_no_matching_command_gets_no_suggestion(self):
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.resolve_provider(None, self._grok(), "zzz")
+        self.assertNotIn("did you mean", caught.exception.message)
+
     def test_a_registry_local_entry_runs_its_command_rather_than_dialing_an_address(self):
         registry = providers.parse_registry(
             {"providers": {"llamafile": {"transport": "local", "command": "llamafile"}}},

@@ -2313,7 +2313,7 @@ why an unreachable GitHub cannot turn a label check into a red run.
 
 <a id="keel-delegate"></a>
 
-## `keel delegate run --provider TOKEN --role ROLE --prompt-file FILE [--cwd DIR] [--timeout S] [--effort low|medium|high] [--model TOKEN] [--root DIR] [--project project.yaml] [--registry FILE] [--run-id ID] [--activity-run-id RUN] [--detach] [--json]`
+## `keel delegate run --provider TOKEN --role ROLE --prompt-file FILE [--cwd DIR] [--timeout S] [--effort low|medium|high] [--model TOKEN] [--root DIR] [--project project.yaml] [--registry FILE] [--run-id ID] [--activity-run-id RUN] [--detach] [--print-argv] [--json]`
 
 Dispatch **one** delegate and print the JSON return contract. This is the single executor
 for every transport keel supports — the three built-in agent CLIs, a
@@ -2373,6 +2373,32 @@ write-enabling flags plans a *reviewer* with them. That run comes back
 `read_only_backed: false` with a warning naming the provider — **branch on that field, not
 on `read_only`.** Set `review_args` for any profile used as a reviewer; an explicitly empty
 `review_args: []` is a deliberate "this CLI needs no flags to review" and counts as backed.
+
+A `~/.keel/providers.yaml` entry takes `args` (the **implementer's** flags, applied to a
+write role only) and `review_args` (the reviewer's); `args` is never a fallback for
+`review_args`. A current `cursor-agent` needs `--trust` to implement and
+`--trust --workspace <dir>` to review, so:
+
+```yaml
+providers:
+  grok:
+    transport: cli
+    command: cursor-agent
+    args: ["-p", "--trust"]
+    review_args: ["-p", "--trust", "--workspace", "/path/to/checkout"]
+```
+
+The brief goes on stdin, which `cursor-agent -p` reads; registry entries have no
+`prompt_mode`, so a CLI that only takes its prompt as an argument needs a project
+`knobs.delegate_profiles` entry with `prompt_mode: arg` instead.
+
+`keel delegate run` prints the registry's load warnings (an ignored field, a bad type) and
+any name it shares with a project `knobs.delegate_profiles` entry (the project profile
+wins) on stderr as `keel: warning: …` (#1508). **`--print-argv`** resolves the plan and
+prints it as JSON, `argv` included, without running or recording anything (it wins over `--detach`), so you can check which flags
+a seat will get. An unknown `--provider` that is the CLI of a configured entry says so:
+`unknown provider 'cursor'; … did you mean 'grok'?` (#1509) — matched on the entry's
+`command`, so there is no alias table to bind a product name to someone else's entry.
 
 `--effort` is translated into each vendor's own spelling — a model suffix for `agy`,
 `-c model_reasoning_effort=<level>` for `codex`, `thinking.budget_tokens` for
@@ -2505,6 +2531,13 @@ files, with the child's own `done` always winning over a crash marker — a mark
 "this looked abandoned", a `done` record says "the delegate answered". Because the
 *result* only ever comes from the record, it survives the caller exiting, the session
 ending, and a reboot. `.keel/state/` is gitignored, so nothing here is ever committed.
+
+A `--detach` whose plan cannot be made (an unknown provider, an unsafe model) never
+starts a child, but it still leaves a record: `ok: false` with the `error_code`, a
+`run_id`, exit 1, the error on stderr, and a `done` state file, so `keel delegate status`
+lists it as `failed` rather than reporting "no delegate runs" (#1510). Writing that file is
+best-effort: on an unwritable state directory the JSON and exit code are the same but no
+record is left, so `status` has nothing to list.
 
 Reusing a `--run-id` is fine — an orchestrator naming a run after its issue will reuse it
 on a retry. The pid and crash markers are cleared as the new record is written, so a
