@@ -1339,8 +1339,9 @@ policy_pack:
 **The question it answers.** Coverage proves a line *ran*, not that any assertion depends on
 it — and with `fail_under = 100` enforced, "maintained 100 % coverage" is true of every pull
 request before anyone writes it. An audit of 14 closed fixes in keel found three whose tests
-passed with the fix removed *at the time their issue was closed*; after #1289 all 14 fail
-without their fix today. This gate asks the question coverage cannot: for each production
+still passed with the fix removed at the time their issue was closed (#877, and one arm each
+of #871 and #879); later audits added tests that catch them, and when #1289 recorded the audit
+on 2026-09-22 all 14 failed without their fix. This gate asks the question coverage cannot: for each production
 change on the branch, does a test **fail as an assertion** when *that change alone* is
 reverted?
 

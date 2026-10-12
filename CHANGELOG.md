@@ -7,7 +7,7 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
-- **The #1289 audit is stated in the tense it happened** (#1513). `docs/keel/configuration.md`, the `revertcheck` module docstring and a comment in `artifacts.py` said an audit of 14 closed fixes "found three whose tests passed with the fix removed", which reads as three fixes unguarded today. They now say three survived at the time their issue was closed and that all 14 fail without their fix today. `tests/test_docs_claims.py` fails if any surface states the audit without that qualifier.
+- **The #1289 audit is stated in the past tense it happened in** (#1513). `docs/keel/configuration.md`, `CONTRIBUTING.md`, the `revertcheck` module docstring and a comment in `artifacts.py` said an audit of 14 closed fixes "found three whose tests passed with the fix removed", which reads as three fixes unguarded today; the first rewrite then asserted "all 14 fail without their fix today", a present-tense claim nobody re-checks. They now say three (#877, and one arm each of #871 and #879) still passed with the fix removed at the time their issue was closed, that later audits added tests that catch them, and that all 14 failed without their fix when #1289 recorded the audit on 2026-09-22. `tests/test_docs_claims.py` reads every tracked `*.md`, `*.html`, `*.js` and `*.py` file except `CHANGELOG.md` and `tests/`, and fails if a sentence stating the audit lacks "at the time their issue was closed" or contains "today" or a present-tense "fail".
 
 ## [1.31.1] - 2026-10-12
 

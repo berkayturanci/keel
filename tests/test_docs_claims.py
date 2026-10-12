@@ -41,6 +41,7 @@ import io
 import json
 import re
 import shlex
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -2853,33 +2854,46 @@ class TheWorkflowPageMatchesThisRepositorysJuryPolicy(unittest.TestCase):
 class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
     """The #1289 audit result carries its time qualifier on every surface (#1513).
 
-    Three of 14 closed fixes survived *at the time their issue was closed*; after #1289 all 14
-    fail without their fix. "An audit found three whose tests passed with the fix removed", with
-    no "at the time", reads as three fixes unguarded today.
+    Three of 14 closed fixes had tests that passed with the fix removed *at the time their
+    issue was closed*; later audits added tests that catch them. An unqualified "found three
+    whose tests passed with the fix removed" reads as three fixes unguarded today, and a
+    present-tense "all 14 fail without their fix" is as unfalsifiable as the coverage sentence.
+    Every tracked text file except the CHANGELOG (history) and tests/ is scanned.
     """
 
     CLAIM = re.compile(r"audit\s+of\s+(?:14|fourteen)\s+closed\s+fixes", re.IGNORECASE)
+    QUALIFIER = "at the time their issue was closed"
 
     def _surfaces(self):
-        roots = [REPO_ROOT / n for n in ("README.md", "docs", "website", "src")]
-        for root in roots:
-            paths = [root] if root.is_file() else sorted(root.rglob("*"))
-            for path in paths:
-                if path.is_file() and path.suffix in {".md", ".html", ".js", ".py"}:
-                    yield path, path.read_text(encoding="utf-8")
+        tracked = subprocess.run(
+            ["git", "ls-files", "*.md", "*.html", "*.js", "*.py"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        ).stdout.split()
+        for name in tracked:
+            if name == "CHANGELOG.md" or name.startswith("tests/"):
+                continue
+            path = REPO_ROOT / name
+            if path.is_file():
+                yield name, path.read_text(encoding="utf-8")
 
-    def test_every_statement_of_the_audit_says_when(self):
-        found = 0
-        for path, text in self._surfaces():
+    def _sentences(self):
+        for name, text in self._surfaces():
             flat = re.sub(r"\s*\n\s*(?:#\s*)?", " ", text)
             for m in self.CLAIM.finditer(flat):
-                found += 1
-                with self.subTest(path=str(path.relative_to(REPO_ROOT))):
-                    self.assertRegex(
-                        flat[m.start() : m.end() + 400],
-                        r"(?i)at the time (?:their|the) issue",
-                    )
-        self.assertGreater(found, 0)
+                end = re.search(r"\.\s", flat[m.end() :])
+                yield name, flat[m.start() : m.end() + (end.end() if end else 400)]
+
+    def test_every_statement_of_the_audit_says_when(self):
+        found = list(self._sentences())
+        self.assertGreater(len(found), 0)
+        for name, sentence in found:
+            with self.subTest(path=name):
+                self.assertIn(self.QUALIFIER, sentence)
+
+    def test_no_statement_of_the_audit_is_present_tense(self):
+        for name, sentence in self._sentences():
+            with self.subTest(path=name):
+                self.assertNotRegex(sentence, r"(?i)\btoday\b|\bfail\b")
 
 
 if __name__ == "__main__":

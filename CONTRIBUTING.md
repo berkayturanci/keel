@@ -72,7 +72,10 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    from one that merely runs through it. Coverage cannot make that distinction — `fail_under =
    100` is enforced in CI, so "maintained 100 % coverage" is true of every merged pull request
    before anyone writes it. An audit of 14 closed fixes in this repo found three whose tests
-   would have passed with the fix removed; all three offered coverage as their evidence. The
+   still passed with the fix removed at the time their issue was closed (#877, and one arm
+   each of #871 and #879); later audits added tests that catch them, and when #1289 recorded
+   the audit on 2026-09-22 all 14 failed without their fix. All three offered coverage as
+   their evidence. The
    rationale is in [#1289](https://github.com/berkayturanci/keel/issues/1289).
 
    It is also worth knowing what such a sentence does *not* prove. A test can fail without the
