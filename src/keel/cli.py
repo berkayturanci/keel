@@ -10832,8 +10832,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_dr.add_argument(
         "--print-argv",
         action="store_true",
-        help="resolve the plan and print it as JSON (argv, read_only, warnings) without "
-        "running or recording anything; wins over --detach",
+        help="resolve the plan and print it as JSON (argv included) without running or "
+        "recording anything; registry warnings and clashes go to stderr; wins over --detach",
     )
     p_dr.add_argument(
         "--json",

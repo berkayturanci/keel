@@ -560,16 +560,26 @@ class ProfileArgvTest(unittest.TestCase):
             "did you mean 'g'?",
             self._suggestion({"g": {**cli, "command": "C:\\tools\\cursor-agent"}}, "cursor"),
         )
+        self.assertIn(
+            "did you mean 'g'?",
+            self._suggestion({"g": {**cli, "command": "C:\\tools\\aider.EXE"}}, "aider"),
+        )
 
     def test_a_bare_prefix_or_a_commandless_entry_is_not_suggested(self):
         message = self._suggestion(
             {
                 "g": {"transport": "cli", "command": "cursor-agent"},
-                "api": {"transport": "openai-compatible", "endpoint": "http://127.0.0.1:1/v1"},
+                "api": {
+                    "transport": "api",
+                    "endpoint": "http://127.0.0.1:1/v1",
+                    "api_key_env": "LOCAL_TEST_KEY",
+                },
             },
             "curs",
         )
         self.assertNotIn("did you mean", message)
+        # The command-less entry must really be in the registry for this to test anything.
+        self.assertIn("api", message)
 
     def test_a_shadowed_name_is_never_suggested(self):
         # `claude` is a built-in, so resolving it would not run this cursor-agent entry.

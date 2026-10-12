@@ -335,6 +335,7 @@ def _did_you_mean(name: str, profiles, registry: providers_mod.Registry) -> str:
     for entry_name, command in commands:
         # Windows paths split on backslashes too.
         base = posixpath.basename((command or "").replace("\\", "/")).lower()
+        base = base.removesuffix(".exe")
         if base and (base == needle or base.startswith(needle + "-")):
             matches.append(entry_name)
     if not matches:

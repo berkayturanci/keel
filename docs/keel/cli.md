@@ -2522,7 +2522,9 @@ ending, and a reboot. `.keel/state/` is gitignored, so nothing here is ever comm
 A `--detach` whose plan cannot be made (an unknown provider, an unsafe model) never
 starts a child, but it still leaves a record: `ok: false` with the `error_code`, a
 `run_id`, exit 1, the error on stderr, and a `done` state file, so `keel delegate status`
-lists it as `failed` rather than reporting "no delegate runs" (#1510).
+lists it as `failed` rather than reporting "no delegate runs" (#1510). Writing that file is
+best-effort: on an unwritable state directory the JSON and exit code are the same but no
+record is left, so `status` has nothing to list.
 
 Reusing a `--run-id` is fine — an orchestrator naming a run after its issue will reuse it
 on a retry. The pid and crash markers are cleared as the new record is written, so a
