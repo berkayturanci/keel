@@ -3,7 +3,8 @@
 Coverage proves that a line *ran*, not that an assertion *depends* on it. With
 ``fail_under = 100`` enforced, "maintained 100 % coverage" is true of every merged pull
 request before anyone writes it, and an audit of 14 closed fixes found three whose tests
-passed with the fix removed. This gate asks the question coverage cannot: for each
+passed with the fix removed at the time their issue was closed (all 14 fail without their fix
+today). This gate asks the question coverage cannot: for each
 production change on the branch, revert **that change alone** in a scratch worktree, run
 the project's tests, and require a test to **fail as an assertion**.
 

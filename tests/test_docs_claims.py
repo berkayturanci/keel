@@ -2850,5 +2850,37 @@ class TheWorkflowPageMatchesThisRepositorysJuryPolicy(unittest.TestCase):
                         self.test_the_page_names_the_mode_this_repository_sets()
 
 
+class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
+    """The #1289 audit result carries its time qualifier on every surface (#1513).
+
+    Three of 14 closed fixes survived *at the time their issue was closed*; after #1289 all 14
+    fail without their fix. "An audit found three whose tests passed with the fix removed", with
+    no "at the time", reads as three fixes unguarded today.
+    """
+
+    CLAIM = re.compile(r"audit\s+of\s+(?:14|fourteen)\s+closed\s+fixes", re.IGNORECASE)
+
+    def _surfaces(self):
+        roots = [REPO_ROOT / n for n in ("README.md", "docs", "website", "src")]
+        for root in roots:
+            paths = [root] if root.is_file() else sorted(root.rglob("*"))
+            for path in paths:
+                if path.is_file() and path.suffix in {".md", ".html", ".js", ".py"}:
+                    yield path, path.read_text(encoding="utf-8")
+
+    def test_every_statement_of_the_audit_says_when(self):
+        found = 0
+        for path, text in self._surfaces():
+            flat = re.sub(r"\s*\n\s*(?:#\s*)?", " ", text)
+            for m in self.CLAIM.finditer(flat):
+                found += 1
+                with self.subTest(path=str(path.relative_to(REPO_ROOT))):
+                    self.assertRegex(
+                        flat[m.start() : m.end() + 400],
+                        r"(?i)at the time (?:their|the) issue",
+                    )
+        self.assertGreater(found, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

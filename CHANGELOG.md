@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The #1289 audit is stated in the tense it happened** (#1513). `docs/keel/configuration.md`, the `revertcheck` module docstring and a comment in `artifacts.py` said an audit of 14 closed fixes "found three whose tests passed with the fix removed", which reads as three fixes unguarded today. They now say three survived at the time their issue was closed and that all 14 fail without their fix today. `tests/test_docs_claims.py` fails if any surface states the audit without that qualifier.
+
 ## [1.31.1] - 2026-10-12
 
 - `keel review --from-jury` posts an ai-jury panelist's `COMMENT` (its worst upheld finding is minor or nit) as `LGTM`, so a pull request the chair approved is no longer held by panelists' nits. A `COMMENT` carrying a critical or major finding or a finding index that does not resolve, the issue-mode `UNCLEAR`, a host's own `COMMENT`, and a chair's `COMMENT` consensus still hold.
