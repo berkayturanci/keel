@@ -77,7 +77,11 @@ In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictl
   rather than convening a second panel whose result nothing ties to it. The panel-shape readers — the `vendors:` / `panelists:` counts and whether a
   panel sat — still read the comment's presence: a panel that rejected the change still sat.
   The panelists' ballots that `keel review --from-jury` posts are review verdicts, and are read
-  like any other: a ballot that requests changes holds.
+  like any other: a ballot that requests changes holds. A panelist's `COMMENT` — ai-jury's
+  stance for one whose worst upheld finding is minor or nit — is posted as `LGTM` with its
+  findings listed, the same as a host's `APPROVE — minor nits`; it stays `COMMENT`, and holds,
+  if it carries a critical or major finding (#1500). The panel's consensus is not converted:
+  a chair's `COMMENT` still fails the jury requirement.
 * If the head commit changes by even one byte, previous review evidence is automatically invalidated,
   and Keel halts the merge until the new commit is re-verified by the backbone.
 * **One exemption, and only one: the lesson `keel capture-land` lands (#1203).** With an in-repo

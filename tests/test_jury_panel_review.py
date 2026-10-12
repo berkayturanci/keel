@@ -93,6 +93,7 @@ def _report(
     vendors: list[str],
     ballots: tuple[str, ...] = _APPROVING_BALLOTS,
     chair: str = "APPROVE",
+    severity: str = "major",
 ) -> dict:
     """An ai-jury JSON report (schema 1.1) whose panelists carry ``vendors``.
 
@@ -104,7 +105,7 @@ def _report(
         "schema_version": "1.1",
         "findings": [
             {
-                "severity": "major",
+                "severity": severity,
                 "file": "src/keel/review.py",
                 "line": 42,
                 "claim": "the closure path drops the jury post",
@@ -114,7 +115,7 @@ def _report(
         "consensus": [
             {
                 "representative": {
-                    "severity": "major",
+                    "severity": severity,
                     "file": "src/keel/review.py",
                     "line": 42,
                     "claim": "the closure path drops the jury post",
@@ -308,6 +309,43 @@ class TestTheJuryIsTheReviewPanel(unittest.TestCase):
                 "alpha requests changes at abc123.",
                 "beta does not approve at abc123 (verdict COMMENT).",
             ],
+        )
+
+    def test_ballots_with_only_minor_remarks_count_when_the_chair_approves(self):
+        """#1500: two panelists who left only a minor finding no longer hold the merge.
+
+        ai-jury casts ``COMMENT`` for a panelist whose worst upheld finding is minor or
+        nit. The chair approved and nothing blocks, yet keel posted those ballots as
+        ``Verdict: COMMENT`` and the gate refused to land the pull request.
+        """
+        result = self._map_panel(
+            ["anthropic", "google", "openai"],
+            ballots=("COMMENT", "COMMENT", "APPROVE"),
+            severity="minor",
+        )
+        verdicts = [p for p in result["plan"]["posts"] if p["artifact"] == "review-verdict"]
+        self.assertEqual(
+            [line for post in verdicts for line in post["body"].splitlines() if "Verdict:" in line],
+            ["Verdict: LGTM", "Verdict: LGTM", "Verdict: LGTM"],
+        )
+
+        rc, report = self._verify(result["plan"]["posts"])
+
+        self.assertEqual(rc, 0, report["verification"]["findings"])
+        self.assertEqual(report["verification"]["status"], "pass")
+
+    def test_a_comment_ballot_carrying_a_major_finding_still_holds(self):
+        """The same panel, but the finding is major: the ``COMMENT`` is not upgraded."""
+        result = self._map_panel(
+            ["anthropic", "google", "openai"],
+            ballots=("COMMENT", "APPROVE", "APPROVE"),
+        )
+        rc, report = self._verify(result["plan"]["posts"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn(
+            "alpha does not approve at abc123 (verdict COMMENT).",
+            [f["message"] for f in report["verification"]["findings"]],
         )
 
     def test_a_panel_whose_consensus_rejects_holds_the_gate(self):
