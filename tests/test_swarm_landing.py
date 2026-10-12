@@ -1014,7 +1014,12 @@ class SwarmLandMergesThroughKeelMerge(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(
             payload["held_clusters"],
-            [["cluster-1-101", "PR #10: keel merge: PR merge state is DIRTY"]],
+            [
+                [
+                    "cluster-1-101",
+                    "PR #10: keel merge: PR has merge conflicts with main; resolve them and push",
+                ]
+            ],
         )
         self.assertEqual([pr for pr, _, _ in host.merges], [11])
 
