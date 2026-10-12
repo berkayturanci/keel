@@ -516,6 +516,53 @@ class TestMapVerdict(unittest.TestCase):
         self.assertEqual(jury.map_verdict("mostly fine"), "MOSTLY_FINE")
 
 
+class TestBallotVerdict(unittest.TestCase):
+    """A panelist's COMMENT is a remark, not a rejection (#1500)."""
+
+    def test_a_comment_with_only_minor_or_nit_findings_approves(self):
+        for findings in (
+            (),
+            ({"severity": "minor"},),
+            ({"severity": "nit"}, {"severity": "MINOR"}),
+        ):
+            with self.subTest(findings=findings):
+                self.assertEqual(jury.ballot_verdict("COMMENT", findings), "LGTM")
+
+    def test_a_comment_carrying_a_blocking_finding_stays_a_comment(self):
+        for severity in ("critical", "major", " Major "):
+            with self.subTest(severity=severity):
+                findings = ({"severity": "nit"}, {"severity": severity})
+                self.assertEqual(jury.ballot_verdict("COMMENT", findings), "COMMENT")
+
+    def test_every_other_token_maps_as_map_verdict_does(self):
+        for token in (
+            "APPROVE",
+            "READY",
+            "REQUEST_CHANGES",
+            "NEEDS-INFO",
+            "UNCLEAR",
+            "ABSTAIN",
+            "",
+            "hmm",
+        ):
+            with self.subTest(token=token):
+                self.assertEqual(jury.ballot_verdict(token, ()), jury.map_verdict(token))
+
+    def test_the_chair_record_keeps_its_comment(self):
+        """The consensus is read by map_verdict, so a COMMENT consensus still holds the gate."""
+        report = {
+            "schema_version": "1.1",
+            "findings": [],
+            "reviewers": [
+                {"name": "alpha", "verdict": "COMMENT", "findings": []},
+                {"name": "chair", "role": "chair", "verdict": "COMMENT"},
+            ],
+        }
+        panel = jury.parse_panel(report)
+        self.assertEqual(panel.chair.verdict, "COMMENT")
+        self.assertEqual(jury.panel_consensus(report), "COMMENT")
+
+
 class TestBallotProse(unittest.TestCase):
     """The scope/testing lines keel synthesises must survive its own gate."""
 
