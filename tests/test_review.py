@@ -1501,6 +1501,26 @@ class TestReviewEarlyAttribution(unittest.TestCase):
         self.assertIn("nothing is posted", err)
         self.assertFalse(any("POST" in argv for argv in calls))
 
+    def test_the_fix_line_is_only_the_command(self):
+        """Pasting the line after ``Fix:`` runs gh and nothing else (#1504)."""
+        import shlex
+
+        _, _, err, _ = self._live(_live_fetch_with_labels("keel:ship"))
+        fix = err.split("Fix: ", 1)[1].splitlines()[0]
+        self.assertEqual(
+            shlex.split(fix),
+            [
+                "gh",
+                "pr",
+                "edit",
+                "42",
+                "--add-label",
+                "agent:<vendor>",
+                "--add-label",
+                "model:<base>",
+            ],
+        )
+
     def test_gated_pr_with_agent_label_warns_about_model_and_posts(self):
         rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship", "agent:claude"))
         self.assertEqual(rc, 0)

@@ -3948,9 +3948,10 @@ def _review_attribution_problem(
         if check["warnings"]:
             print(f"warning: {_attribution_report(check, pr=args.pr)}", file=sys.stderr)
         return None
+    # The fix command stays the last line on its own, so it can be copied as is.
     return (
-        _attribution_report(check, pr=args.pr)
-        + "; nothing is posted. Apply the labels, then re-run `keel review`."
+        "refused, nothing is posted: apply the labels, then re-run keel review.\n"
+        + _attribution_report(check, pr=args.pr)
     )
 
 

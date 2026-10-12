@@ -524,7 +524,7 @@ refused with exit 1 and **nothing posted**; the message names the fix, for examp
 quoted so the line parses; the real labels appear when the PR's ship_run ledger record, read from the configured
 ledger path, names the implementer, and `keel attribution` prints them otherwise). "Governed"
 is decided from the PR's labels, its own head ref, its comments and reviews and that
-ledger record, exactly as `evidence-verify` does. A PR without a `model:<base>` label only gets a warning on stderr.
+ledger record, as `evidence-verify` does — except that an unreadable or corrupt ledger reads as no record here (fail-open: review is not refused for it, while `evidence-verify` stops on it). A PR without a `model:<base>` label only gets a warning on stderr.
 A PR the gate does not govern, one carrying the waiver label, and unreadable labels are not
 refused, and `--dry-run` reads no labels, so it never reports this.
 

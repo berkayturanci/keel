@@ -10990,7 +10990,7 @@ class TestShipEarlyAttribution(unittest.TestCase):
         import shlex
 
         _, _, err = self._ship([self.GATED], *self.LIVE)
-        fix = err.split("Fix: ", 1)[1].splitlines()[0].split(";")[0]
+        fix = err.split("Fix: ", 1)[1].splitlines()[0]
         self.assertEqual(
             shlex.split(fix),
             [
