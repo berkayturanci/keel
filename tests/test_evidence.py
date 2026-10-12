@@ -1484,7 +1484,7 @@ class TestEarlyAttributionCheck(unittest.TestCase):
         )
         self.assertEqual(
             result["fix_command"],
-            "gh pr edit 7 --add-label 'agent:<vendor>' --add-label 'model:<model>'",
+            "gh pr edit 7 --add-label 'agent:<vendor>' --add-label 'model:<base>'",
         )
 
     def test_missing_model_label_is_only_a_warning(self):
@@ -1492,7 +1492,7 @@ class TestEarlyAttributionCheck(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["warnings"], ["PR has no model:<base> attribution label."])
-        self.assertEqual(result["fix_command"], "gh pr edit 7 --add-label 'model:<model>'")
+        self.assertEqual(result["fix_command"], "gh pr edit 7 --add-label 'model:<base>'")
 
     def test_known_implementer_writes_the_real_labels(self):
         result = evidence.early_attribution_check([], pr=7, implementer="claude:opus")
@@ -1504,7 +1504,7 @@ class TestEarlyAttributionCheck(unittest.TestCase):
         result = evidence.early_attribution_check([], pr="7", implementer="codex")
         self.assertEqual(
             result["fix_command"],
-            "gh pr edit 7 --add-label agent:codex --add-label 'model:<model>'",
+            "gh pr edit 7 --add-label agent:codex --add-label 'model:<base>'",
         )
 
     def test_fix_command_adds_only_the_agent_label_when_a_model_label_exists(self):

@@ -1497,7 +1497,7 @@ class TestReviewEarlyAttribution(unittest.TestCase):
         rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship"))
         self.assertEqual(rc, 1)
         self.assertIn("missing a mandatory agent:<vendor>", err)
-        self.assertIn("gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<model>'", err)
+        self.assertIn("gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<base>'", err)
         self.assertIn("nothing is posted", err)
         self.assertFalse(any("POST" in argv for argv in calls))
 
@@ -1505,7 +1505,7 @@ class TestReviewEarlyAttribution(unittest.TestCase):
         rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship", "agent:claude"))
         self.assertEqual(rc, 0)
         self.assertIn("warning: PR #42 attribution: PR has no model:<base>", err)
-        self.assertIn("gh pr edit 42 --add-label 'model:<model>'", err)
+        self.assertIn("gh pr edit 42 --add-label 'model:<base>'", err)
         self.assertTrue(any("POST" in argv for argv in calls))
 
     def test_gated_pr_with_both_labels_is_silent(self):
@@ -1525,6 +1525,26 @@ class TestReviewEarlyAttribution(unittest.TestCase):
         rc, _, err, _ = self._live(_live_fetch_with_labels("keel:ship", "keel:evidence-waived"))
         self.assertEqual(rc, 0)
         self.assertNotIn("attribution", err)
+
+    def test_the_prs_head_ref_arms_the_check(self):
+        rc, _, err, calls = self._live(_live_fetch_with_labels("bug", branch="fix/issue-42-x"))
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+        self.assertFalse(any("POST" in argv for argv in calls))
+
+    def test_a_provenance_comment_arms_the_check(self):
+        comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}
+        base = _live_fetch_with_labels("bug")
+
+        def fetch(argv, **kw):
+            if argv[-1].endswith("/issues/42/comments"):
+                return _proc(json.dumps([comment]))
+            return base(argv, **kw)
+
+        rc, _, err, calls = self._live(fetch)
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+        self.assertFalse(any("POST" in argv for argv in calls))
 
     def test_unreadable_labels_on_a_gated_pr_are_not_refused(self):
         comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}

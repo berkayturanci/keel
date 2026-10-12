@@ -1793,17 +1793,19 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         # #1504: a missing agent:/model: label was first found at `keel merge`, after the
         # whole CI wait. The label is on the pull request already, so say so now.
         early_labels = github.pr_labels(args.pr, cwd=args.root)
-        if early_labels is not None and _ship_pr_is_governed(args, config, early_labels):
+        governed, ledger_implementer = (
+            _ship_pr_governance(args, config, early_labels)
+            if early_labels is not None
+            else (False, None)
+        )
+        if governed:
             early = evidence.early_attribution_check(
-                early_labels, pr=args.pr, implementer=args.implementer
+                early_labels, pr=args.pr, implementer=args.implementer or ledger_implementer
             )
             if early["errors"] or early["warnings"]:
                 report_text = _attribution_report(early, pr=args.pr)
                 if early["ok"] or not args.live:
-                    print(
-                        f"{'warning' if early['ok'] else 'dry-run'}: {report_text}",
-                        file=sys.stderr,
-                    )
+                    print(f"warning: {report_text}", file=sys.stderr)
                 elif args.json:
                     print(
                         json.dumps(
@@ -3826,33 +3828,60 @@ def _attribution_report(check: dict[str, Any], *, pr: int | str) -> str:
     return f"PR #{pr} attribution: " + " ".join(lines)
 
 
-def _ship_pr_is_governed(
-    args: argparse.Namespace, config: cfg.ProjectConfig, labels: list[str]
-) -> bool:
-    """Whether the evidence gate governs ``keel ship --pr N``'s pull request (#1504).
+def _soft_fetch(fetch: Callable[[], Any]) -> Any:
+    """Run a GitHub read; any failure reads as "nothing fetched" (``None``).
 
-    The same decision `evidence-verify` makes. `ship` holds no fetched artifacts, so the
-    branch is the checkout's and the comments are read fail-soft: comments that cannot be
-    read arm nothing, they never turn an ungoverned PR into a refused one.
+    The early attribution check is advisory plumbing around a ship run. A label check must
+    never abort ship, so no failure of the context reads it needs (a missing owner, ``gh``
+    failing, a malformed payload) is allowed to escape.
     """
-    comments: list[dict[str, Any]] | None
     try:
-        comments = _gh_json_list(
-            ["repos", _owner_repo(config), "issues", str(args.pr), "comments"], cwd=args.root
+        return fetch()
+    except Exception:
+        return None
+
+
+def _ship_pr_governance(
+    args: argparse.Namespace, config: cfg.ProjectConfig, labels: list[str]
+) -> tuple[bool, str | None]:
+    """Whether the evidence gate governs ``keel ship --pr N``'s PR, and its implementer (#1504).
+
+    The same decision `keel review` reaches for the same pull request: the PR's *own* head
+    ref (from the pulls API, not the checkout, which may be any branch), its comments and
+    reviews, its labels and the ship_run ledger record (``--ledger-jsonl`` when given).
+    Reads that fail arm nothing, so they never turn an ungoverned PR into a refused one.
+    The implementer is the ledger record's, for the fix command when ``--implementer`` is
+    not given.
+    """
+    pr_ref = ["repos", _soft_fetch(lambda: _owner_repo(config)), "pulls", str(args.pr)]
+    owner_known = pr_ref[1] is not None
+    pr = _soft_fetch(lambda: _gh_json(pr_ref, cwd=args.root)) if owner_known else None
+    head = pr.get("head") if isinstance(pr, dict) else None
+    head_ref = head.get("ref") if isinstance(head, dict) else None
+    comments = (
+        _soft_fetch(
+            lambda: _gh_json_list(
+                ["repos", pr_ref[1], "issues", str(args.pr), "comments"], cwd=args.root
+            )
         )
-    except ValueError:
-        comments = None
-    record = _merge_ledger_record(
-        argparse.Namespace(pr=args.pr, root=args.root, ledger_jsonl=None), config
+        if owner_known
+        else None
     )
-    return _attribution_gate_enforced(
+    reviews = (
+        _soft_fetch(lambda: _gh_json_list([*pr_ref, "reviews"], cwd=args.root))
+        if owner_known
+        else None
+    )
+    record = _merge_ledger_record(args, config)
+    governed = _attribution_gate_enforced(
         config,
         labels,
-        head_ref=git.current_branch(cwd=args.root),
+        head_ref=head_ref if isinstance(head_ref, str) else None,
         pr_comments=comments,
-        pr_reviews=None,
+        pr_reviews=reviews,
         ledger_record=record,
     )
+    return governed, evidence.ledger_implementer(record)
 
 
 def _attribution_gate_enforced(
@@ -3902,9 +3931,7 @@ def _review_attribution_problem(
     labels = artifacts_ctx.get("pr_labels")
     if labels is None:
         return None
-    record = _merge_ledger_record(
-        argparse.Namespace(pr=args.pr, root=args.root, ledger_jsonl=None), config
-    )
+    record = _merge_ledger_record(args, config)
     if not _attribution_gate_enforced(
         config,
         labels,

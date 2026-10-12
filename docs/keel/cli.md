@@ -520,9 +520,11 @@ holds `keel merge` on its own (#1426) and refusing it would only hide the reject
 the evidence gate is enforced on the PR, runs the presence half of the attribution rule
 that `evidence-verify` and `keel merge` apply later. A PR with no `agent:<vendor>` label is
 refused with exit 1 and **nothing posted**; the message names the fix, for example
-`gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<model>'` (placeholders are
-quoted so the line parses; the real labels appear when the PR's ship_run ledger record names
-the implementer, and `keel attribution` prints them otherwise). A PR without a `model:<base>` label only gets a warning on stderr.
+`gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<base>'` (placeholders are
+quoted so the line parses; the real labels appear when the PR's ship_run ledger record, read from the configured
+ledger path, names the implementer, and `keel attribution` prints them otherwise). "Governed"
+is decided from the PR's labels, its own head ref, its comments and reviews and that
+ledger record, exactly as `evidence-verify` does. A PR without a `model:<base>` label only gets a warning on stderr.
 A PR the gate does not govern, one carrying the waiver label, and unreadable labels are not
 refused, and `--dry-run` reads no labels, so it never reports this.
 
@@ -2577,10 +2579,12 @@ check-rollup through the selected GitHub transport), each gate's result, and the
 (`MERGE` / `DEFER` / `BLOCK`).
 
 With `--pr N`, `keel ship` also reads the pull request's labels and, when the evidence gate
-governs the PR (the same `gate_decision` as `evidence-verify`; an ungoverned PR is never
-refused), checks attribution up front (#1504), so a missing label is found before the CI wait rather than at `keel merge`.
+governs the PR (the same `gate_decision` as `evidence-verify`, fed the PR's own head ref, comments and
+reviews from the pulls API, its labels and the ledger record; the checkout's branch is never
+used, and a read that fails arms nothing; an ungoverned PR is never refused), checks attribution up front (#1504), so a missing label is found before the CI wait rather than at `keel merge`.
 `--live` refuses (exit 1, the `--json` payload carries `error`) when there is no
-`agent:<vendor>` label, with the exact `gh pr edit N --add-label … --add-label …` command in the message (the real labels when `--implementer` is given). A missing
+`agent:<vendor>` label, with the exact `gh pr edit N --add-label … --add-label …` command in the message (the real
+labels from `--implementer`, else from the PR's ship_run ledger record). A missing
 `model:<base>` label, and any missing label under `--dry-run`, is only a warning on stderr.
 The waiver label skips the check, and labels `gh` could not read skip it too. Only
 presence is checked here; the vendor cross-check against the ledger stays at `keel merge`.

@@ -1628,7 +1628,7 @@ def attribution_fix_command(
     Only the missing halves are added, so running it never stacks a second ``agent:*`` on a
     PR that already has one. When the implementer is known (``vendor`` or ``vendor:model``)
     the real labels from :func:`keel.agents.attribution_from_implementer` are written;
-    otherwise a quoted ``'agent:<vendor>'`` / ``'model:<model>'`` placeholder stands in
+    otherwise a quoted ``'agent:<vendor>'`` / ``'model:<base>'`` placeholder stands in
     (``keel attribution`` prints the real values). Pure.
     """
     known = agents.attribution_from_implementer(implementer) or {}
@@ -1638,7 +1638,7 @@ def attribution_fix_command(
         label = known.get("agent_label") or f"{AGENT_LABEL_PREFIX}<vendor>"
         parts += ["--add-label", shlex.quote(label)]
     if need_model:
-        label = known.get("model_label") or f"{MODEL_LABEL_PREFIX}<model>"
+        label = known.get("model_label") or f"{MODEL_LABEL_PREFIX}<base>"
         parts += ["--add-label", shlex.quote(label)]
     return " ".join(parts)
 
