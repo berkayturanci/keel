@@ -522,7 +522,7 @@ that `evidence-verify` and `keel merge` apply later. A PR with no `agent:<vendor
 refused with exit 1 and **nothing posted**; the message names the fix, for example
 `gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<base>'` (placeholders are
 quoted so the line parses; the real labels appear when the PR's ship_run ledger record, read from the configured
-ledger path, names the implementer, and `keel attribution` prints them otherwise). "Governed"
+ledger path, names the implementer; otherwise the quoted placeholders are printed and `keel attribution --model <model>` writes the real labels). "Governed"
 is decided from the PR's labels, its own head ref, its comments and reviews and that
 ledger record, as `evidence-verify` does — except that an unreadable or corrupt ledger reads as no record here (fail-open: review is not refused for it, while `evidence-verify` stops on it). A PR without a `model:<base>` label only gets a warning on stderr.
 A PR the gate does not govern, one carrying the waiver label, and unreadable labels are not
@@ -2579,8 +2579,8 @@ check-rollup through the selected GitHub transport), each gate's result, and the
 (`MERGE` / `DEFER` / `BLOCK`).
 
 With `--pr N`, `keel ship` also reads the pull request's labels and, when the evidence gate
-governs the PR (the same `gate_decision` as `evidence-verify`, fed the PR's own head ref, comments and
-reviews from the pulls API, its labels and the ledger record; the checkout's branch is never
+governs the PR (the same `gate_decision` as `evidence-verify`, fed the PR's own head ref and reviews from the pulls API, its comments from the issues API, its labels
+(read with `--repo <owner>/<repo>` and retried) and the ledger record; the checkout's branch is never
 used, and a read that fails arms nothing; an ungoverned PR is never refused), checks attribution up front (#1504), so a missing label is found before the CI wait rather than at `keel merge`.
 `--live` refuses (exit 1, the `--json` payload carries `error`) when there is no
 `agent:<vendor>` label, with the exact `gh pr edit N --add-label … --add-label …` command in the message (the real

@@ -1792,7 +1792,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     if args.pr is not None and transport.name == "gh":
         # #1504: a missing agent:/model: label was first found at `keel merge`, after the
         # whole CI wait. The label is on the pull request already, so say so now.
-        early_labels = github.pr_labels(args.pr, cwd=args.root)
+        early_labels = github.pr_labels(
+            args.pr,
+            repo=f"{config.owner}/{config.repo}" if config.owner and config.repo else None,
+            cwd=args.root,
+        )
         governed, ledger_implementer = (
             _ship_pr_governance(args, config, early_labels)
             if early_labels is not None

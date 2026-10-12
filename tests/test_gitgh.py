@@ -499,7 +499,24 @@ class TestGitHub(unittest.TestCase):
         self.assertEqual(github.pr_labels(7, _run=_Recorder(out="")), [])
 
     def test_pr_labels_failsoft(self):
-        self.assertIsNone(github.pr_labels(7, _run=_Recorder(code=1)))
+        self.assertIsNone(github.pr_labels(7, _run=_Recorder(code=1), _sleep=lambda _s: None))
+
+    def test_pr_labels_reads_the_named_repo(self):
+        rec = _Recorder(out="bug\n")
+        github.pr_labels(7, repo="o/r", _run=rec)
+        self.assertEqual(rec.calls[0][-2:], ["--repo", "o/r"])
+
+    def test_pr_labels_retries_a_transient_failure(self):
+        calls = []
+
+        def run(argv, **_kw):
+            calls.append(argv)
+            if len(calls) == 1:
+                return _Proc(1, "", "HTTP 502: Bad Gateway")
+            return _Proc(0, "agent:claude\n", "")
+
+        self.assertEqual(github.pr_labels(7, _run=run, _sleep=lambda _s: None), ["agent:claude"])
+        self.assertEqual(len(calls), 2)
 
     def test_ci_conclusion_parsed(self):
         self.assertEqual(github.ci_conclusion(7, _run=_Recorder(out="SUCCESS\n")), "SUCCESS")
