@@ -27,12 +27,16 @@ CONSUMER_SPECIFIC_TERMS = (
 )
 
 
-# pip's wording when the index does not (yet) list the requested version. Only
-# these mean "wait and try again"; any other failure is a real defect (#1526).
-NOT_FOUND_MARKERS = (
-    "No matching distribution found",
-    "Could not find a version that satisfies",
+# pip's wording when the index does not (yet) list a version. Only a sentence
+# whose direct object is the requested distribution means "wait and try again";
+# any other failure is a real defect (#1526).
+NOT_FOUND_SENTENCES = (
+    "no matching distribution found for",
+    "could not find a version that satisfies the requirement",
 )
+# pip's own words when the version exists but its Requires-Python excludes this
+# interpreter: the same two not-found lines follow, and waiting cannot help.
+PERMANENT_MARKERS = ("ignored the following versions", "requires-python")
 INSTALL_ATTEMPTS = 6
 INSTALL_INTERVAL_SECONDS = 20
 
@@ -69,18 +73,21 @@ def _distribution_name(requirement: str) -> str:
 def _is_not_found(exc: subprocess.CalledProcessError, requirement: str) -> bool:
     """True when pip says the *requested* distribution is not on the index yet.
 
-    A missing dependency, or a Requires-Python exclusion, names another package
-    and is a real defect, so the sentence must name ``requirement``'s own name.
+    The requested name must be the direct object of the not-found sentence. A
+    missing dependency prints "... the requirement <dep> (from <requested>==v)",
+    which names ours only in the parenthesis, and a Requires-Python exclusion
+    (output with "Ignored the following versions" or "Requires-Python") is
+    permanent; both are real defects and fail at once.
     """
     name = _distribution_name(requirement)
-    own = re.compile(rf"(?<![a-z0-9-]){re.escape(name)}(?![a-z0-9-])")
+    if not name:
+        return False
     output = f"{exc.stdout or ''}\n{exc.stderr or ''}"
-    for line in output.splitlines():
-        if any(marker.lower() in line.lower() for marker in NOT_FOUND_MARKERS) and own.search(
-            _normalise(line)
-        ):
-            return True
-    return False
+    if any(marker in output.lower() for marker in PERMANENT_MARKERS):
+        return False
+    sentences = "|".join(re.escape(sentence) for sentence in NOT_FOUND_SENTENCES)
+    direct = re.compile(rf"(?:{sentences})\s+{re.escape(name)}(?![a-z0-9-])")
+    return any(direct.search(_normalise(line)) for line in output.splitlines())
 
 
 def _pip_install(

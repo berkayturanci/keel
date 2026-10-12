@@ -104,12 +104,38 @@ class NotFoundNamesTheRequestedPackage(unittest.TestCase):
         msg = "ERROR: No matching distribution found for some-dependency>=2"
         self.assertFalse(smoke._is_not_found(_fail(msg), REQ))
 
-    def test_a_requires_python_exclusion_for_another_name_is_not_a_lagging_index(self):
+    def test_pips_two_line_missing_dependency_output_names_ours_only_as_the_parent(self):
         msg = (
-            "ERROR: Could not find a version that satisfies the requirement other-pkg "
-            "(from versions: none)\nERROR: Ignored the following versions that require "
-            f"a different python version: 1.0 Requires-Python >=4; for {REQ}"
+            "INFO: pip is looking at multiple versions of keel-workflow to determine\n"
+            "ERROR: Could not find a version that satisfies the requirement some-dep "
+            f"(from {REQ}) (from versions: none)\n"
+            f"ERROR: No matching distribution found for some-dep (from {REQ})\n"
         )
+        self.assertFalse(smoke._is_not_found(_fail(msg), REQ))
+
+    def test_a_requires_python_exclusion_of_our_own_version_is_permanent(self):
+        msg = (
+            "ERROR: Ignored the following versions that require a different python "
+            "version: 9.9.9 Requires-Python >=4.0\n"
+            f"ERROR: Could not find a version that satisfies the requirement {REQ} "
+            "(from versions: 1.0)\n"
+            f"ERROR: No matching distribution found for {REQ}\n"
+        )
+        self.assertFalse(smoke._is_not_found(_fail(msg), REQ))
+
+    def test_a_bare_requires_python_mention_is_permanent(self):
+        msg = f"Requires-Python >=4.0\n{NOT_FOUND}"
+        self.assertFalse(smoke._is_not_found(_fail(msg), REQ))
+
+    def test_a_blank_requirement_never_matches(self):
+        self.assertFalse(smoke._is_not_found(_fail(NOT_FOUND), ""))
+        self.assertFalse(smoke._is_not_found(_fail(NOT_FOUND), "   "))
+        self.assertFalse(
+            smoke._is_not_found(_fail("ERROR: No matching distribution found for "), "")
+        )
+
+    def test_the_name_must_be_separated_from_the_sentence(self):
+        msg = "ERROR: No matching distribution found forkeel-workflow==9.9.9"
         self.assertFalse(smoke._is_not_found(_fail(msg), REQ))
 
     def test_a_longer_name_sharing_the_prefix_does_not_match(self):
