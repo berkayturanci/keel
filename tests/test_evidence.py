@@ -1484,7 +1484,7 @@ class TestEarlyAttributionCheck(unittest.TestCase):
         )
         self.assertEqual(
             result["fix_command"],
-            "gh pr edit 7 --add-label agent:<vendor> --add-label model:<model>",
+            "gh pr edit 7 --add-label 'agent:<vendor>' --add-label 'model:<model>'",
         )
 
     def test_missing_model_label_is_only_a_warning(self):
@@ -1492,7 +1492,7 @@ class TestEarlyAttributionCheck(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["warnings"], ["PR has no model:<base> attribution label."])
-        self.assertEqual(result["fix_command"], "gh pr edit 7 --add-label model:<model>")
+        self.assertEqual(result["fix_command"], "gh pr edit 7 --add-label 'model:<model>'")
 
     def test_known_implementer_writes_the_real_labels(self):
         result = evidence.early_attribution_check([], pr=7, implementer="claude:opus")
@@ -1504,14 +1504,31 @@ class TestEarlyAttributionCheck(unittest.TestCase):
         result = evidence.early_attribution_check([], pr="7", implementer="codex")
         self.assertEqual(
             result["fix_command"],
-            "gh pr edit 7 --add-label agent:codex --add-label model:<model>",
+            "gh pr edit 7 --add-label agent:codex --add-label 'model:<model>'",
         )
 
     def test_fix_command_adds_only_the_agent_label_when_a_model_label_exists(self):
         self.assertEqual(
             evidence.attribution_fix_command(7, need_agent=True, need_model=False),
-            "gh pr edit 7 --add-label agent:<vendor>",
+            "gh pr edit 7 --add-label 'agent:<vendor>'",
         )
+
+    def test_every_fix_command_parses_as_a_shell_line(self):
+        import shlex
+
+        for need_agent, need_model, implementer in (
+            (True, True, None),
+            (True, False, None),
+            (False, True, None),
+            (True, True, "claude:opus"),
+        ):
+            command = evidence.attribution_fix_command(
+                7, need_agent=need_agent, need_model=need_model, implementer=implementer
+            )
+            tokens = shlex.split(command)
+            self.assertEqual(tokens[:4], ["gh", "pr", "edit", "7"])
+            self.assertEqual(tokens.count("--add-label"), need_agent + need_model)
+            self.assertFalse(any(token.startswith("<") for token in tokens))
 
     def test_blank_labels_do_not_count(self):
         result = evidence.early_attribution_check(["agent:", "model:"], pr=7)
@@ -1550,6 +1567,41 @@ class TestAttributionModelFinding(unittest.TestCase):
             **_satisfied_evidence_kwargs(),
         )
         self.assertNotIn("attribution-model-label", [f["id"] for f in report["findings"]])
+
+
+class TestAttributionModelFindingPhases(unittest.TestCase):
+    def test_pre_merge_phase_still_raises_the_advisory(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=["agent:claude"],
+            phase=evidence.PHASE_PRE_MERGE,
+            **_satisfied_evidence_kwargs(),
+        )
+        self.assertIn("attribution-model-label", [f["id"] for f in report["findings"]])
+
+    def test_dry_run_with_an_enforced_gate_skips_both_attribution_findings(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1),
+            pr_labels=[],
+            dry_run=True,
+            enforced=True,
+            **_satisfied_evidence_kwargs(),
+        )
+        ids = [f["id"] for f in report["findings"]]
+        self.assertNotIn("attribution-label", ids)
+        self.assertNotIn("attribution-model-label", ids)
+
+    def test_neither_label_is_a_blocking_and_an_advisory_finding_together(self):
+        report = evidence.verify(
+            _review_contract(reviewers=1), pr_labels=[], **_satisfied_evidence_kwargs()
+        )
+        severities = {
+            f["id"]: f["severity"] for f in report["findings"] if f["id"].startswith("attribution-")
+        }
+        self.assertEqual(
+            severities, {"attribution-label": "major", "attribution-model-label": "minor"}
+        )
+        self.assertEqual(report["status"], "fail")
 
 
 class TestAttributionVerifyWiring(unittest.TestCase):

@@ -1497,15 +1497,15 @@ class TestReviewEarlyAttribution(unittest.TestCase):
         rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship"))
         self.assertEqual(rc, 1)
         self.assertIn("missing a mandatory agent:<vendor>", err)
-        self.assertIn("gh pr edit 42 --add-label agent:<vendor> --add-label model:<model>", err)
+        self.assertIn("gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<model>'", err)
         self.assertIn("nothing is posted", err)
         self.assertFalse(any("POST" in argv for argv in calls))
 
     def test_gated_pr_with_agent_label_warns_about_model_and_posts(self):
         rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship", "agent:claude"))
         self.assertEqual(rc, 0)
-        self.assertIn("no model:<base>", err)
-        self.assertIn("gh pr edit 42 --add-label model:<model>", err)
+        self.assertIn("warning: PR #42 attribution: PR has no model:<base>", err)
+        self.assertIn("gh pr edit 42 --add-label 'model:<model>'", err)
         self.assertTrue(any("POST" in argv for argv in calls))
 
     def test_gated_pr_with_both_labels_is_silent(self):
@@ -1525,6 +1525,36 @@ class TestReviewEarlyAttribution(unittest.TestCase):
         rc, _, err, _ = self._live(_live_fetch_with_labels("keel:ship", "keel:evidence-waived"))
         self.assertEqual(rc, 0)
         self.assertNotIn("attribution", err)
+
+    def test_unreadable_labels_on_a_gated_pr_are_not_refused(self):
+        comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}
+        original = cli._load_evidence_artifacts
+
+        def unreadable(args, config):
+            ctx = original(args, config)
+            return {**ctx, "pr_labels": None, "pr_comments": [comment]}
+
+        with patch("keel.cli._load_evidence_artifacts", unreadable):
+            rc, _, err, calls = self._live(_live_fetch_with_labels())
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+        self.assertTrue(any("POST" in argv for argv in calls))
+
+    def test_the_ledger_implementer_supplies_the_real_labels(self):
+        import tempfile
+
+        record = {
+            "type": "ship_run",
+            "pr": 42,
+            "actors": {"implementer": "claude:opus"},
+        }
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch("keel.cli._merge_ledger_record", return_value=record),
+        ):
+            rc, _, err, calls = self._live(_live_fetch_with_labels("keel:ship"), "--root", d)
+        self.assertEqual(rc, 1)
+        self.assertIn("gh pr edit 42 --add-label agent:claude --add-label model:opus", err)
 
     def test_dry_run_never_reads_labels(self):
         reviews = _write(_two_reviews())

@@ -1793,7 +1793,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         # #1504: a missing agent:/model: label was first found at `keel merge`, after the
         # whole CI wait. The label is on the pull request already, so say so now.
         early_labels = github.pr_labels(args.pr, cwd=args.root)
-        if early_labels is not None and evidence.DEFAULT_WAIVER_LABEL not in early_labels:
+        if early_labels is not None and _ship_pr_is_governed(args, config, early_labels):
             early = evidence.early_attribution_check(
                 early_labels, pr=args.pr, implementer=args.implementer
             )
@@ -3826,6 +3826,63 @@ def _attribution_report(check: dict[str, Any], *, pr: int | str) -> str:
     return f"PR #{pr} attribution: " + " ".join(lines)
 
 
+def _ship_pr_is_governed(
+    args: argparse.Namespace, config: cfg.ProjectConfig, labels: list[str]
+) -> bool:
+    """Whether the evidence gate governs ``keel ship --pr N``'s pull request (#1504).
+
+    The same decision `evidence-verify` makes. `ship` holds no fetched artifacts, so the
+    branch is the checkout's and the comments are read fail-soft: comments that cannot be
+    read arm nothing, they never turn an ungoverned PR into a refused one.
+    """
+    comments: list[dict[str, Any]] | None
+    try:
+        comments = _gh_json_list(
+            ["repos", _owner_repo(config), "issues", str(args.pr), "comments"], cwd=args.root
+        )
+    except ValueError:
+        comments = None
+    record = _merge_ledger_record(
+        argparse.Namespace(pr=args.pr, root=args.root, ledger_jsonl=None), config
+    )
+    return _attribution_gate_enforced(
+        config,
+        labels,
+        head_ref=git.current_branch(cwd=args.root),
+        pr_comments=comments,
+        pr_reviews=None,
+        ledger_record=record,
+    )
+
+
+def _attribution_gate_enforced(
+    config: cfg.ProjectConfig,
+    labels: list[str],
+    *,
+    head_ref: str | None,
+    pr_comments: list[dict[str, Any]] | None,
+    pr_reviews: list[dict[str, Any]] | None,
+    ledger_record: dict[str, object] | None,
+) -> bool:
+    """Whether the evidence gate governs this pull request, as `evidence-verify` decides it.
+
+    The attribution rule only bites on a governed PR (#1504), so every early check asks
+    this before refusing: a PR keel does not govern, or one carrying the waiver label,
+    is never refused.
+    """
+    return bool(
+        evidence.gate_decision(
+            labels,
+            config.knobs.evidence_gate_label,
+            waiver_label=evidence.DEFAULT_WAIVER_LABEL,
+            head_ref=head_ref,
+            pr_comments=pr_comments,
+            pr_reviews=pr_reviews,
+            ledger_records=_ship_run_records(ledger_record),
+        )["enforced"]
+    )
+
+
 def _review_attribution_problem(
     args: argparse.Namespace,
     config: cfg.ProjectConfig,
@@ -3835,28 +3892,34 @@ def _review_attribution_problem(
 
     Mirrors where the same rule bites later: ``evidence-verify`` / ``keel merge`` only
     check attribution on a pull request the evidence gate is enforced on, so a PR keel is
-    not governing is never refused here. ``None`` means "go on" — including when the labels
-    could not be read. A missing ``model:`` label only warns on stderr.
+    not governing is never refused here. Labels that are absent or ``None`` are *unknown*,
+    not empty: ``None`` means "go on". A missing ``model:`` label only warns on stderr.
+    The fix command carries the real labels when the PR's ship_run ledger record names
+    the implementer.
     """
     # `.get`: a hand-built artifacts mapping (`swarm-review`'s tests) may carry no labels or
     # comments at all, which reads as "nothing to gate on", not as an error.
-    labels = artifacts_ctx.get("pr_labels") or []
-    ledger_args = argparse.Namespace(pr=args.pr, root=args.root, ledger_jsonl=None)
-    gate = evidence.gate_decision(
+    labels = artifacts_ctx.get("pr_labels")
+    if labels is None:
+        return None
+    record = _merge_ledger_record(
+        argparse.Namespace(pr=args.pr, root=args.root, ledger_jsonl=None), config
+    )
+    if not _attribution_gate_enforced(
+        config,
         labels,
-        config.knobs.evidence_gate_label,
-        waiver_label=evidence.DEFAULT_WAIVER_LABEL,
         head_ref=artifacts_ctx.get("head_ref"),
         pr_comments=artifacts_ctx.get("pr_comments"),
         pr_reviews=artifacts_ctx.get("pr_reviews"),
-        ledger_records=_ship_run_records(_merge_ledger_record(ledger_args, config)),
-    )
-    if not gate["enforced"]:
+        ledger_record=record,
+    ):
         return None
-    check = evidence.early_attribution_check(labels, pr=args.pr)
+    check = evidence.early_attribution_check(
+        labels, pr=args.pr, implementer=evidence.ledger_implementer(record)
+    )
     if check["ok"]:
         if check["warnings"]:
-            print(_attribution_report(check, pr=args.pr), file=sys.stderr)
+            print(f"warning: {_attribution_report(check, pr=args.pr)}", file=sys.stderr)
         return None
     return (
         _attribution_report(check, pr=args.pr)

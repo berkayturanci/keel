@@ -520,8 +520,9 @@ holds `keel merge` on its own (#1426) and refusing it would only hide the reject
 the evidence gate is enforced on the PR, runs the presence half of the attribution rule
 that `evidence-verify` and `keel merge` apply later. A PR with no `agent:<vendor>` label is
 refused with exit 1 and **nothing posted**; the message names the fix, for example
-`gh pr edit 42 --add-label agent:<vendor> --add-label model:<model>` (`keel attribution`
-prints the real values). A PR without a `model:<base>` label only gets a warning on stderr.
+`gh pr edit 42 --add-label 'agent:<vendor>' --add-label 'model:<model>'` (placeholders are
+quoted so the line parses; the real labels appear when the PR's ship_run ledger record names
+the implementer, and `keel attribution` prints them otherwise). A PR without a `model:<base>` label only gets a warning on stderr.
 A PR the gate does not govern, one carrying the waiver label, and unreadable labels are not
 refused, and `--dry-run` reads no labels, so it never reports this.
 
@@ -2575,11 +2576,11 @@ check-rollup through the selected GitHub transport), each gate's result, and the
 **merge decision**
 (`MERGE` / `DEFER` / `BLOCK`).
 
-With `--pr N`, `keel ship` also reads the pull request's labels and checks attribution up
-front (#1504), so a missing label is found before the CI wait rather than at `keel merge`.
+With `--pr N`, `keel ship` also reads the pull request's labels and, when the evidence gate
+governs the PR (the same `gate_decision` as `evidence-verify`; an ungoverned PR is never
+refused), checks attribution up front (#1504), so a missing label is found before the CI wait rather than at `keel merge`.
 `--live` refuses (exit 1, the `--json` payload carries `error`) when there is no
-`agent:<vendor>` label, with the exact `gh pr edit N --add-label agent:… --add-label
-model:…` command in the message (the real labels when `--implementer` is given). A missing
+`agent:<vendor>` label, with the exact `gh pr edit N --add-label … --add-label …` command in the message (the real labels when `--implementer` is given). A missing
 `model:<base>` label, and any missing label under `--dry-run`, is only a warning on stderr.
 The waiver label skips the check, and labels `gh` could not read skip it too. Only
 presence is checked here; the vendor cross-check against the ledger stays at `keel merge`.

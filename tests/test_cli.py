@@ -10926,10 +10926,13 @@ class TestShipEarlyAttribution(unittest.TestCase):
     )
     LIVE = ["--live", "--approve-scope", "filesystem,git,github", "--operator", "tester"]
 
-    def _ship(self, labels, *extra, implementer=None):
+    GATED = "keel:ship"
+
+    def _ship(self, labels, *extra, implementer=None, branch="main", comments=None):
         import tempfile
 
         argv = ["--implementer", implementer] if implementer else []
+        owner = patch("keel.cli._owner_repo", return_value="acme/widget") if comments else None
         with (
             tempfile.TemporaryDirectory() as d,
             patch("keel.cli.runtime.detect", return_value=self.GH_UP),
@@ -10937,40 +10940,89 @@ class TestShipEarlyAttribution(unittest.TestCase):
             patch("keel.cli.github.ci_conclusion", return_value="SUCCESS"),
             patch("keel.cli.github.ci_check_names", return_value=["CI"]),
             patch("keel.cli.github.ci_workflow_names", return_value=None),
+            patch("keel.cli.git.current_branch", return_value=branch),
+            patch("keel.cli.git.changed_files", return_value=[]),
+            patch("keel.cli.git.diff", return_value=""),
+            patch("keel.cli._gh_json_list", return_value=comments or []),
+            contextlib.ExitStack() as stack,
         ):
+            if owner is not None:
+                stack.enter_context(owner)
             return run(["ship", _write_config("'true'"), "--root", d, "--pr", "7", *argv, *extra])
 
     def test_live_refuses_without_an_agent_label_and_names_the_fix(self):
-        rc, _, err = self._ship(["bug"], *self.LIVE)
+        rc, _, err = self._ship([self.GATED], *self.LIVE)
         self.assertEqual(rc, 1)
         self.assertIn("missing a mandatory agent:<vendor>", err)
-        self.assertIn("gh pr edit 7 --add-label agent:<vendor> --add-label model:<model>", err)
+        line = "gh pr edit 7 --add-label 'agent:<vendor>' --add-label 'model:<model>'"
+        self.assertIn(line, err)
+
+    def test_the_printed_fix_command_parses_as_a_shell_line(self):
+        import shlex
+
+        _, _, err = self._ship([self.GATED], *self.LIVE)
+        fix = err.split("Fix: ", 1)[1].splitlines()[0].split(";")[0]
+        self.assertEqual(
+            shlex.split(fix),
+            [
+                "gh",
+                "pr",
+                "edit",
+                "7",
+                "--add-label",
+                "agent:<vendor>",
+                "--add-label",
+                "model:<model>",
+            ],
+        )
 
     def test_fix_command_uses_the_implementers_real_labels(self):
-        rc, _, err = self._ship(["bug"], *self.LIVE, implementer="claude:opus")
+        rc, _, err = self._ship([self.GATED], *self.LIVE, implementer="claude:opus")
         self.assertEqual(rc, 1)
         self.assertIn("gh pr edit 7 --add-label agent:claude --add-label model:opus", err)
 
     def test_live_json_refusal_is_an_error_payload(self):
-        rc, out, _ = self._ship(["bug"], *self.LIVE, "--json")
+        rc, out, _ = self._ship([self.GATED], *self.LIVE, "--json")
         self.assertEqual(rc, 1)
         self.assertIn("gh pr edit 7", json.loads(out)["error"])
 
+    def test_an_ungoverned_pr_is_not_refused_on_live(self):
+        rc, _, err = self._ship(["bug"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("attribution", err)
+
+    def test_the_ship_branch_arms_the_check(self):
+        rc, _, err = self._ship(["bug"], *self.LIVE, branch="fix/issue-7-x")
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+
+    def test_a_provenance_comment_arms_the_check(self):
+        comment = {"body": "keel.ship-provenance.v1\n", "author_association": "OWNER"}
+        rc, _, err = self._ship(["bug"], *self.LIVE, comments=[comment])
+        self.assertEqual(rc, 1)
+        self.assertIn("missing a mandatory agent:<vendor>", err)
+
     def test_dry_run_reports_but_does_not_fail(self):
-        rc, _, err = self._ship(["bug"])
+        rc, _, err = self._ship([self.GATED])
         self.assertEqual(rc, 0)
         self.assertIn("dry-run: PR #7 attribution:", err)
         self.assertIn("gh pr edit 7", err)
 
-    def test_missing_model_label_only_warns_on_live(self):
-        rc, _, err = self._ship(["agent:claude"], *self.LIVE)
+    def test_dry_run_with_only_the_model_label_missing_warns(self):
+        rc, _, err = self._ship([self.GATED, "agent:claude"])
         self.assertEqual(rc, 0)
         self.assertIn("warning: PR #7 attribution: PR has no model:<base>", err)
-        self.assertIn("gh pr edit 7 --add-label model:<model>", err)
-        self.assertNotIn("--add-label agent:", err)
+        self.assertNotIn("dry-run:", err)
+
+    def test_missing_model_label_only_warns_on_live(self):
+        rc, _, err = self._ship([self.GATED, "agent:claude"], *self.LIVE)
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: PR #7 attribution: PR has no model:<base>", err)
+        self.assertIn("gh pr edit 7 --add-label 'model:<model>'", err)
+        self.assertNotIn("--add-label 'agent:", err)
 
     def test_complete_labels_are_silent(self):
-        rc, _, err = self._ship(["agent:claude", "model:opus"], *self.LIVE)
+        rc, _, err = self._ship([self.GATED, "agent:claude", "model:opus"], *self.LIVE)
         self.assertEqual(rc, 0)
         self.assertNotIn("attribution", err)
 
@@ -10980,7 +11032,7 @@ class TestShipEarlyAttribution(unittest.TestCase):
         self.assertNotIn("attribution", err)
 
     def test_the_waiver_label_skips_the_check(self):
-        rc, _, err = self._ship(["keel:evidence-waived"], *self.LIVE)
+        rc, _, err = self._ship([self.GATED, "keel:evidence-waived"], *self.LIVE)
         self.assertEqual(rc, 0)
         self.assertNotIn("attribution", err)
 

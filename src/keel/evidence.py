@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shlex
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -1627,15 +1628,18 @@ def attribution_fix_command(
     Only the missing halves are added, so running it never stacks a second ``agent:*`` on a
     PR that already has one. When the implementer is known (``vendor`` or ``vendor:model``)
     the real labels from :func:`keel.agents.attribution_from_implementer` are written;
-    otherwise a ``<vendor>`` / ``<model>`` placeholder stands in (``keel attribution``
-    prints the real values). Pure.
+    otherwise a quoted ``'agent:<vendor>'`` / ``'model:<model>'`` placeholder stands in
+    (``keel attribution`` prints the real values). Pure.
     """
     known = agents.attribution_from_implementer(implementer) or {}
     parts = ["gh", "pr", "edit", str(pr)]
+    # Quoted: an unquoted `agent:<vendor>` is a shell redirection and the line would not run.
     if need_agent:
-        parts += ["--add-label", known.get("agent_label") or f"{AGENT_LABEL_PREFIX}<vendor>"]
+        label = known.get("agent_label") or f"{AGENT_LABEL_PREFIX}<vendor>"
+        parts += ["--add-label", shlex.quote(label)]
     if need_model:
-        parts += ["--add-label", known.get("model_label") or f"{MODEL_LABEL_PREFIX}<model>"]
+        label = known.get("model_label") or f"{MODEL_LABEL_PREFIX}<model>"
+        parts += ["--add-label", shlex.quote(label)]
     return " ".join(parts)
 
 
