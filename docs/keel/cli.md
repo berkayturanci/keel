@@ -3198,8 +3198,10 @@ Bodies with `\r\n` or `\r` line endings are read like `\n` ones.
   phrase with an unrelated `#N` later on its line is over-flagged.
 - **Not a blocker phrase:** the bare noun `dependency` / `needs dependency` without a colon
   ("Upgrade dependency lodash (#123)"), and `Depends on: none`. Fenced code, inline code that quotes
-  a phrase, HTML comments, and negations (`not blocked by`, and `previously` / `formerly` / `was`
-  just before the phrase; older history further back is not detected) are ignored.
+  a phrase, HTML comments, blockquote lines (`> ...`, including nested `> >`), text collapsed inside
+  `<details>...</details>` blocks (case-insensitive, nested, or unterminated; bot-pasted release notes),
+  and negations (`not blocked by`, and `previously` / `formerly` / `was` just before the phrase;
+  older history further back is not detected) are ignored.
 - **Markdown:** `**#12**`, `_#12_`, `**Blocked by:** #12` and a link whose text is `#12` read as
   `#12` when the link is to this repository's issue or PR (root-relative, or absolute and matching
   `gh repo view`). The same label over another repository's URL (including `//host/...` and

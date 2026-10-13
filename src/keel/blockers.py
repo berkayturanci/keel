@@ -91,6 +91,7 @@ _NEGATION_RE = re.compile(
 #: the body, so what follows it is still read.
 _FENCE_RE = re.compile(r"(?:```|~~~).*?(?:```|~~~)", re.DOTALL)
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_DETAILS_TAG_RE = re.compile(r"<\s*(/)?\s*details(?=[\s>])[^>]*>", re.IGNORECASE)
 _INLINE_CODE_RE = re.compile(r"`([^`\n]*)`")
 #: ``[#12](https://...)`` reads as its link text; a link whose text carries no ``#N`` keeps
 #: its URL, so an issue URL behind prose stays visible to the "could not read" check.
@@ -156,9 +157,36 @@ def _unwrap_link(match: re.Match[str], repo: str | None) -> str:
     return label if _own_link(label, url, repo) else label.replace("#", "external#")
 
 
+def _strip_blockquotes(text: str) -> str:
+    """Drop every blockquote line (first non-space character is '>')."""
+    return "\n".join(line for line in text.split("\n") if not line.lstrip(" \t").startswith(">"))
+
+
+def _strip_details(text: str) -> str:
+    """Drop everything between <details> and </details> (case-insensitive, may span lines,
+    may be nested; an unterminated <details> drops to the end of the body)."""
+    out: list[str] = []
+    depth = 0
+    last_end = 0
+    for m in _DETAILS_TAG_RE.finditer(text):
+        if not m.group(1):
+            if depth == 0:
+                out.append(text[last_end : m.start()])
+            depth += 1
+        elif depth > 0:
+            depth -= 1
+            if depth == 0:
+                last_end = m.end()
+    if depth == 0:
+        out.append(text[last_end:])
+    return "".join(out)
+
+
 def _prose(body: str, repo: str | None) -> str:
     text = _HTML_COMMENT_RE.sub(" ", body.replace("\r\n", "\n").replace("\r", "\n"))
     text = _FENCE_RE.sub(" ", text)
+    text = _strip_blockquotes(text)
+    text = _strip_details(text)
     text = _INLINE_CODE_RE.sub(_unwrap_inline, text)
     text = _LINK_RE.sub(lambda m: _unwrap_link(m, repo), text)
     text = text.replace("**", "").replace("__", "")
@@ -234,9 +262,10 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
 def parse_blockers(body: str | None) -> tuple[Blocker, ...]:
     """Blockers stated in ``body``, de-duplicated: phrase forms first, then ``before`` forms.
 
-    Code fences, inline code spans that quote a blocker phrase, and HTML comments (a PR
-    template's placeholder) are not claims. A negated phrase ("not blocked by #5") is
-    skipped; "unblocked by #5" never matches because the phrase needs a word boundary.
+    Code fences, inline code spans that quote a blocker phrase, HTML comments (a PR
+    template's placeholder), markdown blockquotes, and HTML ``<details>`` blocks (bot-pasted
+    release notes) are not claims. A negated phrase ("not blocked by #5") is skipped;
+    "unblocked by #5" never matches because the phrase needs a word boundary.
     """
     return scan_blockers(body)[0]
 

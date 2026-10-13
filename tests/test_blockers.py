@@ -92,6 +92,85 @@ class ParseTests(unittest.TestCase):
     def test_unterminated_fence_does_not_hide_the_rest(self):
         self.assertEqual(["5"], issues("```\nstray opener\nBlocked by #5"))
 
+    def test_blockquotes_are_not_claims(self):
+        for body in (
+            "> blocked by #1234",
+            "> > blocked by #1234",
+            "   > blocked by #1234",
+            ">>> blocked by #1234",
+            "> - #1234",
+        ):
+            self.assertEqual((), blockers.parse_blockers(body), body)
+
+    def test_details_blocks_are_not_claims(self):
+        body = (
+            "<details><summary>Release notes</summary>\n"
+            "Bumps foo from 1.0 to 1.1\n"
+            "depends on #1234\n"
+            "</details>"
+        )
+        self.assertEqual((), blockers.parse_blockers(body))
+
+    def test_real_blocker_outside_quote_and_details_is_captured(self):
+        for body in (
+            "Blocked by #5\n\n> blocked by #1234",
+            "> blocked by #1234\n\nBlocked by #5",
+            (
+                "Blocked by #5\n\n"
+                "<details><summary>Release notes</summary>\n"
+                "depends on #1234\n"
+                "</details>"
+            ),
+            (
+                "<details><summary>Release notes</summary>\n"
+                "depends on #1234\n"
+                "</details>\n\n"
+                "Blocked by #5"
+            ),
+        ):
+            self.assertEqual(["5"], issues(body), body)
+
+    def test_nested_and_unterminated_details(self):
+        nested = (
+            "<details><summary>Outer</summary>\n"
+            "outer notes\n"
+            "<details><summary>Inner</summary>\n"
+            "depends on #1234\n"
+            "</details>\n"
+            "more outer depends on #5678\n"
+            "</details>"
+        )
+        self.assertEqual((), blockers.parse_blockers(nested))
+
+        nested_with_real = (
+            "Blocked by #5\n\n"
+            "<details><summary>Outer</summary>\n"
+            "<details><summary>Inner</summary>\n"
+            "depends on #1234\n"
+            "</details>\n"
+            "depends on #5678\n"
+            "</details>"
+        )
+        self.assertEqual(["5"], issues(nested_with_real))
+
+        unterminated = (
+            "Blocked by #5\n\n"
+            "<details><summary>Release notes</summary>\n"
+            "depends on #1234 (never closed)"
+        )
+        self.assertEqual(["5"], issues(unterminated))
+
+        unterminated_alone = "<details><summary>Release notes</summary>\ndepends on #1234"
+        self.assertEqual((), blockers.parse_blockers(unterminated_alone))
+
+        stray_close = "</details>\nBlocked by #5"
+        self.assertEqual(["5"], issues(stray_close))
+
+    def test_crlf_with_blockquote(self):
+        body = "Blocked by #5\r\n> blocked by #1234\r\n"
+        self.assertEqual(["5"], issues(body))
+        self.assertEqual((), blockers.parse_blockers("> blocked by #1234\r\n"))
+
     def test_crlf_bodies(self):
         for body in (
             "Depends on:\r\n- #1\r\n- #2\r\n- #3\r\n\r\nNotes",
