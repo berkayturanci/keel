@@ -110,9 +110,10 @@ independent of the staleness cutoff:
 keel stale-blockers --root . --json
 ```
 
-For each PR in `prs`, add a line to the summary naming the cleared blockers (`abandoned` ones —
+Print the result as a **"Blocker cleared"** list. For each PR in `prs`, add a line to the summary naming the cleared blockers (`abandoned` ones —
 a PR closed unmerged, an issue closed as not planned — are reported as such, not as cleared), and say
-`all blockers cleared` when `all_cleared` is true (otherwise list the still-pending or
+`all blockers cleared` only when `all_cleared` is true (a PR with `incomplete: true` has
+a reference the parser could not read and is never `all_cleared`; otherwise list the still-pending or
 `unknown` ones). A blocker whose state is `unknown` could not be read and is never treated
 as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
 could not be read and carry on. This step never comments, edits or merges; a cleared
@@ -191,4 +192,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=skills command=stale-prs keel_version=1.32.0 source_sha256=9e9a8c09361efac47eb7d5942718b42aed16aae9e19d58239c058fbfa29d71ef generated_sha256=12909a4d467a7ea467d2f41b734a561604e7049ca86057693ee05675583fb9a6 -->
+<!-- keel-generated: surface=skills command=stale-prs keel_version=1.32.0 source_sha256=8b929ac2a984415f9b8454aacd424b1fabc63d4a70354015f9752b01a9fae4fe generated_sha256=7ecb0a24238898de8a566157277d2f57710355328559f077baf2fa71d129867a -->

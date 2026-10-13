@@ -85,12 +85,15 @@ Query through the selected GitHub transport for issues closed and PRs merged sin
 Include the effective agent, tier, gate summary, merge decision, and capture status from
 the structured ledger where available; use GitHub only to fill timeline gaps.
 
-Also run `keel stale-blockers --root . --json` (read-only) and list under a separate "Ready to move"
-section (not "Shipped" — these PRs are still open) every PR it reports: its stated blocker
-(`blocked by #N`, `do not merge before #N|<tag>`) has cleared, so the PR may be ready to
-move; an `abandoned` blocker is flagged as such. The command reads through the `gh` CLI
-rather than the selected transport, so say so when transport is degraded. A blocker with state `unknown` was unreadable
-and is not cleared; if the command exits non-zero, note that blocker state was unavailable.
+Also run `keel stale-blockers --root . --json` (read-only). List under a separate
+"Ready to move" section (not "Shipped" — these PRs are still open) only the PRs it reports
+with `all_cleared: true`: every stated blocker (`blocked by #N`,
+`do not merge before #N|<tag>`) has cleared. List the rest under "Blockers partly resolved":
+some blockers cleared or `abandoned` (closed unmerged or not planned — flag it as such), while
+others are `pending`, `unknown` or the list is `incomplete`. A blocker with state `unknown`
+was unreadable and is never cleared. The command reads through the `gh` CLI rather than the
+selected transport, so say so when transport is degraded; if it exits non-zero, note that
+blocker state was unavailable.
 
 ## Step 3 — Project health/telemetry signals (project-specific)
 
@@ -142,4 +145,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=plugin command=morning keel_version=1.32.0 source_sha256=98a44054962d21301b57324b65d0a11bd8c4d0c4ed306f22e79f2e6490650b8c generated_sha256=98a44054962d21301b57324b65d0a11bd8c4d0c4ed306f22e79f2e6490650b8c -->
+<!-- keel-generated: surface=plugin command=morning keel_version=1.32.0 source_sha256=46342ef58efd419bd6a4e22d8a3aee51b1d9b50aaf4066f2dc791b187b54fe1e generated_sha256=46342ef58efd419bd6a4e22d8a3aee51b1d9b50aaf4066f2dc791b187b54fe1e -->

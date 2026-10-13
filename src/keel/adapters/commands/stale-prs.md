@@ -107,9 +107,10 @@ independent of the staleness cutoff:
 keel stale-blockers --root . --json
 ```
 
-For each PR in `prs`, add a line to the summary naming the cleared blockers (`abandoned` ones —
+Print the result as a **"Blocker cleared"** list. For each PR in `prs`, add a line to the summary naming the cleared blockers (`abandoned` ones —
 a PR closed unmerged, an issue closed as not planned — are reported as such, not as cleared), and say
-`all blockers cleared` when `all_cleared` is true (otherwise list the still-pending or
+`all blockers cleared` only when `all_cleared` is true (a PR with `incomplete: true` has
+a reference the parser could not read and is never `all_cleared`; otherwise list the still-pending or
 `unknown` ones). A blocker whose state is `unknown` could not be read and is never treated
 as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
 could not be read and carry on. This step never comments, edits or merges; a cleared

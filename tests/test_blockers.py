@@ -44,7 +44,7 @@ class ParseTests(unittest.TestCase):
             (Blocker(TAG, "v1.2.0"),), blockers.parse_blockers("Do not merge before v1.2.0.")
         )
         self.assertEqual(
-            (Blocker(TAG, "1.2"),), blockers.parse_blockers("do not merge until `1.2`")
+            (Blocker(TAG, "1.2.0"),), blockers.parse_blockers("do not merge until `1.2.0`")
         )
 
     def test_v_prefixed_tag(self):
@@ -70,6 +70,9 @@ class ParseTests(unittest.TestCase):
             "do not merge before 5pm",
             "do not merge until 2026-10-15",
             "do not merge before 3 reviewers approve",
+            "do not merge until 10.30",
+            "do not merge for 3.5 hours",
+            "Upgrade dependency #123",
             "no longer do not merge before #5",
             "depends on owner/repo#5",
             "blocked by #",
@@ -86,6 +89,56 @@ class ParseTests(unittest.TestCase):
             "```\nunterminated fence blocked by #5"
         )
         self.assertEqual((), blockers.parse_blockers(body))
+
+    def test_inline_code_quoting_a_phrase_is_not_a_claim(self):
+        for body in ("Use `do not merge before #2` in a body.", "Say `depends on #3` here."):
+            self.assertEqual((), blockers.parse_blockers(body), body)
+
+    def test_list_grammar(self):
+        want = ["1", "2", "3"]
+        for body in (
+            "Blocked by #1, #2, and #3",
+            "Blocked by #1, #2 and #3",
+            "Blocked by #1, #2, or #3",
+            "Blocked by #1 or #2 or #3",
+            "Blocked by #1 / #2 / #3",
+            "Blocked by #1 & #2 & #3",
+            "Blocked by #1 + #2 + #3",
+            "Blocked by #1,#2,#3",
+            "Blocked by PR #1, PR #2, issue #3",
+            "Blocked by PR#1, PR#2, issue#3",
+            "Blocked by pull request #1 and pull request #2 and #3",
+            "Depends on:\n- #1\n- #2\n* #3\n\nSomething else",
+            "Depends on: - #1\n+ #2\n- PR #3",
+            "Depends on `#1`, `#2`, `#3`",
+        ):
+            got = issues(body)
+            self.assertEqual(want, got, body)
+            self.assertFalse(blockers.scan_blockers(body)[1], body)
+
+    def test_before_forms_accept_pr_prefix(self):
+        self.assertEqual(["12"], issues("do not merge before PR #12"))
+
+    def test_noun_dependency_needs_a_label(self):
+        self.assertEqual(((), False), blockers.scan_blockers("Upgrade dependency #123"))
+        self.assertEqual(["7"], issues("Dependency: #7"))
+
+    def test_incomplete_when_a_reference_is_not_captured(self):
+        for body in (
+            "Blocked by #1 and owner/repo#9",
+            "Blocked by #1, #2, and https://github.com/o/r/issues/9",
+            "Blocked by #1;\n- see owner/r#9",
+            "Depends on:\n- #1\n- owner/r#9",
+            "depends on owner/repo#5",
+            "blocked by https://github.com/o/r/pull/5",
+            "do not merge before #1 and #2",
+            "do not merge before v1.2 / #4",
+        ):
+            self.assertTrue(blockers.scan_blockers(body)[1], body)
+
+    def test_not_incomplete_when_nothing_is_dropped(self):
+        for body in ("Blocked by #1, and the auth work", "Blocked by #1.\nSee #9 for context", ""):
+            self.assertFalse(blockers.scan_blockers(body)[1], body)
 
     def test_backticked_ref_outside_phrase_is_kept(self):
         self.assertEqual(["7"], issues("blocked by `#7`"))
@@ -192,7 +245,7 @@ class StaleBlockersTests(unittest.TestCase):
     def test_flags_cleared_and_orders(self):
         prs = [
             _pr(30, "Blocked by #1 and #2", draft=True),
-            _pr(10, "Do not merge before v2.0 / blocked by #1"),
+            _pr(10, "Do not merge before v2.0. Blocked by #1"),
             _pr(20, "Blocked by #2"),
             _pr(40, "no blocker here"),
             _pr(50, "Blocked by #50 and #99"),
@@ -235,6 +288,26 @@ class StaleBlockersTests(unittest.TestCase):
         )
         self.assertTrue(rep["prs"][0]["all_cleared"])
 
+    def test_oxford_list_is_not_certified_while_the_third_is_open(self):
+        rep = self.report(
+            prs=[_pr(5, "Blocked by #1, #2, and #3")], issue_states={"1": C, "2": C, "3": OPEN}
+        )
+        self.assertEqual(["1", "2", "3"], [e["ref"] for e in rep["prs"][0]["blockers"]])
+        self.assertFalse(rep["prs"][0]["all_cleared"])
+
+    def test_incomplete_list_is_never_all_cleared(self):
+        rep = self.report(prs=[_pr(5, "Blocked by #1 and owner/repo#9")], issue_states={"1": C})
+        self.assertTrue(rep["prs"][0]["incomplete"])
+        self.assertFalse(rep["prs"][0]["all_cleared"])
+        rep = self.report(prs=[_pr(6, "Blocked by #1")], issue_states={"1": C})
+        self.assertFalse(rep["prs"][0]["incomplete"])
+        self.assertTrue(rep["prs"][0]["all_cleared"])
+
+    def test_truncation_is_flagged(self):
+        with mock.patch("keel.blockers.run_argv", _router(prs=[_pr(1, "x"), _pr(2, "y")])):
+            self.assertTrue(blockers.stale_blockers(limit=2)["truncated"])
+            self.assertFalse(blockers.stale_blockers(limit=3)["truncated"])
+
     def test_malformed_rows_are_skipped(self):
         rows = [
             1,
@@ -271,40 +344,56 @@ class StaleBlockersTests(unittest.TestCase):
 
 class RenderAndCliTests(unittest.TestCase):
     def test_render(self):
-        self.assertIn("could not", blockers.render({"ok": False, "error": "could not", "prs": []}))
+        self.assertIn(
+            "could not",
+            blockers.render({"ok": False, "error": "could not", "truncated": False, "prs": []}),
+        )
         self.assertEqual(
             "No open PRs with a cleared or abandoned blocker.",
-            blockers.render({"ok": True, "error": None, "prs": []}),
+            blockers.render({"ok": True, "error": None, "truncated": False, "prs": []}),
         )
         out = blockers.render(
             {
                 "ok": True,
                 "error": None,
+                "truncated": True,
                 "prs": [
                     {
                         "number": 3,
                         "title": "x",
                         "draft": True,
                         "all_cleared": False,
+                        "incomplete": False,
                         "blockers": [
                             {"kind": ISSUE, "ref": "1", "state": CLEARED},
                             {"kind": TAG, "ref": "v1", "state": PENDING},
                         ],
                     },
                     {
+                        "number": 5,
+                        "title": "z",
+                        "draft": False,
+                        "all_cleared": False,
+                        "incomplete": True,
+                        "blockers": [{"kind": ISSUE, "ref": "3", "state": CLEARED}],
+                    },
+                    {
                         "number": 4,
                         "title": "y",
                         "draft": False,
                         "all_cleared": True,
+                        "incomplete": False,
                         "blockers": [{"kind": ISSUE, "ref": "2", "state": CLEARED}],
                     },
                 ],
             }
         )
-        self.assertIn("#3 (draft) x — blockers resolved or abandoned", out)
+        self.assertIn("#3 (draft) x — some blockers cleared or abandoned", out)
         self.assertIn("  - #1: cleared", out)
         self.assertIn("  - v1: pending", out)
         self.assertIn("#4 y — all blockers cleared", out)
+        self.assertIn("#5 z — blocker list may be incomplete", out)
+        self.assertIn("raise --limit", out)
 
     def run_cli(self, argv, router):
         buf = io.StringIO()
