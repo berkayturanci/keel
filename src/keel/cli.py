@@ -1092,10 +1092,10 @@ def _resolution_ship_command(
         parts.extend(["--head-sha", shlex.quote(str(head_sha))])
     scope_str = ""
     if approve_scope:
-        if isinstance(approve_scope, (list, tuple, set)):
+        if not isinstance(approve_scope, str):
             scope_str = ",".join(str(s) for s in sorted(approve_scope) if s)
         else:
-            scope_str = str(approve_scope)
+            scope_str = approve_scope
     parts.extend(["--approve-scope", shlex.quote(scope_str) if scope_str else "'<scope>'"])
     parts.extend(["--operator", shlex.quote(str(operator)) if operator else "'<operator>'"])
     return " ".join(parts)
@@ -1218,8 +1218,6 @@ def _checkpoint_gate(
     }
     if "carried_from_run_id" in coverage:
         gate_payload["carried_from_run_id"] = coverage["carried_from_run_id"]
-    if coverage.get("adopt"):
-        gate_payload["adopt"] = True
     if coverage["covered"]:
         return gate_payload, None
     return gate_payload, coverage["reason"]
@@ -1523,10 +1521,8 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         landed = github.rest_json(merged) if transport == TRANSPORT_REST else None
         if isinstance(landed, dict) and isinstance(landed.get("sha"), str):
             args.merge_sha = landed["sha"]
-        carried_id = (
-            gate_payload.get("carried_from_run_id") if isinstance(gate_payload, dict) else None
-        )
-        should_adopt = bool(gate_payload.get("adopt") if isinstance(gate_payload, dict) else False)
+        carried_id = gate_payload.get("carried_from_run_id")
+        should_adopt = "carried_from_run_id" in gate_payload and carried_id is None
         payload["checkpoint_update"] = _record_merge_in_checkpoint(
             args,
             config,
@@ -2120,13 +2116,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # fingerprint had moved (a `gh` outage on the first attempt, a label fetched on
     # the second) scattered a second document into the sink, possibly a shared
     # knowledge folder, that no ledger record would ever name.
+    capture_status_value = _resolved_capture_status(args.capture_status)
     capture_clash = (
         ledger.capture_marker_for_head(
             existing_ledger_records,
             pr_number=args.ledger_pr or args.pr,
             head_sha=args.head_sha,
         )
-        if args.append_ledger and args.live
+        if args.append_ledger and args.live and capture_status_value is not None
         else None
     )
     # **A named artifact is recorded, not written again** (#1203). With an in-repo sink
@@ -2142,7 +2139,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             args, config, capture_changed, existing_ledger_records, outcomes, capture_facts
         )
     )
-    capture_status_value = _resolved_capture_status(args.capture_status)
     capture_reason_value = args.capture_reason
     capture_artifact_value = args.capture_artifact
     if capture_write is not None:

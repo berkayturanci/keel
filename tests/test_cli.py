@@ -2874,93 +2874,6 @@ class TestShip(unittest.TestCase):
         self.assertIs(records[0]["capture"]["not_run"], True)
         self.assertFalse(ledger._is_merged_ship_run(records[0]))
 
-    def test_duplicate_capture_marker_skipped_without_false_resolution_command(self):
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as d:
-            config = _write_config_with_ledger("'true'")
-            head = "d" * 40
-            # First ship run records deferred capture (which creates a capture marker).
-            rc_first, _, _ = run(
-                [
-                    "ship",
-                    config,
-                    "--root",
-                    d,
-                    "--live",
-                    "--append-ledger",
-                    "--run-id",
-                    "RUN-1",
-                    "--pull-request",
-                    "940",
-                    "--head-sha",
-                    head,
-                    "--capture-status",
-                    "deferred",
-                    "--approve-scope",
-                    "filesystem,git,github",
-                    "--operator",
-                    "tester",
-                ]
-            )
-            # Second ship run on the same head without not-run is skipped
-            # as duplicate-capture-marker.
-            rc_second_json, out_json, _ = run(
-                [
-                    "ship",
-                    config,
-                    "--root",
-                    d,
-                    "--live",
-                    "--append-ledger",
-                    "--json",
-                    "--run-id",
-                    "RUN-2",
-                    "--pull-request",
-                    "940",
-                    "--head-sha",
-                    head,
-                    "--capture-status",
-                    "deferred",
-                    "--approve-scope",
-                    "filesystem,git,github",
-                    "--operator",
-                    "tester",
-                ]
-            )
-            # Human output without --json reports duplicate skip without false resolution hint.
-            rc_second_human, out_human, _ = run(
-                [
-                    "ship",
-                    config,
-                    "--root",
-                    d,
-                    "--live",
-                    "--append-ledger",
-                    "--run-id",
-                    "RUN-2",
-                    "--pull-request",
-                    "940",
-                    "--head-sha",
-                    head,
-                    "--capture-status",
-                    "deferred",
-                    "--approve-scope",
-                    "filesystem,git,github",
-                    "--operator",
-                    "tester",
-                ]
-            )
-
-        self.assertEqual(rc_first, 0)
-        self.assertEqual(rc_second_json, 0)
-        self.assertEqual(rc_second_human, 0)
-        ledger_result = json.loads(out_json)["result"]["run_ledger"]
-        self.assertEqual(ledger_result["skipped"], "duplicate-capture-marker")
-        self.assertNotIn("resolution", ledger_result)
-        self.assertIn("skipped — this head already has a capture marker (run RUN-1)", out_human)
-        self.assertNotIn("record a new gates-pass with:", out_human)
-
     def test_a_missing_marker_is_still_reported_without_the_declaration(self):
         # The counterweight to the test above. `not_run` must earn its exemption by
         # being declared: inferring "never attempted" from a null marker would
@@ -12159,6 +12072,106 @@ class TestMergeCheckpointGate(unittest.TestCase):
         args_tuple = cli.build_parser().parse_args(shlex.split(cmd_tuple)[1:])
         self.assertIsNone(args_tuple.ledger_pr)
         self.assertEqual(args_tuple.approve_scope, ["git,github"])
+
+        cmd_frozenset = cli._resolution_ship_command(
+            "p.yaml",
+            root=None,
+            pr_number=None,
+            approve_scope=frozenset({"git", "github"}),
+        )
+        args_frozenset = cli.build_parser().parse_args(shlex.split(cmd_frozenset)[1:])
+        self.assertEqual(args_frozenset.approve_scope, ["git,github"])
+
+    def test_same_run_merge_updates_checkpoint_even_when_head_differs(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-1", step="s10", head_sha="headA")
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-1")
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+        self.assertNotIn("adopt", data["checkpoint_gate"])
+        self.assertEqual(
+            data["checkpoint_update"],
+            {"updated": True, "run_id": "RUN-1", "current_step": "s11"},
+        )
+        self.assertEqual(record["state"]["merge"], "merged")
+        self.assertEqual(record["position"]["current_step"], "s11")
+
+    def test_retry_merge_refuses_post_merge_adoption_when_identifiers_removed(self):
+        config = _write_config_with_checkpoint("'true'")
+        for drop_field in ("pull_request", "head_sha", "run_id"):
+            with self.subTest(drop_field=drop_field), tempfile.TemporaryDirectory() as d:
+                self._write_checkpoint(
+                    d, config, run_id="RUN-PREV", step="s10", pull_request=123, head_sha="abc"
+                )
+                cfg_obj = cli.cfg.load_config(config)
+                path = cli.checkpoint.resolve_path(d, cfg_obj)
+                original = cli.checkpoint.read_checkpoint(path)
+                tampered = json.loads(json.dumps(original))
+                if drop_field == "run_id":
+                    tampered["run_id"] = None
+                else:
+                    tampered["identifiers"][drop_field] = None
+                reads = [original, tampered]
+                with patch("keel.cli.checkpoint.read_checkpoint", side_effect=reads):
+                    rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+                data = json.loads(out)
+                self.assertEqual(rc, 0)
+                self.assertTrue(data["merged"])
+                self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+                self.assertNotIn("adopt", data["checkpoint_gate"])
+                self.assertEqual(
+                    data["checkpoint_update"],
+                    {"updated": False, "reason": "no checkpoint for run RUN-RETRY"},
+                )
+
+    def test_resolution_ship_command_records_gates_pass_when_capture_marker_already_exists(self):
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            head = "d" * 40
+            # An earlier run on the same head recorded a capture marker.
+            rc_first, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    d,
+                    "--live",
+                    "--append-ledger",
+                    "--run-id",
+                    "RUN-1",
+                    "--pull-request",
+                    "123",
+                    "--head-sha",
+                    head,
+                    "--capture-status",
+                    "deferred",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+            self.assertEqual(rc_first, 0)
+            # The suggested resolution ship command uses --capture-status not-run,
+            # so it appends a new ship_run record without clashing with the existing marker.
+            cmd = cli._resolution_ship_command(
+                config,
+                root=d,
+                pr_number=123,
+                head_sha=head,
+                operator="tester",
+                approve_scope=["filesystem", "git", "github"],
+                run_id="RUN-2",
+            )
+            rc_second, out_second, _ = run([*shlex.split(cmd)[1:], "--json"])
+            self.assertEqual(rc_second, 0)
+            ledger_res = json.loads(out_second)["result"]["run_ledger"]
+            self.assertTrue(ledger_res["appended"])
+            self.assertNotIn("skipped", ledger_res)
 
     def test_explicit_run_id_overrides_gates_pass_run_id(self):
         config = _write_config_with_checkpoint("'true'")

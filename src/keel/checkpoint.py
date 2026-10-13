@@ -348,7 +348,7 @@ def _resolution_checkpoint_command(
     head_sha: str | None = None,
     pr_number: int | None = None,
 ) -> str:
-    parts = ["keel checkpoint", shlex.quote(config_path) if config_path else "<project.yaml>"]
+    parts = ["keel checkpoint", shlex.quote(config_path) if config_path else "'<project.yaml>'"]
     if root and root != ".":
         parts.extend(["--root", shlex.quote(str(root))])
     parts.extend(["--write", "--run-id", shlex.quote(run_id), "--step", step])
@@ -382,6 +382,9 @@ def covering_checkpoint(
     * or the checkpoint is for the same pull request (``pr_number``) and head commit,
       or an accepted run id (such as a second merge attempt accepting the PR's latest
       gates run at s10 for the same head, carrying the checkpoint forward — #1507).
+      Because a project has a single checkpoint file, any run's checkpoint at or past
+      ``expected_step`` matching ``(pr_number, head_sha)`` is accepted and adopted by
+      whichever merge lands under the merge resource claim.
 
     The result distinguishes:
 
@@ -572,10 +575,11 @@ def mark_merged(
     ``keel status`` calls a merged run *waiting on the merge window* for as long as it exists
     (#1448). When ``carried_from_run_id`` or ``adopt`` is given, a covering checkpoint from a
     previous run (such as a retried merge carrying s10 forward) is adopted and stamped with
-    the new ``run_id`` (#1507), re-verifying pull request and head identifiers when provided
-    to guard against changes between gate check and merge completion. The merged record says
-    ``merge: merged``, counts s10 as completed and moves the run to the next step, and clears
-    the stop that held it; a run already past s10 keeps its position.
+    the new ``run_id`` (#1507), failing closed unless the reread checkpoint still carries
+    matching pull request and head SHA provenance. Same-run checkpoints are updated without
+    requiring cross-run provenance. The merged record says ``merge: merged``, counts s10 as
+    completed and moves the run to the next step, and clears the stop that held it; a run
+    already past s10 keeps its position.
     """
     if record is None:
         return None
@@ -586,17 +590,18 @@ def mark_merged(
     rec_head = identifiers.get("head_sha")
 
     is_same_run = rec_run_id == run_id
-    can_adopt = (carried_from_run_id is not None and rec_run_id == carried_from_run_id) or (
-        adopt and (rec_run_id is None or rec_run_id == carried_from_run_id)
-    )
-
-    if not (is_same_run or can_adopt):
-        return None
-
-    if pr_number is not None and rec_pr is not None and rec_pr != pr_number:
-        return None
-    if head_sha is not None and rec_head is not None and rec_head != head_sha:
-        return None
+    if not is_same_run:
+        can_adopt = (
+            rec_run_id == carried_from_run_id
+            if carried_from_run_id is not None
+            else (adopt and rec_run_id is None)
+        )
+        if not can_adopt:
+            return None
+        if pr_number is None or rec_pr is None or rec_pr != pr_number:
+            return None
+        if not head_sha or not rec_head or rec_head != head_sha:
+            return None
 
     validate_checkpoint(record)
     position = record["position"]

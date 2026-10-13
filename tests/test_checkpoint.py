@@ -471,7 +471,7 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertFalse(result["covered"])
         self.assertIn("run RUN-1 is at s6", result["reason"])
         self.assertIn(
-            "advance it with: keel checkpoint <project.yaml> --write --run-id RUN-1 --step s10",
+            "advance it with: keel checkpoint '<project.yaml>' --write --run-id RUN-1 --step s10",
             result["reason"],
         )
 
@@ -586,8 +586,14 @@ class TestMarkMerged(unittest.TestCase):
         self.assertEqual(record["position"]["current_step"], "s10")
 
     def test_mark_merged_adopts_checkpoint_when_carried_from_run_id_matches(self):
-        record = _record(run_id="RUN-OLD", current_step="s10")
-        merged = checkpoint.mark_merged(record, "RUN-NEW", carried_from_run_id="RUN-OLD")
+        record = _record(run_id="RUN-OLD", current_step="s10", pull_request=170, head_sha="abc123")
+        merged = checkpoint.mark_merged(
+            record,
+            "RUN-NEW",
+            carried_from_run_id="RUN-OLD",
+            pr_number=170,
+            head_sha="abc123",
+        )
         self.assertIsNotNone(merged)
         self.assertEqual(merged["run_id"], "RUN-NEW")
         self.assertEqual(merged["carried_from_run_id"], "RUN-OLD")
@@ -596,8 +602,14 @@ class TestMarkMerged(unittest.TestCase):
         self.assertIn("s10", merged["position"]["completed_steps"])
 
     def test_mark_merged_adopts_checkpoint_past_s10_and_records_provenance(self):
-        record = _record(run_id="RUN-OLD", current_step="s12")
-        merged = checkpoint.mark_merged(record, "RUN-NEW", carried_from_run_id="RUN-OLD")
+        record = _record(run_id="RUN-OLD", current_step="s12", pull_request=170, head_sha="abc123")
+        merged = checkpoint.mark_merged(
+            record,
+            "RUN-NEW",
+            carried_from_run_id="RUN-OLD",
+            pr_number=170,
+            head_sha="abc123",
+        )
         self.assertIsNotNone(merged)
         self.assertEqual(merged["run_id"], "RUN-NEW")
         self.assertEqual(merged["carried_from_run_id"], "RUN-OLD")
@@ -606,7 +618,13 @@ class TestMarkMerged(unittest.TestCase):
 
     def test_mark_merged_rejects_when_carried_from_run_id_does_not_match(self):
         record = _record(run_id="RUN-OLD", current_step="s10")
-        merged = checkpoint.mark_merged(record, "RUN-NEW", carried_from_run_id="RUN-MISMATCH")
+        merged = checkpoint.mark_merged(
+            record,
+            "RUN-NEW",
+            carried_from_run_id="RUN-MISMATCH",
+            pr_number=170,
+            head_sha="abc123",
+        )
         self.assertIsNone(merged)
 
     def test_mark_merged_adopts_checkpoint_with_none_run_id_when_adopt_is_true(self):
@@ -635,15 +653,86 @@ class TestMarkMerged(unittest.TestCase):
         )
         self.assertIsNone(merged)
 
-    def test_mark_merged_rejects_when_same_run_toctou_pr_mismatches(self):
-        record = _record(run_id="RUN-149", current_step="s10", pull_request=999, head_sha="abc")
-        merged = checkpoint.mark_merged(record, "RUN-149", pr_number=123, head_sha="abc")
-        self.assertIsNone(merged)
+    def test_mark_merged_rejects_when_cross_run_identifiers_removed_or_missing(self):
+        # Removing pull_request from checkpoint between gate check and reread fails closed.
+        rec_no_pr = _record(run_id="RUN-OLD", current_step="s10", pull_request=None, head_sha="abc")
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                rec_no_pr, "RUN-NEW", carried_from_run_id="RUN-OLD", pr_number=123, head_sha="abc"
+            )
+        )
+        # Missing caller pr_number on cross-run adoption also fails closed.
+        rec_full = _record(run_id="RUN-OLD", current_step="s10", pull_request=123, head_sha="abc")
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                rec_full, "RUN-NEW", carried_from_run_id="RUN-OLD", pr_number=None, head_sha="abc"
+            )
+        )
+        # Removing head_sha from checkpoint between gate check and reread fails closed.
+        rec_no_head = _record(run_id="RUN-OLD", current_step="s10", pull_request=123, head_sha=None)
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                rec_no_head,
+                "RUN-NEW",
+                carried_from_run_id="RUN-OLD",
+                pr_number=123,
+                head_sha="abc",
+            )
+        )
+        # Missing caller head_sha on cross-run adoption also fails closed.
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                rec_full, "RUN-NEW", carried_from_run_id="RUN-OLD", pr_number=123, head_sha=None
+            )
+        )
+        # Removing run_id from a checkpoint that was accepted for a specific carried_from_run_id
+        # fails closed even if adopt=True is passed.
+        rec_no_run = _record(run_id="", current_step="s10", pull_request=123, head_sha="abc")
+        rec_no_run["run_id"] = None
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                rec_no_run,
+                "RUN-NEW",
+                carried_from_run_id="RUN-OLD",
+                adopt=True,
+                pr_number=123,
+                head_sha="abc",
+            )
+        )
+        # And when adopt=True (for a None-run-id acceptance), removing pull_request or head_sha
+        # between gate check and reread fails closed.
+        rec_adopt_no_pr = _record(run_id="", current_step="s10", pull_request=None, head_sha="abc")
+        rec_adopt_no_pr["run_id"] = None
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                rec_adopt_no_pr, "RUN-NEW", adopt=True, pr_number=123, head_sha="abc"
+            )
+        )
+        rec_adopt_no_head = _record(run_id="", current_step="s10", pull_request=123, head_sha=None)
+        rec_adopt_no_head["run_id"] = None
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                rec_adopt_no_head, "RUN-NEW", adopt=True, pr_number=123, head_sha="abc"
+            )
+        )
 
-    def test_mark_merged_rejects_when_same_run_toctou_head_mismatches(self):
+    def test_mark_merged_updates_same_run_even_when_head_differs_or_provenance_missing(self):
+        # Same-run checkpoint is covered whatever the head (#1448 / #1507).
         record = _record(run_id="RUN-149", current_step="s10", pull_request=123, head_sha="headA")
         merged = checkpoint.mark_merged(record, "RUN-149", pr_number=123, head_sha="headB")
-        self.assertIsNone(merged)
+        self.assertIsNotNone(merged)
+        self.assertEqual(merged["state"]["merge"], "merged")
+        self.assertEqual(merged["position"]["current_step"], "s11")
+
+        rec_missing_ids = _record(
+            run_id="RUN-149", current_step="s10", pull_request=None, head_sha=None
+        )
+        merged_missing = checkpoint.mark_merged(
+            rec_missing_ids, "RUN-149", pr_number=123, head_sha="headB"
+        )
+        self.assertIsNotNone(merged_missing)
+        self.assertEqual(merged_missing["state"]["merge"], "merged")
+        self.assertEqual(merged_missing["position"]["current_step"], "s11")
 
     def test_a_run_already_past_s10_keeps_its_step(self):
         merged = checkpoint.mark_merged(_record(current_step="s12"), "RUN-149")

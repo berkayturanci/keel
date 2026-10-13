@@ -342,11 +342,14 @@ the checkpoint file. The result is reported in the `checkpoint_gate` block of th
   (keyed on matching `identifiers.pull_request` and equal `identifiers.head_sha`, or an accepted run ID
   for the same PR and head) across run IDs and carries it forward to the new run upon landing (#1507).
   The head check fails closed: records lacking a recorded head SHA or callers without a head are not
-  accepted across runs. In that case, `checkpoint_gate.carried_from_run_id` records the source run ID.
+  accepted across runs. In that case, `checkpoint_gate.carried_from_run_id` records the source run ID
+  (or `null` when the adopted checkpoint had no `run_id`). Because a project has one checkpoint file,
+  any run's `s10` checkpoint matching `(pull_request, head_sha)` is accepted and stamped with the
+  merging run's `run_id` under the single-writer merge resource claim.
   The merge proceeds.
 - **`missing`** — no checkpoint, or the checkpoint is for a different run and PR. Refused with
   `no current checkpoint for run <id> at step s10`. When no checkpoint exists, a suggested `keel checkpoint ... --write`
-  command is named (placeholders like `<project.yaml>` must be filled in; valid only after the run has genuinely reached `s10`,
+  command is named (placeholders like `'<project.yaml>'` must be filled in; valid only after the run has genuinely reached `s10`,
   e.g. recovering from a lost checkpoint; otherwise drive the run through `s10`).
 - **`stale-step`** — a checkpoint that has not reached `s10`. Refused naming the advancing command
   (placeholders must be filled in).
@@ -367,10 +370,10 @@ the gate for callers that legitimately do not checkpoint. It **requires a named
 (`checkpoint_gate: {status: "bypassed", operator}`).
 
 **After the merge lands, the checkpoint records it (#1448, #1507).** Once GitHub has merged the
-head, `keel merge` reads the run's checkpoint and, when it belongs to the same run-id (or is
-carried forward from a previous run covering this PR at `s10` on the same head, re-verifying
-pull request and head SHA identifiers against TOCTOU changes, #1507), writes it back through
-the pure `keel.checkpoint.mark_merged`:
+head, `keel merge` re-reads the checkpoint file and, when it belongs to the same run-id (or is
+carried forward from a previous run covering this PR at `s10` on the same head, failing closed
+unless the reread checkpoint still records the expected source `run_id`, `pull_request`, and
+`head_sha` provenance, #1507), writes it back through the pure `keel.checkpoint.mark_merged`:
 
 - `run_id` is updated to the current merge run ID
 - `carried_from_run_id` is recorded in the checkpoint file to preserve provenance when carried (#1507)
