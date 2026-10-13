@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **`release_smoke.py` prints why a command failed and waits out a lagging index** (#1526). `_run` captured output and raised a bare `CalledProcessError`, so a failed `pip install keel-workflow==<v>` in the publish verify job (v1.32.0, twice) left only a traceback. A failing command now prints its argv, stdout and stderr to stderr before raising. For `--requirement` installs, `pip install --no-cache-dir` is retried up to 6 times, 20 s apart, only when pip says the version is not found yet (`No matching distribution found` / `Could not find a version that satisfies`); any other failure fails at once, and exhausting the attempts exits with a `TIMEOUT:` message. Local wheel installs are not retried, and a not-found sentence that names another package (a missing dependency) is not either. The verify job's `release_smoke.py` wrapper goes from `timeout 300` to `timeout 480` so all six attempts fit.
+
 ## [1.32.0] - 2026-10-12
 
 - Fixes from the 2026-10-12 operator feedback round: `keel review` and `keel ship` find a missing `agent:` label before the CI wait and print the exact `gh pr edit` command; `keel merge` names the pending or failing checks, a branch behind its base or a merge conflict instead of echoing GitHub's merge state (the bare `UNSTABLE` text stays only when no check is named).
