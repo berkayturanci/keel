@@ -295,7 +295,7 @@ class EveryNetworkCallInAReleaseIsBounded(ThePublishWorkflow):
 
     def test_an_interpreter_does_not_hide_a_script_that_resolves_from_the_index(self):
         """`release_smoke.py` builds a venv and installs; the interpreter is not the client."""
-        found = network_calls("timeout 300 python scripts/release_smoke.py --requirement x")
+        found = network_calls("timeout 480 python scripts/release_smoke.py --requirement x")
 
         self.assertEqual([t for t, _ in found], ["release_smoke.py"])
 
