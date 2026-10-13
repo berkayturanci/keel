@@ -71,6 +71,30 @@ class TestCiDecision(unittest.TestCase):
         self.assertEqual(self.decide(_ci("pass"))["action"], "proceed")
         self.assertEqual(self.decide(_ci("no-checks"))["action"], "proceed")
 
+    def test_no_checks_waits_for_the_workflows_to_register_then_proceeds(self):
+        waiting = self.decide(_ci("no-checks"), elapsed=10, settle=120)
+        self.assertEqual((waiting["action"], waiting["names"]), ("wait", []))
+        at = self.decide(_ci("no-checks"), elapsed=120, settle=120)
+        self.assertEqual(at["action"], "proceed")
+
+    def test_no_checks_is_not_waited_on_by_default_nor_past_the_timeout(self):
+        self.assertEqual(self.decide(_ci("no-checks"))["action"], "proceed")
+        late = self.decide(_ci("no-checks"), elapsed=100, timeout=100, settle=500)
+        self.assertEqual(late["action"], "proceed")
+
+    def test_a_rerun_waits_while_anything_is_still_pending(self):
+        ci = _ci("fail", failing=["flaky"], pending=["sibling"])
+        got = self.decide(ci, rerun=["flaky"])
+        self.assertEqual((got["action"], got["names"]), ("wait", ["sibling"]))
+        late = self.decide(ci, rerun=["flaky"], elapsed=100)
+        self.assertEqual(late["action"], "timeout")
+        done = self.decide(_ci("fail", failing=["flaky"]), rerun=["flaky"])
+        self.assertEqual(done["action"], "rerun")
+
+    def test_a_pending_sibling_does_not_save_a_failure_that_is_not_rerunnable(self):
+        got = self.decide(_ci("fail", failing=["real"], pending=["s"]), rerun=["flaky"])
+        self.assertEqual(got["action"], "failed")
+
     def test_pending_waits_until_the_timeout_then_times_out(self):
         waiting = self.decide(_ci("pending", pending=["a"]), elapsed=99)
         self.assertEqual((waiting["action"], waiting["names"]), ("wait", ["a"]))
@@ -502,10 +526,71 @@ class TestFinishCiWait(FinishCase):
         self.assertEqual(self.sleeps, [])
         self.assertEqual(self.invocations, [])
 
-    def test_no_checks_proceeds_so_the_merge_gate_can_apply_its_docs_carve_out(self):
+    def test_no_checks_is_proceeded_on_only_after_the_settle_grace(self):
         self.snapshots = [_ci("no-checks")]
-        rc, doc, _ = self.finish()
+        rc, doc, _ = self.finish("--ci-interval", "30", "--ci-settle", "90")
         self.assertEqual(rc, 0)
+        self.assertEqual(doc["steps"][0]["polls"], 4)  # waits at 0, 30, 60; goes on at 90
+        self.assertEqual(self.sleeps, [30, 30, 30])
+
+    def test_checks_that_appear_during_the_grace_are_waited_for(self):
+        self.snapshots = [_ci("no-checks"), _ci("pending", pending=["build"]), _ci("pass")]
+        rc, doc, _ = self.finish("--ci-interval", "10")
+        self.assertEqual(rc, 0)
+        self.assertEqual(doc["steps"][0]["polls"], 3)
+        self.assertEqual(self.sleeps, [10, 10])
+
+    def test_checks_that_appear_and_fail_during_the_grace_fail(self):
+        self.snapshots = [_ci("no-checks"), _ci("fail", failing=["build"])]
+        rc, doc, _ = self.finish("--ci-interval", "10")
+        self.assertEqual((rc, doc["stopped_at"]), (1, "ci"))
+
+    def test_a_zero_settle_proceeds_on_an_empty_set_at_once(self):
+        self.snapshots = [_ci("no-checks")]
+        rc, doc, _ = self.finish("--ci-settle", "0")
+        self.assertEqual((rc, doc["steps"][0]["polls"]), (0, 1))
+
+    def test_a_rerun_is_deferred_until_the_runs_siblings_finish(self):
+        busy = _ci("fail", failing=["lint"], pending=["slow"])
+        self.snapshots = [busy, busy, _ci("fail", failing=["lint"]), _ci("pass")]
+        rc, doc, _ = self.finish("--rerun-flaky", "lint", "--ci-interval", "5")
+        self.assertEqual(rc, 0)
+        self.rerun.assert_called_once_with("1", cwd=self.dir)
+        self.assertEqual(self.sleeps[:2], [5, 5])  # waited out two polls before the rerun
+        self.assertEqual(doc["steps"][0]["polls"], 4)
+
+    def test_a_deferred_rerun_that_never_becomes_possible_times_out(self):
+        self.snapshots = [_ci("fail", failing=["lint"], pending=["slow"])]
+        rc, doc, _ = self.finish(
+            "--rerun-flaky", "lint", "--ci-timeout", "10", "--ci-interval", "5"
+        )
+        self.assertEqual((rc, doc["status"]), (1, "timeout"))
+        self.rerun.assert_not_called()
+
+    def test_a_stale_failure_is_waited_out_for_the_whole_settle_window(self):
+        fail = _ci("fail", failing=["lint"])
+        self.snapshots = [fail, fail, fail, fail, _ci("pass")]
+        rc, doc, _ = self.finish(
+            "--rerun-flaky", "lint", "--ci-interval", "5", "--ci-settle", "100"
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(doc["steps"][0]["polls"], 5)
+
+    def test_a_failure_persisting_past_the_settle_window_fails(self):
+        self.snapshots = [_ci("fail", failing=["lint"])]
+        rc, doc, _ = self.finish("--rerun-flaky", "lint", "--ci-interval", "5", "--ci-settle", "12")
+        self.assertEqual((rc, doc["stopped_at"]), (1, "ci"))
+        self.assertEqual(doc["steps"][0]["polls"], 4)  # rerun at 0; stale at 5, 10; fails at 15
+
+    def test_the_failing_step_reason_carries_the_sub_commands_own_message(self):
+        self.snapshots = [_ci("pass")]
+
+        def invoke(argv, *, capture):
+            return {"exit_code": 1, "stderr": "noise\nmissing evidence: tests"}
+
+        with mock.patch("keel.cli._finish_invoke", side_effect=invoke):
+            rc, doc, _ = self.finish()
+        self.assertEqual(doc["reason"], "keel ship refused (exit 1): missing evidence: tests")
 
     def test_a_named_flaky_check_is_rerun_once_then_waited_for(self):
         fail = _ci("fail", failing=["lint"])
@@ -600,7 +685,7 @@ class TestFinishCiWait(FinishCase):
         self.now = 0.0
         self.snapshots = [_ci("pending", pending=["a"]), cli._SnapshotFailed("rest", "boom")]
         rc, doc, _ = self.finish("--ci-timeout", "10", "--ci-interval", "10")
-        self.assertEqual((rc, doc["status"]), (1, "fail"))
+        self.assertEqual((rc, doc["status"]), (1, "timeout"))
         self.assertIn("could not read CI state", doc["reason"])
         self.assertEqual(self.sleeps, [10])
 
@@ -715,6 +800,17 @@ class TestFinishAgainstTheRealHandlers(FinishCase):
 
 
 class TestFinishInvoke(unittest.TestCase):
+    def test_a_refused_flag_is_the_steps_exit_code_not_an_escaped_systemexit(self):
+        for raised, expected in ((SystemExit(2), 2), (SystemExit("usage"), 1)):
+            with mock.patch("keel.cli.main", side_effect=raised):
+                got = cli._finish_invoke(["merge", "p"], capture=True)
+            self.assertEqual(got["exit_code"], expected)
+
+    def test_every_step_argv_parses_with_json_appended(self):
+        parser = cli.build_parser()
+        for argv in TestArgvBuilders()._all().values():
+            parser.parse_args([*argv, "--json"])
+
     def test_uncaptured_returns_only_the_exit_code(self):
         with mock.patch("keel.cli.main", return_value=3) as main:
             self.assertEqual(cli._finish_invoke(["merge", "p"], capture=False), {"exit_code": 3})

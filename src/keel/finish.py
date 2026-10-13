@@ -94,20 +94,28 @@ def ci_decision(
     rerun: Sequence[str] = (),
     reran: Sequence[str] = (),
     settling: Sequence[str] = (),
+    settle: float = 0,
 ) -> dict[str, object]:
     """What one CI snapshot means for the wait: ``{action, names}``.
 
     ``ci`` is the rollup state :func:`keel.cli._ci_rollup_state` returns. ``rerun`` names the
     checks the operator allowed to be rerun once, ``reran`` those already rerun, and
-    ``settling`` those rerun on the previous poll: GitHub can keep showing the old failure
-    for a moment after a rerun is requested, and that stale failure must be waited out once
-    rather than read as the rerun failing.
+    ``settling`` those rerun within the settle window: GitHub can keep showing the old
+    failure for a while after a rerun is requested, and that stale failure must be waited out
+    rather than read as the rerun failing. ``settle`` is the grace, in seconds, an empty
+    rollup is waited on before it is accepted as "no checks".
     """
     ci = ci if isinstance(ci, dict) else {}
     state = ci.get("state")
-    if state in ("pass", "no-checks"):
-        # `no-checks` is passed on: whether an empty check set is acceptable is the merge
-        # gate's call (docs-only), not the wait's.
+    if state == "pass":
+        return {"action": ACTION_PROCEED, "names": []}
+    if state == "no-checks":
+        # Right after a push the rollup is empty until the workflows register, which is when
+        # finish is usually run. An empty set is waited on for `settle` seconds (never past
+        # the timeout) before it is taken as a genuinely check-less pull request; whether
+        # that is acceptable (docs-only) is then the merge gate's call, not the wait's.
+        if elapsed < settle and elapsed < timeout:
+            return {"action": ACTION_WAIT, "names": []}
         return {"action": ACTION_PROCEED, "names": []}
     if state == "fail":
         failing = _names(ci.get("failing_checks"))
@@ -119,6 +127,12 @@ def ci_decision(
             return _wait_or_timeout(failing, elapsed, timeout)
         allowed = [n for n in real if n in rerun and n not in reran]
         if len(allowed) == len(real):
+            pending = _names(ci.get("pending_checks"))
+            if pending:
+                # `gh run rerun --failed` is refused while the run still has jobs in
+                # flight, and the snapshot does not say which run a pending check is in.
+                # So the rerun waits until nothing is pending (within the budget).
+                return _wait_or_timeout(pending, elapsed, timeout)
             return {"action": ACTION_RERUN, "names": allowed}
         return {"action": ACTION_FAILED, "names": real}
     return _wait_or_timeout(_names(ci.get("pending_checks")), elapsed, timeout)

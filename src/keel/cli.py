@@ -9092,7 +9092,10 @@ def _finish_invoke(argv: list[str], *, capture: bool) -> dict[str, object]:
         return {"exit_code": main(argv)}
     out, err = stdio.StringIO(), stdio.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        code = main([*argv, "--json"])
+        try:
+            code = main([*argv, "--json"])
+        except SystemExit as exc:  # argparse refusing a flag must not escape as exit 2
+            code = exc.code if isinstance(exc.code, int) else 1
     text = out.getvalue()
     try:
         output: object = json.loads(text)
@@ -9146,7 +9149,7 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
     snap_args = argparse.Namespace(pr=args.pr, root=args.root, transport=args.transport)
     start = _finish_clock()
     reran: list[str] = []
-    settling: list[str] = []
+    rerun_at: dict[str, float] = {}
     unreadable = 0
     last_ci: object = None
     elapsed = 0.0
@@ -9157,9 +9160,10 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
             _, snapshot = _merge_snapshot_over_best_transport(snap_args)
         except _SnapshotFailed as exc:
             unreadable += 1
-            if finish.read_failures_exhausted(unreadable) or elapsed >= args.ci_timeout:
+            exhausted = finish.read_failures_exhausted(unreadable)
+            if exhausted or elapsed >= args.ci_timeout:
                 return _finish_ci_result(
-                    "fail",
+                    "fail" if exhausted else "timeout",
                     f"could not read CI state: {exc}",
                     polls=poll,
                     elapsed=elapsed,
@@ -9170,6 +9174,7 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
             continue
         unreadable = 0
         last_ci = snapshot["ci"]
+        settling = [n for n, at in rerun_at.items() if elapsed - at < args.ci_settle]
         decision = finish.ci_decision(
             last_ci,
             elapsed=elapsed,
@@ -9177,6 +9182,7 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
             rerun=args.rerun_flaky,
             reran=reran,
             settling=settling,
+            settle=args.ci_settle,
         )
         action = decision["action"]
         summary = _finish_ci_summary(last_ci, config.base_branch, args.pr)
@@ -9193,7 +9199,6 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
             return _finish_ci_result(
                 "timeout", f"timed out after {args.ci_timeout}s waiting for CI: {summary}", **ctx
             )
-        settling = []
         if action == finish.ACTION_RERUN:
             runs, why = github.failed_check_runs(args.pr, decision["names"], cwd=args.root)
             if why is not None:
@@ -9208,7 +9213,7 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
                 if not ok:
                     return _finish_ci_result("fail", why, **ctx)
                 reran.extend(names)
-                settling.extend(names)
+                rerun_at.update(dict.fromkeys(names, elapsed))
         _finish_sleep(finish.next_sleep(args.ci_interval, args.ci_timeout, elapsed))
     return _finish_ci_result(
         "timeout",
@@ -9272,7 +9277,11 @@ def _finish_step(
     result = _finish_invoke(argv, capture=args.json)
     passed = result["exit_code"] == 0
     result["status"] = "pass" if passed else "fail"
-    result["reason"] = "" if passed else f"keel {argv[0]} refused (exit {result['exit_code']})"
+    reason = f"keel {argv[0]} refused (exit {result['exit_code']})"
+    lines = str(result.get("stderr", "")).splitlines()
+    if lines:
+        reason += f": {lines[-1]}"
+    result["reason"] = "" if passed else reason
     return result
 
 
@@ -9605,6 +9614,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=30,
         help="seconds between CI polls (default: 30)",
+    )
+    p_finish.add_argument(
+        "--ci-settle",
+        type=_bounded_int(0),
+        default=120,
+        help=(
+            "seconds an empty check set, and a failure just rerun, are waited on before "
+            "they are believed (default: 120)"
+        ),
     )
     p_finish.add_argument(
         "--rerun-flaky",

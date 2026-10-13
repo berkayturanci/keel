@@ -379,7 +379,7 @@ the payload:
 A dry run, a refused merge or a failed `gh` merge never reaches this step, so it carries no
 `checkpoint_update`.
 
-## `keel finish <project.yaml> --pr N --issue I [--root DIR] [--reviews FILE] [--closure FILE] [--ci-timeout S] [--ci-interval S] [--rerun-flaky NAME]... [--method squash|merge|rebase] [--transport auto|graphql|rest] [--run-id ID] [--capture-status S] [--capture-reason TEXT] [--capture-artifact REF] [--implementer NAME] [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE] [--dry-run] [--json]`
+## `keel finish <project.yaml> --pr N --issue I [--root DIR] [--reviews FILE] [--closure FILE] [--ci-timeout S] [--ci-interval S] [--ci-settle S] [--rerun-flaky NAME]... [--method squash|merge|rebase] [--transport auto|graphql|rest] [--run-id ID] [--capture-status S] [--capture-reason TEXT] [--capture-artifact REF] [--implementer NAME] [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE] [--dry-run] [--json]`
 
 Finish an open pull request the way operators used to hand-chain it (#1505). It is a
 separate subcommand rather than a `keel ship --finish` flag because `ship` is one assessment
@@ -397,14 +397,20 @@ The steps run in this order and stop at the first one that does not pass:
    `--ci-interval` seconds (default 30). Pending and failing checks are named with the same
    wording `keel merge` uses (`2 checks still pending: build, lint`). **A timeout is reported
    as a timeout and exits 1**; the loop is also capped at a fixed number of polls so a clock
-   that stops advancing cannot keep it alive. Three unreadable snapshots in a row fail the step
-   (one dropped request does not). An empty check set proceeds, because whether that is
-   acceptable (docs-only) is the merge gate's decision.
+   that stops advancing cannot keep it alive. An unreadable snapshot once the budget is spent is
+   also a `timeout`. Three unreadable snapshots in a row fail the step
+   (one dropped request does not). An empty check set is waited on for `--ci-settle` seconds (default 120, never past the
+   timeout), because right after a push the rollup is empty until the workflows register;
+   checks that appear in that time are waited for as usual. Only a set still empty after the
+   grace proceeds, since whether that is acceptable (docs-only) is the merge gate's decision.
+   `--ci-settle 0` accepts an empty set at once.
    `--rerun-flaky NAME` (repeatable) allows one rerun of a failed check called *exactly*
    `NAME` (`gh run rerun --failed` on its Actions run, once per run even when several named
    checks are jobs of the same run; a cancelled or timed-out job counts as failed). It applies only when every failing
-   check is so named and has not been rerun; any other failure ends the wait. A failure still
-   showing on the poll right after the rerun is waited out once, not read as the rerun failing.
+   check is so named and has not been rerun; any other failure ends the wait. The rerun is
+   deferred while any check is still pending (`gh run rerun --failed` is refused on a run with
+   jobs in flight), within the budget. A failure still showing after the rerun is waited out for
+   `--ci-settle` seconds, not read as the rerun failing.
 3. **`window`**: if the project's merge window is closed, finish says so and stops with status
    `window-closed` (exit 1). There is no bypass: finish has no `--hotfix`.
 4. **`ship`**: `keel ship --live --append-ledger --pr N --issue I`, with `--run-id`,
@@ -424,7 +430,8 @@ closing the issue and capture remain `keel close-reconcile` and `keel capture-la
 `--dry-run` prints the plan (the steps that would run, in order) and does nothing else.
 `--json` prints one `keel.finish.v1` document: `status` (`pass`, `fail`, `timeout`,
 `window-closed` or `dry-run`), `stopped_at`, `reason`, and a `steps` array with each step's
-`status`; the sub-commands' own output is embedded under `output`, and the `ci` step always carries
+`status`; the sub-commands' own output is embedded under `output` (a failed step's `reason` ends with the
+last line of its stderr), and the `ci` step always carries
 `polls`, `elapsed`, the last `ci` snapshot (`null` before one was read) and the checks it
 `reran`. Exit code 0 means the
 pull request merged (or `--dry-run`); 1 means it stopped.

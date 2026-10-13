@@ -10,8 +10,8 @@ rules, and what makes a command exit non-zero. Every claim here is grounded in
 `window.py`, `evidence.py`, `runcontrols.py`, `capture.py`, `checkpoint.py`).
 
 **What this document does not cover yet.** It is not a per-flag reference for the whole
-CLI. Eighteen subcommands have no section here and are documented in
-[`cli.md`](cli.md) only: `guard`, `consent-verify`, `close-reconcile`, `dryrun-verify`,
+CLI. Nineteen subcommands have no section here and are documented in
+[`cli.md`](cli.md) only: `finish`, `guard`, `consent-verify`, `close-reconcile`, `dryrun-verify`,
 `review-cycle-summary`, `render-report`, `verify-merge`, `scope-verify`, `verify-branch`,
 `scratch-dir`, `doctor`, `delegate`, `swarm-plan`, `swarm-status`, `swarm-run`, `canary`,
 `rollback` and `cost-report`. Treat a missing section as *not yet written*, never as
