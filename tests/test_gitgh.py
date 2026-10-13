@@ -78,6 +78,26 @@ class TestGitLandingPlumbing(unittest.TestCase):
         self.assertIsNone(git.show_file("", "a.py"))
         self.assertIsNone(git.show_file("abc", ""))
 
+    def test_show_file_absent_path_in_tree(self):
+        rec = _Recorder(code=128, err="fatal: path 'a.py' does not exist in 'HEAD'\n")
+        self.assertIs(git.show_file(SHA_B, "a.py", _run=rec), git.FILE_ABSENT)
+
+    def test_show_file_absent_path_via_ls_tree(self):
+        def _run(argv, **kw):
+            if argv[1] == "show":
+                return _Proc(128, "", "fatal: git failure")
+            return _Proc(0, "", "")
+
+        self.assertIs(git.show_file(SHA_B, "a.py", _run=_run), git.FILE_ABSENT)
+
+    def test_show_file_ls_tree_nonempty_returns_none(self):
+        def _run(argv, **kw):
+            if argv[1] == "show":
+                return _Proc(128, "", "fatal: git failure")
+            return _Proc(0, "100644 blob ...\ta.py\n", "")
+
+        self.assertIsNone(git.show_file(SHA_B, "a.py", _run=_run))
+
     def test_mktree_sends_the_listing_on_stdin(self):
         listing = f"100644 blob {SHA_A}\ta.md\x00"
         captured = {}
@@ -635,6 +655,14 @@ class TestGitHub(unittest.TestCase):
     def test_commit_file_content_empty_inputs(self):
         self.assertIsNone(github.commit_file_content("", "src/x.py"))
         self.assertIsNone(github.commit_file_content("abc", ""))
+
+    def test_commit_file_content_absent_returns_sentinel(self):
+        rec = _Recorder(code=1, err="gh: Not Found (HTTP 404)\n")
+        self.assertIs(github.commit_file_content("abc", "src/x.py", _run=rec), github.FILE_ABSENT)
+
+    def test_commit_file_content_not_found_in_stdout_returns_sentinel(self):
+        rec = _Recorder(code=1, out='{"message": "Not Found"}')
+        self.assertIs(github.commit_file_content("abc", "src/x.py", _run=rec), github.FILE_ABSENT)
 
     def test_commit_file_content_url_encoding(self):
         rec = _Recorder(out="raw content\n")

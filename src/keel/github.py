@@ -13,6 +13,7 @@ import time
 import urllib.parse
 from collections.abc import Sequence
 
+from .mergeverify import FILE_ABSENT
 from .runner import CommandResult, run_argv
 
 _TRANSIENT_PATTERNS = (
@@ -333,8 +334,14 @@ def pr_diff(pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None) ->
 
 def commit_file_content(
     sha: str, path: str, *, cwd: str | None = None, _run=None, _sleep=None
-) -> str | None:
-    """Raw content of ``path`` at commit ``sha`` from GitHub (#1511)."""
+) -> str | object | None:
+    """Raw content of ``path`` at commit ``sha`` from GitHub (#1511).
+
+    Returns:
+    - the ``str`` file content if present and read,
+    - ``FILE_ABSENT`` if the path is confirmed absent at commit ``sha`` (404 Not Found),
+    - ``None`` if reading failed (network error, rate limit, 5xx, etc.).
+    """
     if not sha or not path:
         return None
     encoded_path = urllib.parse.quote(path, safe="/")
@@ -351,6 +358,9 @@ def commit_file_content(
         _sleep=_sleep,
     )
     if not result.ok:
+        combined = f"{result.stderr} {result.stdout} {result.output}".lower()
+        if "404" in combined or "not found" in combined:
+            return FILE_ABSENT
         return None
     return result.stdout or result.output
 

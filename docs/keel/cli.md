@@ -1698,11 +1698,22 @@ content (ignoring blank lines): for every line the PR added, its count in the me
 must be >= its count in the PR's landed version; for every line the PR deleted, its count
 in the merge commit must be <= its count in the PR's landed version (catching re-added
 deletions). If the overtaking PR deleted a whole file (`+++ /dev/null`), the file
-reappearing in the merge commit is flagged as drift. Drift is conservatively reported
-if any lines are lost, deletions re-added, or if diffs or file contents cannot be read
-(e.g. malformed or truncated diffs, binary files, or unreadable file content); if all
-changes survive, it reports `clean (N shared files, 0 lost lines)`. The report names all
-colliding PRs for each drifted file so a human can judge.
+reappearing in the merge commit is flagged as drift, while staying absent is clean.
+Unreadable content (network failures, rate limits, 5xx, or unfetched commits) is
+distinguished from confirmed absent files (`FILE_ABSENT`), ensuring an unreadable file is
+reported as drift and never silently treated as a stayed deletion. Multiset counting is
+conservative: if an overtaking PR deleted a generic line (like `return None` or `}`) and
+this PR legitimately adds that same line, it is conservatively flagged as drift. Drift is
+conservatively reported if any lines are lost, deletions re-added, or if diffs or file
+contents cannot be read (e.g. malformed or truncated diffs, binary files, or unreadable
+file content); if all changes survive, it reports `clean (N shared files, 0 lost lines)`.
+The report names all colliding PRs and specific violations for each drifted file so a human
+can judge.
+
+The JSON report uses schema `keel.merge-verify.v2`:
+* `overtaken` maps `{path: [int, ...]}` to list all colliding PRs for that path (in v1 it was `{path: int}`);
+* `shared_files` lists all paths shared between the merge commit and overtaking PRs in the window (`list[str]`);
+* `drift_details` maps `{path: [str, ...]}` detailing specific lost lines, re-added deletions, or unreadable inputs (`dict[str, list[str]]`).
 
 `unknown` exits **2**, not 0. The status line has always said "not a pass", but the
 exit code said otherwise, and the exit code is what a caller wiring this in after

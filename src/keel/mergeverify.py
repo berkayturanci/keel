@@ -9,13 +9,23 @@ no test for the removed behaviour — so the suite stayed green throughout.
 
 **Why the obvious checks do not work.**
 1. The first version of this module compared the PR's file set against the merge's
-   file set. Run against #543 reverting #550 it reported clean, because `update-branch`
-   had pulled the reverting state into the branch so the revert was inside the reviewed diff.
+   file set, on the theory that a revert shows up as the merge touching files the PR
+   never did. Run against the actual incident (#543's squash reverting #550) it reported
+   **clean**, and the reason is the whole point: `update-branch` had already pulled
+   the reverting state into the branch, so GitHub computed the PR's own diff — the
+   thing a reviewer reads — as *including* those files. The revert was inside the
+   reviewed diff. Scope comparison cannot see it.
 2. Checking line survival via simple set membership reported false clean when generic
    lines (like `}`, `return None`, or boilerplate) were reverted while existing elsewhere
    in the file, or when deletions were silently re-added.
 
-**What works** is multiset line counting per overtaking PR (#1511):
+**What does work** is multiset line counting per overtaking PR (#1511):
+The timing fingerprint the incident actually leaves:
+* #550 merged at 13:02, touching ``src/keel/github.py`` and three others;
+* #543 had branched on the 8th, **before** that;
+* #543 merged at 15:19 and its commit **removed 41 lines** from ``github.py`` —
+  a file a "label the search input" change has no reason to touch at all.
+
 For every file shared between this merge and pull requests that merged in the window
 (branch point, merge commit), compare the file content as of each overtaking PR's merge
 (its landed version) against the merge commit's content:
@@ -25,7 +35,9 @@ For every file shared between this merge and pull requests that merged in the wi
   the PR's landed version (catching re-added deletions).
 - Blank lines are ignored.
 - A PR that deleted a whole file (`+++ /dev/null`): the file reappearing in the merge
-  commit is drift.
+  commit is drift; staying absent is clean.
+- Unreadable content at either commit is distinguished from confirmed absent files
+  via :data:`FILE_ABSENT`, ensuring failed reads are reported as drift, not stayed deletions.
 - Any unreadable input (missing diff, malformed diff, unreadable file content) stays
   conservative drift.
 
@@ -34,16 +46,35 @@ Pure: lists in, report out. The CLI does every GitHub read.
 
 from __future__ import annotations
 
-import codecs
+import ast
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-#: Report shape version, so a consumer can tell an old report from a new one.
-SCHEMA_VERSION = "keel.merge-verify.v1"
+
+class _FileAbsent:
+    """Sentinel indicating a file is confirmed absent in a commit/tree (#1511)."""
+
+    def __repr__(self) -> str:
+        return "<FILE_ABSENT>"
+
+
+#: Sentinel object representing a file confirmed absent (e.g. 404 or not in tree).
+FILE_ABSENT = _FileAbsent()
+
+#: Report shape version, so a consumer can tell an old report from a new one (#1511).
+SCHEMA_VERSION = "keel.merge-verify.v2"
 
 _HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _split_lines(text: str) -> list[str]:
+    """Split text on newlines (\\r\\n, \\r, \\n) without splitting on form feeds/VT (#1511)."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if text.endswith("\n"):
+        text = text[:-1]
+    return text.split("\n") if text else []
 
 
 @dataclass(frozen=True)
@@ -60,7 +91,7 @@ def _clean_diff_path(raw: str, *, is_new: bool) -> str:
     raw = raw.strip()
     if raw.startswith('"') and raw.endswith('"'):
         try:
-            raw = codecs.escape_decode(raw[1:-1].encode("latin1"))[0].decode("utf-8")
+            raw = ast.literal_eval(raw)
         except Exception:
             raw = raw[1:-1]
     if is_new and raw.startswith("b/"):
@@ -116,7 +147,7 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
         saw_hunk_for_file = False
         return True
 
-    for line in diff_text.splitlines():
+    for line in _split_lines(diff_text):
         if line.startswith("diff --git "):
             if in_hunk:
                 return None
@@ -194,10 +225,11 @@ def extract_added_lines_by_file(diff_text: str | None) -> dict[str, list[str]]:
 def check_multiset_survival(
     added_lines: Sequence[str],
     deleted_lines: Sequence[str],
-    landed_content: str | None,
-    merge_content: str | None,
+    landed_content: str | object | None,
+    merge_content: str | object | None,
     *,
     is_deleted: bool = False,
+    this_pr_added_lines: Sequence[str] | None = None,
 ) -> tuple[int, list[str]]:
     """Check line survival via multiset counting (#1511).
 
@@ -205,15 +237,23 @@ def check_multiset_survival(
     Ignore blank lines only.
     """
     if is_deleted:
-        if merge_content is not None:
-            return 1, ["deleted file reappeared in merge commit"]
-        return 0, []
+        if merge_content is FILE_ABSENT:
+            return 0, []
+        if merge_content is None:
+            return 1, ["unreadable file content"]
+        return 1, ["deleted file reappeared in merge commit"]
 
     if landed_content is None or merge_content is None:
         return 1, ["unreadable file content"]
 
-    landed_lines = [line for line in landed_content.splitlines() if line.strip()]
-    merge_lines = [line for line in merge_content.splitlines() if line.strip()]
+    if landed_content is FILE_ABSENT or merge_content is FILE_ABSENT:
+        return 1, ["file missing in merge commit"]
+
+    assert isinstance(landed_content, str)
+    assert isinstance(merge_content, str)
+
+    landed_lines = [line for line in _split_lines(landed_content) if line.strip()]
+    merge_lines = [line for line in _split_lines(merge_content) if line.strip()]
 
     landed_counts = Counter(landed_lines)
     merge_counts = Counter(merge_lines)
@@ -227,8 +267,14 @@ def check_multiset_survival(
             if line not in violations:
                 violations.append(line)
 
+    excluded_lines = (
+        {line.strip() for line in this_pr_added_lines if line.strip()}
+        if this_pr_added_lines is not None
+        else set()
+    )
+
     for line in deleted_lines:
-        if not line.strip():
+        if not line.strip() or line.strip() in excluded_lines:
             continue
         if merge_counts[line] > landed_counts[line]:
             if line not in violations:
@@ -239,11 +285,12 @@ def check_multiset_survival(
 
 def check_line_survival(
     added_lines: Sequence[str],
-    landed_or_merge_content: str | None,
-    merge_content: str | None = None,
+    landed_or_merge_content: str | object | None,
+    merge_content: str | object | None = None,
     deleted_lines: Sequence[str] | None = None,
     *,
     is_deleted: bool = False,
+    this_pr_added_lines: Sequence[str] | None = None,
 ) -> tuple[int, list[str]]:
     """Check how many added/deleted lines survive in the target file content (#1511).
 
@@ -257,6 +304,7 @@ def check_line_survival(
             landed_content,
             landed_or_merge_content,
             is_deleted=is_deleted,
+            this_pr_added_lines=this_pr_added_lines,
         )
     return check_multiset_survival(
         added_lines,
@@ -264,6 +312,7 @@ def check_line_survival(
         landed_or_merge_content,
         merge_content,
         is_deleted=is_deleted,
+        this_pr_added_lines=this_pr_added_lines,
     )
 
 
@@ -351,17 +400,31 @@ def verify_merge(
 
                     fd = pr_parsed[path]
                     if fd.is_deleted:
-                        if merge_content is not None:
+                        if merge_content is FILE_ABSENT:
+                            continue
+                        if merge_content is None:
                             drifted.setdefault(path, []).append(pr)
                             drift_details.setdefault(path, []).append(
-                                f"deleted file reappeared in merge commit (#{pr})"
+                                f"unreadable merge commit content for {path}"
                             )
+                            continue
+                        drifted.setdefault(path, []).append(pr)
+                        drift_details.setdefault(path, []).append(
+                            f"deleted file reappeared in merge commit (#{pr})"
+                        )
                         continue
 
                     if merge_content is None:
                         drifted.setdefault(path, []).append(pr)
                         drift_details.setdefault(path, []).append(
                             f"unreadable merge commit content for {path}"
+                        )
+                        continue
+
+                    if merge_content is FILE_ABSENT:
+                        drifted.setdefault(path, []).append(pr)
+                        drift_details.setdefault(path, []).append(
+                            f"file missing in merge commit for {path}"
                         )
                         continue
 
@@ -376,6 +439,13 @@ def verify_merge(
                         drifted.setdefault(path, []).append(pr)
                         drift_details.setdefault(path, []).append(
                             f"unreadable landed content for {path} (#{pr})"
+                        )
+                        continue
+
+                    if pr_landed_content is FILE_ABSENT:
+                        drifted.setdefault(path, []).append(pr)
+                        drift_details.setdefault(path, []).append(
+                            f"landed content absent for {path} (#{pr})"
                         )
                         continue
 
@@ -442,8 +512,12 @@ def _report(status: str, reason: str, **extra) -> dict:
         "overtaken": {},
         "unexpected": [],
         "landed_count": 0,
+        # Present on every report, so a consumer never has to distinguish
+        # "complete" from "this key was added later". Set by the caller when a
+        # finding is kept despite an input it could not read.
         "incomplete": False,
         "shared_files": [],
+        "drift_details": {},
     }
     report.update(extra)
     return report
@@ -460,12 +534,15 @@ def render(report: dict) -> str:
         f"keel verify-merge — {report.get('status', 'unknown')}",
         f"  {report.get('reason', '')}",
     ]
+    drift_details = report.get("drift_details") or {}
     for path, prs in (report.get("overtaken") or {}).items():
         if isinstance(prs, int):
             prs_str = f"#{prs}"
         else:
             prs_str = ", ".join(f"#{pr}" for pr in sorted(prs))
         lines.append(f"    {path}  — also changed by {prs_str} after this PR branched")
+        for detail in drift_details.get(path) or []:
+            lines.append(f"      * {detail}")
     for path in report.get("unexpected") or []:
         lines.append(f"    {path}  — not in the PR's own diff")
     return "\n".join(lines)

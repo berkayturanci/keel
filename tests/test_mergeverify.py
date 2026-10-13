@@ -403,11 +403,44 @@ class TestCheckLineSurvival(unittest.TestCase):
             added_lines=[],
             deleted_lines=["old line"],
             landed_content=None,
-            merge_content=None,
+            merge_content=mv.FILE_ABSENT,
             is_deleted=True,
         )
         self.assertEqual(lost_count, 0)
         self.assertEqual(lost, [])
+
+    def test_whole_file_deletion_with_unreadable_merge_content_is_drift(self):
+        lost_count, lost = mv.check_multiset_survival(
+            added_lines=[],
+            deleted_lines=["old line"],
+            landed_content=None,
+            merge_content=None,
+            is_deleted=True,
+        )
+        self.assertEqual(lost_count, 1)
+        self.assertEqual(lost, ["unreadable file content"])
+
+    def test_non_deleted_file_with_file_absent_in_check_multiset_survival(self):
+        lost_count, lost = mv.check_multiset_survival(
+            added_lines=["line"],
+            deleted_lines=[],
+            landed_content="line\n",
+            merge_content=mv.FILE_ABSENT,
+            is_deleted=False,
+        )
+        self.assertEqual(lost_count, 1)
+        self.assertEqual(lost, ["file missing in merge commit"])
+
+    def test_non_deleted_file_with_landed_absent_in_check_multiset_survival(self):
+        lost_count, lost = mv.check_multiset_survival(
+            added_lines=["line"],
+            deleted_lines=[],
+            landed_content=mv.FILE_ABSENT,
+            merge_content="line\n",
+            is_deleted=False,
+        )
+        self.assertEqual(lost_count, 1)
+        self.assertEqual(lost, ["file missing in merge commit"])
 
     def test_unreadable_content_returns_drift(self):
         lost_count, lost = mv.check_multiset_survival(
@@ -637,10 +670,56 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
             landed=["a.py"],
             overtaken={"a.py": [550]},
             diffs={550: diff},
-            file_contents={"a.py": None},
+            file_contents={"a.py": mv.FILE_ABSENT},
             pr_file_contents={550: {"a.py": None}},
         )
         self.assertEqual(report["status"], "clean")
+
+    def test_whole_file_deletion_with_unreadable_merge_content_is_drift(self):
+        diff = (
+            "diff --git a/a.py b/a.py\n"
+            "deleted file mode 100644\n"
+            "--- a/a.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,1 +0,0 @@\n"
+            "-deleted content\n"
+        )
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550]},
+            diffs={550: diff},
+            file_contents={"a.py": None},
+            pr_file_contents={550: {"a.py": None}},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"a.py": [550]})
+        self.assertIn("unreadable merge commit content for a.py", report["drift_details"]["a.py"])
+
+    def test_non_deleted_file_missing_in_merge_commit_is_drift(self):
+        diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+added line\n"
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550]},
+            diffs={550: diff},
+            file_contents={"a.py": mv.FILE_ABSENT},
+            pr_file_contents={550: {"a.py": "added line\n"}},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"a.py": [550]})
+        self.assertIn("file missing in merge commit for a.py", report["drift_details"]["a.py"])
+
+    def test_non_deleted_file_with_landed_content_absent_is_drift(self):
+        diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+added line\n"
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550]},
+            diffs={550: diff},
+            file_contents={"a.py": "added line\n"},
+            pr_file_contents={550: {"a.py": mv.FILE_ABSENT}},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"a.py": [550]})
+        self.assertIn("landed content absent for a.py (#550)", report["drift_details"]["a.py"])
 
     def test_duplicate_identical_additions_where_one_is_removed_reports_drift(self):
         # Codex major & MUST test 5: duplicate identical addition removed
@@ -896,3 +975,55 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
             pr_file_contents={550: {"a.py": "line\n"}},
         )
         self.assertEqual(report["status"], "clean")
+
+    def test_schema_version_is_v2(self):
+        self.assertEqual(mv.SCHEMA_VERSION, "keel.merge-verify.v2")
+        self.assertEqual(repr(mv.FILE_ABSENT), "<FILE_ABSENT>")
+
+    def test_diff_with_form_feed_in_added_line_is_parsed(self):
+        diff = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+line with\x0cformfeed\n"
+        )
+        parsed = mv.parse_diff_by_file(diff)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["a.py"].added_lines, ("line with\x0cformfeed",))
+
+    def test_check_multiset_survival_with_form_feed(self):
+        lost_count, viols = mv.check_multiset_survival(
+            added_lines=["line with\x0cformfeed"],
+            deleted_lines=[],
+            landed_content="line with\x0cformfeed\n",
+            merge_content="line with\x0cformfeed\n",
+        )
+        self.assertEqual(lost_count, 0)
+        self.assertEqual(viols, [])
+
+    def test_check_multiset_survival_with_this_pr_added_lines_excluded(self):
+        # Overtaking PR deleted generic line, but this PR legitimately added it too.
+        # Without this_pr_added_lines it is flagged as re-added deletion; with it, excluded.
+        lost_count, viols = mv.check_multiset_survival(
+            added_lines=[],
+            deleted_lines=["return None"],
+            landed_content="",
+            merge_content="return None\n",
+            this_pr_added_lines=["return None"],
+        )
+        self.assertEqual(lost_count, 0)
+        self.assertEqual(viols, [])
+
+    def test_render_renders_drift_details(self):
+        report = {
+            "status": "drift",
+            "reason": "drift detected",
+            "overtaken": {"a.py": [550]},
+            "drift_details": {"a.py": ["lost line: x", "unreadable content"]},
+        }
+        rendered = mv.render(report)
+        self.assertIn("a.py", rendered)
+        self.assertIn("#550", rendered)
+        self.assertIn("* lost line: x", rendered)
+        self.assertIn("* unreadable content", rendered)

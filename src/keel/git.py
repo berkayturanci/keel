@@ -12,6 +12,7 @@ import os
 import re
 
 from . import tdd
+from .mergeverify import FILE_ABSENT
 from .runner import CommandResult, run_argv
 
 
@@ -456,12 +457,26 @@ def ls_tree(treeish: str, *, cwd: str | None = None, _run=None) -> str | None:
     return result.stdout if result.ok else None
 
 
-def show_file(treeish: str, path: str, *, cwd: str | None = None, _run=None) -> str | None:
-    """Read the content of ``path`` at ``treeish`` via ``git show <treeish>:<path>`` (#1511)."""
+def show_file(treeish: str, path: str, *, cwd: str | None = None, _run=None) -> str | object | None:
+    """Read the content of ``path`` at ``treeish`` via ``git show <treeish>:<path>`` (#1511).
+
+    Returns:
+    - the ``str`` file content if present and read,
+    - ``FILE_ABSENT`` if the path is confirmed absent from ``treeish``,
+    - ``None`` if reading failed (invalid treeish, git failure, etc.).
+    """
     if not treeish or not path:
         return None
     result = run_argv(["git", "show", f"{treeish}:{path}"], cwd=cwd, **_kw(_run))
-    return result.stdout if result.ok else None
+    if result.ok:
+        return result.stdout
+    err = f"{result.stderr} {result.output}".lower()
+    if "does not exist in" in err or "exists on disk, but not in" in err:
+        return FILE_ABSENT
+    ls = run_argv(["git", "ls-tree", treeish, "--", path], cwd=cwd, **_kw(_run))
+    if ls.ok and not ls.stdout.strip():
+        return FILE_ABSENT
+    return None
 
 
 def mktree(listing: str, *, cwd: str | None = None, _run=None) -> str | None:

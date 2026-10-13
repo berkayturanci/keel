@@ -4830,8 +4830,8 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
         landed_set = {p.strip() for p in landed if p.strip()} if landed else set()
         shared_paths = [p for p in (overtaken or {}) if p in landed_set]
         diffs: dict[int, str | None] | None = None
-        file_contents: dict[str, str | None] | None = None
-        pr_file_contents: dict[int, dict[str, str | None]] | None = None
+        file_contents: dict[str, str | object | None] | None = None
+        pr_file_contents: dict[int, dict[str, str | object | None]] | None = None
         if shared_paths:
             diffs = {}
             file_contents = {}

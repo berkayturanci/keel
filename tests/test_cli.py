@@ -11351,9 +11351,9 @@ class TestVerifyMergeCommand(unittest.TestCase):
         diff_by_pr = diff_by_pr or {}
         content_by_path = content_by_path or {}
 
-        def _window(pr, **kw):
+        def _window(pr, *, rest=False, **kw):
             if callable(window):
-                return window(pr)
+                return window(pr, rest=rest)
             if isinstance(window, dict):
                 if str(pr) != "543" and "merge_commit" in window:
                     res = dict(window)
@@ -11383,8 +11383,14 @@ class TestVerifyMergeCommand(unittest.TestCase):
             return None
 
         with (
-            patch("keel.cli.github.pr_merge_window", side_effect=_window),
-            patch("keel.cli.github.rest_pr_merge_window", side_effect=_window),
+            patch(
+                "keel.cli.github.pr_merge_window",
+                side_effect=lambda pr, **kw: _window(pr, rest=False, **kw),
+            ),
+            patch(
+                "keel.cli.github.rest_pr_merge_window",
+                side_effect=lambda pr, **kw: _window(pr, rest=True, **kw),
+            ),
             patch("keel.cli.github.prs_merged_between", return_value=others),
             patch("keel.cli.github.rest_prs_merged_between", return_value=others),
             patch("keel.cli.github.commit_files", return_value=commit_files),
@@ -11392,8 +11398,18 @@ class TestVerifyMergeCommand(unittest.TestCase):
             patch(
                 "keel.cli.github.rest_pr_files", side_effect=lambda pr, **kw: files_by_pr.get(pr)
             ),
-            patch("keel.cli.github.pr_diff", side_effect=lambda pr, **kw: diff_by_pr.get(pr)),
-            patch("keel.cli.github.rest_pr_diff", side_effect=lambda pr, **kw: diff_by_pr.get(pr)),
+            patch(
+                "keel.cli.github.pr_diff",
+                side_effect=lambda pr, **kw: (
+                    diff_by_pr(pr, rest=False) if callable(diff_by_pr) else diff_by_pr.get(pr)
+                ),
+            ),
+            patch(
+                "keel.cli.github.rest_pr_diff",
+                side_effect=lambda pr, **kw: (
+                    diff_by_pr(pr, rest=True) if callable(diff_by_pr) else diff_by_pr.get(pr)
+                ),
+            ),
             patch("keel.cli.git.show_file", side_effect=_git_show),
             patch("keel.cli.github.commit_file_content", side_effect=_gh_content),
         ):
@@ -11799,6 +11815,75 @@ class TestVerifyMergeCommand(unittest.TestCase):
         )
         self.assertEqual(rc, 0)
         self.assertIn("out-of-scope", out)
+
+    def test_overtaking_pr_missing_merge_commit_sha_reports_drift(self):
+        diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line 1\n"
+
+        def _window(pr, **kw):
+            if str(pr) == "543":
+                return {
+                    "branched_at": "2026-08-08T10:00:00Z",
+                    "merged_at": "2026-08-08T15:19:00Z",
+                    "base": "main",
+                    "merge_commit": "7c140f3",
+                }
+            return {
+                "branched_at": "2026-08-08T10:00:00Z",
+                "merged_at": "2026-08-08T13:02:00Z",
+                "base": "main",
+                "merge_commit": "",
+            }
+
+        rc, out, _ = self._run(
+            window=_window,
+            others=[550],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},
+            commit_files=["a.py"],
+            diff_by_pr={550: diff550},
+            content_by_path={"a.py": "line 1\n"},
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("drift", out)
+
+    def test_shared_files_rest_transport_with_drift_calls_rest_readers(self):
+        diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line 1\n"
+        rest_diff_called = []
+        rest_window_called = []
+
+        def _rest_diff(pr, *, rest=False, **kw):
+            if not rest:
+                raise AssertionError("non-REST pr_diff called")
+            rest_diff_called.append(pr)
+            return diff550
+
+        def _rest_window(pr, *, rest=False, **kw):
+            if not rest:
+                raise AssertionError("non-REST pr_merge_window called")
+            rest_window_called.append(pr)
+            return {
+                "branched_at": "2026-08-08T10:00:00Z",
+                "merged_at": "2026-08-08T13:02:00Z",
+                "base": "main",
+                "merge_commit": f"commit_{pr}" if str(pr) != "543" else "7c140f3",
+            }
+
+        rc, out, _ = self._run(
+            window=_rest_window,
+            others=[550],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},
+            commit_files=["a.py"],
+            argv_extra=("--transport", "rest"),
+            diff_by_pr=_rest_diff,
+            content_by_path={
+                ("commit_550", "a.py"): "line 1\n",
+                ("7c140f3", "a.py"): "different\n",
+            },
+            use_git_for_content=False,
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("drift", out)
+        self.assertIn(550, rest_diff_called)
+        self.assertIn(550, rest_window_called)
 
     def test_a_bad_config_path_fails_cleanly(self):
         rc, _, err = run(["verify-merge", "/nope/x.yaml", "--pr", "1"])
