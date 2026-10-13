@@ -163,7 +163,7 @@ def _pr(number, body, draft=False, title="t"):
 
 
 C = "closed completed issue"
-O = "open - issue"
+OPEN = "open - issue"
 
 
 def _router(prs, issue_states=None, tags=None, list_result=None):
@@ -198,7 +198,7 @@ class StaleBlockersTests(unittest.TestCase):
             _pr(50, "Blocked by #50 and #99"),
             _pr(60, None),
         ]
-        rep = self.report(prs=prs, issue_states={"1": C, "2": O, "99": O}, tags={"v2.0": "yes"})
+        rep = self.report(prs=prs, issue_states={"1": C, "2": OPEN, "99": OPEN}, tags={"v2.0": "yes"})
         self.assertTrue(rep["ok"])
         self.assertEqual([10, 30], [p["number"] for p in rep["prs"]])
         ten, thirty = rep["prs"]
