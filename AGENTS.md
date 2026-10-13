@@ -24,8 +24,8 @@ The rules you will hit most often. Details follow below.
   fail-soft wrappers (`runner`, `git`, `github`, `lock`). The pure modules (`config`,
   `model`, `extensions`, `findings`, `gates`, `orchestrator`, `classify`, `ship`,
   `window`, `cli`) must stay deterministic and side-effect-free.
-- **Coverage bar is non-negotiable.** The pure core is held at **100 % line + branch**;
-  the CI gate is `fail_under = 100` (`pyproject.toml`). New core code ships with tests
+- **Coverage bar is non-negotiable.** Every module under `src/keel/` is held at **100% line + branch coverage**;
+  the CI gate is `fail_under = 100` (`pyproject.toml`). New code ships with tests
   that keep it at 100 %.
 - **Coverage is not fix evidence — a revert is.** Because `fail_under = 100` is enforced,
   "Maintained 100% line + branch test coverage across the repository." is true of every merged
@@ -196,7 +196,7 @@ the schema if the contract changes), not this prose.
   reorder backbone steps. `on_fail: block` is permitted only in documented blocking hooks:
   `guard`, `tester`, `test`, and `pre-merge`. The loader is fail-soft.
 - **Tests mirror modules.** Each `src/keel/<m>.py` has `tests/test_<m>.py`. New behaviour
-  comes with tests that hold the core at 100 % line + branch.
+  comes with tests that hold the package at 100% line + branch coverage.
 - **A re-exporting module declares `__all__`.** A name imported only so *other* modules
   can read it from there is spelled `from .x import Y as Y` (which `ruff`'s F401 honours)
   **and** listed in the module's `__all__`: CodeQL's `py/unused-import` counts same-module
@@ -210,7 +210,9 @@ the schema if the contract changes), not this prose.
   reviewers, window, gates, decision).
 - **Docs impact.** When behaviour, config, or the CLI changes, update `docs/keel/` (and
   `README.md`, plus a `changelog.d/<issue>.<type>.md` fragment — never an edit to
-  `CHANGELOG.md` itself) or state `Docs Impact: none` with a reason.
+  `CHANGELOG.md` itself) or state `Docs Impact: none` with a reason. If a public
+  claim changes (swarm status, coverage bar, revert-check numbers), update
+  `docs/keel/claims.yaml`.
 - **A bot's branch is a read-only input.** Never rebase, amend, or push fixes onto a
   pull-request branch opened by an automation (`jules`, `bolt`, `palette`, `sentinel`,
   `dependabot`, `copilot`, `renovate`, any spelling). The bot pushes from its own
