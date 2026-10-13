@@ -88,6 +88,11 @@ Query through the selected GitHub transport for issues closed and PRs merged sin
 Include the effective agent, tier, gate summary, merge decision, and capture status from
 the structured ledger where available; use GitHub only to fill timeline gaps.
 
+Also run `keel stale-blockers --root . --json` (read-only) and list under "Shipped" every
+open PR it reports: its stated blocker (`blocked by #N`, `do not merge before #N|<tag>`)
+has cleared, so the PR may be ready to move. A blocker with state `unknown` was unreadable
+and is not cleared; if the command exits non-zero, note that blocker state was unavailable.
+
 ## Step 3 — Project health/telemetry signals (project-specific)
 
 If the project provides a health/telemetry brief (crash reports, performance
@@ -138,4 +143,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=skills command=morning keel_version=1.32.0 source_sha256=2fafee4f1970172e7ff962be695d442e8cfeefa2e2c73e6ce7578b4a79446d52 generated_sha256=03741291ed0a861a2b3093dc077bdac4a7cb6552ba26d213a78c1f2fab24f4bd -->
+<!-- keel-generated: surface=skills command=morning keel_version=1.32.0 source_sha256=3c163d67ba1e5031f060d67f2f775d17f6e3118f274bd3418ba1a23d98767a52 generated_sha256=f135644db1dc66f7b7691b3fc2110af5cac17d0e345bfdc820ccaee4b2d59d1a -->

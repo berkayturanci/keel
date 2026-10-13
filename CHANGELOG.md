@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`keel stale-blockers` lists open PRs whose stated blocker has cleared** (#1512). A PR body that says `blocked by #N`, `depends on #N` or `do not merge before #N|<tag>` is checked against GitHub: the issue or PR closed or merged, or the tag now exists. Read-only and fail-soft: an unreadable blocker is `unknown`, never cleared. `/keel:stale-prs` and `/keel:morning` run it and surface the result.
+
 ## [1.32.0] - 2026-10-12
 
 - Fixes from the 2026-10-12 operator feedback round: `keel review` and `keel ship` find a missing `agent:` label before the CI wait and print the exact `gh pr edit` command; `keel merge` names the pending or failing checks, a branch behind its base or a merge conflict instead of echoing GitHub's merge state (the bare `UNSTABLE` text stays only when no check is named).

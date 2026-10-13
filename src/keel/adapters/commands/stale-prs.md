@@ -96,6 +96,24 @@ A PR both behind and a stale draft → drift; a clean stale draft → abandoned.
 merge-state cannot be classified and that do not match the abandoned criteria are dropped
 with a one-line stdout note and no comment.
 
+## Step 2b — blocker-cleared PRs (read-only)
+
+A PR can be idle only because its body says it waits on something — `blocked by #N`,
+`depends on #N`, `do not merge before #N` / `before <tag>` — and that something has since
+landed. Activity age never shows it. Run the read-only check and surface the result,
+independent of the staleness cutoff:
+
+```bash
+keel stale-blockers --root . --json
+```
+
+For each PR in `prs`, add a line to the summary naming the cleared blockers, and say
+`all blockers cleared` when `all_cleared` is true (otherwise list the still-pending or
+`unknown` ones). A blocker whose state is `unknown` could not be read and is never treated
+as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
+could not be read and carry on. This step never comments, edits or merges; a cleared
+blocker is a prompt for the author or `/keel:ship`, not an action taken here.
+
 ## Step 3 — build the per-PR triage comment
 
 Build a comment body whose **literal first line** is a codename `STALE-PRS-<DATE>-<UTC_TIMESTAMP>`
@@ -153,7 +171,7 @@ merging here.
 
 Print a summary table: PR · title · bucket · action, where action is one of `commented`,
 `already-commented-today`, `merge-pushed`, `conflict-skipped`, `dry-run-noted`,
-`error-skipped — <reason>`. If no PR is stale at the threshold, print a single line
+`error-skipped — <reason>`, followed by a "Blocker cleared" list from Step 2b. If no PR is stale at the threshold, print a single line
 `No stale PRs at threshold <days> days.`
 
 ## Stop conditions / invariants

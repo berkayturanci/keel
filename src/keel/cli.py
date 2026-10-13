@@ -9073,6 +9073,17 @@ def _cmd_cost_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_stale_blockers(args: argparse.Namespace) -> int:
+    from . import blockers
+
+    report = blockers.stale_blockers(limit=args.limit, cwd=args.root)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(blockers.render(report))
+    return 0 if report["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -11506,6 +11517,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_cost.add_argument("--root", default=".", help="repo root containing .keel/activity")
     p_cost.add_argument("--json", action="store_true", help="emit structured JSON")
     p_cost.set_defaults(func=_cmd_cost_report)
+
+    p_sb = sub.add_parser(
+        "stale-blockers",
+        help="list open PRs whose stated blocker (issue closed, tag created) has cleared",
+    )
+    p_sb.add_argument("--root", default=".", help="repo root (the checkout `gh` reads)")
+    p_sb.add_argument("--limit", type=int, default=200, help="open PRs to read (default 200)")
+    p_sb.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_sb.set_defaults(func=_cmd_stale_blockers)
 
     return parser
 

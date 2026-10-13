@@ -3011,6 +3011,27 @@ so the working tree is left clean rather than mid-revert, and reports the git ou
 
 Exit 0 when the revert commit was created, 1 otherwise.
 
+## `keel stale-blockers [--root DIR] [--limit N] [--json]`
+
+List open pull requests whose **stated blocker has cleared** (#1512). It reads each open PR's
+body for `blocked by #N`, `depends on #N`, `waiting on #N`, `blocked until #N` (several refs may
+share one phrase: `#1, #2 and #3`) and `do not merge before|until #N` / `before <tag>`, then asks
+GitHub through `gh api` whether each one is done: an issue or PR is cleared once closed or merged
+(`repos/{owner}/{repo}/issues/N`), a tag once `repos/{owner}/{repo}/git/ref/tags/<tag>` exists.
+Fenced code, inline code that quotes a phrase, HTML comments, negations (`not blocked by`), and
+`owner/repo#N` references are ignored.
+
+Read-only and fail-soft: a blocker that cannot be read (offline, no auth, odd output) has state
+`unknown` and is **never** reported as cleared. A PR is listed when at least one blocker is
+`cleared`; `all_cleared` is true only when every one is. `--limit` caps the open PRs read
+(default 200). Exit 0 on success (even with an empty list), 1 when the PR list itself cannot be
+read. `/keel:stale-prs` and `/keel:morning` run it.
+
+```json
+{"ok": true, "error": null, "prs": [{"number": 42, "title": "...", "url": "...", "draft": true,
+  "all_cleared": true, "blockers": [{"kind": "issue", "ref": "3177", "state": "cleared"}]}]}
+```
+
 ## `keel cost-report [--root DIR] [--json]`
 
 Report recorded or estimated token counts, estimated USD cost and per-model analytics from

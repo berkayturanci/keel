@@ -85,6 +85,11 @@ Query through the selected GitHub transport for issues closed and PRs merged sin
 Include the effective agent, tier, gate summary, merge decision, and capture status from
 the structured ledger where available; use GitHub only to fill timeline gaps.
 
+Also run `keel stale-blockers --root . --json` (read-only) and list under "Shipped" every
+open PR it reports: its stated blocker (`blocked by #N`, `do not merge before #N|<tag>`)
+has cleared, so the PR may be ready to move. A blocker with state `unknown` was unreadable
+and is not cleared; if the command exits non-zero, note that blocker state was unavailable.
+
 ## Step 3 — Project health/telemetry signals (project-specific)
 
 If the project provides a health/telemetry brief (crash reports, performance
