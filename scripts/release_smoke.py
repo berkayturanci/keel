@@ -8,6 +8,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 CONSUMER_SPECIFIC_TERMS = (
@@ -25,9 +27,107 @@ CONSUMER_SPECIFIC_TERMS = (
 )
 
 
+# pip's wording when the index does not (yet) list a version. Only a sentence
+# whose direct object is the requested distribution means "wait and try again";
+# any other failure is a real defect (#1526).
+NOT_FOUND_SENTENCES = (
+    "no matching distribution found for",
+    "could not find a version that satisfies the requirement",
+)
+# pip's own words when the version exists but its Requires-Python excludes this
+# interpreter: the same two not-found lines follow, and waiting cannot help.
+PERMANENT_MARKERS = ("ignored the following versions", "requires-python")
+INSTALL_ATTEMPTS = 6
+INSTALL_INTERVAL_SECONDS = 20
+
+
 def _run(argv: list[str], *, cwd: Path | None = None) -> str:
-    result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, check=True)
+    """Run a command; on failure print it and its output before raising (#1526).
+
+    With ``capture_output=True`` a ``CalledProcessError`` traceback carries only
+    the exit status, so the job log never said why ``pip install`` failed.
+    """
+    try:
+        result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"command failed (exit {exc.returncode}): {' '.join(argv)}", file=sys.stderr, flush=True
+        )
+        if exc.stdout:
+            print(f"--- stdout ---\n{exc.stdout}", file=sys.stderr, flush=True)
+        if exc.stderr:
+            print(f"--- stderr ---\n{exc.stderr}", file=sys.stderr, flush=True)
+        raise
     return result.stdout
+
+
+def _normalise(text: str) -> str:
+    """Lower-case and fold ``-``/``_``/``.`` runs, as PEP 503 does for names."""
+    return re.sub(r"[-_.]+", "-", text.lower())
+
+
+def _distribution_name(requirement: str) -> str:
+    return _normalise(re.split(r"[\s=<>!~\[;@(]", requirement.strip(), maxsplit=1)[0])
+
+
+def _is_not_found(exc: subprocess.CalledProcessError, requirement: str) -> bool:
+    """True when pip says the *requested* distribution is not on the index yet.
+
+    The requested name must be the direct object of the not-found sentence. A
+    missing dependency prints "... the requirement <dep> (from <requested>==v)",
+    which names ours only in the parenthesis, and a Requires-Python exclusion
+    (output with "Ignored the following versions" or "Requires-Python") is
+    permanent; both are real defects and fail at once.
+    """
+    name = _distribution_name(requirement)
+    if not name:
+        return False
+    output = f"{exc.stdout or ''}\n{exc.stderr or ''}"
+    if any(marker in output.lower() for marker in PERMANENT_MARKERS):
+        return False
+    sentences = "|".join(re.escape(sentence) for sentence in NOT_FOUND_SENTENCES)
+    direct = re.compile(rf"(?:{sentences})\s+{re.escape(name)}(?![a-z0-9-])")
+    return any(direct.search(_normalise(line)) for line in output.splitlines())
+
+
+def _pip_install(
+    pip: Path,
+    install_args: list[str],
+    *,
+    retry: bool,
+    requirement: str = "",
+    attempts: int = INSTALL_ATTEMPTS,
+    interval: int = INSTALL_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Install, retrying only a published requirement the index cannot find yet.
+
+    A just-uploaded release can be missing from the runner's view of the simple
+    index for a while; a local wheel never is, so ``retry`` is False for those.
+    """
+    if not retry:
+        _run([str(pip), "install", *install_args])
+        return
+    argv = [str(pip), "install", "--no-cache-dir", *install_args]
+    for attempt in range(1, attempts + 1):
+        try:
+            _run(argv)
+            return
+        except subprocess.CalledProcessError as exc:
+            if not _is_not_found(exc, requirement):
+                raise
+        if attempt < attempts:
+            print(
+                f"index cannot resolve the requirement yet (attempt {attempt}/{attempts}); "
+                f"retrying in {interval}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            sleep(interval)
+    raise SystemExit(
+        f"TIMEOUT: pip could not find the requirement in {attempts} attempts "
+        f"over about {(attempts - 1) * interval}s"
+    )
 
 
 def _venv_bin(root: Path, name: str) -> Path:
@@ -55,6 +155,11 @@ def _install_target(args: argparse.Namespace) -> tuple[list[str], str]:
         return pip_args + [args.requirement], args.requirement
     wheel = Path(args.wheel) if args.wheel else _find_wheel(Path(args.dist_dir))
     return pip_args + [str(wheel)], str(wheel)
+
+
+def _installs_published(args: argparse.Namespace) -> bool:
+    """True when the target comes from an index (retry-worthy), not a local file."""
+    return bool(args.requirement)
 
 
 def _adapter_count(python: Path) -> int:
@@ -95,7 +200,12 @@ def smoke(args: argparse.Namespace) -> dict[str, object]:
         keel = _venv_bin(venv, "keel")
 
         install_args, target = _install_target(args)
-        _run([str(pip), "install", *install_args])
+        _pip_install(
+            pip,
+            install_args,
+            retry=_installs_published(args),
+            requirement=args.requirement or "",
+        )
 
         help_text = _run([str(keel), "--help"])
         version_text = _run([str(keel), "version"]).strip()
