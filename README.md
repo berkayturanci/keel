@@ -25,7 +25,7 @@
 2. **keel's CLI enforces the backbone.** At each of the fixed steps `s0`–`s12` the agent asks
    `keel` for the plan, the gates, the reviewers and the evidence it owes. `keel ship` is a dry
    assessment: the agent commits, pushes and opens the pull request. The CLI's own writes are
-   these. On GitHub: the merge `keel merge` makes, the lesson commit `keel capture-land` pushes
+   these. On GitHub: the merge `keel merge` makes (`keel finish` chains it with `keel review --live` and `keel ship --live`), the lesson commit `keel capture-land` pushes
    onto the pull request's branch (the base branch without `--onto`), the verdict and closure
    comments `keel post-comment` and `keel review --live` post or update, the labels
    `keel doctor --fix` creates, and the branch and pull request per cluster that the experimental
