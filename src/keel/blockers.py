@@ -47,7 +47,9 @@ _REF_LIST = rf"(?P<refs>{_ITEM}(?:{_SEP}{_ITEM})*)"
 #: ``depends on: PR #N``, ``waiting on #1, #2, and #3``, or ``Depends on:`` and a bullet per
 #: ref. ``owner/repo#N`` does not match (the target must start with ``#N``, optionally after
 #: ``PR``/``issue``), so it is never resolved against the wrong repository.
-_AFTER_BLOCKED_RE = re.compile(rf"\s*:?\s*(?:[-*+]\s+)?{_REF_LIST}", re.IGNORECASE)
+_AFTER_BLOCKED_RE = re.compile(
+    rf"[ \t]*:?[ \t]*(?:\n[ \t]*)?(?:[-*+][ \t]+)?{_REF_LIST}", re.IGNORECASE
+)
 #: Phrases that are also ordinary nouns: "Upgrade dependency #123" quotes an upstream issue
 #: number, so they only count when written as a label ("Dependency: #123").
 _NOUN_PHRASES = frozenset({"dependency", "needs dependency"})
@@ -85,7 +87,9 @@ _NEGATION_RE = re.compile(
     r"(?:currently\s+|really\s+|yet\s+)?$",
     re.IGNORECASE,
 )
-_FENCE_RE = re.compile(r"(?:```|~~~).*?(?:```|~~~|\Z)", re.DOTALL)
+#: A terminated fence only: a stray unterminated opener must not swallow (hide) the rest of
+#: the body, so what follows it is still read.
+_FENCE_RE = re.compile(r"(?:```|~~~).*?(?:```|~~~)", re.DOTALL)
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _INLINE_CODE_RE = re.compile(r"`([^`\n]*)`")
 #: ``[#12](https://...)`` reads as its link text; a link whose text carries no ``#N`` keeps
@@ -115,15 +119,20 @@ def _unwrap_inline(match: re.Match[str]) -> str:
     return inner
 
 
-def _own_link(url: str, repo: str | None) -> bool:
-    """True when ``url`` points at this repository's own issues/pulls.
+def _own_link(label: str, url: str, repo: str | None) -> bool:
+    """True when ``url`` points at this repository's own issue/PR *and* is the one ``label`` names.
 
     A root-relative ``/issues/N`` or ``/pull/N`` (or a bare ``#N``) is this repository's. A
     protocol-relative ``//host/...`` or ``../other/...`` path is not, and an absolute URL
-    counts only when ``repo`` (``owner/name``) is known and matches.
+    counts only when ``repo`` (``owner/name``) is known and matches. A link whose URL names a
+    different number than its label (``[#12](.../issues/99)``) is not read as ``#12``.
     """
     if url.startswith("//"):
-        url = "https:" + url
+        return False
+    named = re.search(r"(?:issues|pull)/(\d+)", url)
+    labelled = re.search(r"#(\d+)", label)
+    if named and labelled and named.group(1) != labelled.group(1):
+        return False
     if not re.match(r"[a-z][a-z0-9+.-]*:", url, re.IGNORECASE):
         return bool(re.match(r"(?:/?(?:issues|pull)/\d+|#\d+)", url))
     if repo is None:
@@ -144,11 +153,11 @@ def _unwrap_link(match: re.Match[str], repo: str | None) -> str:
     label, url = match.groups()
     if "#" not in label:
         return f"{label} {url}"
-    return label if _own_link(url, repo) else label.replace("#", "external#")
+    return label if _own_link(label, url, repo) else label.replace("#", "external#")
 
 
 def _prose(body: str, repo: str | None) -> str:
-    text = _HTML_COMMENT_RE.sub(" ", body)
+    text = _HTML_COMMENT_RE.sub(" ", body.replace("\r\n", "\n").replace("\r", "\n"))
     text = _FENCE_RE.sub(" ", text)
     text = _INLINE_CODE_RE.sub(_unwrap_inline, text)
     text = _LINK_RE.sub(lambda m: _unwrap_link(m, repo), text)
@@ -184,15 +193,16 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
     for m in BLOCKED_PHRASE_RE.finditer(text):
         if _NEGATION_RE.search(text[: m.start()]):
             continue
-        if m.group(1).lower() in _NOUN_PHRASES and not text[m.end() :].lstrip(" \t").startswith(
-            ":"
-        ):
+        label = m.group(1).lower() in _NOUN_PHRASES
+        if label and not text[m.end() :].lstrip(" \t").startswith(":"):
             continue
         if NON_BLOCKING_DEPENDENCY_RE.match(text, m.start()):
             continue
         ref = _AFTER_BLOCKED_RE.match(text, m.end())
         if ref is None:
-            incomplete = incomplete or _unread_target(text, m.end())
+            # "Dependency: lodash (#123)" is a changelog line, not a blocker: a label that
+            # is not followed by refs is not worth a "could not be read" flag.
+            incomplete = incomplete or (not label and _unread_target(text, m.end()))
             continue
         found.extend(Blocker(ISSUE, n) for n in re.findall(r"\d+", ref.group("refs")))
         incomplete = incomplete or _has_more(text, ref.end())
@@ -205,10 +215,12 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
             continue
         if target.group("issue"):
             found.append(Blocker(ISSUE, re.sub(r"\D", "", target.group("issue"))))
-        elif ".." in target.group("tag") or target.group("tag").endswith("/"):
-            incomplete = True  # not a tag name git can hold; never put it in an API path
         else:
-            found.append(Blocker(TAG, target.group("tag").rstrip(".")))
+            tag = target.group("tag").rstrip(".")
+            if ".." in tag or tag.endswith("/"):
+                incomplete = True  # not a tag name git can hold; never put it in an API path
+            else:
+                found.append(Blocker(TAG, tag))
         incomplete = incomplete or _has_more(text, target.end())
     seen: set[Blocker] = set()
     ordered: list[Blocker] = []
@@ -359,7 +371,7 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
     # Only a body with an absolute link needs to know which repository is "this" one.
     repo = (
         _repo_slug(cwd, _run)
-        if any(isinstance(r, dict) and "](http" in str(r.get("body")) for r in rows)
+        if any(isinstance(r, dict) and "](http" in str(r.get("body")).lower() for r in rows)
         else None
     )
     resolved: dict[Blocker, tuple[str, str | None]] = {}
@@ -390,8 +402,8 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
         prs.append(
             {
                 "number": number,
-                "title": row.get("title", ""),
-                "url": row.get("url", ""),
+                "title": row.get("title") or "",
+                "url": row.get("url") or "",
                 "draft": bool(row.get("isDraft")),
                 "blockers": entries,
                 "incomplete": incomplete,

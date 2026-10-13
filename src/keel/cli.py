@@ -11874,7 +11874,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sb = sub.add_parser(
         "stale-blockers",
-        help="list open PRs whose stated blocker (issue closed, tag created) has cleared",
+        help=(
+            "list open PRs whose stated blocker (PR merged, issue completed, tag created) "
+            "has cleared, was abandoned or could not be checked"
+        ),
     )
     p_sb.add_argument("--root", default=".", help="repo root (the checkout `gh` reads)")
     p_sb.add_argument(

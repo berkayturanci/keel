@@ -86,9 +86,44 @@ class ParseTests(unittest.TestCase):
             "~~~\ndo not merge before #2\n~~~\n"
             "<!-- depends on #3 -->\n"
             "Use `blocked by #4` in a body.\n"
-            "```\nunterminated fence blocked by #5"
         )
         self.assertEqual((), blockers.parse_blockers(body))
+
+    def test_unterminated_fence_does_not_hide_the_rest(self):
+        self.assertEqual(["5"], issues("```\nstray opener\nBlocked by #5"))
+
+    def test_crlf_bodies(self):
+        for body in (
+            "Depends on:\r\n- #1\r\n- #2\r\n- #3\r\n\r\nNotes",
+            "Depends on:\r- #1\r- #2\r- #3",
+        ):
+            self.assertEqual((("1", "2", "3"), False), self.refs(body), body)
+        self.assertEqual((("5",), False), self.refs("Do not merge before #5\r\nThanks"))
+        self.assertEqual(((), True), self.refs("Depends on:\r\n- owner/repo#9\r\n"))
+        self.assertEqual(((), True), self.refs("Blocked by:\r\n- https://x.test/9\r\n"))
+        self.assertEqual((("1",), True), self.refs("Depends on #1\r\n- Fixes #5\r\n"))
+        self.assertEqual((("1",), False), self.refs("Depends on #1\r\n\r\n- Fixes #5"))
+
+    def test_protocol_relative_and_mismatched_links_are_foreign(self):
+        for body in (
+            "Blocked by [#12](//github.com/me/keel/issues/12)",
+            "Blocked by [#12](https://github.com/me/keel/issues/99)",
+            "Blocked by [#12](/issues/99)",
+            "Blocked by [#12](../keel/issues/12)",
+        ):
+            self.assertEqual(((), True), self.refs(body, "me/keel"), body)
+        self.assertEqual((("12",), False), self.refs("Blocked by [#12](/pull/12)", "me/keel"))
+
+    def test_tag_trailing_dot_slash_is_refused(self):
+        self.assertEqual(((), True), self.refs("do not merge before v1/."))
+
+    def test_label_followed_by_prose_is_not_flagged(self):
+        for body in ("Upgrade dependency: lodash (#123)", "Dependency: bump, see #4"):
+            self.assertEqual(((), False), self.refs(body), body)
+
+    def test_first_target_may_not_sit_past_a_blank_line(self):
+        self.assertEqual(((), False), self.refs("Blocked by\n\n#5 is the next ticket"))
+        self.assertEqual((("5",), False), self.refs("Blocked by\n#5"))
 
     def test_inline_code_quoting_a_phrase_is_not_a_claim(self):
         for body in ("Use `do not merge before #2` in a body.", "Say `depends on #3` here."):
@@ -552,6 +587,16 @@ class StaleBlockersTests(unittest.TestCase):
         self.assertIn("  - #77: unknown (network down)", text)
         self.assertIn("2 blocker(s) could not be checked", text)
         self.assertNotIn("No open PRs", text)
+
+    def test_uppercase_scheme_still_looks_up_the_repository(self):
+        link = "Blocked by [#1](HTTPS://github.com/me/keel/issues/1)"
+        rep = self.report(prs=[_pr(5, link)], issue_states={"1": C})
+        self.assertTrue(rep["prs"][0]["all_cleared"])
+
+    def test_null_title_and_url_render_as_empty(self):
+        row = {"number": 5, "title": None, "url": None, "isDraft": False, "body": "Blocked by #1"}
+        rep = self.report(prs=[row], issue_states={"1": C})
+        self.assertEqual(("", ""), (rep["prs"][0]["title"], rep["prs"][0]["url"]))
 
     def test_repo_slug_lookup(self):
         link = "Blocked by [#1](https://github.com/me/keel/issues/1)"

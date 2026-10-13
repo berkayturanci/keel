@@ -3175,9 +3175,13 @@ straight or curly apostrophe, `must not`, `should not`, `shouldn't`, `cannot`, `
 `the pull request` or `it` may follow `merge`). Then it asks GitHub through `gh api` whether each
 referenced blocker is done.
 
-**The parsing invariant.** Every blocker-phrase occurrence is found first, then a strict target
-grammar is tried right after it. The occurrence ends in exactly one of two outcomes: its references
-were captured, or the PR is marked `incomplete`. Nothing is silently dropped.
+**The parsing invariant.** Every occurrence of a *recognised* phrase (the list above, and no other)
+is found first, then a strict target grammar is tried right after it. The occurrence ends in exactly
+one of two outcomes: its references were captured, or the PR is marked `incomplete`. A recognised
+phrase is never silently dropped. A phrase that is not in the list is not detected at all and
+produces no flag of any kind: `Blocked on #5`, `Waiting for #5`, `Stacked on #5`, `Requires #5`,
+`Merge after #5` and `Do not merge this PR into main until #5` are all invisible to this command.
+Bodies with `\r\n` or `\r` line endings are read like `\n` ones.
 
 - **Strict target grammar:** items are `#N`, `PR #N`, `PR#N`, `issue #N` or `pull request #N`,
   joined by `,`, `, and`, `, or`, `and`, `or`, `/`, `&`, `+`, or written as a markdown bullet list
@@ -3210,8 +3214,8 @@ were captured, or the PR is marked `incomplete`. Nothing is silently dropped.
 **A failed read is never silence.** Anything else (offline, no auth, rate limit, a 5xx, odd output)
 is `unknown`, never cleared. A PR with an `unknown` blocker is listed, each such entry carries a
 `reason`, the report's `unknown_blockers` counts the distinct blockers that could not be read, the
-text output says how many, and the command exits **2**. An empty list with exit 0 therefore means
-every blocker was read.
+text output says how many, and the command exits **2**. An empty list with exit 0 and `truncated: false`
+therefore means every blocker the command recognised was read, not that no PR is blocked.
 
 Read-only and fail-soft. `all_cleared` is true only when every blocker is cleared and the list is
 not `incomplete`. `--limit` (a positive integer, default 200) caps the open PRs read; `truncated` is
