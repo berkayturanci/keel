@@ -197,8 +197,19 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(((), True), self.refs("do not merge before v1/."))
 
     def test_label_followed_by_prose_is_not_flagged(self):
-        for body in ("Upgrade dependency: lodash (#123)", "Dependency: bump, see #4"):
+        for body in ("Upgrade dependency: lodash", "Dependency: bump"):
             self.assertEqual(((), False), self.refs(body), body)
+
+    def test_token_accounting_unreadable_targets_are_incomplete(self):
+        cases = (
+            ("Blocked by #1\nDependency: owner/repo#9", ("1",), True),
+            ("Dependency: owner/repo#9", (), True),
+            ("Needs dependency: https://github.com/o/r/issues/9", (), True),
+            ("Blocked by #1 and https://example.com/ticket/9", ("1",), True),
+            ("Blocked by #1 (merged) and #2", ("1",), True),
+        )
+        for body, want_refs, want_incomplete in cases:
+            self.assertEqual((want_refs, want_incomplete), self.refs(body), body)
 
     def test_first_target_may_not_sit_past_a_blank_line(self):
         self.assertEqual(((), False), self.refs("Blocked by\n\n#5 is the next ticket"))
@@ -253,6 +264,8 @@ class ParseTests(unittest.TestCase):
             "Blocked by [the auth work](https://github.com/o/r/issues/12)",
             "Dependencies: #1, #2 -- blocked by o/r#12",
             "Blocked by <https://github.com/o/r/pull/12>",
+            "Upgrade dependency: lodash (#123)",
+            "Dependency: bump, see #4",
         ):
             self.assertTrue(blockers.scan_blockers(body)[1], body)
 
@@ -621,6 +634,27 @@ class StaleBlockersTests(unittest.TestCase):
         rep = self.report(prs=[_pr(6, "Blocked by #1")], issue_states={"1": C})
         self.assertFalse(rep["prs"][0]["incomplete"])
         self.assertTrue(rep["prs"][0]["all_cleared"])
+
+    def test_token_accounting_stale_blockers_reports_incomplete_and_not_dropped(self):
+        rep = self.report(
+            prs=[
+                _pr(10, "Blocked by #1\nDependency: owner/repo#9"),
+                _pr(20, "Dependency: owner/repo#9"),
+                _pr(30, "Needs dependency: https://github.com/o/r/issues/9"),
+                _pr(40, "Blocked by #1 and https://example.com/ticket/9"),
+                _pr(50, "Blocked by #1 (merged) and #2"),
+            ],
+            issue_states={"1": C, "2": C},
+        )
+        self.assertEqual([10, 20, 30, 40, 50], [p["number"] for p in rep["prs"]])
+        for pr in rep["prs"]:
+            self.assertTrue(pr["incomplete"], pr)
+            self.assertFalse(pr["all_cleared"], pr)
+        self.assertEqual(["1"], [e["ref"] for e in rep["prs"][0]["blockers"]])
+        self.assertEqual([], rep["prs"][1]["blockers"])
+        self.assertEqual([], rep["prs"][2]["blockers"])
+        self.assertEqual(["1"], [e["ref"] for e in rep["prs"][3]["blockers"]])
+        self.assertEqual(["1"], [e["ref"] for e in rep["prs"][4]["blockers"]])
 
     def test_pr_with_only_unreadable_refs_is_reported(self):
         rep = self.report(

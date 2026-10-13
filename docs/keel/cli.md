@@ -3175,11 +3175,10 @@ straight or curly apostrophe, `must not`, `should not`, `shouldn't`, `cannot`, `
 `the pull request` or `it` may follow `merge`). Then it asks GitHub through `gh api` whether each
 referenced blocker is done.
 
-**The parsing invariant.** Every occurrence of a *recognised* phrase (the list above, and no other)
-is found first, then a strict target grammar is tried right after it. The occurrence ends in exactly
-one of two outcomes: its references were captured, or the PR is marked `incomplete`. A recognised
-phrase is never silently dropped. A phrase that is not in the list is not detected at all and
-produces no flag of any kind: `Blocked on #5`, `Waiting for #5`, `Stacked on #5`, `Requires #5`,
+**The parsing invariant.** For a recognised phrase, every reference-like token in its zone is either
+read as a blocker or the PR is marked `incomplete`. A recognised phrase is never silently dropped, and
+`all_cleared` is never certified over unread references. A phrase that is not in the list is not detected
+at all and produces no flag of any kind: `Blocked on #5`, `Waiting for #5`, `Stacked on #5`, `Requires #5`,
 `Merge after #5` and `Do not merge this PR into main until #5` are all invisible to this command.
 Bodies with `\r\n` or `\r` line endings are read like `\n` ones.
 
@@ -3188,20 +3187,21 @@ Bodies with `\r\n` or `\r` line endings are read like `\n` ones.
   on the lines directly under the phrase (a blank line ends the list). A `before` target is `#N`,
   a `v`-prefixed tag (`v2`, `v1.2.0`) or a three-part version (`1.2.0`; it checks for a tag named
   exactly that, not `v1.2.0`). `5pm`, `10.30` and `2026.10.15` are not tags.
-- **Incomplete:** if the strict grammar captures nothing, or leaves something reference-like behind
-  (`#1 and owner/repo#9`, a URL, `owner/repo#9` as the first bullet, a second issue or tag target
-  after a `before`, a tag containing `..`), the PR gets `incomplete: true` and `all_cleared` is
-  never true for it. "Reference-like" means a `#N`, an issue or pull path, or a URL on the rest of
-  the phrase's line (or in the bullet block under a phrase that ends its line). Prose with none of
-  those ("behaviour depends on the config") is not flagged. A PR that read nothing at all is listed
-  with `blockers: []` ("blocker reference could not be read"). The parser errs toward flagging, so a
-  phrase with an unrelated `#N` later on its line is over-flagged.
-- **Not a blocker phrase:** the bare noun `dependency` / `needs dependency` without a colon
-  ("Upgrade dependency lodash (#123)"), and `Depends on: none`. Fenced code, inline code that quotes
-  a phrase, HTML comments, blockquote lines (`> ...`, including nested `> >`), text collapsed inside
-  `<details>...</details>` blocks (case-insensitive, nested, or unterminated; bot-pasted release notes),
-  and negations (`not blocked by`, and `previously` / `formerly` / `was` just before the phrase;
-  older history further back is not detected) are ignored.
+- **Zone and token accounting:** for a recognised phrase, its zone spans the rest of the line (bounded
+  by any subsequent blocker phrase) plus any bullet block directly below it (when the phrase ends its
+  line, or contiguous bullet lines under it). Reference-like tokens in the zone are `#N`, foreign
+  `owner/repo#N`, URLs, `/issues/N` or `/pull/N` paths, and tag-like targets. If the number of tokens
+  captured by the strict grammar differs from the number of reference-like tokens in the zone, the PR
+  is marked `incomplete: true` and `all_cleared` is never true for it. A PR that read nothing at all is
+  listed with `blockers: []` ("blocker reference could not be read").
+- **Deliberately not read:** negated or historical phrases (`not blocked by`, `no longer blocked by`,
+  `previously` / `formerly` / `was` just before the phrase), phrases with no reference-like token at
+  all ("behaviour depends on the config", `Dependency: bump`, "do not merge before release"), and
+  unrecognised phrasings (`blocked on`, `waiting for`, `stacked on`, `requires`). Also ignored as non-claims:
+  the bare noun `dependency` / `needs dependency` without a colon ("Upgrade dependency lodash (#123)"),
+  `Depends on: none`, fenced code, inline code quoting a phrase, HTML comments, blockquote lines
+  (`> ...`, including nested `> >`), and text collapsed inside `<details>...</details>` blocks
+  (case-insensitive, nested, or unterminated; bot-pasted release notes).
 - **Markdown:** `**#12**`, `_#12_`, `**Blocked by:** #12` and a link whose text is `#12` read as
   `#12` when the link is to this repository's issue or PR (root-relative, or absolute and matching
   `gh repo view`). The same label over another repository's URL (including `//host/...` and

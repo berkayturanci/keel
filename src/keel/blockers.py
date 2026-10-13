@@ -38,11 +38,8 @@ _ITEM = r"(?:(?:pull request|pr|issue)s?\s*)?#\d+"
 _SEP = r"(?:\s*(?:,\s*(?:(?:and|or)\b\s*)?|&|/|\+|(?:and|or)\b)\s*|[ \t]*\n[ \t]*[-*+][ \t]+)"
 _REF_LIST = rf"(?P<refs>{_ITEM}(?:{_SEP}{_ITEM})*)"
 # --- The one parsing invariant (#1512) ------------------------------------------------
-# Every blocker-phrase occurrence is found first with a phrase-only regex, then the strict
-# target grammar is tried right after it. The occurrence ends in exactly one of:
-#   (a) references captured (and nothing readable-looking left over), or
-#   (b) ``incomplete = True``.
-# There is no third outcome in which a phrase is silently dropped.
+# For every recognised blocker phrase (including the label forms), every reference-like
+# token in its zone is either read as a blocker or the PR is marked incomplete.
 #: The strict grammar for what may follow a blocked phrase: ``blocked by #N``,
 #: ``depends on: PR #N``, ``waiting on #1, #2, and #3``, or ``Depends on:`` and a bullet per
 #: ref. ``owner/repo#N`` does not match (the target must start with ``#N``, optionally after
@@ -53,20 +50,18 @@ _AFTER_BLOCKED_RE = re.compile(
 #: Phrases that are also ordinary nouns: "Upgrade dependency #123" quotes an upstream issue
 #: number, so they only count when written as a label ("Dependency: #123").
 _NOUN_PHRASES = frozenset({"dependency", "needs dependency"})
-#: Text that looks like more references than the grammar captured: a separator followed by
-#: something carrying a ``#N`` (``and owner/repo#9``) or an issue/pull URL.
-_MORE_REFS_RE = re.compile(
-    r"[ \t]*(?:[,;&/+]|\b(?:and|or)\b|\n[ \t]*[-*+])\s*[^\n]*?(?:#\d+|/(?:issues|pull)/\d+)",
+_TAG_DELIM = r"(?:[^\w\s]|(?:\s+(?:and|or|&|/|\+)\b)|\s*$)"
+#: Reference-like tokens in a blocker zone: this-repo `#N`, foreign `owner/repo#N`,
+#: URLs, issue/pull paths, and tag-like targets (`v1`, `v1.2.0`, `1.2.0`).
+_REFLIKE_RE = re.compile(
+    r"https?://\S+"
+    r"|[\w.-]+/[\w.-]+#\d+"
+    r"|/(?:issues|pull)/\d+"
+    r"|#\d+"
+    r"|(?:\bv\d[\w.+\-/]*|\b\d{1,3}\.\d+\.\d[\w.+\-/]*)"
+    rf"(?=\s*{_TAG_DELIM})",
     re.IGNORECASE,
 )
-#: A second *tag* target after a separator (``before v1.0 and v2.0``). Adjacent only, so a
-#: later word that merely starts with ``v1`` does not count.
-_MORE_TAGS_RE = re.compile(
-    r"\s*(?:[,;&/+]|\b(?:and|or)\b)\s*(?:the\s+)?(?:v\d|\d{1,3}\.\d+\.\d)", re.IGNORECASE
-)
-#: Something that looks like a reference to a thing we could not read: ``#N``, an issue/pull
-#: path (``owner/repo#9`` and URLs both contain one of those) or any URL.
-_REFLIKE_RE = re.compile(r"#\d+|/(?:issues|pull)/\d+|https?://\S+", re.IGNORECASE)
 _DO_NOT_MERGE = (
     r"(?:do not|don't|dont|must not|should not|shouldn't|cannot|can't)\s+"
     r"merge\s+(?:(?:this|the)(?:\s+(?:pr|pull request))?\s+|it\s+)?"
@@ -193,31 +188,36 @@ def _prose(body: str, repo: str | None) -> str:
     return _EMPHASIS_REF_RE.sub(r"\2", text.replace("\u2019", "'"))
 
 
-def _has_more(text: str, pos: int) -> bool:
-    return bool(_MORE_REFS_RE.match(text, pos) or _MORE_TAGS_RE.match(text, pos))
-
-
-def _unread_target(text: str, pos: int) -> bool:
-    """True when the target a phrase should have had (the rest of its line, or the bullet
-    block under it when the line ends at the phrase) contains something reference-like."""
-    head = text[pos : text.find("\n", pos) if "\n" in text[pos:] else len(text)]
-    zone = head if head.strip(" \t:") else re.split(r"\n[ \t]*\n", text[pos:], maxsplit=1)[0]
-    return bool(_REFLIKE_RE.search(zone))
+def _zone(text: str, pos: int) -> str:
+    """The span a blocker phrase governs: the rest of its line, or the bullet block
+    under it when the phrase ends its line, plus any bullet lines directly under it."""
+    rest = text[pos:]
+    nl = rest.find("\n")
+    head = rest[:nl] if nl != -1 else rest
+    if not head.strip(" \t:"):
+        return re.split(r"\n[ \t]*\n", rest, maxsplit=1)[0]
+    if nl == -1:
+        return head
+    lines = [head]
+    for line in rest[nl + 1 :].split("\n"):
+        if re.match(r"^[ \t]*[-*+]", line):
+            lines.append(line)
+        else:
+            break
+    return "\n".join(lines)
 
 
 def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Blocker, ...], bool]:
     """``(blockers, incomplete)`` stated in ``body``.
 
-    Every blocker phrase ends in captured references or ``incomplete`` (see the invariant
-    above): ``incomplete`` is True when a phrase is followed by something reference-like the
-    strict grammar did not read (``and owner/repo#9``, a URL, ``owner/repo#9`` as the first
-    bullet) or by a second target. The caller must then never certify that every blocker
-    cleared. ``repo`` (``owner/name``) lets a link to this repository's own issue read as a
-    bare ``#N``; without it every absolute link is treated as foreign.
+    The parsing invariant (#1512): for every recognised phrase, every reference-like token
+    in its zone is either read as a blocker or the PR is marked incomplete. The caller must
+    then never certify that every blocker cleared. ``repo`` (``owner/name``) lets a link to
+    this repository's own issue read as a bare ``#N``; without it every absolute link is
+    treated as foreign.
     """
     text = _prose(body or "", repo)
-    found: list[Blocker] = []
-    incomplete = False
+    matches: list[tuple[re.Match[str], str]] = []
     for m in BLOCKED_PHRASE_RE.finditer(text):
         if _NEGATION_RE.search(text[: m.start()]):
             continue
@@ -226,30 +226,37 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
             continue
         if NON_BLOCKING_DEPENDENCY_RE.match(text, m.start()):
             continue
-        ref = _AFTER_BLOCKED_RE.match(text, m.end())
-        if ref is None:
-            # "Dependency: lodash (#123)" is a changelog line, not a blocker: a label that
-            # is not followed by refs is not worth a "could not be read" flag.
-            incomplete = incomplete or (not label and _unread_target(text, m.end()))
-            continue
-        found.extend(Blocker(ISSUE, n) for n in re.findall(r"\d+", ref.group("refs")))
-        incomplete = incomplete or _has_more(text, ref.end())
+        matches.append((m, "blocked"))
     for m in _BEFORE_PHRASE_RE.finditer(text):
         if _NEGATION_RE.search(text[: m.start()]):
             continue
-        target = _AFTER_BEFORE_RE.match(text, m.end())
-        if target is None:
-            incomplete = incomplete or _unread_target(text, m.end())
-            continue
-        if target.group("issue"):
-            found.append(Blocker(ISSUE, re.sub(r"\D", "", target.group("issue"))))
+        matches.append((m, "before"))
+    matches.sort(key=lambda item: item[0].start())
+
+    found: list[Blocker] = []
+    incomplete = False
+    for i, (m, kind) in enumerate(matches):
+        next_start = matches[i + 1][0].start() if i + 1 < len(matches) else len(text)
+        zone = _zone(text[:next_start], m.end())
+        zone_refs = _REFLIKE_RE.findall(zone)
+        if kind == "blocked":
+            ref = _AFTER_BLOCKED_RE.match(text, m.end())
+            this_found = (
+                [Blocker(ISSUE, n) for n in re.findall(r"\d+", ref.group("refs"))] if ref else []
+            )
         else:
-            tag = target.group("tag").rstrip(".")
-            if ".." in tag or tag.endswith("/"):
-                incomplete = True  # not a tag name git can hold; never put it in an API path
-            else:
-                found.append(Blocker(TAG, tag))
-        incomplete = incomplete or _has_more(text, target.end())
+            target = _AFTER_BEFORE_RE.match(text, m.end())
+            this_found = []
+            if target is not None:
+                if target.group("issue"):
+                    this_found.append(Blocker(ISSUE, re.sub(r"\D", "", target.group("issue"))))
+                else:
+                    tag = target.group("tag").rstrip(".")
+                    if not (".." in tag or tag.endswith("/")):
+                        this_found.append(Blocker(TAG, tag))
+        found.extend(this_found)
+        if len(this_found) != len(zone_refs):
+            incomplete = True
     seen: set[Blocker] = set()
     ordered: list[Blocker] = []
     for b in found:
