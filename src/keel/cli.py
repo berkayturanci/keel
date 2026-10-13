@@ -10,7 +10,9 @@ Subcommands
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
+import io as stdio
 import json
 import os
 import re
@@ -44,6 +46,7 @@ from . import (
     doctor,
     dryrunverify,
     evidence,
+    finish,
     fixloop,
     flows,
     gates,
@@ -9087,6 +9090,267 @@ def _cmd_stale_blockers(args: argparse.Namespace) -> int:
     return 2 if report["unknown_blockers"] else 0
 
 
+def _finish_clock() -> float:
+    return time.monotonic()
+
+
+def _finish_sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _finish_invoke(argv: list[str], *, capture: bool) -> dict[str, object]:
+    """Run one existing subcommand through :func:`main` — the same parser, the same
+    handler, every refusal it already has. Under ``--json`` its output is captured so the
+    finish document stays one JSON object; otherwise it prints as it would on its own."""
+    if not capture:
+        return {"exit_code": main(argv)}
+    out, err = stdio.StringIO(), stdio.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = main([*argv, "--json"])
+        except SystemExit as exc:  # argparse refusing a flag must not escape as exit 2
+            code = exc.code if isinstance(exc.code, int) else 1
+    text = out.getvalue()
+    try:
+        output: object = json.loads(text)
+    except ValueError:
+        output = text.strip()
+    detail: dict[str, object] = {"exit_code": code, "output": output}
+    if err.getvalue().strip():
+        detail["stderr"] = err.getvalue().strip()
+    return detail
+
+
+def _finish_ci_summary(ci: object, base: str, pr: int) -> str:
+    """One line for a CI snapshot, in the words ``keel merge`` uses for pending and failing."""
+    state = ci.get("state") if isinstance(ci, dict) else None
+    if state == "pass":
+        return "all checks passing"
+    if state == "no-checks":
+        return "no checks reported"
+    if isinstance(ci, dict) and (ci.get("failing_checks") or ci.get("pending_checks")):
+        return _merge_state_reason("UNSTABLE", ci, base, pr)[1]
+    return f"CI state is {state}"
+
+
+def _finish_ci_result(
+    status: str,
+    reason: str,
+    *,
+    polls: int,
+    elapsed: float,
+    ci: object,
+    reran: list[str],
+) -> dict[str, object]:
+    """The ``ci`` step's result: the same keys on every path, so a consumer can rely on them."""
+    return {
+        "status": status,
+        "reason": reason,
+        "polls": polls,
+        "elapsed": round(elapsed, 1),
+        "ci": ci,
+        "reran": list(reran),
+    }
+
+
+def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict[str, object]:
+    """The bounded CI wait: poll the merge snapshot until it passes, fails or times out.
+
+    Bounded twice — by ``--ci-timeout`` of elapsed time and by :func:`finish.poll_cap`
+    polls — so no clock behaviour can make it spin. Running out of either is reported as
+    ``timeout``; it is never a pass.
+    """
+    snap_args = argparse.Namespace(pr=args.pr, root=args.root, transport=args.transport)
+    start = _finish_clock()
+    reran: list[str] = []
+    rerun_at: dict[str, float] = {}
+    unreadable = 0
+    last_ci: object = None
+    elapsed = 0.0
+    cap = finish.poll_cap(args.ci_timeout, args.ci_interval)
+    for poll in range(1, cap + 1):
+        elapsed = _finish_clock() - start
+        try:
+            _, snapshot = _merge_snapshot_over_best_transport(snap_args)
+        except _SnapshotFailed as exc:
+            unreadable += 1
+            exhausted = finish.read_failures_exhausted(unreadable)
+            if exhausted or elapsed >= args.ci_timeout:
+                return _finish_ci_result(
+                    "fail" if exhausted else "timeout",
+                    f"could not read CI state: {exc}",
+                    polls=poll,
+                    elapsed=elapsed,
+                    ci=last_ci,
+                    reran=reran,
+                )
+            _finish_sleep(finish.next_sleep(args.ci_interval, args.ci_timeout, elapsed))
+            continue
+        unreadable = 0
+        last_ci = snapshot["ci"]
+        settling = [n for n, at in rerun_at.items() if elapsed - at < args.ci_settle]
+        decision = finish.ci_decision(
+            last_ci,
+            elapsed=elapsed,
+            timeout=args.ci_timeout,
+            rerun=args.rerun_flaky,
+            reran=reran,
+            settling=settling,
+            settle=args.ci_settle,
+        )
+        action = decision["action"]
+        summary = _finish_ci_summary(last_ci, config.base_branch, args.pr)
+        if not args.json:
+            print(f"  ci poll {poll} ({elapsed:.0f}s): {summary}")
+
+        ctx = {"polls": poll, "elapsed": elapsed, "ci": last_ci, "reran": reran}
+
+        if action == finish.ACTION_PROCEED:
+            return _finish_ci_result("pass", "CI is green", **ctx)
+        if action == finish.ACTION_FAILED:
+            return _finish_ci_result("fail", summary, **ctx)
+        if action == finish.ACTION_TIMEOUT:
+            return _finish_ci_result(
+                "timeout", f"timed out after {args.ci_timeout}s waiting for CI: {summary}", **ctx
+            )
+        if action == finish.ACTION_RERUN:
+            runs, why = github.failed_check_runs(args.pr, decision["names"], cwd=args.root)
+            if why is not None:
+                return _finish_ci_result("fail", why, **ctx)
+            # One rerun per Actions run: several failed checks can be jobs of one run, and
+            # a second `gh run rerun` on a run already restarted is refused.
+            by_run: dict[str, list[str]] = {}
+            for name, run_id in runs.items():
+                by_run.setdefault(run_id, []).append(name)
+            for run_id, names in by_run.items():
+                ok, why = github.rerun_run(run_id, cwd=args.root)
+                if not ok:
+                    return _finish_ci_result("fail", why, **ctx)
+                reran.extend(names)
+                rerun_at.update(dict.fromkeys(names, elapsed))
+        _finish_sleep(finish.next_sleep(args.ci_interval, args.ci_timeout, elapsed))
+    return _finish_ci_result(
+        "timeout",
+        f"timed out after {args.ci_timeout}s waiting for CI (poll limit reached)",
+        polls=cap,
+        elapsed=elapsed,
+        ci=last_ci,
+        reran=reran,
+    )
+
+
+def _finish_step(
+    name: str, args: argparse.Namespace, config: cfg.ProjectConfig, consent_flags: list[str]
+) -> dict[str, object]:
+    """Run one planned step and return its result, ``status`` ``pass`` or the stop reason."""
+    if name == finish.STEP_CI:
+        return _finish_wait_ci(args, config)
+    if name == finish.STEP_WINDOW:
+        open_now = True
+        if config.timezone and config.merge_window:
+            open_now = window.is_merge_open(config.timezone, config.merge_window)
+        return {
+            "open": open_now,
+            "status": "pass" if open_now else "window-closed",
+            "reason": "" if open_now else "merge window is closed; not bypassed",
+        }
+    if name == finish.STEP_REVIEW:
+        argv = finish.review_argv(
+            path=args.path,
+            root=args.root,
+            pr=args.pr,
+            issue=args.issue,
+            reviews=args.reviews,
+            closure=args.closure,
+            consent=consent_flags,
+        )
+    elif name == finish.STEP_SHIP:
+        argv = finish.ship_argv(
+            path=args.path,
+            root=args.root,
+            pr=args.pr,
+            issue=args.issue,
+            run_id=args.run_id,
+            capture_status=args.capture_status,
+            capture_reason=args.capture_reason,
+            capture_artifact=args.capture_artifact,
+            implementer=args.implementer,
+            consent=consent_flags,
+        )
+    else:
+        argv = finish.merge_argv(
+            path=args.path,
+            root=args.root,
+            pr=args.pr,
+            issue=args.issue,
+            method=args.method,
+            transport=args.transport,
+            run_id=args.run_id,
+            consent=consent_flags,
+        )
+    result = _finish_invoke(argv, capture=args.json)
+    passed = result["exit_code"] == 0
+    result["status"] = "pass" if passed else "fail"
+    reason = f"keel {argv[0]} refused (exit {result['exit_code']})"
+    lines = str(result.get("stderr", "")).splitlines()
+    if lines:
+        reason += f": {lines[-1]}"
+    result["reason"] = "" if passed else reason
+    return result
+
+
+def _cmd_finish(args: argparse.Namespace) -> int:
+    if args.closure and args.reviews is None:
+        print("--closure is posted by the review step; it needs --reviews", file=sys.stderr)
+        return 1
+    steps = finish.plan_steps(reviews=args.reviews is not None, rerun=args.rerun_flaky)
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    results: list[dict[str, object]] = []
+    doc: dict[str, object] = {
+        "schema_version": finish.SCHEMA_VERSION,
+        "pull_request": args.pr,
+        "issue": args.issue,
+        "status": "dry-run" if args.dry_run else "pass",
+        "stopped_at": None,
+        "reason": None,
+        "steps": results,
+    }
+    consent_flags = finish.consent_argv(args.approve_scope, args.operator, args.consent_mode)
+    for step in steps:
+        name = str(step["name"])
+        if args.dry_run:
+            results.append({"name": name, "status": "planned", "description": step["description"]})
+            if not args.json:
+                print(f"  {name:<7} {step['description']}")
+            continue
+        if not args.json:
+            print(f"== keel finish: {name} ==")
+        result = {"name": name, **_finish_step(name, args, config, consent_flags)}
+        results.append(result)
+        if result["status"] != "pass":
+            doc["status"] = result["status"]
+            doc["stopped_at"] = name
+            doc["reason"] = result["reason"]
+            break
+    if args.json:
+        print(json.dumps(doc, indent=2, sort_keys=True))
+    elif args.dry_run:
+        print(f"keel finish — dry-run  PR #{args.pr}: {len(steps)} steps, nothing run")
+    elif doc["status"] == "pass":
+        print(f"keel finish — pass  PR #{args.pr} merged")
+    else:
+        print(f"keel finish — {doc['status']}  PR #{args.pr} stopped at {doc['stopped_at']}")
+        print(f"  reason : {doc['reason']}")
+    return 0 if doc["status"] in ("pass", "dry-run") else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="keel", description="keel — workflow core")
     parser.add_argument("--version", action="version", version=f"keel {__version__}")
@@ -9334,6 +9598,93 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_guard.add_argument("--json", action="store_true", help="emit structured JSON")
     p_guard.set_defaults(func=_cmd_guard)
+
+    p_finish = sub.add_parser(
+        "finish",
+        help="finish an open PR: post reviews, wait for CI (bounded), ship, merge",
+    )
+    p_finish.add_argument("path", help="path to project.yaml")
+    p_finish.add_argument("--root", default=".", help="repo root for git/GitHub operations")
+    p_finish.add_argument("--pr", type=_positive_int, required=True, help="pull request number")
+    p_finish.add_argument(
+        "--issue", type=_positive_int, required=True, help="issue the pull request closes"
+    )
+    p_finish.add_argument(
+        "--reviews",
+        default=None,
+        help="JSON array of reviewer verdicts; posted first through keel review --live",
+    )
+    p_finish.add_argument(
+        "--closure", default=None, help="ship_run-shaped JSON record keel review posts as closure"
+    )
+    p_finish.add_argument(
+        "--ci-timeout",
+        type=_positive_int,
+        default=1800,
+        help="seconds to wait for CI before reporting a timeout (default: 1800)",
+    )
+    p_finish.add_argument(
+        "--ci-interval",
+        type=_positive_int,
+        default=30,
+        help="seconds between CI polls (default: 30)",
+    )
+    p_finish.add_argument(
+        "--ci-settle",
+        type=_bounded_int(0),
+        default=120,
+        help=(
+            "seconds an empty check set, and a failure just rerun, are waited on before "
+            "they are believed (default: 120)"
+        ),
+    )
+    p_finish.add_argument(
+        "--rerun-flaky",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="rerun the failed check with exactly this name once; repeatable",
+    )
+    p_finish.add_argument(
+        "--method",
+        choices=("squash", "merge", "rebase"),
+        default="squash",
+        help="GitHub merge method",
+    )
+    p_finish.add_argument(
+        "--transport",
+        choices=_TRANSPORT_CHOICES,
+        default="auto",
+        help="how to reach GitHub: auto probes GraphQL once, rest forces the REST API",
+    )
+    p_finish.add_argument("--run-id", default=None, help="run id for the ledger and the merge")
+    p_finish.add_argument(
+        "--capture-status",
+        type=_capture_status_arg,
+        default=CAPTURE_STATUS_NOT_RUN,
+        help=(
+            "capture outcome passed to keel ship (required there for a live ledger append); "
+            f"default '{CAPTURE_STATUS_NOT_RUN}', because finish runs before capture"
+        ),
+    )
+    p_finish.add_argument("--capture-reason", default=None, help="passed to keel ship")
+    p_finish.add_argument("--capture-artifact", default=None, help="passed to keel ship")
+    p_finish.add_argument("--implementer", default=None, help="passed to keel ship")
+    p_finish.add_argument(
+        "--approve-scope",
+        action="append",
+        default=[],
+        help="approve a consent scope for every step; repeat or comma-separate",
+    )
+    p_finish.add_argument("--operator", default=None, help="operator identifier for consent")
+    p_finish.add_argument(
+        "--consent-mode", choices=consent.CONSENT_MODES, default=None, help="operator consent mode"
+    )
+    p_finish.add_argument(
+        "--dry-run", action="store_true", help="print the plan of steps; run nothing"
+    )
+    p_finish.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_finish.set_defaults(func=_cmd_finish)
 
     p_merge = sub.add_parser("merge", help="perform the fail-closed core-owned PR merge")
     p_merge.add_argument("path", help="path to project.yaml")

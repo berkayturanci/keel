@@ -379,6 +379,63 @@ the payload:
 A dry run, a refused merge or a failed `gh` merge never reaches this step, so it carries no
 `checkpoint_update`.
 
+## `keel finish <project.yaml> --pr N --issue I [--root DIR] [--reviews FILE] [--closure FILE] [--ci-timeout S] [--ci-interval S] [--ci-settle S] [--rerun-flaky NAME]... [--method squash|merge|rebase] [--transport auto|graphql|rest] [--run-id ID] [--capture-status S] [--capture-reason TEXT] [--capture-artifact REF] [--implementer NAME] [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE] [--dry-run] [--json]`
+
+Finish an open pull request the way operators used to hand-chain it (#1505). It is a
+separate subcommand rather than a `keel ship --finish` flag because `ship` is one assessment
+of one head, with its own flag set and a ledger record; finish is a *sequence* over several
+commands, and a flag on `ship` would have had to refuse most of `ship`'s other flags.
+
+The steps run in this order and stop at the first one that does not pass:
+
+1. **`review`** (only with `--reviews FILE`): `keel review --live --reviews FILE`, the same
+   handler, so its attribution-label and head-pin refusals apply. Reviews are posted first so
+   they are on the pull request while CI is still running. `--closure FILE` is passed along and
+   is refused without `--reviews`, since the review step is what posts it.
+2. **`ci`**: poll the pull request's merge snapshot (the same rollup `keel merge` reads) until
+   it passes, a check fails, or `--ci-timeout` seconds (default 1800) have elapsed, every
+   `--ci-interval` seconds (default 30). Pending and failing checks are named with the same
+   wording `keel merge` uses (`2 checks still pending: build, lint`). **A timeout is reported
+   as a timeout and exits 1**; the loop is also capped at a fixed number of polls so a clock
+   that stops advancing cannot keep it alive. An unreadable snapshot once the budget is spent is
+   also a `timeout`. Three unreadable snapshots in a row fail the step
+   (one dropped request does not). An empty check set is waited on for `--ci-settle` seconds (default 120, never past the
+   timeout), because right after a push the rollup is empty until the workflows register;
+   checks that appear in that time are waited for as usual. Only a set still empty after the
+   grace proceeds, since whether that is acceptable (docs-only) is the merge gate's decision.
+   `--ci-settle 0` accepts an empty set at once.
+   `--rerun-flaky NAME` (repeatable) allows one rerun of a failed check called *exactly*
+   `NAME` (`gh run rerun --failed` on its Actions run, once per run even when several named
+   checks are jobs of the same run; a cancelled or timed-out job counts as failed). It applies only when every failing
+   check is so named and has not been rerun; any other failure ends the wait. The rerun is
+   deferred while any check is still pending (`gh run rerun --failed` is refused on a run with
+   jobs in flight), within the budget. A failure still showing after the rerun is waited out for
+   `--ci-settle` seconds, not read as the rerun failing.
+3. **`window`**: if the project's merge window is closed, finish says so and stops with status
+   `window-closed` (exit 1). There is no bypass: finish has no `--hotfix`.
+4. **`ship`**: `keel ship --live --append-ledger --pr N --issue I`, with `--run-id`,
+   `--capture-reason`, `--capture-artifact` and `--implementer` passed through, and
+   `--capture-status` defaulting to `not-run` (ship requires one for a live append, and finish
+   runs before capture, so the record carries no capture claim; pass another value to state
+   one). It records the gates-pass ledger entry the merge looks for.
+5. **`merge`**: `keel merge --pr N --issue I --method M`, which re-checks the window, CI,
+   evidence, attribution, the gates-pass for the head, the checkpoint gate and head drift.
+
+Every step runs the existing handler with the existing flags plus the consent flags
+(`--approve-scope`, `--operator`, `--consent-mode`) given to finish, so each refusal those
+commands have still applies. Finish adds none and offers no way around one:
+`--no-checkpoint-gate`, `--operator-override` and `--hotfix` are not accepted. After a merge,
+closing the issue and capture remain `keel close-reconcile` and `keel capture-land`.
+
+`--dry-run` prints the plan (the steps that would run, in order) and does nothing else.
+`--json` prints one `keel.finish.v1` document: `status` (`pass`, `fail`, `timeout`,
+`window-closed` or `dry-run`), `stopped_at`, `reason`, and a `steps` array with each step's
+`status`; the sub-commands' own output is embedded under `output` (a failed step's `reason` ends with the
+last line of its stderr), and the `ci` step always carries
+`polls`, `elapsed`, the last `ci` snapshot (`null` before one was read) and the checks it
+`reran`. Exit code 0 means the
+pull request merged (or `--dry-run`); 1 means it stopped.
+
 ## `keel attribution --vendor VENDOR [--model MODEL] [--profile NAME] [--config FILE] [--json]`
 
 Print keel's own attribution labels for a delegate vendor/model pair. This is the **only**
@@ -2521,6 +2578,102 @@ orchestrator's.
 
 Exit status is `0` when `ok` is true, `1` otherwise. `--json` is accepted for symmetry with
 every other keel command; the contract is JSON either way.
+
+### Worked example: `agy` as a reviewer and as an implementer (#1517)
+
+`agy` is the Antigravity CLI. keel talks to it in stream-json: the prompt goes in as one
+NDJSON frame on stdin, and the reply's final `result` frame becomes `text`. Check the exact
+command first. `--print-argv` runs nothing and records nothing:
+
+```bash
+keel delegate run --provider agy:gemini-3.8-flash --role review \
+  --prompt-file review-prompt.md --cwd "$PWD" --print-argv
+# "argv": ["agy", "--sandbox", "--dangerously-skip-permissions",
+#          "--input-format", "stream-json", "--output-format", "stream-json",
+#          "--model", "gemini-3.8-flash", "--add-dir", "<cwd>", "--print-timeout", "1800s"]
+```
+
+**Review.** Write the brief, ask for a verdict as JSON, run, and read the result:
+
+```bash
+cat > review-prompt.md <<'PROMPT'
+Review the diff of this branch against main (git diff main...HEAD).
+Reply with ONLY a JSON object: {"verdict": "LGTM" | "CHANGES", "findings": [...]}.
+PROMPT
+
+keel delegate run --provider agy:gemini-3.8-flash --role review \
+  --prompt-file review-prompt.md --project .keel/project.yaml \
+  --cwd "$PWD" --timeout 1800 > result.json
+# exit status 0 when ok is true, 1 otherwise
+```
+
+`result.json` is the return contract above. For a review, branch on `ok`, then read `text`
+(the model's answer), and on failure `error_code` and `error`; `usage` is `null` for `agy`,
+because only the `api` transport reports token counts. `text` is the model's whole reply, so
+it may wrap the JSON in prose or a code fence. Take the outermost `{ … }`:
+
+```bash
+python3 - <<'PY'
+import json
+r = json.load(open("result.json"))
+if not r["ok"]:
+    raise SystemExit(f"{r['error_code']}: {r['error']}")
+text = r["text"]
+verdict = json.loads(text[text.index("{"): text.rindex("}") + 1])
+print(verdict["verdict"], len(verdict.get("findings", [])))
+PY
+```
+
+If `text` holds no parseable JSON, treat that as no verdict, never as an approval.
+
+**Implement.** The same command with `--role implement` (or `fix`), and the worktree as
+`--cwd`:
+
+```bash
+keel delegate run --provider agy:gemini-3.8-flash --role implement \
+  --prompt-file brief.md --cwd /abs/path/to/worktree --timeout 3600
+```
+
+What `agy` is allowed to do depends on the role, exactly as `keel delegate run` plans it:
+
+| role | flags keel passes | what that means |
+| --- | --- | --- |
+| `review` · `gate` · `chair` | `--sandbox --dangerously-skip-permissions` | `read_only: true`. The sandbox is the only read-only mechanism `agy` documents, so keel reports `read_only_backed: true`. keel does **not** verify that the sandbox confines `agy`, so do not treat it as a guarantee: check `git status` afterwards if a stray write would matter. |
+| `implement` · `fix` | `--dangerously-skip-permissions` (no `--sandbox`) | `read_only: false`, `read_only_backed: false`. `agy` runs tools without asking and may edit files and run commands. |
+
+In both roles `--dangerously-skip-permissions` is there so an unattended run does not stop at
+an approval prompt. When `--cwd` is an absolute path keel adds `--add-dir <cwd>`, which is
+what makes `agy` edit that directory instead of its own scratch copy; a relative `--cwd`
+omits the flag and the result carries a warning, so pass an absolute path. keel never
+commits, pushes or opens a pull request for the delegate: the orchestrator reads the diff
+and does that.
+
+**A long review: `--detach`.** Start it in the background, then poll or block:
+
+```bash
+keel delegate run --provider agy:gemini-3.8-flash --role review \
+  --prompt-file review-prompt.md --cwd "$PWD" --timeout 3600 \
+  --detach --run-id review-1517 --root .
+keel delegate status --root .
+keel delegate wait review-1517 --root . --timeout 3600 > result.json
+```
+
+`wait` prints the same result document (see the section below), so the extraction above works
+unchanged.
+
+**Quota exhaustion.** When `agy` reports it is out of quota, the run comes back fail-soft:
+
+```json
+{"ok": false, "text": "", "error_code": "rate-limit",
+ "error": "agy exited 1: … quota exceeded …", "exit_code": 1, "timed_out": false}
+```
+
+`error_code: rate-limit` is decided from `agy`'s own final error (phrases such as `quota
+exceeded`, `resource_exhausted`, `usage limit`), and `error` quotes the tail of its output.
+keel does not retry it: wait-out-a-window is not a retry. A caller should not re-run the same
+seat, and should fall back to a different seat (another vendor, or the host agent) for that
+review. `timeout` is the opposite case (retry now, with more time), and `timeout` wins when
+the output reads as both.
 
 ## `keel delegate run … --detach` / `keel delegate wait RUN_ID [--timeout S]` / `keel delegate status`
 

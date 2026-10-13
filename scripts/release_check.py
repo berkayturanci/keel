@@ -9,7 +9,7 @@ version, or a ``keel-visual`` marker two releases behind (#796) cannot be fixed 
 only yanked and re-released.
 
 So the same assertions run again in ``publish.yml``'s build job, before the build
-step, and locally as ``make release-check``. Five guards:
+step, and locally as ``make release-check``. Five guards (plus two more below):
 
 ``declared version``
     ``pyproject.toml`` and ``src/keel/__init__.py`` agree.
@@ -42,7 +42,12 @@ step, and locally as ``make release-check``. Five guards:
     ``release_bump.VISUAL_EDITS`` — the list the bumper rewrites — rather than
     restated here.
 
-With ``--tag v<x.y.z>`` a sixth guard runs: the tag names the declared version.
+Two more guards cover the changelog fragments of #1515. ``changelog entries``: the
+declared version's section carries at least one bullet under a ``###`` heading.
+``changelog fragments``: every file in ``changelog.d`` is named
+``<issue>.<type>.md`` with a known type and opens with a bullet.
+
+With ``--tag v<x.y.z>`` a final guard runs: the tag names the declared version.
 The publish workflow passes it on a tag push, so a tag pushed at the wrong commit
 fails before the build.
 
@@ -74,6 +79,7 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+from changelog_fragments import scan, section_entries  # noqa: E402
 from release_bump import VISUAL_EDITS, current_version, visual_version  # noqa: E402
 from release_notes import parse_highlights, requires_highlights  # noqa: E402
 from release_surfaces import RELEASE_SURFACES, versions_in  # noqa: E402
@@ -179,6 +185,34 @@ def check_highlights(root: Path) -> Check:
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     _highlights, problems = parse_highlights(changelog, declared)
     return Check("release highlights", problems)
+
+
+def check_entries(root: Path) -> Check:
+    """The declared version's section must carry at least one entry (#1515).
+
+    Entries now arrive as fragments collected by ``make release-bump``; a release
+    cut without that step, or from an empty fragment directory, would publish a
+    heading with nothing under it.
+    """
+    declared = current_version(root)
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    entries = section_entries(changelog, declared)
+    if entries is None:
+        problems = [f"CHANGELOG.md has no `## [{declared}]` section"]
+    elif entries == 0:
+        problems = [
+            f"`## [{declared}]` has no entries under a `###` heading; add changelog.d "
+            "fragments and run `make release-bump`, or write the entries by hand"
+        ]
+    else:
+        problems = []
+    return Check("changelog entries", problems)
+
+
+def check_fragments(root: Path) -> Check:
+    """Every file in ``changelog.d`` must be a well-named fragment (#1515)."""
+    _fragments, problems = scan(root)
+    return Check("changelog fragments", problems)
 
 
 def check_surfaces(root: Path) -> Check:
@@ -305,6 +339,8 @@ def run_checks(root: Path, tag: str | None = None, package: str = "core") -> lis
         check_declared_version(root),
         check_changelog(root),
         check_highlights(root),
+        check_entries(root),
+        check_fragments(root),
         check_surfaces(root),
         check_visual_markers(root),
     ]
