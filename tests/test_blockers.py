@@ -127,7 +127,7 @@ class ParseTests(unittest.TestCase):
             "Blocked by [#12](u), [#13](v) and **#14**",
             "Blocked by [PR #12](u)",
         ):
-            got = blockers.scan_blockers(body)
+            got = blockers.scan_blockers(body, "o/r")
             self.assertEqual(Blocker(ISSUE, "12"), got[0][0], body)
             self.assertFalse(got[1], body)
         self.assertEqual(["12", "13", "14"], issues("Blocked by [#12](u), [#13](v) and **#14**"))
@@ -138,8 +138,81 @@ class ParseTests(unittest.TestCase):
             "Dependencies: #1, #2 -- blocked by o/r#12",
             "Blocked by <https://github.com/o/r/pull/12>",
         ):
-            blockers_, incomplete = blockers.scan_blockers(body)
-            self.assertTrue(incomplete, body)
+            self.assertTrue(blockers.scan_blockers(body)[1], body)
+
+    def test_noun_dependency_is_not_a_phrase_at_all(self):
+        for body in (
+            "Upgrade dependency lodash (#123)",
+            "- Fix dependency resolution (#45)",
+            "Upgrade dependency #123",
+            "needs dependency bump, see #4",
+        ):
+            self.assertEqual(((), False), blockers.scan_blockers(body), body)
+        self.assertEqual((("7",), False), self.refs("Dependency: #7"))
+
+    def refs(self, body, repo=None):
+        got, incomplete = blockers.scan_blockers(body, repo)
+        return tuple(b.ref for b in got), incomplete
+
+    def test_non_blocking_phrase_is_not_a_blocker(self):
+        for body in (
+            "Depends on: none. Fixes #9",
+            "Dependency: none, closes #9",
+            "Blocked by: none. Fixes #9",
+        ):
+            self.assertEqual(((), False), blockers.scan_blockers(body), body)
+
+    def test_links_into_this_repository_read_as_bare_refs(self):
+        own = "Blocked by [#12](https://github.com/Me/Keel/issues/12)"
+        self.assertEqual((("12",), False), self.refs(own, "me/keel"))
+        self.assertEqual(
+            (("12",), False),
+            self.refs("Blocked by [#12](https://github.com/me/keel/pull/12)", "me/keel"),
+        )
+        self.assertEqual((("12",), False), self.refs("Blocked by [#12](/issues/12)"))
+
+    def test_links_into_another_repository_are_never_this_repositorys_ref(self):
+        for body in (
+            "Blocked by [#12](https://github.com/other/repo/issues/12)",
+            "Blocked by [#12](https://github.com/me/keel-other/issues/12)",
+            "Blocked by [#12](https://example.com/whatever)",
+        ):
+            self.assertEqual(((), True), self.refs(body, "me/keel"), body)
+        # no repository known: every absolute link is foreign
+        self.assertEqual(
+            ((), True), self.refs("Blocked by [#12](https://github.com/me/keel/issues/12)")
+        )
+        # in a list, the foreign half sets incomplete and the own half is still read
+        self.assertEqual(
+            (("1",), True),
+            self.refs("Blocked by #1, [#2](https://github.com/other/repo/pull/2)", "me/keel"),
+        )
+
+    def test_second_before_target_is_incomplete(self):
+        for body in (
+            "do not merge before v1.0 and v2.0",
+            "do not merge before #1 and v2.0",
+            "do not merge before v1.0, 2.0.1",
+            "do not merge before #1 & #2",
+            "Blocked by #1 and v2.0",
+        ):
+            self.assertTrue(blockers.scan_blockers(body)[1], body)
+        self.assertFalse(
+            blockers.scan_blockers("do not merge before v1.0 and then v2 reviewers sign off")[1]
+        )
+
+    def test_tag_with_dot_dot_is_refused(self):
+        self.assertEqual(((), True), self.refs("do not merge before v1/../../x"))
+        self.assertEqual(((), True), self.refs("do not merge before v1/"))
+
+    def test_merge_this_pr_forms(self):
+        for body in (
+            "Do not merge this PR until #5",
+            "don't merge this before #5",
+            "do not merge the pull request until #5",
+            "do not merge it until #5",
+        ):
+            self.assertEqual((("5",), False), self.refs(body), body)
 
     def test_curly_apostrophe_and_until_after(self):
         self.assertEqual(["5"], issues("Don\u2019t merge before #5"))
@@ -276,13 +349,15 @@ C = "closed completed issue"
 OPEN = "open - issue"
 
 
-def _router(prs, issue_states=None, tags=None, list_result=None, cwds=None):
+def _router(prs, issue_states=None, tags=None, list_result=None, cwds=None, slug_result=None):
     issue_states = issue_states or {}
     tags = tags or {}
 
     def run(argv, **kw):
         if cwds is not None:
             cwds.append(kw.get("cwd"))
+        if argv[:3] == ["gh", "repo", "view"]:
+            return slug_result if slug_result is not None else _ok("me/keel\n")
         if argv[:3] == ["gh", "pr", "list"]:
             return list_result if list_result is not None else _ok(json.dumps(prs))
         if argv[2] == "repos/{owner}/{repo}":
@@ -363,6 +438,15 @@ class StaleBlockersTests(unittest.TestCase):
         rep = self.report(prs=[_pr(6, "Blocked by #1")], issue_states={"1": C})
         self.assertFalse(rep["prs"][0]["incomplete"])
         self.assertTrue(rep["prs"][0]["all_cleared"])
+
+    def test_repo_slug_lookup(self):
+        link = "Blocked by [#1](https://github.com/me/keel/issues/1)"
+        rep = self.report(prs=[_pr(5, link)], issue_states={"1": C})
+        self.assertTrue(rep["prs"][0]["all_cleared"])
+        for bad in (_fail(), _ok("not a slug"), _ok("")):
+            rep = self.report(prs=[_pr(5, link)], issue_states={"1": C}, slug_result=bad)
+            self.assertEqual([], rep["prs"][0]["blockers"])
+            self.assertTrue(rep["prs"][0]["incomplete"])
 
     def test_pr_with_only_unreadable_refs_is_reported(self):
         rep = self.report(

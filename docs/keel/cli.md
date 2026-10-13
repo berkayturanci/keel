@@ -3023,20 +3023,27 @@ by `#N`, `PR #N` or a tag. Then it asks GitHub through `gh api` whether each one
 
 - **List grammar:** items may be `#N`, `PR #N`, `PR#N`, `issue #N` or `pull request #N`, joined by `,`,
   `, and`, `, or`, `and`, `or`, `/`, `&`, `+`, or written as a markdown bullet list under the
-  phrase (`Depends on:` then `- #1`, `- #2`). A `before` target must be `#N`, a `v`-prefixed tag
+  phrase (`Depends on:` then `- #1`, `- #2`). `do not merge this PR before` and `... it until` are accepted. A `before` target must be `#N`, a `v`-prefixed tag
   (`v2`, `v1.2.0`) or a three-part version (`1.2.0`); `5pm` and `10.30` are not tags. A bare
-  `dependency #N` (as in "Upgrade dependency #123") is not a blocker. References wrapped in
-  Markdown read as the bare ref: a link whose text is `#12`, `**#12**`, `_#12_`, `**Blocked by:** #12`.
+  noun `dependency` / `needs dependency` without a colon ("Upgrade dependency lodash (#123)",
+  "Fix dependency resolution (#45)") is not a phrase at all, and neither is `Depends on: none`. References wrapped in
+  Markdown read as the bare ref: a link whose text is `#12` to this repository's issue or PR (a relative link, or an absolute one
+  matching `gh repo view`); the same label over another repository's URL is a foreign reference and
+  makes the PR `incomplete` instead of being resolved here, `**#12**`, `_#12_`, `**Blocked by:** #12`.
 - **Ignored text:** fenced code, inline code that quotes a phrase, HTML comments, negations
   (`not blocked by`, and `previously` / `formerly` / `was` just before the phrase; older
   history further back is not detected), and `owner/repo#N` references (never resolved against this repository).
 - **Incomplete lists:** when the text carries a reference the grammar did not capture
-  (`#1 and owner/repo#9`, an issue URL, a second target after a `before`), the PR gets
+  (`#1 and owner/repo#9`, an issue URL, a second issue or tag target after a `before`, a tag
+  containing `..`), the PR gets
   `incomplete: true` and `all_cleared` is never true for it. When *none* of a PR's references
   could be read (`blocked by owner/repo#12`), the PR is still listed, with `blockers: []` and
   `incomplete: true` ("blocker reference could not be read"), so it is never silently dropped.
   The parser errs toward flagging, which can over-flag a phrase with an unrelated `#N` later on
-  its line.
+  its line. A PR that is `incomplete` is listed only if another blocker of it cleared or was
+  abandoned, or none could be read; one whose readable blockers are all still open is not listed.
+  A bare `1.2.0` checks for a tag with exactly that name (not `v1.2.0`). Issue and PR blockers
+  are both `kind: issue`.
 - **States:** a PR is `cleared` once **merged**; an issue once closed as `completed` (or with no
   reason, as old issues are) (`repos/{owner}/{repo}/issues/N`). A PR closed unmerged, or an issue
   closed `not_planned` or as a duplicate, is `abandoned` — reported, never counted as cleared. A

@@ -113,8 +113,8 @@ not planned) are reported as such, never as cleared; a PR whose blockers are all
 "blocker abandoned — needs a decision", not cleared. Say `all blockers cleared` only when
 `all_cleared` is true; a PR with `incomplete: true` has a reference the parser could not read
 and is never `all_cleared`, and one with `blockers: []` is reported as "blocker reference could
-not be read". Otherwise list the still-pending or `unknown` ones. A blocker whose state is `unknown` could not be read and is never treated
-as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
+not be read". Otherwise list the still-pending or `unknown` ones. A blocker whose state is `unknown`
+could not be read and is never treated as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
 could not be read and carry on. This step never comments, edits or merges; a cleared
 blocker is a prompt for the author or `/keel:ship`, not an action taken here.
 

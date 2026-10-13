@@ -113,8 +113,8 @@ not planned) are reported as such, never as cleared; a PR whose blockers are all
 "blocker abandoned — needs a decision", not cleared. Say `all blockers cleared` only when
 `all_cleared` is true; a PR with `incomplete: true` has a reference the parser could not read
 and is never `all_cleared`, and one with `blockers: []` is reported as "blocker reference could
-not be read". Otherwise list the still-pending or `unknown` ones. A blocker whose state is `unknown` could not be read and is never treated
-as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
+not be read". Otherwise list the still-pending or `unknown` ones. A blocker whose state is `unknown`
+could not be read and is never treated as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
 could not be read and carry on. This step never comments, edits or merges; a cleared
 blocker is a prompt for the author or `/keel:ship`, not an action taken here.
 
@@ -191,4 +191,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=plugin command=stale-prs keel_version=1.32.0 source_sha256=774699269f53b7acaa8c42995a8281a041d7cc3eab5b89e3c6b5be7da6339bd6 generated_sha256=774699269f53b7acaa8c42995a8281a041d7cc3eab5b89e3c6b5be7da6339bd6 -->
+<!-- keel-generated: surface=plugin command=stale-prs keel_version=1.32.0 source_sha256=0715814c80a7d34f712d1a947067be7d7be90af60bf163581aa17598c826a75b generated_sha256=0715814c80a7d34f712d1a947067be7d7be90af60bf163581aa17598c826a75b -->

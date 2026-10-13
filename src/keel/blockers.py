@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .intake import BLOCKED_PHRASE_RE
+from .intake import BLOCKED_PHRASE_RE, NON_BLOCKING_DEPENDENCY_RE
 from .runner import run_argv
 
 ISSUE = "issue"
@@ -55,10 +55,16 @@ _MORE_REFS_RE = re.compile(
     r"\s*(?:[,;&/+]|\b(?:and|or)\b|\n\s*[-*+])\s*[^\n]*?(?:#\d+|/(?:issues|pull)/\d+)",
     re.IGNORECASE,
 )
+#: A second *tag* target after a separator (``before v1.0 and v2.0``). Adjacent only, so a
+#: later word that merely starts with ``v1`` does not count.
+_MORE_TAGS_RE = re.compile(
+    r"\s*(?:[,;&/+]|\b(?:and|or)\b)\s*(?:the\s+)?(?:v\d|\d{1,3}\.\d+\.\d)", re.IGNORECASE
+)
 _LINE_REF_RE = re.compile(r"[^\n]*?(?:#\d+|/(?:issues|pull)/\d+)", re.IGNORECASE)
 _DO_NOT_MERGE = (
     r"(?:do not|don't|dont|must not|should not|shouldn't|cannot|can't)\s+"
-    r"merge\s+(?:before|until(?:\s+after)?|prior to)"
+    r"merge\s+(?:(?:this|the)(?:\s+(?:pr|pull request))?\s+|it\s+)?"
+    r"(?:before|until(?:\s+after)?|prior to)"
 )
 #: ``do not merge before #N`` / ``... before v1.2.0``. A bare word ("before release") or a
 #: time/count ("before 5pm", "before 3 reviewers") is not a reference: only ``#N``, a
@@ -100,57 +106,88 @@ def _unwrap_inline(match: re.Match[str]) -> str:
     """Keep backticked content (a tag is routinely written ``v1.2.0``) unless the span
     is itself a blocker phrase, which is documentation about the phrase, not a claim."""
     inner = match.group(1)
-    if _BLOCKED_REF_RE.search(inner) or _BEFORE_RE.search(inner):
+    if BLOCKED_PHRASE_RE.search(inner) or _BEFORE_RE.search(inner):
         return ""
     return inner
 
 
-def _unwrap_link(match: re.Match[str]) -> str:
+def _own_link(url: str, repo: str | None) -> bool:
+    """True when ``url`` is relative or points at this repository's issues/pulls."""
+    if not re.match(r"[a-z][a-z0-9+.-]*:", url, re.IGNORECASE):
+        return True
+    if repo is None:
+        return False
+    return bool(
+        re.match(
+            rf"https?://(?:www\.)?github\.com/{re.escape(repo)}/(?:issues|pull)/\d+(?:[/?#]|$)",
+            url,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _unwrap_link(match: re.Match[str], repo: str | None) -> str:
+    """``[#12](own-repo url)`` reads as ``#12``. A ``#N`` label over any other URL is a
+    reference into another repository: it is renamed ``external#N`` (so it is never read as
+    this repository's ``#N``, yet still counts as an unread reference). Prose keeps its URL."""
     label, url = match.groups()
-    return label if "#" in label else f"{label} {url}"
+    if "#" not in label:
+        return f"{label} {url}"
+    return label if _own_link(url, repo) else label.replace("#", "external#")
 
 
-def _prose(body: str) -> str:
+def _prose(body: str, repo: str | None) -> str:
     text = _HTML_COMMENT_RE.sub(" ", body)
     text = _FENCE_RE.sub(" ", text)
     text = _INLINE_CODE_RE.sub(_unwrap_inline, text)
-    text = _LINK_RE.sub(_unwrap_link, text).replace("**", "").replace("__", "")
+    text = _LINK_RE.sub(lambda m: _unwrap_link(m, repo), text)
+    text = text.replace("**", "").replace("__", "")
     return _EMPHASIS_REF_RE.sub(r"\2", text.replace("\u2019", "'"))
 
 
-def scan_blockers(body: str | None) -> tuple[tuple[Blocker, ...], bool]:
+def _has_more(text: str, pos: int) -> bool:
+    return bool(_MORE_REFS_RE.match(text, pos) or _MORE_TAGS_RE.match(text, pos))
+
+
+def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Blocker, ...], bool]:
     """``(blockers, incomplete)`` stated in ``body``.
 
     ``incomplete`` is True when the text carries a reference the grammar did not capture —
     ``and owner/repo#9``, a URL, a phrase whose ``#N`` it could not read. The caller must
-    then never certify that every blocker cleared.
+    then never certify that every blocker cleared. ``repo`` (``owner/name``) lets a link to
+    this repository's own issue read as a bare ``#N``; without it every absolute link is
+    treated as foreign.
     """
-    text = _prose(body or "")
+    text = _prose(body or "", repo)
     found: list[Blocker] = []
     incomplete = False
     for m in BLOCKED_PHRASE_RE.finditer(text):
         if _NEGATION_RE.search(text[: m.start()]):
+            continue
+        if m.group(1).lower() in _NOUN_PHRASES and not text[m.end() :].lstrip(" \t").startswith(
+            ":"
+        ):
+            continue
+        if NON_BLOCKING_DEPENDENCY_RE.match(text, m.start()):
             continue
         ref = _BLOCKED_REF_RE.match(text, m.start())
         if ref is None:
             # A phrase with a reference we could not read: say so rather than drop it.
             incomplete = incomplete or bool(_LINE_REF_RE.match(text, m.end()))
             continue
-        if m.group(1).lower() in _NOUN_PHRASES and not text[m.end() :].lstrip(" \t").startswith(
-            ":"
-        ):
-            continue
         for num in re.findall(r"\d+", ref.group("refs")):
             found.append(Blocker(ISSUE, num))
-        incomplete = incomplete or bool(_MORE_REFS_RE.match(text, ref.end()))
+        incomplete = incomplete or _has_more(text, ref.end())
     for m in _BEFORE_RE.finditer(text):
         if _NEGATION_RE.search(text[: m.start()]):
             continue
         if m.group("issue"):
             found.append(Blocker(ISSUE, re.sub(r"\D", "", m.group("issue"))))
+        elif ".." in m.group("tag") or m.group("tag").endswith("/"):
+            incomplete = True  # not a tag name git can hold; never put it in an API path
         else:
             found.append(Blocker(TAG, m.group("tag").rstrip(".")))
-        incomplete = incomplete or bool(_MORE_REFS_RE.match(text, m.end()))
+        incomplete = incomplete or _has_more(text, m.end())
     seen: set[Blocker] = set()
     ordered: list[Blocker] = []
     for b in found:
@@ -172,6 +209,8 @@ def parse_blockers(body: str | None) -> tuple[Blocker, ...]:
 
 #: One line: ``<state> <state_reason|-> <issue|unmerged|<merged_at>>``. The last field is
 #: how a PR is told from an issue, and whether it merged (``merged_at`` is null if not).
+# Yes, the issues payload's ``pull_request`` object carries ``merged_at`` (checked live:
+# `gh api repos/berkayturanci/keel/issues/1520 --jq '.pull_request.merged_at'` returns a timestamp).
 _ISSUE_JQ = (
     '.state + " " + (.state_reason // "-") + " " + '
     '(if .pull_request then (.pull_request.merged_at // "unmerged") else "issue" end)'
@@ -241,6 +280,20 @@ def _open_prs(limit: int, cwd: str | None, _run) -> list[dict[str, Any]] | None:
     return rows if isinstance(rows, list) else None
 
 
+_SLUG_RE = re.compile(r"[\w.-]+/[\w.-]+")
+
+
+def _repo_slug(cwd: str | None, _run) -> str | None:
+    """``owner/name`` of the checkout, or ``None`` when ``gh`` cannot say."""
+    result = run_argv(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    slug = result.stdout.strip() if result.ok else ""
+    return slug if _SLUG_RE.fullmatch(slug) else None
+
+
 def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> dict[str, Any]:
     """Open PRs with at least one cleared or abandoned stated blocker, plus PRs whose blocker
     references could not be read at all (``blockers`` empty, ``incomplete`` true).
@@ -257,13 +310,20 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
             "truncated": False,
             "prs": [],
         }
+    # Only a body with an absolute link needs to know which repository is "this" one.
+    repo = (
+        _repo_slug(cwd, _run)
+        if any(isinstance(r, dict) and "](http" in str(r.get("body")) for r in rows)
+        else None
+    )
     states: dict[Blocker, str] = {}
     prs: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("number"), int):
             continue
         number = row["number"]
-        found, incomplete = scan_blockers(row["body"] if isinstance(row.get("body"), str) else None)
+        body = row["body"] if isinstance(row.get("body"), str) else None
+        found, incomplete = scan_blockers(body, repo)
         blockers = [b for b in found if not (b.kind == ISSUE and b.ref == str(number))]
         if not blockers and not incomplete:
             continue

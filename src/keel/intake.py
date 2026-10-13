@@ -27,6 +27,9 @@ _NON_BLOCKING_DEPENDENCY_RE = re.compile(
     r"waiting on\s+(?:none|no one|nobody|no-one))\b",
     re.IGNORECASE,
 )
+#: Public name for the "no blocker, despite the phrase" set (``Depends on: none``), shared
+#: with ``keel stale-blockers`` (#1512) for the same reason as ``BLOCKED_PHRASE_RE``.
+NON_BLOCKING_DEPENDENCY_RE = _NON_BLOCKING_DEPENDENCY_RE
 _AMBIGUOUS_RE = re.compile(
     r"\b(tbd|todo|unclear|ambiguous|maybe|not sure|needs clarification|decide later)\b",
     re.IGNORECASE,
