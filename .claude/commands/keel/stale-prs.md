@@ -109,17 +109,17 @@ keel stale-blockers --root . --json
 
 Print the result as a **"Blocker status"** list. For each PR in `prs`, add a line to the
 summary naming the cleared blockers. `abandoned` ones (a PR closed unmerged, an issue closed as
-not planned) are reported as such, never as cleared; a PR whose blockers are all abandoned is
-"blocker abandoned — needs a decision", not cleared. Say `all blockers cleared` only when
-`all_cleared` is true; a PR with `incomplete: true` has a reference the parser could not read
-and is never `all_cleared`, and one with `blockers: []` is reported as "blocker reference could
-not be read". Otherwise list the still-pending or `unknown` ones, with each `unknown` entry's `reason`.
-A blocker whose state is `unknown` could not be read and is never treated as cleared. Exit
-code 2 means `unknown_blockers` is above zero: say how many blockers could not be checked, and
-never report an empty or short list as "no blocker has cleared". If the command exits 1
-(`ok: false`), print one note that blocker state could not be read and carry on.
-This step never comments, edits or merges; a cleared
-blocker is a prompt for the author or `/keel:ship`, not an action taken here.
+not planned) are reported as such, not as cleared; a PR whose blockers are all abandoned is
+"blocker abandoned — needs a decision", not cleared. Note that `all_cleared` is a best-effort hint
+for an operator to look at, never a certificate ("blockers look cleared — check the PR"): an operator
+must read the PR before acting. A PR with `incomplete: true` has a reference the parser could not read,
+and one with `blockers: []` is reported as "blocker reference could not be read". Otherwise list the
+still-pending or `unknown` ones, with each `unknown` entry's `reason`. A blocker whose state is `unknown`
+could not be read and is not treated as cleared. Exit code 2 means `unknown_blockers` is above zero: say
+how many blockers could not be checked, and never report an empty or short list as "no blocker has cleared".
+If the command exits 1 (`ok: false`), print one note that blocker state could not be read and carry on.
+This step never comments, edits or merges; a cleared blocker is a prompt for the author or `/keel:ship`,
+not an action taken here.
 
 ## Step 3 — build the per-PR triage comment
 
@@ -194,4 +194,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=claude command=stale-prs keel_version=1.32.0 source_sha256=60379286f3feaac993702b45e793138b7750d750e94126cfd2aed928bbcd5a43 generated_sha256=60379286f3feaac993702b45e793138b7750d750e94126cfd2aed928bbcd5a43 -->
+<!-- keel-generated: surface=claude command=stale-prs keel_version=1.32.0 source_sha256=fbab41d7c6b58a9226b967b167df577a14d1cfa08ef6d890ae8f54531fa4128d generated_sha256=fbab41d7c6b58a9226b967b167df577a14d1cfa08ef6d890ae8f54531fa4128d -->

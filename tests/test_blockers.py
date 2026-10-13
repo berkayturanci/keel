@@ -102,6 +102,20 @@ class ParseTests(unittest.TestCase):
         ):
             self.assertEqual((), blockers.parse_blockers(body), body)
 
+    def test_github_alert_blocks_are_scanned(self):
+        # GitHub alert blocks are author claims and must be scanned, not stripped.
+        self.assertEqual(["5"], issues("> [!WARNING]\n> Blocked by #5"))
+        self.assertEqual(["5"], issues("> [!NOTE]\n> Blocked by #5"))
+        self.assertEqual(["5"], issues("> [!IMPORTANT]\n> Blocked by #5"))
+        self.assertEqual(["5"], issues("> [!CAUTION]\n> Blocked by #5"))
+        self.assertEqual(["5"], issues("> [!TIP]\n> Blocked by #5"))
+        self.assertEqual(["5", "6"], issues("> [!NOTE]\n> Blocked by:\n> - #5\n> - #6"))
+        self.assertEqual(["5"], issues("   >   [!warning]   \n> Blocked by #5"))
+        self.assertEqual(
+            ["5"],
+            issues("> [!NOTE]\n> Blocked by #5\n\n> Quoted:\n> Blocked by #99"),
+        )
+
     def test_details_blocks_are_not_claims(self):
         body = (
             "<details><summary>Release notes</summary>\n"
@@ -363,10 +377,14 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(["12"], issues("do not merge before PR #12"))
 
     def test_every_phrase_is_read_or_marks_incomplete(self):
-        """The one parsing invariant: a phrase followed by a reference-like target that the
-        strict grammar could not read is never silently dropped."""
+        """A phrase followed by an unreadable reference-like target marks the PR incomplete."""
         for body in (
             "do not merge before owner/repo#12",
+            "do not merge before v2/sdk#12",
+            "do not merge before v2#12",
+            "do not merge before v1/repo#9",
+            "do not merge before 1.2.0/repo#9",
+            "do not merge before 1.2.0#9",
             "do not merge before https://github.com/o/r/issues/12",
             "do not merge before [#12](https://github.com/other/repo/issues/12)",
             "do not merge until after owner/repo#12",
@@ -379,6 +397,36 @@ class ParseTests(unittest.TestCase):
             "waiting on [#12](../other/issues/12)",
         ):
             self.assertEqual(((), True), self.refs(body, "me/keel"), body)
+
+    def test_foreign_ref_tag_continuation_is_not_read_as_tag(self):
+        # A tag target must not be followed by `#\d` (or `/owner/repo#N` continuation);
+        # such a target is a foreign repository reference -> incomplete.
+        for body in (
+            "do not merge before v2/sdk#12",
+            "do not merge before v2#12",
+            "do not merge before v1/repo#9",
+            "do not merge before 1.2.0/repo#9",
+            "do not merge before 1.2.0#9",
+        ):
+            self.assertEqual(((), True), self.refs(body), body)
+        self.assertEqual(
+            (Blocker(TAG, "v2/sdk"),),
+            blockers.parse_blockers("do not merge before v2/sdk"),
+        )
+        self.assertEqual(
+            (Blocker(TAG, "v2"),),
+            blockers.parse_blockers("do not merge before v2"),
+        )
+        self.assertEqual(
+            (Blocker(TAG, "1.2.0"),),
+            blockers.parse_blockers("do not merge before 1.2.0"),
+        )
+
+    def test_negation_anchored_to_same_line(self):
+        self.assertEqual(["5"], issues("The previous fix was\nBlocked by #5"))
+        self.assertEqual(["5"], issues("Nothing was done.\nBlocked by #5"))
+        self.assertEqual([], issues("This was blocked by #5"))
+        self.assertEqual([], issues("no longer blocked by #5"))
 
     def test_phrases_with_no_reference_like_target_are_not_flagged(self):
         for body in (
@@ -620,7 +668,7 @@ class StaleBlockersTests(unittest.TestCase):
         )
         self.assertTrue(rep["prs"][0]["all_cleared"])
 
-    def test_oxford_list_is_not_certified_while_the_third_is_open(self):
+    def test_oxford_list_is_not_all_cleared_while_the_third_is_open(self):
         rep = self.report(
             prs=[_pr(5, "Blocked by #1, #2, and #3")], issue_states={"1": C, "2": C, "3": OPEN}
         )
@@ -634,6 +682,20 @@ class StaleBlockersTests(unittest.TestCase):
         rep = self.report(prs=[_pr(6, "Blocked by #1")], issue_states={"1": C})
         self.assertFalse(rep["prs"][0]["incomplete"])
         self.assertTrue(rep["prs"][0]["all_cleared"])
+
+    def test_incomplete_pr_with_pending_blocker_is_reported(self):
+        rep = self.report(
+            prs=[_pr(5, "Blocked by #1 and owner/repo#9")],
+            issue_states={"1": OPEN},
+        )
+        self.assertEqual(1, len(rep["prs"]))
+        self.assertEqual(5, rep["prs"][0]["number"])
+        self.assertTrue(rep["prs"][0]["incomplete"])
+        self.assertFalse(rep["prs"][0]["all_cleared"])
+        self.assertEqual(
+            [{"kind": "issue", "ref": "1", "state": PENDING}],
+            rep["prs"][0]["blockers"],
+        )
 
     def test_token_accounting_stale_blockers_reports_incomplete_and_not_dropped(self):
         rep = self.report(
@@ -854,6 +916,32 @@ class RenderAndCliTests(unittest.TestCase):
         self.assertIn("#7 b — blocker abandoned, none cleared", out2)
         self.assertIn("#5 z — blocker list may be incomplete", out)
         self.assertIn("raise --limit", out)
+
+    def test_render_mixed_abandoned_and_unknown(self):
+        out = blockers.render(
+            {
+                "ok": True,
+                "error": None,
+                "truncated": False,
+                "unknown_blockers": 1,
+                "prs": [
+                    {
+                        "number": 9,
+                        "title": "m",
+                        "draft": False,
+                        "all_cleared": False,
+                        "incomplete": False,
+                        "blockers": [
+                            {"kind": ISSUE, "ref": "1", "state": ABANDONED},
+                            {"kind": ISSUE, "ref": "2", "state": UNKNOWN, "reason": "rate limit"},
+                        ],
+                    }
+                ],
+            }
+        )
+        self.assertIn("#9 m — some blockers cleared, abandoned or unchecked", out)
+        self.assertIn("  - #1: abandoned", out)
+        self.assertIn("  - #2: unknown (rate limit)", out)
 
     def run_cli(self, argv, router):
         buf = io.StringIO()

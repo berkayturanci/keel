@@ -4,11 +4,12 @@ A draft that says "do not merge before #3177" stays open long after #3177 closed
 nothing surfaced it. This module reads the *stated* blockers out of PR bodies and asks
 GitHub whether each has cleared.
 
-* :func:`parse_blockers` is pure: PR body text in, blocker references out. It reuses
-  :data:`keel.intake.BLOCKED_PHRASE_RE`, the phrase set issue intake already uses.
+* :func:`parse_blockers` and :func:`scan_blockers` are pure: PR body text in, blocker
+  references and completeness out. It reuses :data:`keel.intake.BLOCKED_PHRASE_RE`,
+  the phrase set issue intake already uses.
 * :func:`resolve_blocker` and :func:`stale_blockers` are the thin, fail-soft ``gh`` I/O.
-  A read that fails is ``unknown`` and is **never** reported as ``cleared``: an operator
-  told "the blocker is gone" merges on it.
+  A read that fails is ``unknown``. ``all_cleared`` is a best-effort hint for an operator
+  to inspect, never a certificate: an operator must read the PR before acting.
 """
 
 from __future__ import annotations
@@ -37,13 +38,13 @@ _ITEM = r"(?:(?:pull request|pr|issue)s?\s*)?#\d+"
 #: or a markdown bullet on the very next line (a blank line ends the list).
 _SEP = r"(?:\s*(?:,\s*(?:(?:and|or)\b\s*)?|&|/|\+|(?:and|or)\b)\s*|[ \t]*\n[ \t]*[-*+][ \t]+)"
 _REF_LIST = rf"(?P<refs>{_ITEM}(?:{_SEP}{_ITEM})*)"
-# --- The one parsing invariant (#1512) ------------------------------------------------
-# For every recognised blocker phrase (including the label forms), every reference-like
-# token in its zone is either read as a blocker or the PR is marked incomplete.
+# --- Recognised phrases and reference zones (#1512) -----------------------------------
+# The parser reads the recognised phrases and marks a PR incomplete when it sees a
+# reference it could not read in a phrase's zone.
 #: The strict grammar for what may follow a blocked phrase: ``blocked by #N``,
 #: ``depends on: PR #N``, ``waiting on #1, #2, and #3``, or ``Depends on:`` and a bullet per
 #: ref. ``owner/repo#N`` does not match (the target must start with ``#N``, optionally after
-#: ``PR``/``issue``), so it is never resolved against the wrong repository.
+#: ``PR``/``issue``), so it is not resolved against this repository.
 _AFTER_BLOCKED_RE = re.compile(
     rf"[ \t]*:?[ \t]*(?:\n[ \t]*)?(?:[-*+][ \t]+)?{_REF_LIST}", re.IGNORECASE
 )
@@ -71,15 +72,17 @@ _BEFORE_PHRASE_RE = re.compile(rf"(?<![\w/]){_DO_NOT_MERGE}", re.IGNORECASE)
 #: What may follow ``do not merge before``: ``#N`` (or ``PR #N``), a ``v``-prefixed tag
 #: (``v2``, ``v1.2.0``) or a three-part dotted version (``1.2.0``). A bare word ("before
 #: release") or a time/count ("before 5pm", "before 3 reviewers") is not a reference.
+#: A tag target must not be followed by ``#\d`` (or an ``/owner/repo#N`` continuation),
+#: which is a foreign repository reference.
 _AFTER_BEFORE_RE = re.compile(
     r"\s+(?:the\s+)?(?:"
     r"(?P<issue>(?:(?:pull request|pr|issue)\s*)?#\d+)"
-    r"|(?P<tag>v\d[\w.+\-/]*|\d{1,3}\.\d+\.\d[\w.+\-/]*))",
+    r"|(?P<tag>(?:v\d|\d{1,3}\.\d+\.\d)[\w.+\-/]*+)(?!#\d))",
     re.IGNORECASE,
 )
 _NEGATION_RE = re.compile(
-    r"(?:\bnot|\bno longer|\bnever|n't|\bnothing|\bpreviously|\bformerly|\bwas|\bwere)\s+"
-    r"(?:currently\s+|really\s+|yet\s+)?$",
+    r"(?:\bnot|\bno longer|\bnever|n't|\bnothing|\bpreviously|\bformerly|\bwas|\bwere)[ \t]+"
+    r"(?:(?:currently|really|yet)[ \t]+)?$",
     re.IGNORECASE,
 )
 #: A terminated fence only: a stray unterminated opener must not swallow (hide) the rest of
@@ -144,7 +147,7 @@ def _own_link(label: str, url: str, repo: str | None) -> bool:
 
 def _unwrap_link(match: re.Match[str], repo: str | None) -> str:
     """``[#12](own-repo url)`` reads as ``#12``. A ``#N`` label over any other URL is a
-    reference into another repository: it is renamed ``external#N`` (so it is never read as
+    reference into another repository: it is renamed ``external#N`` (so it is not read as
     this repository's ``#N``, yet still counts as an unread reference). Prose keeps its URL."""
     label, url = match.groups()
     if "#" not in label:
@@ -152,9 +155,29 @@ def _unwrap_link(match: re.Match[str], repo: str | None) -> str:
     return label if _own_link(label, url, repo) else label.replace("#", "external#")
 
 
+_ALERT_RE = re.compile(
+    r"^[ \t]*>[ \t]*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]",
+    re.IGNORECASE,
+)
+
+
 def _strip_blockquotes(text: str) -> str:
-    """Drop every blockquote line (first non-space character is '>')."""
-    return "\n".join(line for line in text.split("\n") if not line.lstrip(" \t").startswith(">"))
+    """Drop blockquote lines (first non-space character is '>'), except GitHub alert blocks
+    (> [!NOTE], > [!WARNING], > [!IMPORTANT], > [!CAUTION], > [!TIP] and lines quoted under
+    them) which are the author's own text."""
+    out: list[str] = []
+    in_alert = False
+    for line in text.split("\n"):
+        stripped = line.lstrip(" \t")
+        if stripped.startswith(">"):
+            if _ALERT_RE.match(line):
+                in_alert = True
+            if in_alert:
+                out.append(re.sub(r"^[ \t]*>[ \t]?", "", line))
+        else:
+            in_alert = False
+            out.append(line)
+    return "\n".join(out)
 
 
 def _strip_details(text: str) -> str:
@@ -210,11 +233,11 @@ def _zone(text: str, pos: int) -> str:
 def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Blocker, ...], bool]:
     """``(blockers, incomplete)`` stated in ``body``.
 
-    The parsing invariant (#1512): for every recognised phrase, every reference-like token
-    in its zone is either read as a blocker or the PR is marked incomplete. The caller must
-    then never certify that every blocker cleared. ``repo`` (``owner/name``) lets a link to
-    this repository's own issue read as a bare ``#N``; without it every absolute link is
-    treated as foreign.
+    The parser reads the recognised phrases and marks a PR incomplete when it sees a
+    reference it could not read in a phrase's zone. ``all_cleared`` is a best-effort hint
+    for an operator to look at, never a certificate: an operator must read the PR before
+    acting. ``repo`` (``owner/name``) lets a link to this repository's own issue read as
+    a bare ``#N``; without it every absolute link is treated as foreign.
     """
     text = _prose(body or "", repo)
     matches: list[tuple[re.Match[str], str]] = []
@@ -270,9 +293,10 @@ def parse_blockers(body: str | None) -> tuple[Blocker, ...]:
     """Blockers stated in ``body``, de-duplicated: phrase forms first, then ``before`` forms.
 
     Code fences, inline code spans that quote a blocker phrase, HTML comments (a PR
-    template's placeholder), markdown blockquotes, and HTML ``<details>`` blocks (bot-pasted
-    release notes) are not claims. A negated phrase ("not blocked by #5") is skipped;
-    "unblocked by #5" never matches because the phrase needs a word boundary.
+    template's placeholder), standard blockquotes (author alerts like ``> [!NOTE]`` are
+    scanned), and HTML ``<details>`` blocks (bot-pasted release notes) are ignored as
+    non-claims. Negated phrases ("not blocked by #5") are skipped; "unblocked by #5"
+    does not match because the phrase needs a word boundary.
     """
     return scan_blockers(body)[0]
 
@@ -309,8 +333,7 @@ def resolve_detail(
     are). A PR closed unmerged, or an issue closed ``not_planned`` / as a duplicate, is
     ``abandoned``. A tag is cleared once ``git/ref/tags/<tag>`` exists and pending only on
     an HTTP 404 while the repository itself answers. Anything else — no ``gh``, offline, no
-    auth, rate limit, odd output — is ``unknown``, never cleared: an operator told "the
-    blocker is gone" merges on it.
+    auth, rate limit, odd output — is ``unknown``: an operator must inspect before acting.
     """
     if blocker.kind == ISSUE:
         argv = ["gh", "api", f"repos/{{owner}}/{{repo}}/issues/{blocker.ref}", "--jq", _ISSUE_JQ]
@@ -387,11 +410,12 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
     """Open PRs worth an operator's attention about their stated blockers.
 
     Listed: a PR with a blocker that cleared or was abandoned, one whose blocker could not be
-    *checked* (``unknown``, with the reason), and one whose references could not be read
-    (``blockers`` empty, ``incomplete`` true). ``ok`` is False (and ``error`` set) when the PR
-    list itself cannot be read. ``unknown_blockers`` counts the distinct blockers whose state
-    could not be read; a read failure is never reported as "nothing found". A PR is never
-    reported against itself.
+    *checked* (``unknown``, with the reason), an incomplete PR (an unread reference was seen
+    in a blocker zone), and one whose references could not be read (``blockers`` empty,
+    ``incomplete`` true). ``ok`` is False (and ``error`` set) when the PR list itself cannot be
+    read. ``unknown_blockers`` counts the distinct blockers whose state could not be read.
+    ``all_cleared`` is a best-effort hint, never a certificate: an operator must read the PR
+    before acting. A PR is not reported against itself.
     """
     rows = _open_prs(limit, cwd, _run)
     if rows is None:
@@ -431,9 +455,9 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
                 entry["reason"] = reason
             entries.append(entry)
         # Shown, not dropped: a resolved or abandoned blocker, an unchecked one, or a PR
-        # whose references could not be read at all.
+        # whose references could not be read or whose blocker list may be incomplete.
         noteworthy = {CLEARED, ABANDONED, UNKNOWN}
-        if not (incomplete and not entries) and not any(e["state"] in noteworthy for e in entries):
+        if not incomplete and not any(e["state"] in noteworthy for e in entries):
             continue
         prs.append(
             {
@@ -474,7 +498,7 @@ def render(report: dict[str, Any]) -> str:
             kind = "blocker list may be incomplete"
         elif states == {UNKNOWN}:
             kind = "blocker state could not be checked"
-        elif CLEARED not in states and ABANDONED in states:
+        elif CLEARED not in states and ABANDONED in states and UNKNOWN not in states:
             kind = "blocker abandoned, none cleared"
         else:
             kind = "some blockers cleared, abandoned or unchecked"
