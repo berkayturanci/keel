@@ -33,7 +33,7 @@ Closes #
 - [ ] `make test`
 - [ ] `make lint`
 - [ ] `make validate`
-- [ ] `make coverage` (pure core stays at 100% line + branch)
+- [ ] `make coverage` (every module under `src/keel/` stays at 100% line + branch)
 - [ ] `CHANGELOG` updated
 - [ ] #63 parity matrix row updated (if a command changed)
 - [ ] Docs / `CHANGELOG.md` updated if behaviour changed
