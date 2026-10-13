@@ -5,7 +5,6 @@
 #
 # Every surface stating these claims must quote the canonical text verbatim.
 # Pinned by tests/test_docs_claims.py and tests/test_docs_root_claims.py.
-# Promo copy quotes this file.
 
 swarm:
   status: "experimental"
