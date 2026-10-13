@@ -3192,12 +3192,17 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
 - **Zone and token accounting:** for a recognised phrase, its zone spans the rest of the line (bounded
   by any subsequent blocker phrase) plus any bullet block directly below it (when the phrase ends its
   line, or contiguous bullet lines under it). Reference-like tokens in the zone are `#N`, foreign
-  `owner/repo#N`, URLs, `/issues/N` or `/pull/N` paths, and tag-like targets. If the number of tokens
-  captured by the strict grammar differs from the number of reference-like tokens in the zone, the PR
-  is marked `incomplete: true` and `all_cleared` is false for it. Incomplete PRs are listed in the
-  report regardless of whether their parsed blockers are cleared, abandoned, or pending, so unread
-  references are always surfaced for operator review. A PR where a blocker phrase has unreadable
-  references and no parsed blockers is listed with `blockers: []` ("blocker reference could not be read").
+  `owner/repo#N`, URLs, `/issues/N` or `/pull/N` paths, and tag-like targets. If the spans of the
+  tokens captured by the strict grammar do not match the spans of the reference-like tokens in the zone,
+  the PR is marked `incomplete: true` and `all_cleared` is false for it. Because the zone covers the
+  entire line and any immediately following bullet lines, an unrelated reference on the same line
+  (`Depends on #12. Closes #15`) or on a contiguous bullet line without a blank line before it
+  (`Depends on #12` followed by `- Fixes #15`) also marks the PR `incomplete: true` (an expected false
+  negative for `all_cleared`; put closing keywords on a separate non-bullet line or after a blank line).
+  Incomplete PRs are listed in the report regardless of whether their parsed blockers are cleared,
+  abandoned, or pending, so unread references in scanned text are surfaced for operator review. A PR
+  where a blocker phrase has unreadable references and no parsed blockers is listed with `blockers: []`
+  ("blocker reference could not be read").
 - **Deliberately not read:** negated or historical phrases (`not blocked by`, `no longer blocked by`,
   `previously` / `formerly` / `was` immediately preceding the phrase on the same line), phrases with no
   reference-like token at all ("behaviour depends on the config", `Dependency: bump`, "do not merge before release"),
@@ -3206,13 +3211,16 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
   as incomplete. Also ignored as non-claims: the bare noun `dependency` / `needs dependency` without a
   colon ("Upgrade dependency lodash (#123)"), `Depends on: none`, fenced code, inline code quoting a
   phrase, HTML comments, standard blockquotes (`> ...`, including nested `> >`), and text collapsed inside
-  `<details>...</details>` blocks (case-insensitive, nested, or unterminated; bot-pasted release notes).
+  `<details>...</details>` blocks (case-insensitive, nested, or unterminated — an unterminated `<details>`
+  drops through the end of the body without setting `incomplete`, so truncated bot release notes are not
+  flagged and any blocker written after an unclosed `<details>` is missed).
   GitHub alert blocks (`> [!NOTE]`, `> [!WARNING]`, `> [!IMPORTANT]`, `> [!CAUTION]`, `> [!TIP]` and the
   lines quoted under them) are the author's own text and are scanned rather than stripped.
 - **Markdown:** `**#12**`, `_#12_`, `**Blocked by:** #12` and a link whose text is `#12` read as
-  `#12` when the link is to this repository's issue or PR (root-relative, or absolute and matching
-  `gh repo view`). The same label over another repository's URL (including `//host/...` and
-  `../other/...`) is a foreign reference: `incomplete`, not resolved here.
+  `#12` when the link is to this repository's own `#12` (root-relative `/issues/12` or `/pull/12`, `#12`,
+  or absolute and matching `gh repo view`). The same label over another repository's URL (including
+  `//host/...`, `../other/...`, or a path or `#N` fragment naming a different number than the label) is a
+  foreign reference: `incomplete`, not resolved here.
 - **States:** a PR is `cleared` once **merged**; an issue once closed as `completed` (or with no
   reason, as old issues are) (`repos/{owner}/{repo}/issues/N`). A PR closed unmerged, or an issue
   closed `not_planned` or as a duplicate, is `abandoned` — reported, not counted as cleared. A

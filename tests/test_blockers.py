@@ -91,6 +91,14 @@ class ParseTests(unittest.TestCase):
 
     def test_unterminated_fence_does_not_hide_the_rest(self):
         self.assertEqual(["5"], issues("```\nstray opener\nBlocked by #5"))
+        self.assertEqual(
+            ["5"],
+            issues("```\nstray opener\nBlocked by #5\n```python\nblocked by #99\n```"),
+        )
+        self.assertEqual(
+            ["5"],
+            issues("~~~\nstray opener\nBlocked by #5\n```\nblocked by #99\n```"),
+        )
 
     def test_blockquotes_are_not_claims(self):
         for body in (
@@ -202,10 +210,12 @@ class ParseTests(unittest.TestCase):
             "Blocked by [#12](//github.com/me/keel/issues/12)",
             "Blocked by [#12](https://github.com/me/keel/issues/99)",
             "Blocked by [#12](/issues/99)",
+            "Blocked by [#12](#99)",
             "Blocked by [#12](../keel/issues/12)",
         ):
             self.assertEqual(((), True), self.refs(body, "me/keel"), body)
         self.assertEqual((("12",), False), self.refs("Blocked by [#12](/pull/12)", "me/keel"))
+        self.assertEqual((("12",), False), self.refs("Blocked by [#12](#12)", "me/keel"))
 
     def test_tag_trailing_dot_slash_is_refused(self):
         self.assertEqual(((), True), self.refs("do not merge before v1/."))
@@ -337,6 +347,7 @@ class ParseTests(unittest.TestCase):
             "do not merge before #1 and v2.0",
             "do not merge before v1.0, 2.0.1",
             "do not merge before #1 & #2",
+            "Do not merge before v2 is released and #2 is merged",
             "Blocked by #1 and v2.0",
         ):
             self.assertTrue(blockers.scan_blockers(body)[1], body)
@@ -595,7 +606,9 @@ C = "closed completed issue"
 OPEN = "open - issue"
 
 
-def _router(prs, issue_states=None, tags=None, list_result=None, cwds=None, slug_result=None):
+def _router(
+    prs, issue_states=None, tags=None, list_result=None, cwds=None, slug_result=None, limits=None
+):
     issue_states = issue_states or {}
     tags = tags or {}
 
@@ -605,7 +618,10 @@ def _router(prs, issue_states=None, tags=None, list_result=None, cwds=None, slug
         if argv[:3] == ["gh", "repo", "view"]:
             return slug_result if slug_result is not None else _ok("me/keel\n")
         if argv[:3] == ["gh", "pr", "list"]:
-            return list_result if list_result is not None else _ok(json.dumps(prs))
+            n = int(argv[argv.index("--limit") + 1])
+            if limits is not None:
+                limits.append(n)
+            return list_result if list_result is not None else _ok(json.dumps(prs[:n]))
         if argv[2] == "repos/{owner}/{repo}":
             return _ok("1")
         if "git/ref/tags" in argv[2]:
@@ -683,6 +699,17 @@ class StaleBlockersTests(unittest.TestCase):
         self.assertFalse(rep["prs"][0]["incomplete"])
         self.assertTrue(rep["prs"][0]["all_cleared"])
 
+    def test_before_tag_followed_by_prose_and_open_issue_is_not_all_cleared(self):
+        rep = self.report(
+            prs=[_pr(5, "Do not merge before v2 is released and #2 is merged")],
+            issue_states={"2": OPEN},
+            tags={"v2": "yes"},
+        )
+        self.assertEqual(1, len(rep["prs"]))
+        self.assertEqual([{"kind": TAG, "ref": "v2", "state": CLEARED}], rep["prs"][0]["blockers"])
+        self.assertTrue(rep["prs"][0]["incomplete"])
+        self.assertFalse(rep["prs"][0]["all_cleared"])
+
     def test_incomplete_pr_with_pending_blocker_is_reported(self):
         rep = self.report(
             prs=[_pr(5, "Blocked by #1 and owner/repo#9")],
@@ -742,10 +769,13 @@ class StaleBlockersTests(unittest.TestCase):
         self.assertEqual(CLEARED, rep["prs"][0]["blockers"][0]["state"])
 
     def test_truncation_is_flagged(self):
-        with mock.patch("keel.blockers.run_argv", _router(prs=[_pr(1, "x"), _pr(2, "y")])):
+        limits = []
+        router = _router(prs=[_pr(1, "x"), _pr(2, "y"), _pr(3, "z")], limits=limits)
+        with mock.patch("keel.blockers.run_argv", router):
             self.assertTrue(blockers.stale_blockers(limit=1)["truncated"])
-            self.assertFalse(blockers.stale_blockers(limit=2)["truncated"])
+            self.assertTrue(blockers.stale_blockers(limit=2)["truncated"])
             self.assertFalse(blockers.stale_blockers(limit=3)["truncated"])
+        self.assertEqual([2, 3, 4], limits)
 
     def test_read_failure_is_never_silence(self):
         # `gh pr list` works; every REST call fails (rate limit): the PRs are listed, as unknown
@@ -788,6 +818,7 @@ class StaleBlockersTests(unittest.TestCase):
             None,
             {"title": "no number"},
             {"number": "7", "body": "Blocked by #1"},
+            {"number": True, "body": "Blocked by #1"},
             _pr(8, "Blocked by #1"),
             {"number": 9, "body": 5},
         ]

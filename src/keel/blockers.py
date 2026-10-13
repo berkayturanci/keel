@@ -56,7 +56,7 @@ _TAG_DELIM = r"(?:[^\w\s]|(?:\s+(?:and|or|&|/|\+)\b)|\s*$)"
 #: URLs, issue/pull paths, and tag-like targets (`v1`, `v1.2.0`, `1.2.0`).
 _REFLIKE_RE = re.compile(
     r"https?://\S+"
-    r"|[\w.-]+/[\w.-]+#\d+"
+    r"|(?<![\w.-])[\w.-]++/[\w.-]++#\d+"
     r"|/(?:issues|pull)/\d+"
     r"|#\d+"
     r"|(?:\bv\d[\w.+\-/]*|\b\d{1,3}\.\d+\.\d[\w.+\-/]*)"
@@ -86,8 +86,11 @@ _NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 #: A terminated fence only: a stray unterminated opener must not swallow (hide) the rest of
-#: the body, so what follows it is still read.
-_FENCE_RE = re.compile(r"(?:```|~~~).*?(?:```|~~~)", re.DOTALL)
+#: the body or mispair with a later fenced block's opener, so what follows it is still read.
+_FENCE_RE = re.compile(
+    r"^[ \t]*(```|~~~)[^\n]*\n(?:(?!^[ \t]*(?:```|~~~))[^\n]*\n)*?^[ \t]*\1[ \t]*$",
+    re.MULTILINE,
+)
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _DETAILS_TAG_RE = re.compile(r"<\s*(/)?\s*details(?=[\s>])[^>]*>", re.IGNORECASE)
 _INLINE_CODE_RE = re.compile(r"`([^`\n]*)`")
@@ -128,12 +131,12 @@ def _own_link(label: str, url: str, repo: str | None) -> bool:
     """
     if url.startswith("//"):
         return False
-    named = re.search(r"(?:issues|pull)/(\d+)", url)
+    named = re.search(r"(?:(?:issues|pull)/|^#)(\d+)", url)
     labelled = re.search(r"#(\d+)", label)
     if named and labelled and named.group(1) != labelled.group(1):
         return False
     if not re.match(r"[a-z][a-z0-9+.-]*:", url, re.IGNORECASE):
-        return bool(re.match(r"(?:/?(?:issues|pull)/\d+|#\d+)", url))
+        return bool(re.match(r"(?:/?(?:issues|pull)/\d+|#\d+$)", url))
     if repo is None:
         return False
     return bool(
@@ -261,24 +264,35 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
     for i, (m, kind) in enumerate(matches):
         next_start = matches[i + 1][0].start() if i + 1 < len(matches) else len(text)
         zone = _zone(text[:next_start], m.end())
-        zone_refs = _REFLIKE_RE.findall(zone)
+        zone_ref_spans = [
+            (rm.start(), rm.start() + len(rm.group(0).rstrip(".")))
+            for rm in _REFLIKE_RE.finditer(zone)
+        ]
+        this_found: list[Blocker] = []
+        captured_spans: list[tuple[int, int]] = []
         if kind == "blocked":
             ref = _AFTER_BLOCKED_RE.match(text, m.end())
-            this_found = (
-                [Blocker(ISSUE, n) for n in re.findall(r"\d+", ref.group("refs"))] if ref else []
-            )
+            if ref:
+                base = ref.start("refs") - m.end()
+                for rm in re.finditer(r"#(\d+)", ref.group("refs")):
+                    this_found.append(Blocker(ISSUE, rm.group(1)))
+                    captured_spans.append((base + rm.start(), base + rm.end()))
         else:
             target = _AFTER_BEFORE_RE.match(text, m.end())
-            this_found = []
             if target is not None:
                 if target.group("issue"):
-                    this_found.append(Blocker(ISSUE, re.sub(r"\D", "", target.group("issue"))))
+                    num = re.sub(r"\D", "", target.group("issue"))
+                    end = target.end("issue") - m.end()
+                    this_found.append(Blocker(ISSUE, num))
+                    captured_spans.append((end - len(num) - 1, end))
                 else:
                     tag = target.group("tag").rstrip(".")
                     if not (".." in tag or tag.endswith("/")):
+                        start = target.start("tag") - m.end()
                         this_found.append(Blocker(TAG, tag))
+                        captured_spans.append((start, start + len(tag)))
         found.extend(this_found)
-        if len(this_found) != len(zone_refs):
+        if captured_spans != zone_ref_spans:
             incomplete = True
     seen: set[Blocker] = set()
     ordered: list[Blocker] = []
@@ -303,8 +317,8 @@ def parse_blockers(body: str | None) -> tuple[Blocker, ...]:
 
 #: One line: ``<state> <state_reason|-> <issue|unmerged|<merged_at>>``. The last field is
 #: how a PR is told from an issue, and whether it merged (``merged_at`` is null if not).
-# Yes, the issues payload's ``pull_request`` object carries ``merged_at`` (checked live:
-# `gh api repos/berkayturanci/keel/issues/1520 --jq '.pull_request.merged_at'` returns a timestamp).
+# GitHub's issues endpoint includes ``pull_request.merged_at`` on PR items (timestamp when
+# merged, null when open or closed unmerged).
 _ISSUE_JQ = (
     '.state + " " + (.state_reason // "-") + " " + '
     '(if .pull_request then (.pull_request.merged_at // "unmerged") else "issue" end)'
@@ -437,7 +451,7 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
     resolved: dict[Blocker, tuple[str, str | None]] = {}
     prs: list[dict[str, Any]] = []
     for row in rows:
-        if not isinstance(row, dict) or not isinstance(row.get("number"), int):
+        if not isinstance(row, dict) or type(row.get("number")) is not int:
             continue
         number = row["number"]
         body = row["body"] if isinstance(row.get("body"), str) else None

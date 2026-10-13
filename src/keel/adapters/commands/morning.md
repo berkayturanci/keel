@@ -94,10 +94,12 @@ hint, not a certificate; an operator must read the PR before acting. List the re
 whose blockers are all `abandoned` is "blocker abandoned — needs a decision", and one with
 `blockers: []` and `incomplete: true` is "blocker reference could not be read". A blocker with
 state `unknown` was unreadable (its `reason` says why) and is not cleared. Exit code 2 means
-`unknown_blockers` is above zero: say how many blockers could not be checked, and never
-present a short or empty list as "nothing is blocked". The command reads through the `gh` CLI
-rather than the selected transport, so say so when transport is degraded; on exit 1, note that
-blocker state was unavailable.
+`unknown_blockers` is above zero, and `truncated: true` means only the first `--limit` open PRs
+were read (even on exit 0): say how many blockers could not be checked and/or that the open-PR
+scan was truncated at `--limit` (pass a higher `--limit` to read more), and never present a short
+or empty list as "nothing is blocked". The command reads through the `gh` CLI rather than the
+selected transport, so say so when transport is degraded; on exit 1, note that blocker state was
+unavailable.
 
 ## Step 3 — Project health/telemetry signals (project-specific)
 

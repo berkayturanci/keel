@@ -115,8 +115,10 @@ for an operator to look at, never a certificate ("blockers look cleared — chec
 must read the PR before acting. A PR with `incomplete: true` has a reference the parser could not read,
 and one with `blockers: []` is reported as "blocker reference could not be read". Otherwise list the
 still-pending or `unknown` ones, with each `unknown` entry's `reason`. A blocker whose state is `unknown`
-could not be read and is not treated as cleared. Exit code 2 means `unknown_blockers` is above zero: say
-how many blockers could not be checked, and never report an empty or short list as "no blocker has cleared".
+could not be read and is not treated as cleared. Exit code 2 means `unknown_blockers` is above zero, and `truncated: true` means only the first
+`--limit` open PRs were read (even when the command exits 0): say how many blockers could not be
+checked and/or that the open-PR scan was truncated at `--limit` (pass a higher `--limit` to read
+more), and never report an empty or short list as "no blocker has cleared".
 If the command exits 1 (`ok: false`), print one note that blocker state could not be read and carry on.
 This step never comments, edits or merges; a cleared blocker is a prompt for the author or `/keel:ship`,
 not an action taken here.

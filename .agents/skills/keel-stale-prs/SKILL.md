@@ -118,8 +118,10 @@ for an operator to look at, never a certificate ("blockers look cleared — chec
 must read the PR before acting. A PR with `incomplete: true` has a reference the parser could not read,
 and one with `blockers: []` is reported as "blocker reference could not be read". Otherwise list the
 still-pending or `unknown` ones, with each `unknown` entry's `reason`. A blocker whose state is `unknown`
-could not be read and is not treated as cleared. Exit code 2 means `unknown_blockers` is above zero: say
-how many blockers could not be checked, and never report an empty or short list as "no blocker has cleared".
+could not be read and is not treated as cleared. Exit code 2 means `unknown_blockers` is above zero, and `truncated: true` means only the first
+`--limit` open PRs were read (even when the command exits 0): say how many blockers could not be
+checked and/or that the open-PR scan was truncated at `--limit` (pass a higher `--limit` to read
+more), and never report an empty or short list as "no blocker has cleared".
 If the command exits 1 (`ok: false`), print one note that blocker state could not be read and carry on.
 This step never comments, edits or merges; a cleared blocker is a prompt for the author or `/keel:ship`,
 not an action taken here.
@@ -197,4 +199,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=skills command=stale-prs keel_version=1.32.0 source_sha256=fbab41d7c6b58a9226b967b167df577a14d1cfa08ef6d890ae8f54531fa4128d generated_sha256=cbaf10ea1ff9bafa702ccde5315a696e756a59e7061ec1418210f21a7c30a6cb -->
+<!-- keel-generated: surface=skills command=stale-prs keel_version=1.32.0 source_sha256=64015b8ffc7060572c552b1a1cdcfe6ae85a31fc9220d00b6a0c5e3a230f32c8 generated_sha256=441945e8e992a6bff5acfda447e49175cd774d83753898ca2964d14ee6072c6a -->

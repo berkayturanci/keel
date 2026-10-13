@@ -97,10 +97,12 @@ hint, not a certificate; an operator must read the PR before acting. List the re
 whose blockers are all `abandoned` is "blocker abandoned — needs a decision", and one with
 `blockers: []` and `incomplete: true` is "blocker reference could not be read". A blocker with
 state `unknown` was unreadable (its `reason` says why) and is not cleared. Exit code 2 means
-`unknown_blockers` is above zero: say how many blockers could not be checked, and never
-present a short or empty list as "nothing is blocked". The command reads through the `gh` CLI
-rather than the selected transport, so say so when transport is degraded; on exit 1, note that
-blocker state was unavailable.
+`unknown_blockers` is above zero, and `truncated: true` means only the first `--limit` open PRs
+were read (even on exit 0): say how many blockers could not be checked and/or that the open-PR
+scan was truncated at `--limit` (pass a higher `--limit` to read more), and never present a short
+or empty list as "nothing is blocked". The command reads through the `gh` CLI rather than the
+selected transport, so say so when transport is degraded; on exit 1, note that blocker state was
+unavailable.
 
 ## Step 3 — Project health/telemetry signals (project-specific)
 
@@ -152,4 +154,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=skills command=morning keel_version=1.32.0 source_sha256=f8d7a4bbe15376b85b56942c015c326954b5910a94f3dae73b30a4a41e892fe2 generated_sha256=f7294f19e3a63b738aa07c64791f675e30d708837bc22e18f1fa018a4f9403d1 -->
+<!-- keel-generated: surface=skills command=morning keel_version=1.32.0 source_sha256=2787a37363741dd5f9e0ec2214b9e27ad5e86ad92b1a8ed889b9ab09c1070e5b generated_sha256=936e9558f0c270e313356c14dd8ca87aa7fa1b1ee05e1d0f1c423ddd20b41053 -->
