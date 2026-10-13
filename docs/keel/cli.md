@@ -2579,6 +2579,102 @@ orchestrator's.
 Exit status is `0` when `ok` is true, `1` otherwise. `--json` is accepted for symmetry with
 every other keel command; the contract is JSON either way.
 
+### Worked example: `agy` as a reviewer and as an implementer (#1517)
+
+`agy` is the Antigravity CLI. keel talks to it in stream-json: the prompt goes in as one
+NDJSON frame on stdin, and the reply's final `result` frame becomes `text`. Check the exact
+command first. `--print-argv` runs nothing and records nothing:
+
+```bash
+keel delegate run --provider agy:gemini-3.8-flash --role review \
+  --prompt-file review-prompt.md --cwd "$PWD" --print-argv
+# "argv": ["agy", "--sandbox", "--dangerously-skip-permissions",
+#          "--input-format", "stream-json", "--output-format", "stream-json",
+#          "--model", "gemini-3.8-flash", "--add-dir", "<cwd>", "--print-timeout", "1800s"]
+```
+
+**Review.** Write the brief, ask for a verdict as JSON, run, and read the result:
+
+```bash
+cat > review-prompt.md <<'PROMPT'
+Review the diff of this branch against main (git diff main...HEAD).
+Reply with ONLY a JSON object: {"verdict": "LGTM" | "CHANGES", "findings": [...]}.
+PROMPT
+
+keel delegate run --provider agy:gemini-3.8-flash --role review \
+  --prompt-file review-prompt.md --project .keel/project.yaml \
+  --cwd "$PWD" --timeout 1800 > result.json
+# exit status 0 when ok is true, 1 otherwise
+```
+
+`result.json` is the return contract above. For a review, branch on `ok`, then read `text`
+(the model's answer), and on failure `error_code` and `error`; `usage` is `null` for `agy`,
+because only the `api` transport reports token counts. `text` is the model's whole reply, so
+it may wrap the JSON in prose or a code fence. Take the outermost `{ … }`:
+
+```bash
+python3 - <<'PY'
+import json
+r = json.load(open("result.json"))
+if not r["ok"]:
+    raise SystemExit(f"{r['error_code']}: {r['error']}")
+text = r["text"]
+verdict = json.loads(text[text.index("{"): text.rindex("}") + 1])
+print(verdict["verdict"], len(verdict.get("findings", [])))
+PY
+```
+
+If `text` holds no parseable JSON, treat that as no verdict, never as an approval.
+
+**Implement.** The same command with `--role implement` (or `fix`), and the worktree as
+`--cwd`:
+
+```bash
+keel delegate run --provider agy:gemini-3.8-flash --role implement \
+  --prompt-file brief.md --cwd /abs/path/to/worktree --timeout 3600
+```
+
+What `agy` is allowed to do depends on the role, exactly as `keel delegate run` plans it:
+
+| role | flags keel passes | what that means |
+| --- | --- | --- |
+| `review` · `gate` · `chair` | `--sandbox --dangerously-skip-permissions` | `read_only: true`. The sandbox is the only read-only mechanism `agy` documents, so keel reports `read_only_backed: true`. keel does **not** verify that the sandbox confines `agy`, so do not treat it as a guarantee: check `git status` afterwards if a stray write would matter. |
+| `implement` · `fix` | `--dangerously-skip-permissions` (no `--sandbox`) | `read_only: false`, `read_only_backed: false`. `agy` runs tools without asking and may edit files and run commands. |
+
+In both roles `--dangerously-skip-permissions` is there so an unattended run does not stop at
+an approval prompt. When `--cwd` is an absolute path keel adds `--add-dir <cwd>`, which is
+what makes `agy` edit that directory instead of its own scratch copy; a relative `--cwd`
+omits the flag and the result carries a warning, so pass an absolute path. keel never
+commits, pushes or opens a pull request for the delegate: the orchestrator reads the diff
+and does that.
+
+**A long review: `--detach`.** Start it in the background, then poll or block:
+
+```bash
+keel delegate run --provider agy:gemini-3.8-flash --role review \
+  --prompt-file review-prompt.md --cwd "$PWD" --timeout 3600 \
+  --detach --run-id review-1517 --root .
+keel delegate status --root .
+keel delegate wait review-1517 --root . --timeout 3600 > result.json
+```
+
+`wait` prints the same result document (see the section below), so the extraction above works
+unchanged.
+
+**Quota exhaustion.** When `agy` reports it is out of quota, the run comes back fail-soft:
+
+```json
+{"ok": false, "text": "", "error_code": "rate-limit",
+ "error": "agy exited 1: … quota exceeded …", "exit_code": 1, "timed_out": false}
+```
+
+`error_code: rate-limit` is decided from `agy`'s own final error (phrases such as `quota
+exceeded`, `resource_exhausted`, `usage limit`), and `error` quotes the tail of its output.
+keel does not retry it: wait-out-a-window is not a retry. A caller should not re-run the same
+seat, and should fall back to a different seat (another vendor, or the host agent) for that
+review. `timeout` is the opposite case (retry now, with more time), and `timeout` wins when
+the output reads as both.
+
 ## `keel delegate run … --detach` / `keel delegate wait RUN_ID [--timeout S]` / `keel delegate status`
 
 A delegated implementation runs for tens of minutes; a host LLM's turn does not. `--detach`
