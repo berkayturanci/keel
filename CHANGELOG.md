@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **`docs/keel/cli.md` has a worked `agy` example for `keel delegate run`** (#1517): a review and an implement run, extracting a verdict JSON from `text`, what `agy` may do per role (`--sandbox` is passed for read-only roles but not verified to confine it), `--detach` with `delegate status`/`wait`, quota exhaustion (`rate-limit`) and `--print-argv`. A test holds every flag and subcommand the example uses to the parser.
+
 ## [1.32.0] - 2026-10-12
 
 - Fixes from the 2026-10-12 operator feedback round: `keel review` and `keel ship` find a missing `agent:` label before the CI wait and print the exact `gh pr edit` command; `keel merge` names the pending or failing checks, a branch behind its base or a merge conflict instead of echoing GitHub's merge state (the bare `UNSTABLE` text stays only when no check is named).
