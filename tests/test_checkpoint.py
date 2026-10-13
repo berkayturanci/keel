@@ -356,10 +356,13 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertIn("checkpoint is for run RUN-OTHER", result["reason"])
 
     def test_missing_names_resolution_command(self):
-        result = checkpoint.covering_checkpoint(None, "RUN-149", "s10", config_path="p.yaml")
+        result = checkpoint.covering_checkpoint(
+            None, "RUN-149", "s10", config_path="p.yaml", pr_number=170, head_sha="abc123"
+        )
         self.assertEqual(result["status"], "missing")
         self.assertIn(
-            "record one with: keel checkpoint p.yaml --write --run-id RUN-149 --step s10",
+            "record one with: keel checkpoint p.yaml --write --run-id RUN-149 "
+            "--step s10 --head-sha abc123 --pull-request 170",
             result["reason"],
         )
 
@@ -368,11 +371,26 @@ class TestCoveringCheckpoint(unittest.TestCase):
             record, "RUN-149", "s10", pr_number=170, config_path="p.yaml", root="/custom"
         )
         self.assertEqual(res_other["status"], "missing")
-        self.assertIn(
-            "record one with: keel checkpoint p.yaml --root /custom --write "
-            "--run-id RUN-149 --step s10",
-            res_other["reason"],
+        self.assertIn("checkpoint is for run RUN-OTHER", res_other["reason"])
+        self.assertNotIn("--write", res_other["reason"])
+
+    def test_same_run_covered_even_if_head_differs(self):
+        record = _record(run_id="RUN-1", current_step="s10", head_sha="headA")
+        result = checkpoint.covering_checkpoint(record, "RUN-1", "s10", head_sha="headB")
+        self.assertEqual(result["status"], "covered")
+        self.assertTrue(result["covered"])
+
+    def test_covered_when_pr_matches_even_if_checkpoint_run_id_is_none(self):
+        record = _record(run_id="", pull_request=170, head_sha="abc123", current_step="s10")
+        record["run_id"] = None
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", pr_number=170, head_sha="abc123"
         )
+        self.assertEqual(result["status"], "covered")
+        self.assertTrue(result["covered"])
+        self.assertIsNone(result["carried_from_run_id"])
+        self.assertTrue(result["adopt"])
+        self.assertIn("checkpoint for PR #170 reached step s10", result["reason"])
 
     def test_stale_step_when_run_has_not_reached_the_expected_step(self):
         record = _record(current_step="s6")
@@ -589,6 +607,42 @@ class TestMarkMerged(unittest.TestCase):
     def test_mark_merged_rejects_when_carried_from_run_id_does_not_match(self):
         record = _record(run_id="RUN-OLD", current_step="s10")
         merged = checkpoint.mark_merged(record, "RUN-NEW", carried_from_run_id="RUN-MISMATCH")
+        self.assertIsNone(merged)
+
+    def test_mark_merged_adopts_checkpoint_with_none_run_id_when_adopt_is_true(self):
+        record = _record(run_id="", current_step="s10", pull_request=170, head_sha="abc123")
+        record["run_id"] = None
+        merged = checkpoint.mark_merged(
+            record, "RUN-NEW", adopt=True, pr_number=170, head_sha="abc123"
+        )
+        self.assertIsNotNone(merged)
+        self.assertEqual(merged["run_id"], "RUN-NEW")
+        self.assertEqual(merged["state"]["merge"], "merged")
+        self.assertEqual(merged["position"]["current_step"], "s11")
+        self.assertIn("s10", merged["position"]["completed_steps"])
+
+    def test_mark_merged_rejects_when_toctou_pr_mismatches(self):
+        record = _record(run_id="RUN-OLD", current_step="s10", pull_request=999, head_sha="abc")
+        merged = checkpoint.mark_merged(
+            record, "RUN-NEW", carried_from_run_id="RUN-OLD", pr_number=123, head_sha="abc"
+        )
+        self.assertIsNone(merged)
+
+    def test_mark_merged_rejects_when_toctou_head_mismatches(self):
+        record = _record(run_id="RUN-OLD", current_step="s10", pull_request=123, head_sha="headA")
+        merged = checkpoint.mark_merged(
+            record, "RUN-NEW", carried_from_run_id="RUN-OLD", pr_number=123, head_sha="headB"
+        )
+        self.assertIsNone(merged)
+
+    def test_mark_merged_rejects_when_same_run_toctou_pr_mismatches(self):
+        record = _record(run_id="RUN-149", current_step="s10", pull_request=999, head_sha="abc")
+        merged = checkpoint.mark_merged(record, "RUN-149", pr_number=123, head_sha="abc")
+        self.assertIsNone(merged)
+
+    def test_mark_merged_rejects_when_same_run_toctou_head_mismatches(self):
+        record = _record(run_id="RUN-149", current_step="s10", pull_request=123, head_sha="headA")
+        merged = checkpoint.mark_merged(record, "RUN-149", pr_number=123, head_sha="headB")
         self.assertIsNone(merged)
 
     def test_a_run_already_past_s10_keeps_its_step(self):

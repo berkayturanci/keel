@@ -346,6 +346,7 @@ def _resolution_checkpoint_command(
     config_path: str | None = None,
     root: str | None = None,
     head_sha: str | None = None,
+    pr_number: int | None = None,
 ) -> str:
     parts = ["keel checkpoint", shlex.quote(config_path) if config_path else "<project.yaml>"]
     if root and root != ".":
@@ -353,6 +354,8 @@ def _resolution_checkpoint_command(
     parts.extend(["--write", "--run-id", shlex.quote(run_id), "--step", step])
     if head_sha:
         parts.extend(["--head-sha", shlex.quote(head_sha)])
+    if pr_number is not None:
+        parts.extend(["--pull-request", str(pr_number)])
     return " ".join(parts)
 
 
@@ -390,14 +393,15 @@ def covering_checkpoint(
     if expected_step not in STEP_IDS:
         raise CheckpointError("expected_step must be a backbone step id")
     expected_index = STEP_IDS.index(expected_step)
-    res_cmd = _resolution_checkpoint_command(
-        step=expected_step,
-        run_id=run_id,
-        config_path=config_path,
-        root=root,
-        head_sha=head_sha,
-    )
     if record is None:
+        res_cmd = _resolution_checkpoint_command(
+            step=expected_step,
+            run_id=run_id,
+            config_path=config_path,
+            root=root,
+            head_sha=head_sha,
+            pr_number=pr_number,
+        )
         return {
             "status": "missing",
             "covered": False,
@@ -428,6 +432,14 @@ def covering_checkpoint(
 
     if checkpoint_run_id == run_id:
         if not reached:
+            advance_cmd = _resolution_checkpoint_command(
+                step=expected_step,
+                run_id=run_id,
+                config_path=config_path,
+                root=root,
+                head_sha=checkpoint_head or head_sha,
+                pr_number=checkpoint_pr or pr_number,
+            )
             return {
                 **base,
                 "status": "stale-step",
@@ -435,7 +447,7 @@ def covering_checkpoint(
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
                     f"(run is at {current_step}; if {expected_step} completed, "
-                    f"advance it with: {res_cmd})"
+                    f"advance it with: {advance_cmd})"
                 ),
             }
         return {
@@ -492,6 +504,7 @@ def covering_checkpoint(
                 config_path=config_path,
                 root=root,
                 head_sha=checkpoint_head,
+                pr_number=checkpoint_pr or pr_number,
             )
             detail = (
                 f"checkpoint for PR #{checkpoint_pr} is at {current_step}"
@@ -512,14 +525,19 @@ def covering_checkpoint(
                 f"checkpoint for PR #{checkpoint_pr} (run {checkpoint_run_id}) "
                 f"reached step {expected_step}"
             )
-            if pr_matches
-            else f"checkpoint for run {checkpoint_run_id} reached step {expected_step}"
+            if pr_matches and checkpoint_run_id
+            else (
+                f"checkpoint for PR #{checkpoint_pr} reached step {expected_step}"
+                if pr_matches
+                else f"checkpoint for run {checkpoint_run_id} reached step {expected_step}"
+            )
         )
         return {
             **base,
             "status": "covered",
             "covered": True,
             "carried_from_run_id": checkpoint_run_id,
+            "adopt": True,
             "reason": reason,
         }
 
@@ -529,8 +547,7 @@ def covering_checkpoint(
         "covered": False,
         "reason": (
             f"no current checkpoint for run {run_id} at step {expected_step} "
-            f"(checkpoint is for run {checkpoint_run_id}; if {expected_step} completed, "
-            f"record one with: {res_cmd})"
+            f"(checkpoint is for run {checkpoint_run_id})"
         ),
     }
 
@@ -544,23 +561,43 @@ def mark_merged(
     run_id: str,
     *,
     carried_from_run_id: str | None = None,
+    adopt: bool = False,
+    pr_number: int | None = None,
+    head_sha: str | None = None,
 ) -> dict[str, Any] | None:
     """The checkpoint after ``run_id``'s merge landed, or ``None`` when it is not that run's.
 
     Pure. ``keel merge`` refuses unless a checkpoint covers the run at s10, and once the merge
     lands that checkpoint has to say so: left alone it reads ``merge: not-started`` at s10, and
     ``keel status`` calls a merged run *waiting on the merge window* for as long as it exists
-    (#1448). When ``carried_from_run_id`` is given, a covering checkpoint from a previous run
-    (such as a retried merge carrying s10 forward) is adopted and stamped with the new ``run_id``
-    (#1507). The merged record says ``merge: merged``, counts s10 as completed and moves the
-    run to the next step, and clears the stop that held it; a run already past s10 keeps its
-    position.
+    (#1448). When ``carried_from_run_id`` or ``adopt`` is given, a covering checkpoint from a
+    previous run (such as a retried merge carrying s10 forward) is adopted and stamped with
+    the new ``run_id`` (#1507), re-verifying pull request and head identifiers when provided
+    to guard against changes between gate check and merge completion. The merged record says
+    ``merge: merged``, counts s10 as completed and moves the run to the next step, and clears
+    the stop that held it; a run already past s10 keeps its position.
     """
     if record is None:
         return None
     rec_run_id = record.get("run_id")
-    if rec_run_id != run_id and (carried_from_run_id is None or rec_run_id != carried_from_run_id):
+    raw_identifiers = record.get("identifiers")
+    identifiers = raw_identifiers if isinstance(raw_identifiers, dict) else {}
+    rec_pr = identifiers.get("pull_request")
+    rec_head = identifiers.get("head_sha")
+
+    is_same_run = rec_run_id == run_id
+    can_adopt = (carried_from_run_id is not None and rec_run_id == carried_from_run_id) or (
+        adopt and (rec_run_id is None or rec_run_id == carried_from_run_id)
+    )
+
+    if not (is_same_run or can_adopt):
         return None
+
+    if pr_number is not None and rec_pr is not None and rec_pr != pr_number:
+        return None
+    if head_sha is not None and rec_head is not None and rec_head != head_sha:
+        return None
+
     validate_checkpoint(record)
     position = record["position"]
     completed = list(position.get("completed_steps", []))

@@ -1081,9 +1081,7 @@ def _resolution_ship_command(
             "--live",
             "--append-ledger",
             "--run-id",
-            shlex.quote(run_id)
-            if run_id and not (run_id.startswith("<") and run_id.endswith(">"))
-            else run_id,
+            shlex.quote(run_id),
             "--capture-status",
             CAPTURE_STATUS_NOT_RUN,
         ]
@@ -1098,8 +1096,8 @@ def _resolution_ship_command(
             scope_str = ",".join(str(s) for s in sorted(approve_scope) if s)
         else:
             scope_str = str(approve_scope)
-    parts.extend(["--approve-scope", shlex.quote(scope_str) if scope_str else "<scope>"])
-    parts.extend(["--operator", shlex.quote(str(operator)) if operator else "<operator>"])
+    parts.extend(["--approve-scope", shlex.quote(scope_str) if scope_str else "'<scope>'"])
+    parts.extend(["--operator", shlex.quote(str(operator)) if operator else "'<operator>'"])
     return " ".join(parts)
 
 
@@ -1179,13 +1177,15 @@ def _checkpoint_gate(
                 "expected_step": CHECKPOINT_MERGE_STEP,
                 "reason": (
                     "checkpointing is configured but no run-id is available "
-                    f"(pass --run-id or record a gates-pass for this head: {gates_cmd})"
+                    f"(pass --run-id, or record a gates-pass for this head: {gates_cmd}) "
+                    "-- note: --capture-status not-run asserts capture was not run prior to merge"
                 ),
             },
             (
                 "checkpointing is configured but no run-id is available for the "
                 f"checkpoint gate; pass --run-id, record a gates-pass ({gates_cmd}), "
-                "or use --no-checkpoint-gate"
+                "or use --no-checkpoint-gate "
+                "-- note: --capture-status not-run asserts capture was not run prior to merge"
             ),
         )
 
@@ -1218,6 +1218,8 @@ def _checkpoint_gate(
     }
     if "carried_from_run_id" in coverage:
         gate_payload["carried_from_run_id"] = coverage["carried_from_run_id"]
+    if coverage.get("adopt"):
+        gate_payload["adopt"] = True
     if coverage["covered"]:
         return gate_payload, None
     return gate_payload, coverage["reason"]
@@ -1229,6 +1231,9 @@ def _record_merge_in_checkpoint(
     run_id: str | None,
     *,
     carried_from_run_id: str | None = None,
+    adopt: bool = False,
+    pr_number: int | None = None,
+    head_sha: str | None = None,
 ) -> dict[str, object]:
     """Write the landed merge into the run's checkpoint (#1448, #1507). Fail-soft.
 
@@ -1244,6 +1249,9 @@ def _record_merge_in_checkpoint(
             checkpoint.read_checkpoint(path),
             run_id,
             carried_from_run_id=carried_from_run_id,
+            adopt=adopt,
+            pr_number=pr_number,
+            head_sha=head_sha,
         )
         if merged is None:
             return {"updated": False, "reason": f"no checkpoint for run {run_id}"}
@@ -1478,7 +1486,8 @@ def _cmd_merge(args: argparse.Namespace) -> int:
                     args,
                     payload,
                     f"no gates-pass recorded for the current head {head_sha} "
-                    f"(record one with: {res_cmd})",
+                    f"(record one with: {res_cmd}) "
+                    "-- note: --capture-status not-run asserts capture was not run prior to merge",
                     code=1,
                 )
 
@@ -1517,11 +1526,15 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         carried_id = (
             gate_payload.get("carried_from_run_id") if isinstance(gate_payload, dict) else None
         )
+        should_adopt = bool(gate_payload.get("adopt") if isinstance(gate_payload, dict) else False)
         payload["checkpoint_update"] = _record_merge_in_checkpoint(
             args,
             config,
             getattr(args, "run_id", None) or gates_run_id,
             carried_from_run_id=carried_id,
+            adopt=should_adopt,
+            pr_number=getattr(args, "pr", None),
+            head_sha=head_sha,
         )
         _autostamp(
             config,
@@ -2253,16 +2266,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             # append is the natural retry after a crash mid-s11, so it no-ops instead.
             ledger_result["skipped"] = "duplicate-capture-marker"
             ledger_result["existing_run_id"] = clash.get("run_id")
-            pr_val = getattr(args, "ledger_pr", None) or getattr(args, "pr", None)
-            res_cmd = _resolution_ship_command(
-                args.path,
-                root=args.root,
-                pr_number=pr_val,
-                head_sha=getattr(args, "head_sha", None),
-                operator=getattr(args, "operator", None),
-                approve_scope=getattr(args, "approve_scope", None),
-            )
-            ledger_result["resolution"] = res_cmd
 
     if args.json:
         print(
@@ -2320,12 +2323,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  run controls  : {run_control_report['status']}")
     if args.append_ledger:
         if ledger_result.get("skipped") == "duplicate-capture-marker":
-            res_cmd = ledger_result.get("resolution")
-            res_hint = f" (record a new gates-pass with: {res_cmd})" if res_cmd else ""
             print(
                 "  ledger append : skipped — this head already has a capture marker "
                 f"(run {ledger_result['existing_run_id']}); a second one on the same "
-                f"head would block capture-verify with no automated repair{res_hint}"
+                "head would block capture-verify with no automated repair"
             )
         else:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
