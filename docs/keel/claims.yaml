@@ -1,0 +1,24 @@
+# docs/keel/claims.yaml
+#
+# One canonical, test-pinned source for public claims (swarm status, coverage
+# bar, revert-check numbers).
+#
+# Every surface stating these claims must quote the canonical text verbatim.
+# Pinned by tests/test_docs_claims.py and tests/test_docs_root_claims.py.
+# Promo copy quotes this file.
+
+swarm:
+  status: "experimental"
+  status_line: "run once, on a sandbox repository, with single-vendor review seats"
+  summary: "`swarm-review` has run once, on a sandbox repository, with single-vendor review seats; swarm stays experimental."
+
+coverage:
+  bar: "100% line + branch"
+  fail_under: 100
+  claim: "Every module under `src/keel/` is held at **100% line + branch coverage**"
+
+revert_check:
+  fixes_audited: 14
+  fixes_survived: 3
+  qualifier: "at the time their issue was closed"
+  audit_ref: "#1289"

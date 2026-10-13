@@ -49,6 +49,8 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+import yaml
+
 from keel import (
     api_delegate,
     cli,
@@ -72,6 +74,8 @@ CONFIG_DOC = REPO_ROOT / "docs" / "keel" / "configuration.md"
 PARAM_DOC = REPO_ROOT / "docs" / "keel" / "parameter-reference.md"
 MODELS_DOC = REPO_ROOT / "docs" / "keel" / "models.md"
 SCHEMA = REPO_ROOT / "src" / "keel" / "schema" / "project.schema.json"
+CLAIMS_PATH = REPO_ROOT / "docs" / "keel" / "claims.yaml"
+CLAIMS = yaml.safe_load(CLAIMS_PATH.read_text(encoding="utf-8"))
 
 #: `## `keel <name> …`` / `### `keel <name> …`` — the signature headings cli.md uses.
 _CLI_SECTION = re.compile(r"(?m)^#{2,3} `keel ([a-z][a-z0-9-]*)")
@@ -1271,8 +1275,13 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         sandbox repository, with two review seats of a single vendor, and `swarm-land --live`
         then merged both pull requests. A surface that names `swarm-review` must say that much
         — experimental, the sandbox repository, single-vendor seats — and nothing more: no
-        maturity, no production readiness, no multi-vendor review. The set is counted."""
+        maturity, no production readiness, no multi-vendor review. The set is counted.
+
+        #1514: every surface naming swarm-review must quote the canonical status line from
+        docs/keel/claims.yaml verbatim.
+        """
         named = set()
+        status_line = CLAIMS["swarm"]["status_line"]
         for rel in _SWARM_STATUS_SURFACES:
             text = _flat(rel)
             for claim in _OVERCLAIMED_SWARM_REVIEW:
@@ -1282,17 +1291,19 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
                 continue
             named.add(rel)
             with self.subTest(surface=rel):
-                self.assertIn("experimental", text.lower())
-                self.assertIn("sandbox repository", text)
-                self.assertRegex(text, r"single[- ]vendor")
+                self.assertIn(CLAIMS["swarm"]["status"], text.lower())
+                self.assertIn(status_line, text)
         self.assertEqual(named, _SURFACES_NAMING_SWARM_REVIEW)
 
     def test_every_swarm_status_surface_says_experimental(self):
         """One run on a toy repository, single-vendor review seats, and run, review and land
-        as separate opt-in commands: swarm stays experimental on every surface (#1423)."""
+        as separate opt-in commands: swarm stays experimental on every surface (#1423).
+
+        #1514: read from CLAIMS['swarm']['status'].
+        """
         for rel in _SWARM_STATUS_SURFACES:
             with self.subTest(surface=rel):
-                self.assertIn("experimental", _flat(rel).lower())
+                self.assertIn(CLAIMS["swarm"]["status"], _flat(rel).lower())
 
     def test_the_claim_detectors_fire_on_the_wording_they_ban(self):
         for claim in (
@@ -1315,11 +1326,8 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         ):
             with self.subTest(stale=stale):
                 self.assertTrue(any(p.search(stale) for p in _STALE_SWARM_STATUS))
-        # The true sentence trips neither detector.
-        true = (
-            "`swarm-review` has run once, on a sandbox repository, with single-vendor review "
-            "seats; swarm stays experimental."
-        )
+        # The true sentence trips neither detector (#1514: canonical summary in claims.yaml).
+        true = CLAIMS["swarm"]["summary"]
         for pattern in _OVERCLAIMED_SWARM_REVIEW + _STALE_SWARM_STATUS:
             with self.subTest(pattern=pattern.pattern):
                 self.assertIsNone(pattern.search(true))
@@ -2736,9 +2744,10 @@ class TheReadmeCoverageClaimIsTheGate(unittest.TestCase):
     def test_the_gate_measures_the_whole_package_at_100(self):
         self.assertEqual(self.coverage["run"]["source"], ["keel"])
         self.assertEqual(self.coverage["report"]["fail_under"], 100)
+        self.assertEqual(CLAIMS["coverage"]["fail_under"], self.coverage["report"]["fail_under"])
 
     def test_the_readme_claims_the_whole_package(self):
-        self.assertIn("Every module under `src/keel/` is held at **100% line + branch", self.readme)
+        self.assertIn(CLAIMS["coverage"]["claim"], self.readme)
         self.assertNotRegex(self.readme, r"The pure core \([^)]*\) is held at")
 
     def test_the_readme_names_every_omitted_file(self):
@@ -2872,7 +2881,7 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
     """
 
     CLAIM = re.compile(r"audit\s+of\s+(?:14|fourteen)\s+closed\s+fixes", re.IGNORECASE)
-    QUALIFIER = "at the time their issue was closed"
+    QUALIFIER = CLAIMS["revert_check"]["qualifier"]
     EXTENSIONS = (".md", ".html", ".js", ".py", ".yaml", ".yml", ".toml")
     BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z(*\[`])")
     KNOWN = (
@@ -2977,6 +2986,75 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
         # The past tense the surfaces use is not caught as present tense.
         self.assertNotRegex("all 14 failed without their fix", r"(?i)\b(?:today|fails?|failing)\b")
         self.assertRegex(self.sentences(bad)[0], r"(?i)\btoday\b")
+
+    def test_every_statement_of_the_audit_reports_canonical_numbers(self):
+        fixes_audited = str(CLAIMS["revert_check"]["fixes_audited"])
+        fixes_survived = str(CLAIMS["revert_check"]["fixes_survived"])
+        for name, sentence in self._found():
+            with self.subTest(path=name):
+                self.assertTrue(
+                    fixes_audited in sentence or "fourteen" in sentence.lower(),
+                    f"{name}: sentence does not state audited count {fixes_audited}: {sentence}",
+                )
+                self.assertTrue(
+                    fixes_survived in sentence or "three" in sentence.lower(),
+                    f"{name}: sentence does not state survived count {fixes_survived}: {sentence}",
+                )
+
+
+class TestPublicClaimsSource(unittest.TestCase):
+    """#1514: One canonical, test-pinned source for public claims.
+
+    docs/keel/claims.yaml holds the current swarm status line, coverage bar,
+    and revert-check numbers. Every surface stating these claims must quote
+    them verbatim, and promo copy quotes the same file.
+    """
+
+    def test_claims_file_exists_and_is_valid_yaml(self):
+        self.assertTrue(CLAIMS_PATH.is_file(), f"{CLAIMS_PATH} is missing")
+        self.assertIsInstance(CLAIMS, dict)
+
+    def test_swarm_claims_structure_and_values(self):
+        self.assertIn("swarm", CLAIMS)
+        swarm = CLAIMS["swarm"]
+        self.assertEqual(swarm["status"], "experimental")
+        self.assertEqual(
+            swarm["status_line"],
+            "run once, on a sandbox repository, with single-vendor review seats",
+        )
+        self.assertIn(swarm["status_line"], swarm["summary"])
+        self.assertIn(swarm["status"], swarm["summary"])
+
+    def test_coverage_claims_match_configuration(self):
+        self.assertIn("coverage", CLAIMS)
+        cov = CLAIMS["coverage"]
+        with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+            pyproject = tomllib.load(fh)
+        gate = pyproject["tool"]["coverage"]["report"]["fail_under"]
+        self.assertEqual(cov["fail_under"], gate)
+        self.assertEqual(cov["bar"], "100% line + branch")
+        self.assertIn(cov["bar"], cov["claim"])
+
+    def test_revert_check_numbers_match_audit(self):
+        self.assertIn("revert_check", CLAIMS)
+        rev = CLAIMS["revert_check"]
+        self.assertEqual(rev["fixes_audited"], 14)
+        self.assertEqual(rev["fixes_survived"], 3)
+        self.assertEqual(rev["qualifier"], "at the time their issue was closed")
+        self.assertEqual(rev["audit_ref"], "#1289")
+
+    def test_every_surface_naming_swarm_review_quotes_status_line_verbatim(self):
+        status_line = CLAIMS["swarm"]["status_line"]
+        for rel in _SURFACES_NAMING_SWARM_REVIEW:
+            text = _flat(rel)
+            with self.subTest(surface=rel):
+                self.assertIn(status_line, text)
+
+    def test_every_surface_naming_the_sandbox_landing_says_outside_the_swarm(self):
+        for rel in _SURFACES_NAMING_THE_SANDBOX_LANDING:
+            text = _flat(rel)
+            with self.subTest(surface=rel):
+                self.assertIn("outside the swarm", text)
 
 
 if __name__ == "__main__":
