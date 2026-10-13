@@ -269,7 +269,7 @@ class TestReleaseCheck(unittest.TestCase):
 
 class TestRunChecksWiring(unittest.TestCase):
     def test_both_new_guards_run_in_the_release_check(self):
-        from unittest import mock
+        import unittest.mock as mock
 
         names = ("declared_version", "changelog", "highlights", "surfaces", "visual_markers")
         patches = [
