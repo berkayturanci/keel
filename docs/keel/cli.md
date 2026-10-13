@@ -3015,30 +3015,38 @@ Exit 0 when the revert commit was created, 1 otherwise.
 
 List open pull requests whose **stated blocker has cleared or been abandoned** (#1512). It reads
 each open PR's body for a blocked phrase (`blocked by`, `depends on`, `waiting on`, `blocked
-until`, and the labels `dependency:` / `needs dependency`) followed by a list of `#N` references,
-and for `do not merge before|until` (also `don't`, `must not`, `should not`, `cannot`) followed
+until`, and the labels `dependency:` / `needs dependency`; the plural `Dependencies:` is not
+recognised) followed by a list of `#N` references,
+and for `do not merge before|until [after]|prior to` (also `don't` with a straight or curly
+apostrophe, `must not`, `should not`, `cannot`) followed
 by `#N`, `PR #N` or a tag. Then it asks GitHub through `gh api` whether each one is done.
 
 - **List grammar:** items may be `#N`, `PR #N`, `PR#N`, `issue #N` or `pull request #N`, joined by `,`,
   `, and`, `, or`, `and`, `or`, `/`, `&`, `+`, or written as a markdown bullet list under the
   phrase (`Depends on:` then `- #1`, `- #2`). A `before` target must be `#N`, a `v`-prefixed tag
   (`v2`, `v1.2.0`) or a three-part version (`1.2.0`); `5pm` and `10.30` are not tags. A bare
-  `dependency #N` (as in "Upgrade dependency #123") is not a blocker.
+  `dependency #N` (as in "Upgrade dependency #123") is not a blocker. References wrapped in
+  Markdown read as the bare ref: a link whose text is `#12`, `**#12**`, `_#12_`, `**Blocked by:** #12`.
 - **Ignored text:** fenced code, inline code that quotes a phrase, HTML comments, negations
-  (`not blocked by`), and `owner/repo#N` references (never resolved against this repository).
+  (`not blocked by`, and `previously` / `formerly` / `was` just before the phrase; older
+  history further back is not detected), and `owner/repo#N` references (never resolved against this repository).
 - **Incomplete lists:** when the text carries a reference the grammar did not capture
   (`#1 and owner/repo#9`, an issue URL, a second target after a `before`), the PR gets
-  `incomplete: true` and `all_cleared` is never true for it. The parser errs toward flagging.
+  `incomplete: true` and `all_cleared` is never true for it. When *none* of a PR's references
+  could be read (`blocked by owner/repo#12`), the PR is still listed, with `blockers: []` and
+  `incomplete: true` ("blocker reference could not be read"), so it is never silently dropped.
+  The parser errs toward flagging, which can over-flag a phrase with an unrelated `#N` later on
+  its line.
 - **States:** a PR is `cleared` once **merged**; an issue once closed as `completed` (or with no
   reason, as old issues are) (`repos/{owner}/{repo}/issues/N`). A PR closed unmerged, or an issue
   closed `not_planned` or as a duplicate, is `abandoned` — reported, never counted as cleared. A
   tag is `cleared` once `repos/{owner}/{repo}/git/ref/tags/<tag>` exists and `pending` only on an
-  HTTP 404. An open issue or PR is `pending`.
+  HTTP 404 while `repos/{owner}/{repo}` itself answers (a 404 on both is `unknown`). An open issue or PR is `pending`.
 
 Read-only and fail-soft: a blocker that cannot be read (offline, no auth, odd output) has state
 `unknown` and is **never** reported as cleared. A PR is listed when at least one blocker is
-`cleared` or `abandoned`; `all_cleared` is true only when every blocker is cleared and the list is
-not `incomplete`. `--limit` caps the open PRs read (default 200); `truncated` is true, and the text
+`cleared` or `abandoned`, or when none of its references could be read; `all_cleared` is true only when every blocker is cleared and the list is
+not `incomplete`. `--limit` (a positive integer) caps the open PRs read (default 200); `truncated` is true, and the text
 says so, when that many came back. It reads through the `gh` CLI, not the selected GitHub
 transport. Exit 0 on success (even with an empty list), 1 when the PR list itself cannot be read.
 `/keel:stale-prs` and `/keel:morning` run it.

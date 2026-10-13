@@ -11523,7 +11523,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="list open PRs whose stated blocker (issue closed, tag created) has cleared",
     )
     p_sb.add_argument("--root", default=".", help="repo root (the checkout `gh` reads)")
-    p_sb.add_argument("--limit", type=int, default=200, help="open PRs to read (default 200)")
+    p_sb.add_argument(
+        "--limit", type=_positive_int, default=200, help="open PRs to read (default 200)"
+    )
     p_sb.add_argument("--json", action="store_true", help="emit structured JSON")
     p_sb.set_defaults(func=_cmd_stale_blockers)
 

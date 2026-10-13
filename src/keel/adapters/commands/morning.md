@@ -90,7 +90,9 @@ Also run `keel stale-blockers --root . --json` (read-only). List under a separat
 with `all_cleared: true`: every stated blocker (`blocked by #N`,
 `do not merge before #N|<tag>`) has cleared. List the rest under "Blockers partly resolved":
 some blockers cleared or `abandoned` (closed unmerged or not planned — flag it as such), while
-others are `pending`, `unknown` or the list is `incomplete`. A blocker with state `unknown`
+others are `pending`, `unknown` or the list is `incomplete`; a PR whose blockers are all
+`abandoned` is "blocker abandoned — needs a decision", and one with `blockers: []` and
+`incomplete: true` is "blocker reference could not be read". A blocker with state `unknown`
 was unreadable and is never cleared. The command reads through the `gh` CLI rather than the
 selected transport, so say so when transport is degraded; if it exits non-zero, note that
 blocker state was unavailable.

@@ -90,7 +90,9 @@ Also run `keel stale-blockers --root . --json` (read-only). List under a separat
 with `all_cleared: true`: every stated blocker (`blocked by #N`,
 `do not merge before #N|<tag>`) has cleared. List the rest under "Blockers partly resolved":
 some blockers cleared or `abandoned` (closed unmerged or not planned — flag it as such), while
-others are `pending`, `unknown` or the list is `incomplete`. A blocker with state `unknown`
+others are `pending`, `unknown` or the list is `incomplete`; a PR whose blockers are all
+`abandoned` is "blocker abandoned — needs a decision", and one with `blockers: []` and
+`incomplete: true` is "blocker reference could not be read". A blocker with state `unknown`
 was unreadable and is never cleared. The command reads through the `gh` CLI rather than the
 selected transport, so say so when transport is degraded; if it exits non-zero, note that
 blocker state was unavailable.
@@ -145,4 +147,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=claude command=morning keel_version=1.32.0 source_sha256=46342ef58efd419bd6a4e22d8a3aee51b1d9b50aaf4066f2dc791b187b54fe1e generated_sha256=46342ef58efd419bd6a4e22d8a3aee51b1d9b50aaf4066f2dc791b187b54fe1e -->
+<!-- keel-generated: surface=claude command=morning keel_version=1.32.0 source_sha256=26e1f51929044c28f86cea1bbe4c92ee883bd6de7a7dceb2f8eed2695d250541 generated_sha256=26e1f51929044c28f86cea1bbe4c92ee883bd6de7a7dceb2f8eed2695d250541 -->

@@ -58,7 +58,7 @@ _MORE_REFS_RE = re.compile(
 _LINE_REF_RE = re.compile(r"[^\n]*?(?:#\d+|/(?:issues|pull)/\d+)", re.IGNORECASE)
 _DO_NOT_MERGE = (
     r"(?:do not|don't|dont|must not|should not|shouldn't|cannot|can't)\s+"
-    r"merge\s+(?:before|until|prior to)"
+    r"merge\s+(?:before|until(?:\s+after)?|prior to)"
 )
 #: ``do not merge before #N`` / ``... before v1.2.0``. A bare word ("before release") or a
 #: time/count ("before 5pm", "before 3 reviewers") is not a reference: only ``#N``, a
@@ -67,16 +67,22 @@ _DO_NOT_MERGE = (
 _BEFORE_RE = re.compile(
     rf"(?<![\w/]){_DO_NOT_MERGE}\s+(?:the\s+)?(?:"
     rf"(?P<issue>(?:(?:pull request|pr|issue)\s*)?#\d+)"
-    r"|(?P<tag>v\d[\w.+\-/]*|\d+\.\d+\.\d[\w.+\-/]*))",
+    r"|(?P<tag>v\d[\w.+\-/]*|\d{1,3}\.\d+\.\d[\w.+\-/]*))",
     re.IGNORECASE,
 )
 _NEGATION_RE = re.compile(
-    r"(?:\bnot|\bno longer|\bnever|n't|\bnothing)\s+(?:currently\s+|really\s+|yet\s+)?$",
+    r"(?:\bnot|\bno longer|\bnever|n't|\bnothing|\bpreviously|\bformerly|\bwas|\bwere)\s+"
+    r"(?:currently\s+|really\s+|yet\s+)?$",
     re.IGNORECASE,
 )
 _FENCE_RE = re.compile(r"(?:```|~~~).*?(?:```|~~~|\Z)", re.DOTALL)
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _INLINE_CODE_RE = re.compile(r"`([^`\n]*)`")
+#: ``[#12](https://...)`` reads as its link text; a link whose text carries no ``#N`` keeps
+#: its URL, so an issue URL behind prose stays visible to the "could not read" check.
+_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
+#: ``_#12_`` / ``*#12*`` (``**`` and ``__`` are dropped outright, so ``**Blocked by:** #5`` reads).
+_EMPHASIS_REF_RE = re.compile(r"([*_])(#\d+)\1")
 
 
 @dataclass(frozen=True)
@@ -99,10 +105,17 @@ def _unwrap_inline(match: re.Match[str]) -> str:
     return inner
 
 
+def _unwrap_link(match: re.Match[str]) -> str:
+    label, url = match.groups()
+    return label if "#" in label else f"{label} {url}"
+
+
 def _prose(body: str) -> str:
     text = _HTML_COMMENT_RE.sub(" ", body)
     text = _FENCE_RE.sub(" ", text)
-    return _INLINE_CODE_RE.sub(_unwrap_inline, text)
+    text = _INLINE_CODE_RE.sub(_unwrap_inline, text)
+    text = _LINK_RE.sub(_unwrap_link, text).replace("**", "").replace("__", "")
+    return _EMPHASIS_REF_RE.sub(r"\2", text.replace("\u2019", "'"))
 
 
 def scan_blockers(body: str | None) -> tuple[tuple[Blocker, ...], bool]:
@@ -176,8 +189,9 @@ def resolve_blocker(blocker: Blocker, *, cwd: str | None = None, _run=None) -> s
     that was merged, an issue closed as ``completed`` (or with no reason, as old issues
     are). A PR closed unmerged, or an issue closed ``not_planned`` / as a duplicate, is
     ``abandoned``. A tag is cleared once ``git/ref/tags/<tag>`` exists and pending only on
-    an HTTP 404. Anything else — no ``gh``, offline, no auth, odd output — is ``unknown``,
-    never cleared: an operator told "the blocker is gone" merges on it.
+    an HTTP 404 while the repository itself answers. Anything else — no ``gh``, offline, no
+    auth, odd output — is ``unknown``, never cleared: an operator told "the blocker is gone"
+    merges on it.
     """
     if blocker.kind == ISSUE:
         argv = ["gh", "api", f"repos/{{owner}}/{{repo}}/issues/{blocker.ref}", "--jq", _ISSUE_JQ]
@@ -197,7 +211,12 @@ def resolve_blocker(blocker: Blocker, *, cwd: str | None = None, _run=None) -> s
     result = run_argv(argv, cwd=cwd, **_kw(_run))
     if result.ok:
         return CLEARED if result.stdout.strip() else UNKNOWN
-    return PENDING if "HTTP 404" in result.stderr else UNKNOWN
+    if "HTTP 404" not in result.stderr:
+        return UNKNOWN
+    # A 404 also answers a repository the caller cannot see (private, no auth, wrong
+    # directory): only a repository that does answer makes it "the tag is not there yet".
+    repo = run_argv(["gh", "api", "repos/{owner}/{repo}", "--jq", ".id"], cwd=cwd, **_kw(_run))
+    return PENDING if repo.ok and repo.stdout.strip() else UNKNOWN
 
 
 def _open_prs(limit: int, cwd: str | None, _run) -> list[dict[str, Any]] | None:
@@ -223,7 +242,8 @@ def _open_prs(limit: int, cwd: str | None, _run) -> list[dict[str, Any]] | None:
 
 
 def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> dict[str, Any]:
-    """Open PRs with at least one cleared or abandoned stated blocker.
+    """Open PRs with at least one cleared or abandoned stated blocker, plus PRs whose blocker
+    references could not be read at all (``blockers`` empty, ``incomplete`` true).
 
     ``ok`` is False (and ``error`` set) when the PR list itself cannot be read; a blocker
     that cannot be read is listed as ``unknown`` and never counts toward ``all_cleared``.
@@ -245,14 +265,16 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
         number = row["number"]
         found, incomplete = scan_blockers(row["body"] if isinstance(row.get("body"), str) else None)
         blockers = [b for b in found if not (b.kind == ISSUE and b.ref == str(number))]
-        if not blockers:
+        if not blockers and not incomplete:
             continue
         entries = []
         for b in blockers:
             if b not in states:
                 states[b] = resolve_blocker(b, cwd=cwd, _run=_run)
             entries.append({**b.to_dict(), "state": states[b]})
-        if not any(e["state"] in (CLEARED, ABANDONED) for e in entries):
+        # A PR whose blocker references could not be read at all is shown, not dropped.
+        unreadable = incomplete and not entries
+        if not unreadable and not any(e["state"] in (CLEARED, ABANDONED) for e in entries):
             continue
         prs.append(
             {
@@ -277,10 +299,15 @@ def render(report: dict[str, Any]) -> str:
     if not report["prs"]:
         lines.append("No open PRs with a cleared or abandoned blocker.")
     for pr in report["prs"]:
+        states = {e["state"] for e in pr["blockers"]}
         if pr["all_cleared"]:
             kind = "all blockers cleared"
+        elif not pr["blockers"]:
+            kind = "blocker reference could not be read"
         elif pr["incomplete"]:
             kind = "blocker list may be incomplete"
+        elif CLEARED not in states:
+            kind = "blocker abandoned, none cleared"
         else:
             kind = "some blockers cleared or abandoned"
         draft = " (draft)" if pr["draft"] else ""
