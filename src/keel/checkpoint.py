@@ -335,7 +335,7 @@ def resume_plan_as_dict(
     }
 
 
-COVERAGE_STATES = ("covered", "missing", "stale-step")
+COVERAGE_STATES = ("covered", "missing", "stale-step", "stale-head")
 
 
 def _resolution_checkpoint_command(
@@ -344,11 +344,14 @@ def _resolution_checkpoint_command(
     run_id: str,
     config_path: str | None = None,
     root: str | None = None,
+    head_sha: str | None = None,
 ) -> str:
     parts = ["keel checkpoint", config_path or "<project.yaml>"]
     if root and root != ".":
         parts.extend(["--root", root])
     parts.extend(["--write", "--run-id", run_id, "--step", step])
+    if head_sha:
+        parts.extend(["--head-sha", head_sha])
     return " ".join(parts)
 
 
@@ -358,6 +361,7 @@ def covering_checkpoint(
     expected_step: str,
     *,
     pr_number: int | None = None,
+    head_sha: str | None = None,
     accepted_run_ids: Collection[str] = (),
     config_path: str | None = None,
     root: str | None = None,
@@ -371,21 +375,26 @@ def covering_checkpoint(
     ``completed_steps``) and either:
 
     * the checkpoint is for the same ``run_id``;
-    * or the checkpoint is for the same pull request (``pr_number``) or an accepted
-      run id (such as a second merge attempt accepting the PR's latest gates run
-      at s10, carrying the checkpoint forward — #1507).
+    * or the checkpoint is for the same pull request (``pr_number``) and head commit,
+      or an accepted run id (such as a second merge attempt accepting the PR's latest
+      gates run at s10 for the same head, carrying the checkpoint forward — #1507).
 
     The result distinguishes:
 
     * ``covered`` — a current checkpoint reached ``expected_step``;
     * ``missing`` — no checkpoint, or a checkpoint for a different run / PR;
-    * ``stale-step`` — a checkpoint that has not reached the step.
+    * ``stale-step`` — a checkpoint that has not reached the step;
+    * ``stale-head`` — a checkpoint for the PR that covers an earlier/different head SHA.
     """
     if expected_step not in STEP_IDS:
         raise CheckpointError("expected_step must be a backbone step id")
     expected_index = STEP_IDS.index(expected_step)
     res_cmd = _resolution_checkpoint_command(
-        step=expected_step, run_id=run_id, config_path=config_path, root=root
+        step=expected_step,
+        run_id=run_id,
+        config_path=config_path,
+        root=root,
+        head_sha=head_sha,
     )
     if record is None:
         return {
@@ -408,6 +417,7 @@ def covering_checkpoint(
     raw_identifiers = record.get("identifiers")
     identifiers = raw_identifiers if isinstance(raw_identifiers, dict) else {}
     checkpoint_pr = identifiers.get("pull_request")
+    checkpoint_head = identifiers.get("head_sha")
     base = {
         "run_id": run_id,
         "expected_step": expected_step,
@@ -437,6 +447,26 @@ def covering_checkpoint(
     pr_matches = pr_number is not None and checkpoint_pr == pr_number
     id_matches = bool(checkpoint_run_id and checkpoint_run_id in accepted_run_ids)
     if pr_matches or id_matches:
+        if checkpoint_head is not None and head_sha is not None and checkpoint_head != head_sha:
+            head_detail = (
+                f"checkpoint for PR #{checkpoint_pr} covers head {checkpoint_head}, "
+                f"current head is {head_sha}"
+                if pr_matches
+                else (
+                    f"checkpoint for run {checkpoint_run_id} covers head {checkpoint_head}, "
+                    f"current head is {head_sha}"
+                )
+            )
+            return {
+                **base,
+                "status": "stale-head",
+                "covered": False,
+                "reason": (
+                    f"no current checkpoint for run {run_id} at step {expected_step} "
+                    f"(head mismatch: {head_detail})"
+                ),
+            }
+
         if not reached:
             advance_run_id = checkpoint_run_id or run_id
             advance_cmd = _resolution_checkpoint_command(
@@ -444,6 +474,7 @@ def covering_checkpoint(
                 run_id=advance_run_id,
                 config_path=config_path,
                 root=root,
+                head_sha=checkpoint_head or head_sha,
             )
             detail = (
                 f"checkpoint for PR #{checkpoint_pr} is at {current_step}"
@@ -534,6 +565,8 @@ def mark_merged(
             "action": _IDEMPOTENT_STEPS.get(current),
         },
     }
+    if carried_from_run_id and carried_from_run_id != run_id:
+        merged["carried_from_run_id"] = carried_from_run_id
     validate_checkpoint(merged)
     return merged
 

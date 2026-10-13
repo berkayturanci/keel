@@ -7,6 +7,8 @@ import io
 import itertools
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -2958,6 +2960,16 @@ class TestShip(unittest.TestCase):
         self.assertEqual(ledger_result["existing_run_id"], "RUN-1")
         self.assertIn("--capture-status not-run", ledger_result["resolution"])
         self.assertIn("--run-id <new-run-id>", ledger_result["resolution"])
+        parsed_ship = cli.build_parser().parse_args(shlex.split(ledger_result["resolution"])[1:])
+        self.assertEqual(parsed_ship.command, "ship")
+        self.assertEqual(parsed_ship.ledger_pr, 940)
+        self.assertEqual(parsed_ship.head_sha, head)
+        self.assertEqual(parsed_ship.approve_scope, ["filesystem,git,github"])
+        self.assertEqual(parsed_ship.operator, "tester")
+        self.assertEqual(parsed_ship.capture_status, "not-run")
+        self.assertEqual(parsed_ship.run_id, "<new-run-id>")
+        self.assertTrue(parsed_ship.live)
+        self.assertTrue(parsed_ship.append_ledger)
         self.assertIn("skipped — this head already has a capture marker (run RUN-1)", out_human)
         self.assertIn("record a new gates-pass with: keel ship", out_human)
         self.assertIn("--capture-status not-run", out_human)
@@ -11727,7 +11739,9 @@ class TestMergeCheckpointGate(unittest.TestCase):
             argv += list(extra)
             return run(argv)
 
-    def _write_checkpoint(self, root, config_path, *, run_id="RUN-1", step="s10"):
+    def _write_checkpoint(
+        self, root, config_path, *, run_id="RUN-1", step="s10", head_sha="abc", pull_request=123
+    ):
         config = cli.cfg.load_config(config_path)
         path = cli.checkpoint.resolve_path(root, config)
         record = cli.checkpoint.build_checkpoint_record(
@@ -11736,9 +11750,19 @@ class TestMergeCheckpointGate(unittest.TestCase):
             current_step=step,
             base_branch="main",
             branch="feat/x",
-            pull_request=123,
+            pull_request=pull_request,
+            head_sha=head_sha,
         )
         cli.checkpoint.write_checkpoint(path, record)
+
+    def _assert_command_runnable(self, text, command_name):
+        match = re.search(r"(keel " + command_name + r" [^\)]+)", text)
+        self.assertIsNotNone(match, f"Could not find keel {command_name} command in {text}")
+        cmd = match.group(1).strip()
+        parser = cli.build_parser()
+        args = parser.parse_args(shlex.split(cmd)[1:])
+        self.assertEqual(args.command, command_name)
+        return args
 
     def test_no_checkpoint_config_merges_advisory_skip(self):
         # keel.yaml (the default _merge_args config) has no reports.checkpoint.
@@ -11851,6 +11875,9 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(data["checkpoint_gate"]["status"], "missing")
         self.assertIn("no current checkpoint for run RUN-1 at step s10", data["reason"])
         self.assertIn("record one with: keel checkpoint", data["reason"])
+        parsed_cp = self._assert_command_runnable(data["reason"], "checkpoint")
+        self.assertEqual(parsed_cp.step, "s10")
+        self.assertTrue(parsed_cp.write)
 
     def test_merge_refused_when_checkpoint_is_stale_step(self):
         config = _write_config_with_checkpoint("'true'")
@@ -11863,6 +11890,9 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(data["checkpoint_gate"]["status"], "stale-step")
         self.assertIn("run is at s6", data["reason"])
         self.assertIn("advance it with: keel checkpoint", data["reason"])
+        parsed_cp = self._assert_command_runnable(data["reason"], "checkpoint")
+        self.assertEqual(parsed_cp.step, "s10")
+        self.assertTrue(parsed_cp.write)
 
     def test_merge_refused_when_no_run_id_available(self):
         config = _write_config_with_checkpoint("'true'")
@@ -11873,6 +11903,15 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(data["checkpoint_gate"]["status"], "missing")
         self.assertIn("no run-id is available", data["reason"])
         self.assertIn("record a gates-pass", data["reason"])
+        parsed_ship = self._assert_command_runnable(data["reason"], "ship")
+        self.assertEqual(parsed_ship.ledger_pr, 123)
+        self.assertEqual(parsed_ship.head_sha, "abc")
+        self.assertEqual(parsed_ship.approve_scope, ["filesystem,git,github"])
+        self.assertEqual(parsed_ship.operator, "tester")
+        self.assertEqual(parsed_ship.capture_status, "not-run")
+        self.assertEqual(parsed_ship.run_id, "<new-run-id>")
+        self.assertTrue(parsed_ship.live)
+        self.assertTrue(parsed_ship.append_ledger)
 
     def test_retry_merge_accepts_prior_run_checkpoint_for_pr_at_s10(self):
         config = _write_config_with_checkpoint("'true'")
@@ -11895,9 +11934,79 @@ class TestMergeCheckpointGate(unittest.TestCase):
             },
         )
         self.assertEqual(record["run_id"], "RUN-RETRY")
+        self.assertEqual(record["carried_from_run_id"], "RUN-PREV")
         self.assertEqual(record["state"]["merge"], "merged")
         self.assertEqual(record["position"]["current_step"], "s11")
         self.assertIn("s10", record["position"]["completed_steps"])
+
+    def test_retry_merge_refused_when_prior_run_checkpoint_head_mismatches(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-PREV", step="s10", head_sha="headA")
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "stale-head")
+        self.assertIn("head mismatch", data["reason"])
+        self.assertIn("covers head headA, current head is abc", data["reason"])
+
+    def test_retry_merge_accepts_prior_run_checkpoint_via_accepted_run_ids(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(
+                d, config, run_id="RUN-GATES", step="s10", pull_request=999, head_sha="abc"
+            )
+            rc, out, _ = self._run_merge(
+                config=config, root=d, run_id="RUN-GATES", extra=["--run-id", "RUN-MERGE"]
+            )
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+        self.assertEqual(data["checkpoint_gate"]["carried_from_run_id"], "RUN-GATES")
+        self.assertEqual(
+            data["checkpoint_update"],
+            {
+                "updated": True,
+                "run_id": "RUN-MERGE",
+                "current_step": "s11",
+                "carried_from": "RUN-GATES",
+            },
+        )
+        self.assertEqual(record["run_id"], "RUN-MERGE")
+        self.assertEqual(record["carried_from_run_id"], "RUN-GATES")
+        self.assertEqual(record["position"]["current_step"], "s11")
+
+    def test_retry_merge_carry_forward_past_s10_keeps_step_and_updates_run_id(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-PREV", step="s12", head_sha="abc")
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+        self.assertEqual(data["checkpoint_update"]["current_step"], "s12")
+        self.assertEqual(data["checkpoint_update"]["carried_from"], "RUN-PREV")
+        self.assertEqual(record["run_id"], "RUN-RETRY")
+        self.assertEqual(record["carried_from_run_id"], "RUN-PREV")
+        self.assertEqual(record["position"]["current_step"], "s12")
+
+    def test_retry_merge_refused_when_checkpoint_is_for_different_pr(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(
+                d, config, run_id="RUN-OTHER", step="s10", pull_request=999, head_sha="abc"
+            )
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+        self.assertIn("checkpoint is for run RUN-OTHER", data["reason"])
 
     def test_retry_merge_refused_when_prior_run_checkpoint_stale_step(self):
         config = _write_config_with_checkpoint("'true'")
@@ -11921,6 +12030,48 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertIn("no gates-pass recorded for the current head abc", data["reason"])
         self.assertIn("record one with: keel ship", data["reason"])
         self.assertIn("--capture-status not-run", data["reason"])
+        parsed_ship = self._assert_command_runnable(data["reason"], "ship")
+        self.assertEqual(parsed_ship.ledger_pr, 123)
+        self.assertEqual(parsed_ship.head_sha, "abc")
+        self.assertEqual(parsed_ship.approve_scope, ["filesystem,git,github"])
+        self.assertEqual(parsed_ship.operator, "tester")
+        self.assertEqual(parsed_ship.capture_status, "not-run")
+        self.assertEqual(parsed_ship.run_id, "<new-run-id>")
+        self.assertTrue(parsed_ship.live)
+        self.assertTrue(parsed_ship.append_ledger)
+
+    def test_no_checkpoint_gate_bypassed_does_not_re_stamp_foreign_checkpoint(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-OLD", step="s10", head_sha="abc")
+            rc, out, _ = self._run_merge(
+                config=config, root=d, run_id="RUN-NEW", extra=["--no-checkpoint-gate"]
+            )
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "bypassed")
+        self.assertNotIn("carried_from_run_id", data["checkpoint_gate"])
+        self.assertFalse(data["checkpoint_update"]["updated"])
+        self.assertEqual(data["checkpoint_update"]["reason"], "no checkpoint for run RUN-NEW")
+        self.assertEqual(record["run_id"], "RUN-OLD")
+
+    def test_resolution_ship_command_variations_parseable(self):
+        cmd_min = cli._resolution_ship_command("p.yaml", root=".")
+        args_min = cli.build_parser().parse_args(shlex.split(cmd_min)[1:])
+        self.assertEqual(args_min.command, "ship")
+        self.assertEqual(args_min.root, ".")
+        self.assertIsNone(args_min.ledger_pr)
+        self.assertIsNone(args_min.head_sha)
+        self.assertEqual(args_min.approve_scope, ["filesystem,git,github"])
+        self.assertEqual(args_min.operator, "<operator>")
+
+        cmd_scope_str = cli._resolution_ship_command(
+            "p.yaml", root=None, approve_scope="git", operator=None
+        )
+        args_scope_str = cli.build_parser().parse_args(shlex.split(cmd_scope_str)[1:])
+        self.assertEqual(args_scope_str.approve_scope, ["git"])
 
     def test_explicit_run_id_overrides_gates_pass_run_id(self):
         config = _write_config_with_checkpoint("'true'")

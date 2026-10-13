@@ -337,14 +337,20 @@ session a clean slate that can re-merge or duplicate comments. The decision is p
 the checkpoint file. The result is reported in the `checkpoint_gate` block of the payload:
 
 - **`covered`** — a current checkpoint reached `s10` (its `current_step` is at
-  or past `s10`, or `s10` is in `completed_steps`). When retrying a merge on a PR whose
-  previous run reached `s10`, `keel merge` accepts the PR's latest checkpoint at `s10` across
-  run IDs and carries it forward to the new run upon landing (#1507). The merge proceeds.
+  or past `s10`, or `s10` is in `completed_steps`). When retrying a merge on a PR on the same head
+  whose previous run reached `s10`, `keel merge` accepts the PR's latest checkpoint at `s10`
+  (keyed on `identifiers.pull_request` and `identifiers.head_sha`, or an accepted run ID) across
+  run IDs and carries it forward to the new run upon landing (#1507). In that case,
+  `checkpoint_gate.carried_from_run_id` records the source run ID. The merge proceeds.
 - **`missing`** — no checkpoint, or the checkpoint is for a different run and PR. Refused with
-  `no current checkpoint for run <id> at step s10`, naming the `keel checkpoint ... --write` command.
+  `no current checkpoint for run <id> at step s10`, naming the `keel checkpoint ... --write` command
+  (valid only after the run has genuinely reached `s10`, e.g. recovering from a lost checkpoint;
+  otherwise drive or resume the run through `s10` via `keel resume`).
 - **`stale-step`** — a checkpoint that has not reached `s10`. Refused naming the advancing command.
+- **`stale-head`** — a checkpoint for the PR covering an earlier head commit (head mismatch). Refused.
 
-The run-id is the gates-SHA `run_id` by default; override it with `--run-id`.
+The run-id is the gates-SHA `run_id` by default; override it with `--run-id`. Cross-run acceptance
+keys on the PR number and matching current head SHA.
 
 **Back-compat / degrade gracefully.** The gate is enforced **only when checkpointing is
 configured** for the project (`policy_pack.reports.checkpoint`). When that key is absent the
@@ -358,10 +364,11 @@ the gate for callers that legitimately do not checkpoint. It **requires a named
 
 **After the merge lands, the checkpoint records it (#1448, #1507).** Once GitHub has merged the
 head, `keel merge` reads the run's checkpoint and, when it belongs to the same run-id (or is
-carried forward from a previous run covering this PR at `s10`, #1507), writes it back through
+carried forward from a previous run covering this PR at `s10` on the same head, #1507), writes it back through
 the pure `keel.checkpoint.mark_merged`:
 
 - `run_id` is updated to the current merge run ID
+- `carried_from_run_id` is recorded in the checkpoint file to preserve provenance when carried (#1507)
 - `state.merge` becomes `merged`
 - `s10` is added to `completed_steps`
 - `current_step` moves to `s11` (a run already past `s10` keeps its step)

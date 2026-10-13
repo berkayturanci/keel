@@ -19,7 +19,7 @@ import shutil
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any
 
@@ -1062,6 +1062,45 @@ CHECKPOINT_MERGE_STEP = "s10"
 CAPTURE_STATUS_NOT_RUN = "not-run"
 
 
+def _resolution_ship_command(
+    config_path: str,
+    *,
+    root: str | None = None,
+    pr_number: int | str | None = None,
+    head_sha: str | None = None,
+    operator: str | None = None,
+    approve_scope: str | Collection[str] | None = None,
+    run_id: str = "<new-run-id>",
+) -> str:
+    """Build a runnable ``keel ship`` command to resolve a gates-pass refusal."""
+    parts = ["keel", "ship", config_path]
+    if root and root != ".":
+        parts.extend(["--root", str(root)])
+    parts.extend(
+        [
+            "--live",
+            "--append-ledger",
+            "--run-id",
+            run_id,
+            "--capture-status",
+            CAPTURE_STATUS_NOT_RUN,
+        ]
+    )
+    if pr_number is not None:
+        parts.extend(["--pull-request", str(pr_number)])
+    if head_sha is not None:
+        parts.extend(["--head-sha", str(head_sha)])
+    scope_str = ""
+    if approve_scope:
+        if isinstance(approve_scope, (list, tuple, set)):
+            scope_str = ",".join(str(s) for s in approve_scope if s)
+        else:
+            scope_str = str(approve_scope)
+    parts.extend(["--approve-scope", scope_str or "filesystem,git,github"])
+    parts.extend(["--operator", str(operator) if operator else "<operator>"])
+    return " ".join(parts)
+
+
 def _checkpoint_gate(
     args: argparse.Namespace,
     config: cfg.ProjectConfig,
@@ -1069,6 +1108,7 @@ def _checkpoint_gate(
     run_id: str | None,
     operator: str | None,
     gates_run_id: str | None = None,
+    head_sha: str | None = None,
 ) -> tuple[dict[str, object], str | None]:
     """Gate the merge on a covering checkpoint for the run at step s10.
 
@@ -1121,11 +1161,13 @@ def _checkpoint_gate(
         )
 
     if not run_id:
-        pr_val = getattr(args, "pr", None)
-        pr_arg = f" --pr {pr_val}" if pr_val is not None else ""
-        gates_cmd = (
-            f"keel ship {args.path} --root {args.root} --live --append-ledger "
-            f"--run-id <new-run-id> --capture-status {CAPTURE_STATUS_NOT_RUN}{pr_arg}"
+        gates_cmd = _resolution_ship_command(
+            args.path,
+            root=args.root,
+            pr_number=getattr(args, "pr", None),
+            head_sha=head_sha,
+            operator=operator,
+            approve_scope=getattr(args, "approve_scope", None),
         )
         return (
             {
@@ -1158,6 +1200,7 @@ def _checkpoint_gate(
         run_id,
         CHECKPOINT_MERGE_STEP,
         pr_number=getattr(args, "pr", None),
+        head_sha=head_sha,
         accepted_run_ids=(gates_run_id,) if gates_run_id else (),
         config_path=args.path,
         root=args.root,
@@ -1421,11 +1464,13 @@ def _cmd_merge(args: argparse.Namespace) -> int:
                 "run_id": gates_run_id,
             }
             if not matched:
-                pr_val = getattr(args, "pr", None)
-                pr_arg = f" --pr {pr_val}" if pr_val is not None else ""
-                res_cmd = (
-                    f"keel ship {args.path} --root {args.root} --live --append-ledger "
-                    f"--run-id <new-run-id> --capture-status {CAPTURE_STATUS_NOT_RUN}{pr_arg}"
+                res_cmd = _resolution_ship_command(
+                    args.path,
+                    root=args.root,
+                    pr_number=getattr(args, "pr", None),
+                    head_sha=head_sha,
+                    operator=approval_operator,
+                    approve_scope=getattr(args, "approve_scope", None),
                 )
                 return _finish_merge(
                     args,
@@ -1441,6 +1486,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             run_id=args.run_id or gates_run_id,
             operator=approval_operator,
             gates_run_id=gates_run_id,
+            head_sha=head_sha,
         )
         payload["checkpoint_gate"] = gate_payload
         if gate_error is not None:
@@ -2206,10 +2252,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             ledger_result["skipped"] = "duplicate-capture-marker"
             ledger_result["existing_run_id"] = clash.get("run_id")
             pr_val = getattr(args, "ledger_pr", None) or getattr(args, "pr", None)
-            pr_arg = f" --pr {pr_val}" if pr_val is not None else ""
-            res_cmd = (
-                f"keel ship {args.path} --root {args.root} --live --append-ledger "
-                f"--run-id <new-run-id> --capture-status {CAPTURE_STATUS_NOT_RUN}{pr_arg}"
+            res_cmd = _resolution_ship_command(
+                args.path,
+                root=args.root,
+                pr_number=pr_val,
+                head_sha=getattr(args, "head_sha", None),
+                operator=getattr(args, "operator", None),
+                approve_scope=getattr(args, "approve_scope", None),
             )
             ledger_result["resolution"] = res_cmd
 
