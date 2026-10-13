@@ -8,6 +8,8 @@ All notable changes to keel are documented here. The format follows
 
 ### Fixed
 - **`release_smoke.py` prints why a command failed and waits out a lagging index** (#1526). `_run` captured output and raised a bare `CalledProcessError`, so a failed `pip install keel-workflow==<v>` in the publish verify job (v1.32.0, twice) left only a traceback. A failing command now prints its argv, stdout and stderr to stderr before raising. For `--requirement` installs, `pip install --no-cache-dir` is retried up to 6 times, 20 s apart, only when pip says the version is not found yet (`No matching distribution found` / `Could not find a version that satisfies`); any other failure fails at once, and exhausting the attempts exits with a `TIMEOUT:` message. Local wheel installs are not retried, and a not-found sentence that names another package (a missing dependency) is not either. The verify job's `release_smoke.py` wrapper goes from `timeout 300` to `timeout 480` so all six attempts fit.
+### Changed
+- **`docs/keel/cli.md` has a worked `agy` example for `keel delegate run`** (#1517): a review and an implement run, extracting a verdict JSON from `text`, what `agy` may do per role (`--sandbox` is passed for read-only roles but not verified to confine it), `--detach` with `delegate status`/`wait`, quota exhaustion (`rate-limit`) and `--print-argv`. A test holds every flag and subcommand the example uses to the parser.
 
 ## [1.32.0] - 2026-10-12
 
