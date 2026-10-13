@@ -9081,7 +9081,10 @@ def _cmd_stale_blockers(args: argparse.Namespace) -> int:
         print(json.dumps(report, indent=2))
     else:
         print(blockers.render(report))
-    return 0 if report["ok"] else 1
+    if not report["ok"]:
+        return 1
+    # 2: some blocker could not be read, so an empty or short list is not "all clear".
+    return 2 if report["unknown_blockers"] else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -107,15 +107,18 @@ independent of the staleness cutoff:
 keel stale-blockers --root . --json
 ```
 
-Print the result as a **"Blocker cleared"** list. For each PR in `prs`, add a line to the
+Print the result as a **"Blocker status"** list. For each PR in `prs`, add a line to the
 summary naming the cleared blockers. `abandoned` ones (a PR closed unmerged, an issue closed as
 not planned) are reported as such, never as cleared; a PR whose blockers are all abandoned is
 "blocker abandoned — needs a decision", not cleared. Say `all blockers cleared` only when
 `all_cleared` is true; a PR with `incomplete: true` has a reference the parser could not read
 and is never `all_cleared`, and one with `blockers: []` is reported as "blocker reference could
-not be read". Otherwise list the still-pending or `unknown` ones. A blocker whose state is `unknown`
-could not be read and is never treated as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
-could not be read and carry on. This step never comments, edits or merges; a cleared
+not be read". Otherwise list the still-pending or `unknown` ones, with each `unknown` entry's `reason`.
+A blocker whose state is `unknown` could not be read and is never treated as cleared. Exit
+code 2 means `unknown_blockers` is above zero: say how many blockers could not be checked, and
+never report an empty or short list as "no blocker has cleared". If the command exits 1
+(`ok: false`), print one note that blocker state could not be read and carry on.
+This step never comments, edits or merges; a cleared
 blocker is a prompt for the author or `/keel:ship`, not an action taken here.
 
 ## Step 3 — build the per-PR triage comment
@@ -177,7 +180,7 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 `already-commented-today`, `merge-pushed`, `conflict-skipped`, `dry-run-noted`,
 `error-skipped — <reason>`. If no PR is stale at the threshold, print a single line
 `No stale PRs at threshold <days> days.` instead of the table. Either way, then print the
-"Blocker cleared" list from Step 2b: it does not depend on the staleness cutoff.
+"Blocker status" list from Step 2b: it does not depend on the staleness cutoff.
 
 ## Stop conditions / invariants
 

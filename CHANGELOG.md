@@ -7,7 +7,10 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **`keel stale-blockers` lists open PRs whose stated blocker has cleared** (#1512). A PR body that says `blocked by #N`, `depends on #N` or `do not merge before #N|<tag>` is checked against GitHub: the PR merged, the issue closed as completed, or the tag now exists. A PR closed unmerged or an issue closed as not planned or a duplicate is `abandoned`: reported, never cleared. The list grammar covers `, and`, `or`, `/`, `&`, `PR #N` and bullet lists, and a list with a reference the parser could not read is never `all_cleared`, and a PR whose references could not be read at all is still listed (`blockers: []`, `incomplete: true`) instead of dropped. References wrapped in Markdown links or emphasis are read. The noun "dependency" ("Upgrade dependency lodash (#123)") is not a blocker phrase, a `#N` link into another repository is never resolved here, and a second `before` target (`before v1.0 and v2.0`) marks the list incomplete. Read-only and fail-soft: an unreadable blocker is `unknown`, never cleared. `/keel:stale-prs` and `/keel:morning` run it and surface the result.
+- **`keel stale-blockers` lists open PRs whose stated blocker has cleared** (#1512). A PR body that says `blocked by #N`, `depends on #N` or `do not merge before #N|<tag>` is checked against GitHub. `/keel:stale-prs` and `/keel:morning` run it and surface the result.
+  - A blocker is `cleared` when its PR merged, its issue closed as completed, or its tag exists; a PR closed unmerged or an issue closed as not planned or a duplicate is `abandoned` (reported, never cleared).
+  - Parsing is structural: every blocker phrase either has its references captured (lists with `, and`, `or`, `/`, `&`, `PR #N`, bullets; Markdown links and emphasis) or marks the PR `incomplete`, so `all_cleared` is never certified over text the parser could not read. A PR whose references could not be read at all is listed (`blockers: []`) rather than dropped. A `#N` link into another repository is never resolved here, and the noun "dependency" is not a phrase.
+  - A failed read is never silence: a blocker that cannot be read is `unknown` (with a reason), its PR is listed, the output counts them, and the command exits 2.
 
 ## [1.32.0] - 2026-10-12
 

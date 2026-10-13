@@ -124,13 +124,15 @@ class ParseTests(unittest.TestCase):
             "Blocked by _#12_",
             "Blocked by *#12*",
             "Blocked by __#12__",
-            "Blocked by [#12](u), [#13](v) and **#14**",
-            "Blocked by [PR #12](u)",
+            "Blocked by [#12](/issues/12), [#13](/pull/13) and **#14**",
+            "Blocked by [PR #12](/issues/12)",
         ):
             got = blockers.scan_blockers(body, "o/r")
             self.assertEqual(Blocker(ISSUE, "12"), got[0][0], body)
             self.assertFalse(got[1], body)
-        self.assertEqual(["12", "13", "14"], issues("Blocked by [#12](u), [#13](v) and **#14**"))
+        self.assertEqual(
+            ["12", "13", "14"], issues("Blocked by [#12](/issues/12), [#13](/pull/13) and **#14**")
+        )
 
     def test_unreadable_reference_is_incomplete(self):
         for body in (
@@ -233,9 +235,37 @@ class ParseTests(unittest.TestCase):
     def test_before_forms_accept_pr_prefix(self):
         self.assertEqual(["12"], issues("do not merge before PR #12"))
 
-    def test_noun_dependency_needs_a_label(self):
-        self.assertEqual(((), False), blockers.scan_blockers("Upgrade dependency #123"))
-        self.assertEqual(["7"], issues("Dependency: #7"))
+    def test_every_phrase_is_read_or_marks_incomplete(self):
+        """The one parsing invariant: a phrase followed by a reference-like target that the
+        strict grammar could not read is never silently dropped."""
+        for body in (
+            "do not merge before owner/repo#12",
+            "do not merge before https://github.com/o/r/issues/12",
+            "do not merge before [#12](https://github.com/other/repo/issues/12)",
+            "do not merge until after owner/repo#12",
+            "Depends on:\n- owner/repo#9",
+            "Depends on:\n- https://github.com/o/r/issues/9",
+            "Blocked by:\n- https://example.com/ticket/9",
+            "Blocked by: https://example.com/ticket/9",
+            "Blocked by owner/repo#9",
+            "waiting on [#12](//github.com/other/repo/issues/12)",
+            "waiting on [#12](../other/issues/12)",
+        ):
+            self.assertEqual(((), True), self.refs(body, "me/keel"), body)
+
+    def test_phrases_with_no_reference_like_target_are_not_flagged(self):
+        for body in (
+            "behaviour depends on the config",
+            "do not merge before release",
+            "Blocked by the auth work.\n\nSee #9 for context",
+            "Depends on:\n\n- unrelated #9 after a blank line",
+            "depends on the config.\nSee #5 for details",
+        ):
+            self.assertEqual(((), False), self.refs(body), body)
+
+    def test_unrelated_bullet_after_a_blank_line_is_not_a_continuation(self):
+        self.assertEqual((("1",), False), self.refs("Depends on #1\n\n- Fixes #5"))
+        self.assertEqual((("1",), True), self.refs("Depends on #1\n- Fixes #5"))
 
     def test_incomplete_when_a_reference_is_not_captured(self):
         for body in (
@@ -327,6 +357,47 @@ class ResolveTests(unittest.TestCase):
             ):
                 self.assertEqual(UNKNOWN, self.resolve(b, res)[0])
 
+    def test_unknown_carries_the_reason(self):
+        def detail(blocker, res):
+            with mock.patch("keel.blockers.run_argv", lambda argv, **kw: res):
+                return blockers.resolve_detail(blocker)
+
+        issue, tag = Blocker(ISSUE, "9"), Blocker(TAG, "v1")
+        self.assertEqual(
+            (UNKNOWN, "API rate limit exceeded"),
+            detail(issue, _fail("\n API rate limit exceeded\nmore")),
+        )
+        self.assertEqual((UNKNOWN, "gh exited 1"), detail(issue, _fail("")))
+        self.assertEqual((UNKNOWN, "gh exited 127"), detail(tag, CommandResult(False, 127, "")))
+        self.assertEqual((UNKNOWN, "unexpected answer: 'weird'"), detail(issue, _ok("weird")))
+        self.assertEqual(
+            (UNKNOWN, "unexpected answer: 'locked - issue'"), detail(issue, _ok("locked - issue"))
+        )
+        self.assertEqual((UNKNOWN, "empty answer for the tag lookup"), detail(tag, _ok("")))
+        self.assertEqual((UNKNOWN, "x" * 120), detail(issue, _fail("x" * 300)))
+        self.assertEqual((CLEARED, None), detail(issue, _ok("closed - issue")))
+        self.assertEqual(
+            (UNKNOWN, "tag lookup was a 404 and the repository could not be read"),
+            self.tag_404_detail(tag),
+        )
+
+    def tag_404_detail(self, blocker):
+        def run(argv, **kw):
+            return _ok("") if argv[2] == "repos/{owner}/{repo}" else _fail("HTTP 404")
+
+        with mock.patch("keel.blockers.run_argv", run):
+            return blockers.resolve_detail(blocker)
+
+    def test_real_run_argv_signature(self):
+        import types
+
+        def fake_subprocess_run(argv, **kw):
+            return types.SimpleNamespace(returncode=0, stdout="closed completed issue\n", stderr="")
+
+        self.assertEqual(
+            CLEARED, blockers.resolve_blocker(Blocker(ISSUE, "3"), _run=fake_subprocess_run)
+        )
+
     def test_run_injection(self):
         seen = []
 
@@ -401,8 +472,6 @@ class StaleBlockersTests(unittest.TestCase):
         )
 
     def test_unreadable_blocker_is_not_cleared(self):
-        rep = self.report(prs=[_pr(5, "Blocked by #77")], issue_states={})
-        self.assertEqual([], rep["prs"])
         rep = self.report(prs=[_pr(5, "Blocked by #77 and #1")], issue_states={"1": C})
         self.assertEqual(UNKNOWN, rep["prs"][0]["blockers"][0]["state"])
         self.assertFalse(rep["prs"][0]["all_cleared"])
@@ -439,15 +508,6 @@ class StaleBlockersTests(unittest.TestCase):
         self.assertFalse(rep["prs"][0]["incomplete"])
         self.assertTrue(rep["prs"][0]["all_cleared"])
 
-    def test_repo_slug_lookup(self):
-        link = "Blocked by [#1](https://github.com/me/keel/issues/1)"
-        rep = self.report(prs=[_pr(5, link)], issue_states={"1": C})
-        self.assertTrue(rep["prs"][0]["all_cleared"])
-        for bad in (_fail(), _ok("not a slug"), _ok("")):
-            rep = self.report(prs=[_pr(5, link)], issue_states={"1": C}, slug_result=bad)
-            self.assertEqual([], rep["prs"][0]["blockers"])
-            self.assertTrue(rep["prs"][0]["incomplete"])
-
     def test_pr_with_only_unreadable_refs_is_reported(self):
         rep = self.report(
             prs=[
@@ -464,7 +524,7 @@ class StaleBlockersTests(unittest.TestCase):
             self.assertFalse(pr["all_cleared"])
 
     def test_readable_markdown_ref_resolves(self):
-        rep = self.report(prs=[_pr(5, "Blocked by [#1](u)")], issue_states={"1": C})
+        rep = self.report(prs=[_pr(5, "Blocked by [#1](/issues/1)")], issue_states={"1": C})
         self.assertTrue(rep["prs"][0]["all_cleared"])
 
     def test_slash_tag(self):
@@ -473,8 +533,34 @@ class StaleBlockersTests(unittest.TestCase):
 
     def test_truncation_is_flagged(self):
         with mock.patch("keel.blockers.run_argv", _router(prs=[_pr(1, "x"), _pr(2, "y")])):
-            self.assertTrue(blockers.stale_blockers(limit=2)["truncated"])
+            self.assertTrue(blockers.stale_blockers(limit=1)["truncated"])
+            self.assertFalse(blockers.stale_blockers(limit=2)["truncated"])
             self.assertFalse(blockers.stale_blockers(limit=3)["truncated"])
+
+    def test_read_failure_is_never_silence(self):
+        # `gh pr list` works; every REST call fails (rate limit): the PRs are listed, as unknown
+        prs = [_pr(5, "Blocked by #77"), _pr(6, "Blocked by #78"), _pr(7, "no blocker")]
+        rep = self.report(prs=prs, issue_states={})
+        self.assertEqual([5, 6], [p["number"] for p in rep["prs"]])
+        for pr in rep["prs"]:
+            self.assertEqual(UNKNOWN, pr["blockers"][0]["state"])
+            self.assertIn("reason", pr["blockers"][0])
+        self.assertEqual("network down", rep["prs"][0]["blockers"][0]["reason"])
+        self.assertEqual(2, rep["unknown_blockers"])
+        text = blockers.render(rep)
+        self.assertIn("#5 t — blocker state could not be checked", text)
+        self.assertIn("  - #77: unknown (network down)", text)
+        self.assertIn("2 blocker(s) could not be checked", text)
+        self.assertNotIn("No open PRs", text)
+
+    def test_repo_slug_lookup(self):
+        link = "Blocked by [#1](https://github.com/me/keel/issues/1)"
+        rep = self.report(prs=[_pr(5, link)], issue_states={"1": C})
+        self.assertTrue(rep["prs"][0]["all_cleared"])
+        for bad in (_fail(), _ok("not a slug"), _ok("")):
+            rep = self.report(prs=[_pr(5, link)], issue_states={"1": C}, slug_result=bad)
+            self.assertEqual([], rep["prs"][0]["blockers"])
+            self.assertTrue(rep["prs"][0]["incomplete"])
 
     def test_malformed_rows_are_skipped(self):
         rows = [
@@ -487,6 +573,15 @@ class StaleBlockersTests(unittest.TestCase):
         ]
         rep = self.report(prs=rows, issue_states={"1": C})
         self.assertEqual([8], [p["number"] for p in rep["prs"]])
+
+    def test_distinct_unknown_blockers_are_counted_once(self):
+        prs = [_pr(5, "Blocked by #77"), _pr(6, "Blocked by #77")]
+        self.assertEqual(1, self.report(prs=prs)["unknown_blockers"])
+
+    def test_no_unknown_when_all_read(self):
+        rep = self.report(prs=[_pr(5, "Blocked by #1")], issue_states={"1": C})
+        self.assertEqual(0, rep["unknown_blockers"])
+        self.assertNotIn("could not be checked", blockers.render(rep))
 
     def test_pr_list_unreadable(self):
         for res in (_fail(), _ok("not json"), _ok('{"a": 1}')):
@@ -514,17 +609,28 @@ class RenderAndCliTests(unittest.TestCase):
     def test_render(self):
         self.assertIn(
             "could not",
-            blockers.render({"ok": False, "error": "could not", "truncated": False, "prs": []}),
+            blockers.render(
+                {
+                    "ok": False,
+                    "error": "could not",
+                    "truncated": False,
+                    "unknown_blockers": 0,
+                    "prs": [],
+                }
+            ),
         )
         self.assertEqual(
-            "No open PRs with a cleared or abandoned blocker.",
-            blockers.render({"ok": True, "error": None, "truncated": False, "prs": []}),
+            "No open PRs with a cleared, abandoned or unchecked blocker.",
+            blockers.render(
+                {"ok": True, "error": None, "truncated": False, "unknown_blockers": 0, "prs": []}
+            ),
         )
         out = blockers.render(
             {
                 "ok": True,
                 "error": None,
                 "truncated": True,
+                "unknown_blockers": 0,
                 "prs": [
                     {
                         "number": 3,
@@ -556,7 +662,7 @@ class RenderAndCliTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertIn("#3 (draft) x — some blockers cleared or abandoned", out)
+        self.assertIn("#3 (draft) x — some blockers cleared, abandoned or unchecked", out)
         self.assertIn("  - #1: cleared", out)
         self.assertIn("  - v1: pending", out)
         self.assertIn("#4 y — all blockers cleared", out)
@@ -565,6 +671,7 @@ class RenderAndCliTests(unittest.TestCase):
                 "ok": True,
                 "error": None,
                 "truncated": False,
+                "unknown_blockers": 0,
                 "prs": [
                     {
                         "number": 6,
@@ -618,6 +725,15 @@ class RenderAndCliTests(unittest.TestCase):
             ):
                 cli.main(["stale-blockers", "--limit", bad])
             self.assertEqual(2, ctx.exception.code)
+
+    def test_cli_exits_2_when_a_blocker_could_not_be_read(self):
+        router = _router(prs=[_pr(8, "Blocked by #1")], issue_states={})
+        code, out = self.run_cli(["stale-blockers"], router)
+        self.assertEqual(2, code)
+        self.assertIn("1 blocker(s) could not be checked", out)
+        code, out = self.run_cli(["stale-blockers", "--json"], router)
+        self.assertEqual(2, code)
+        self.assertEqual(1, json.loads(out)["unknown_blockers"])
 
     def test_cli_failure_exit(self):
         code, out = self.run_cli(["stale-blockers"], _router(prs=[], list_result=_fail()))

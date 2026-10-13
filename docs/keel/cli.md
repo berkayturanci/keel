@@ -3013,55 +3013,63 @@ Exit 0 when the revert commit was created, 1 otherwise.
 
 ## `keel stale-blockers [--root DIR] [--limit N] [--json]`
 
-List open pull requests whose **stated blocker has cleared or been abandoned** (#1512). It reads
-each open PR's body for a blocked phrase (`blocked by`, `depends on`, `waiting on`, `blocked
-until`, and the labels `dependency:` / `needs dependency`; the plural `Dependencies:` is not
-recognised) followed by a list of `#N` references,
-and for `do not merge before|until [after]|prior to` (also `don't` with a straight or curly
-apostrophe, `must not`, `should not`, `cannot`) followed
-by `#N`, `PR #N` or a tag. Then it asks GitHub through `gh api` whether each one is done.
+List open pull requests that deserve attention about their **stated blockers** (#1512): one
+cleared, one abandoned, one that could not be checked, or one whose reference could not be read.
+It reads each open PR's body for a blocked phrase (`blocked by`, `depends on`, `waiting on`,
+`blocked until`, and the labels `dependency:` / `needs dependency:`; the plural `Dependencies:` is
+not recognised) and for `do not merge before|until [after]|prior to` (also `dont`, `don't` with a
+straight or curly apostrophe, `must not`, `should not`, `shouldn't`, `cannot`, `can't`; `this PR`,
+`the pull request` or `it` may follow `merge`). Then it asks GitHub through `gh api` whether each
+referenced blocker is done.
 
-- **List grammar:** items may be `#N`, `PR #N`, `PR#N`, `issue #N` or `pull request #N`, joined by `,`,
-  `, and`, `, or`, `and`, `or`, `/`, `&`, `+`, or written as a markdown bullet list under the
-  phrase (`Depends on:` then `- #1`, `- #2`). `do not merge this PR before` and `... it until` are accepted. A `before` target must be `#N`, a `v`-prefixed tag
-  (`v2`, `v1.2.0`) or a three-part version (`1.2.0`); `5pm` and `10.30` are not tags. A bare
-  noun `dependency` / `needs dependency` without a colon ("Upgrade dependency lodash (#123)",
-  "Fix dependency resolution (#45)") is not a phrase at all, and neither is `Depends on: none`. References wrapped in
-  Markdown read as the bare ref: a link whose text is `#12` to this repository's issue or PR (a relative link, or an absolute one
-  matching `gh repo view`); the same label over another repository's URL is a foreign reference and
-  makes the PR `incomplete` instead of being resolved here, `**#12**`, `_#12_`, `**Blocked by:** #12`.
-- **Ignored text:** fenced code, inline code that quotes a phrase, HTML comments, negations
-  (`not blocked by`, and `previously` / `formerly` / `was` just before the phrase; older
-  history further back is not detected), and `owner/repo#N` references (never resolved against this repository).
-- **Incomplete lists:** when the text carries a reference the grammar did not capture
-  (`#1 and owner/repo#9`, an issue URL, a second issue or tag target after a `before`, a tag
-  containing `..`), the PR gets
-  `incomplete: true` and `all_cleared` is never true for it. When *none* of a PR's references
-  could be read (`blocked by owner/repo#12`), the PR is still listed, with `blockers: []` and
-  `incomplete: true` ("blocker reference could not be read"), so it is never silently dropped.
-  The parser errs toward flagging, which can over-flag a phrase with an unrelated `#N` later on
-  its line. A PR that is `incomplete` is listed only if another blocker of it cleared or was
-  abandoned, or none could be read; one whose readable blockers are all still open is not listed.
-  A bare `1.2.0` checks for a tag with exactly that name (not `v1.2.0`). Issue and PR blockers
-  are both `kind: issue`.
+**The parsing invariant.** Every blocker-phrase occurrence is found first, then a strict target
+grammar is tried right after it. The occurrence ends in exactly one of two outcomes: its references
+were captured, or the PR is marked `incomplete`. Nothing is silently dropped.
+
+- **Strict target grammar:** items are `#N`, `PR #N`, `PR#N`, `issue #N` or `pull request #N`,
+  joined by `,`, `, and`, `, or`, `and`, `or`, `/`, `&`, `+`, or written as a markdown bullet list
+  on the lines directly under the phrase (a blank line ends the list). A `before` target is `#N`,
+  a `v`-prefixed tag (`v2`, `v1.2.0`) or a three-part version (`1.2.0`; it checks for a tag named
+  exactly that, not `v1.2.0`). `5pm`, `10.30` and `2026.10.15` are not tags.
+- **Incomplete:** if the strict grammar captures nothing, or leaves something reference-like behind
+  (`#1 and owner/repo#9`, a URL, `owner/repo#9` as the first bullet, a second issue or tag target
+  after a `before`, a tag containing `..`), the PR gets `incomplete: true` and `all_cleared` is
+  never true for it. "Reference-like" means a `#N`, an issue or pull path, or a URL on the rest of
+  the phrase's line (or in the bullet block under a phrase that ends its line). Prose with none of
+  those ("behaviour depends on the config") is not flagged. A PR that read nothing at all is listed
+  with `blockers: []` ("blocker reference could not be read"). The parser errs toward flagging, so a
+  phrase with an unrelated `#N` later on its line is over-flagged.
+- **Not a blocker phrase:** the bare noun `dependency` / `needs dependency` without a colon
+  ("Upgrade dependency lodash (#123)"), and `Depends on: none`. Fenced code, inline code that quotes
+  a phrase, HTML comments, and negations (`not blocked by`, and `previously` / `formerly` / `was`
+  just before the phrase; older history further back is not detected) are ignored.
+- **Markdown:** `**#12**`, `_#12_`, `**Blocked by:** #12` and a link whose text is `#12` read as
+  `#12` when the link is to this repository's issue or PR (root-relative, or absolute and matching
+  `gh repo view`). The same label over another repository's URL (including `//host/...` and
+  `../other/...`) is a foreign reference: `incomplete`, never resolved here.
 - **States:** a PR is `cleared` once **merged**; an issue once closed as `completed` (or with no
   reason, as old issues are) (`repos/{owner}/{repo}/issues/N`). A PR closed unmerged, or an issue
   closed `not_planned` or as a duplicate, is `abandoned` — reported, never counted as cleared. A
   tag is `cleared` once `repos/{owner}/{repo}/git/ref/tags/<tag>` exists and `pending` only on an
-  HTTP 404 while `repos/{owner}/{repo}` itself answers (a 404 on both is `unknown`). An open issue or PR is `pending`.
+  HTTP 404 while `repos/{owner}/{repo}` itself answers. An open issue or PR is `pending`. Issue and
+  PR blockers are both `kind: issue`.
 
-Read-only and fail-soft: a blocker that cannot be read (offline, no auth, odd output) has state
-`unknown` and is **never** reported as cleared. A PR is listed when at least one blocker is
-`cleared` or `abandoned`, or when none of its references could be read; `all_cleared` is true only when every blocker is cleared and the list is
-not `incomplete`. `--limit` (a positive integer) caps the open PRs read (default 200); `truncated` is true, and the text
-says so, when that many came back. It reads through the `gh` CLI, not the selected GitHub
-transport. Exit 0 on success (even with an empty list), 1 when the PR list itself cannot be read.
-`/keel:stale-prs` and `/keel:morning` run it.
+**A failed read is never silence.** Anything else (offline, no auth, rate limit, a 5xx, odd output)
+is `unknown`, never cleared. A PR with an `unknown` blocker is listed, each such entry carries a
+`reason`, the report's `unknown_blockers` counts the distinct blockers that could not be read, the
+text output says how many, and the command exits **2**. An empty list with exit 0 therefore means
+every blocker was read.
+
+Read-only and fail-soft. `all_cleared` is true only when every blocker is cleared and the list is
+not `incomplete`. `--limit` (a positive integer, default 200) caps the open PRs read; `truncated` is
+true, and the text says so, only when more than that many are open. It reads through the `gh` CLI,
+not the selected GitHub transport. Exit 0: everything was read; 1: the PR list itself cannot be
+read; 2: some blocker could not be read. `/keel:stale-prs` and `/keel:morning` run it.
 
 ```json
-{"ok": true, "error": null, "truncated": false, "prs": [{"number": 42, "title": "...", "url": "...",
-  "draft": true, "incomplete": false, "all_cleared": true,
-  "blockers": [{"kind": "issue", "ref": "3177", "state": "cleared"}]}]}
+{"ok": true, "error": null, "truncated": false, "unknown_blockers": 0,
+  "prs": [{"number": 42, "title": "...", "url": "...", "draft": true, "incomplete": false,
+  "all_cleared": true, "blockers": [{"kind": "issue", "ref": "3177", "state": "cleared"}]}]}
 ```
 
 ## `keel cost-report [--root DIR] [--json]`
@@ -3882,5 +3890,5 @@ Most commands use only 0 and 1; a few give a third answer its own code, so a cal
 |---|---|
 | 0 | success |
 | 1 | a config was invalid/missing, a plan target could not be loaded, or the command's own check failed or blocked |
-| 2 | no command given (help printed); a usage error argparse rejects (an unknown flag, a bad choice); `keel evidence-verify`: required evidence is still `waiting`; `keel verify-merge`: the result is `unknown` or `incomplete`; `keel run-gates`: `--phases` names an unknown phase; `keel ship`: a `--loop-iteration` contradicts the loop policy |
+| 2 | no command given (help printed); a usage error argparse rejects (an unknown flag, a bad choice); `keel evidence-verify`: required evidence is still `waiting`; `keel verify-merge`: the result is `unknown` or `incomplete`; `keel run-gates`: `--phases` names an unknown phase; `keel ship`: a `--loop-iteration` contradicts the loop policy; `keel stale-blockers`: some blocker's state could not be read |
 | 3 | `keel merge`: the merge landed, but drift was detected — it may have written over work another PR merged after this one branched |

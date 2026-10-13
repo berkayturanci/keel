@@ -93,8 +93,10 @@ some blockers cleared or `abandoned` (closed unmerged or not planned — flag it
 others are `pending`, `unknown` or the list is `incomplete`; a PR whose blockers are all
 `abandoned` is "blocker abandoned — needs a decision", and one with `blockers: []` and
 `incomplete: true` is "blocker reference could not be read". A blocker with state `unknown`
-was unreadable and is never cleared. The command reads through the `gh` CLI rather than the
-selected transport, so say so when transport is degraded; if it exits non-zero, note that
+was unreadable (its `reason` says why) and is never cleared. Exit code 2 means
+`unknown_blockers` is above zero: say how many blockers could not be checked, and never
+present a short or empty list as "nothing is blocked". The command reads through the `gh` CLI
+rather than the selected transport, so say so when transport is degraded; on exit 1, note that
 blocker state was unavailable.
 
 ## Step 3 — Project health/telemetry signals (project-specific)
