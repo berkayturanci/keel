@@ -3330,61 +3330,106 @@ class ReviewCheckoutTests(unittest.TestCase):
     def test_review_worktree_path(self):
         self.assertEqual(
             review_worktree_path("seat1"),
-            Path(".keel/worktrees/review-seat1"),
+            Path(".").resolve() / ".keel" / "worktrees" / "review-seat1",
         )
         self.assertEqual(
             review_worktree_path("seat1", root="/tmp/repo"),
-            Path("/tmp/repo/.keel/worktrees/review-seat1"),
+            Path("/tmp/repo").resolve() / ".keel" / "worktrees" / "review-seat1",
+        )
+        self.assertEqual(
+            review_worktree_path("seat1", root="rel/repo", run_id="run42"),
+            Path("rel/repo").resolve() / ".keel" / "worktrees" / "review-seat1-run42",
         )
 
     def test_remove_review_worktree_alias(self):
         self.assertIs(remove_review_worktree, remove_swarm_worktree)
 
-    def test_review_checkout_creates_and_cleans_up(self):
+    def test_review_checkout_creates_and_cleans_up_with_relative_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            target = review_worktree_path("test-seat", root=root)
-            calls = []
+            base = Path(tmpdir)
+            repo = base / "nested" / "repo"
+            repo.mkdir(parents=True)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(base)
+                calls = []
 
-            def fake_runner(cmd, cwd):
-                calls.append((list(cmd), cwd))
-                if "add" in cmd:
-                    target.mkdir(parents=True, exist_ok=True)
-                return CommandResult(True, 0, "")
+                def fake_runner(cmd, cwd):
+                    calls.append((list(cmd), cwd))
+                    if "add" in cmd:
+                        Path(cmd[4]).mkdir(parents=True, exist_ok=True)
+                    return CommandResult(True, 0, "")
 
-            with review_checkout("head123", name="test-seat", root=root, runner=fake_runner) as wt:
-                self.assertEqual(wt, target)
-                self.assertTrue(wt.exists())
+                with review_checkout(
+                    "head123", name="test-seat", root="nested/repo", runner=fake_runner
+                ) as wt:
+                    self.assertTrue(wt.is_absolute())
+                    self.assertEqual(wt.parent, (repo / ".keel" / "worktrees").resolve())
+                    self.assertTrue(wt.name.startswith("review-test-seat-"))
+                    self.assertTrue(wt.exists())
+                    self.assertEqual(calls[0][1], repo.resolve())
+                    self.assertEqual(
+                        calls[0][0],
+                        ["git", "worktree", "add", "--detach", str(wt), "head123"],
+                    )
+
                 self.assertIn(
-                    ["git", "worktree", "add", "--detach", str(target), "head123"],
+                    ["git", "worktree", "remove", "--force", str(wt)],
                     [c[0] for c in calls],
                 )
+                self.assertFalse(wt.exists())
+            finally:
+                os.chdir(old_cwd)
 
-            # Afterwards, remove_swarm_worktree was invoked
-            self.assertIn(
-                ["git", "worktree", "remove", "--force", str(target)],
-                [c[0] for c in calls],
-            )
-            self.assertFalse(target.exists())
-
-    def test_review_checkout_cleans_preexisting_path(self):
+    def test_review_checkout_concurrent_invocations_do_not_clobber_each_other(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            target = review_worktree_path("test-seat", root=root)
-            target.mkdir(parents=True, exist_ok=True)
             calls = []
 
             def fake_runner(cmd, cwd):
                 calls.append((list(cmd), cwd))
                 if "add" in cmd:
-                    target.mkdir(parents=True, exist_ok=True)
+                    Path(cmd[4]).mkdir(parents=True, exist_ok=True)
+                elif "remove" in cmd:
+                    shutil.rmtree(cmd[4], ignore_errors=True)
                 return CommandResult(True, 0, "")
 
-            with review_checkout("head123", name="test-seat", root=root, runner=fake_runner) as wt:
-                self.assertEqual(wt, target)
+            with review_checkout("head1", name="jury", root=root, runner=fake_runner) as wt1:
+                self.assertTrue(wt1.exists())
+                with review_checkout("head2", name="jury", root=root, runner=fake_runner) as wt2:
+                    self.assertNotEqual(wt1, wt2)
+                    self.assertTrue(wt1.exists())
+                    self.assertTrue(wt2.exists())
+                # Exiting wt2 removes only wt2; wt1 stays intact
+                self.assertTrue(wt1.exists())
+                self.assertFalse(wt2.exists())
+            self.assertFalse(wt1.exists())
 
-            remove_calls = [c[0] for c in calls if "remove" in c[0]]
-            self.assertEqual(len(remove_calls), 2)
+    def test_review_checkout_refuses_preexisting_owned_path_without_deleting_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = review_worktree_path("test-seat", root=root, run_id="same-id")
+            target.mkdir(parents=True, exist_ok=True)
+            marker = target / "active.txt"
+            marker.write_text("in-use", encoding="utf-8")
+            calls = []
+
+            def fake_runner(cmd, cwd):
+                calls.append((list(cmd), cwd))
+                return CommandResult(True, 0, "")
+
+            with self.assertRaises(RuntimeError) as cm:
+                with review_checkout(
+                    "head123",
+                    name="test-seat",
+                    root=root,
+                    run_id="same-id",
+                    runner=fake_runner,
+                ):
+                    pass
+            self.assertIn("already exists", str(cm.exception))
+            self.assertEqual(calls, [])
+            self.assertTrue(marker.exists())
 
     def test_review_checkout_raises_when_add_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:

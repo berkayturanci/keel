@@ -143,20 +143,21 @@ class TestStagedContamination(unittest.TestCase):
                 "has_contamination": False,
                 "suspect_paths": [],
                 "warning": None,
-                "comparison_source": "none",
+                "comparison_source": "implementer-files",
             },
         )
 
-    def test_no_baseline_returns_no_contamination(self):
-        self.assertEqual(
-            scope.check_staged_contamination(["a.py"]),
-            {
-                "has_contamination": False,
-                "suspect_paths": [],
-                "warning": None,
-                "comparison_source": "none",
-            },
-        )
+    def test_no_baseline_or_empty_committed_since_returns_no_contamination(self):
+        for kwargs in ({}, {"files_since_start": []}):
+            self.assertEqual(
+                scope.check_staged_contamination(["a.py"], **kwargs),
+                {
+                    "has_contamination": False,
+                    "suspect_paths": [],
+                    "warning": None,
+                    "comparison_source": "none",
+                },
+            )
 
     def test_clean_against_implementer_files(self):
         res = scope.check_staged_contamination(["a.py"], implementer_files=["a.py", "b.py"])

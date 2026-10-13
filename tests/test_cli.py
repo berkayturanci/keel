@@ -1677,6 +1677,47 @@ class TestShip(unittest.TestCase):
                 payload = json.loads(out)
                 self.assertTrue(payload["result"]["staged_contamination"]["has_contamination"])
 
+    def test_ship_without_baseline_skips_staged_git_query_and_does_not_duplicate_ledger_warnings(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    side_effect=AssertionError("should not query staged files without baseline"),
+                ),
+            ):
+                rc, out, _ = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--live",
+                        "--approve-scope",
+                        "filesystem,git,github",
+                        "--operator",
+                        "tester",
+                        "--append-ledger",
+                        "--capture-status",
+                        "skipped",
+                        "--capture-reason",
+                        "no-lesson",
+                        "--implementer",
+                        "unknown-vendor-xyz",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc, 0)
+                payload = json.loads(out)
+                self.assertTrue(payload["result"]["run_ledger"]["warnings"])
+                self.assertNotIn("warnings", payload["result"])
+                self.assertEqual(
+                    payload["result"]["staged_contamination"]["comparison_source"], "none"
+                )
+
     def test_docs_only_allowlist_reaches_the_ship_classification(self):
         # The knob was declared, parsed, hashed and echoed into the contract, and read
         # by nothing (#632). Pin the wire from config to the assessed tier: without the

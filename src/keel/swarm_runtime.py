@@ -26,6 +26,7 @@ import sys
 import tempfile
 import threading
 import traceback
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -280,9 +281,14 @@ def remove_swarm_worktree(
 remove_review_worktree = remove_swarm_worktree
 
 
-def review_worktree_path(name: str, root: str | Path = ".") -> Path:
-    """A reviewer seat's checkout path under .keel/worktrees/."""
-    return Path(root) / ".keel" / "worktrees" / f"review-{name}"
+class ReviewCheckoutError(RuntimeError):
+    """Raised when an isolated review checkout cannot be created."""
+
+
+def review_worktree_path(name: str, root: str | Path = ".", *, run_id: str | None = None) -> Path:
+    """A reviewer seat's resolved checkout path under .keel/worktrees/."""
+    leaf = f"review-{name}-{run_id}" if run_id else f"review-{name}"
+    return Path(root).resolve() / ".keel" / "worktrees" / leaf
 
 
 @contextlib.contextmanager
@@ -291,22 +297,27 @@ def review_checkout(
     name: str = "review",
     *,
     root: str | Path = ".",
+    run_id: str | None = None,
     runner: SubprocessRunner | None = None,
 ):
     """Context manager providing an isolated detached worktree at ``head_sha`` for a reviewer seat.
 
-    Ensures the checkout is removed afterwards using :func:`remove_swarm_worktree`.
+    Allocates a unique invocation-owned path (refusing without deleting if an explicit
+    ``run_id`` path already exists) and removes only that path on exit.
     """
-    root_path = Path(root)
-    checkout = review_worktree_path(name, root=root_path)
+    root_path = Path(root).resolve()
+    token = run_id if run_id is not None else uuid.uuid4().hex[:12]
+    checkout = review_worktree_path(name, root=root_path, run_id=token)
     checkout.parent.mkdir(parents=True, exist_ok=True)
-    run = runner or default_runner
     if checkout.exists():
-        remove_swarm_worktree(root_path, checkout, runner=run)
+        raise ReviewCheckoutError(
+            f"review checkout path already exists at {checkout}; refusing to remove active checkout"
+        )
+    run = runner or default_runner
     added = run(["git", "worktree", "add", "--detach", str(checkout), head_sha], root_path)
     if not added.ok:
         why = added.output.strip()[:200] or f"exit {added.code}"
-        raise RuntimeError(f"could not create review checkout at {checkout}: {why}")
+        raise ReviewCheckoutError(f"could not create review checkout at {checkout}: {why}")
     try:
         yield checkout
     finally:

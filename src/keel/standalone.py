@@ -218,13 +218,21 @@ def cmd_standalone(args: argparse.Namespace) -> int:
     warnings: list[str] = []
     staged_contamination: dict[str, Any] | None = None
     if command == "wrap":
-        staged_md = git.staged_modified_or_deleted_files(cwd=args.root)
-        files_since = None
-        if getattr(args, "since", None):
-            files_since = git.changed_files_since(args.since, head="HEAD", cwd=args.root)
+        impl_files = getattr(args, "implementer_file", None)
+        since_arg = getattr(args, "since", None)
+        files_since = (
+            git.changed_files_since(since_arg, head="HEAD", cwd=args.root)
+            if since_arg and impl_files is None
+            else None
+        )
+        staged_md = (
+            git.staged_modified_or_deleted_files(cwd=args.root)
+            if impl_files is not None or files_since
+            else None
+        )
         staged_contamination = scope.check_staged_contamination(
             staged_md,
-            implementer_files=getattr(args, "implementer_file", None),
+            implementer_files=impl_files,
             files_since_start=files_since,
         )
         if staged_contamination["has_contamination"] and staged_contamination["warning"]:
@@ -310,8 +318,8 @@ def cmd_standalone(args: argparse.Namespace) -> int:
             ]
             print(f"  worktree      : linked required={linked_required}")
             print("  pr            : ready PR after configured gates")
-            if staged_contamination and staged_contamination["has_contamination"]:
-                print(f"  staged files  : warning: {staged_contamination['warning']}")
+            if staged_contamination["has_contamination"]:  # type: ignore[index]
+                print(f"  staged files  : warning: {staged_contamination['warning']}")  # type: ignore[index]
         elif command == "work-block":
             print("  mode source   : keel work-block")
             print("  queue         : explicit issues or selector")

@@ -95,11 +95,14 @@ If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 
 ## Step 3 — Commit
 
-- Check for staged contamination: `keel wrap .keel/project.yaml --root .`
-  (pass `--implementer-file <path>` or `--since <ref|timestamp>` when available).
-  `keel wrap` warns (stderr + JSON field) if the staged change set includes deleted or
-  modified files not touched by the implementer run. Inspect any warnings before committing.
 - `git add -A`
+- Check for staged contamination after staging and before committing:
+  `keel wrap .keel/project.yaml --root .` (pass `--implementer-file <path>` for
+  each path the implementer touched, or `--since <ref|timestamp>` when prior
+  implementation commits exist; `--since` inspects committed history only, so
+  uncommitted work requires `--implementer-file`). `keel wrap` warns (stderr +
+  JSON field) if the staged change set includes deleted or modified files not
+  touched by the implementer run. Inspect any warnings before committing.
 - Write a commit message in Conventional Commits format
   (feat/fix/chore/docs/refactor/test).
 - Include `Closes #N` if this implements an issue.
@@ -133,4 +136,4 @@ skips, deferred capture, and missing markers. If `capture_health.status` is
 `capture_health.reconcile_actions` and hand the gap to the morning queue; do not mutate the
 ledger, GitHub, or project capture destinations from this reporting step.
 
-<!-- keel-generated: surface=skills command=wrap keel_version=1.32.0 source_sha256=fc63ae6404323eecb26b3e16ea832539d9eacf86314646f3a848a654974a8426 generated_sha256=4f9505b8b960e825bc97f888fa886995a99da1cb7cdd8520990dd7d254ffc746 -->
+<!-- keel-generated: surface=skills command=wrap keel_version=1.32.0 source_sha256=3b31bb73929df2bd096bf6fcd978c560952c6cfbf0e98c7f17cae0e24e2fb4d2 generated_sha256=9ec077a00d45268905e62e75693b7af7b92b0ec6b6ae798810b5f371f9dd6440 -->

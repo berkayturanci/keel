@@ -579,10 +579,12 @@ def staged_modified_or_deleted_files(*, cwd: str | None = None, _run=None) -> li
 def changed_files_since(
     since: str, *, head: str = "HEAD", cwd: str | None = None, _run=None
 ) -> list[str] | None:
-    """Paths changed since ``since`` (a commit, ref, or git log date/time string).
+    """Paths touched in committed history since ``since`` (a commit, ref, or git log timestamp).
 
-    Tries ``diff_names(since, head)`` first when ``since`` resolves as a revision.
-    Falls back to ``git log --since=<since> --name-only --format= -z <head>``.
+    Committed-history heuristic: tries ``diff_names(since, head)`` first when ``since``
+    resolves as a revision, falling back to
+    ``git log --since=<since> --name-only --format= -z <head>``. Uncommitted edits are not
+    in commit history (use ``--implementer-file`` when no implementation commit exists yet).
     Returns ``None`` when git could not read the history.
     """
     diffed = diff_names(since, head, cwd=cwd, _run=_run)

@@ -1934,10 +1934,11 @@ and the shared deferral queue. Project-specific changed-file gates and recap des
 stay in policy packs and extensions. Wrap also receives the run-ledger contract so session
 recaps can include structured ship outcomes offline.
 
-Before committing, `keel wrap` checks the staged change set and warns (stderr + JSON
-`staged_contamination` / `warnings` fields) if deleted or modified paths outside the
-implementer run are staged (compared against `--implementer-file` or `--since`). Warns,
-never refuses.
+After `git add -A` and before committing, `keel wrap` checks the staged change set and
+warns (stderr + JSON `staged_contamination` / `warnings` fields) if deleted or modified
+paths outside the implementer run are staged (compared against `--implementer-file`, or
+against non-empty committed history since `--since`; uncommitted work requires
+`--implementer-file`). Warns, never refuses.
 
 ```bash
 keel wrap .keel/project.yaml --json
@@ -2782,10 +2783,11 @@ check-rollup through the selected GitHub transport), each gate's result, and the
 **merge decision**
 (`MERGE` / `DEFER` / `BLOCK`).
 
-`--implementer-file <path>` (repeatable) and `--since <ref|when>` check the staged change
-set for contamination: if deleted or modified paths outside the implementer run are staged
-in the index, a warning is emitted on stderr and recorded in the JSON result's `warnings` and
-`staged_contamination` blocks (warns, never blocks).
+`--implementer-file <path>` (repeatable) and `--since <ref|when>` (committed-history
+heuristic when commits exist since `WHEN`; uncommitted work requires `--implementer-file`)
+check the staged change set for contamination: if deleted or modified paths outside the
+implementer run are staged in the index, a warning is emitted on stderr and recorded in the
+JSON result's `warnings` and `staged_contamination` blocks (warns, never blocks).
 
 With `--pr N`, `keel ship` also reads the pull request's labels and, when the evidence gate
 governs the PR (the same `gate_decision` as `evidence-verify`, fed the PR's own head ref and reviews from the pulls API, its comments from the issues API, its labels

@@ -97,6 +97,7 @@ class TestStandaloneHelpers(unittest.TestCase):
         with patch("sys.stderr", err):
             code = standalone.cmd_standalone(args)
         self.assertEqual(code, 1)
+        self.assertIn("no such config", err.getvalue())
 
     def test_cmd_standalone_wrap_staged_contamination_warns(self):
         import json
@@ -178,6 +179,30 @@ class TestStandaloneHelpers(unittest.TestCase):
                 self.assertEqual(
                     data["result"]["staged_contamination"]["comparison_source"],
                     "files-since-start",
+                )
+
+            # An opaque session label or uncommitted HEAD yields [] from changed_files_since:
+            # must not query staged files or falsely flag staged work as contamination.
+            args.json = True
+            args.implementer_file = None
+            args.since = "morning-session"
+            with (
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    side_effect=AssertionError("should not query staged files without baseline"),
+                ),
+                patch("keel.git.changed_files_since", return_value=[]),
+            ):
+                err = io.StringIO()
+                out = io.StringIO()
+                with patch("sys.stderr", err), patch("sys.stdout", out):
+                    code = standalone.cmd_standalone(args)
+                self.assertEqual(code, 0)
+                data = json.loads(out.getvalue())
+                self.assertFalse(data["result"]["staged_contamination"]["has_contamination"])
+                self.assertEqual(
+                    data["result"]["staged_contamination"]["comparison_source"],
+                    "none",
                 )
 
             args.json = False

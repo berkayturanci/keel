@@ -126,12 +126,29 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
         for path in _adapter_files():
             text = path.read_text(encoding="utf-8")
             for line in text.splitlines():
-                if "--detach" not in line or "worktree" in line:
+                if "--detach" not in line.replace("git worktree add --detach", ""):
                     continue
                 with self.subTest(path=str(path.relative_to(REPO_ROOT)), line=line.strip()):
                     # the flag may sit on a continuation line of the same example
                     block = text[max(0, text.index(line) - 400) : text.index(line) + 400]
                     self.assertIn("--timeout", block)
+
+    def test_wrap_adapter_stages_before_checking_staged_contamination(self):
+        wrap_md = (REPO_ROOT / "src/keel/adapters/commands/wrap.md").read_text(encoding="utf-8")
+        step3 = wrap_md.split("## Step 3 — Commit", 1)[1]
+        self.assertLess(
+            step3.index("git add -A"),
+            step3.index("keel wrap .keel/project.yaml"),
+            "git add -A must precede the staged contamination check so unstaged edits are caught",
+        )
+
+    def test_ship_adapter_resolves_diff_and_guards_review_worktree_cleanup(self):
+        ship_md = (REPO_ROOT / "src/keel/adapters/commands/ship.md").read_text(encoding="utf-8")
+        self.assertIn("DIFF_ABS=", ship_md)
+        self.assertIn('--diff-file "$DIFF_ABS"', ship_md)
+        self.assertIn(".keel/worktrees/review-$RUN_ID-jury", ship_md)
+        self.assertIn(".keel/worktrees/review-$RUN_ID-$SLOT", ship_md)
+        self.assertIn("trap 'keel worktree-remove", ship_md)
 
     def test_the_detach_primitive_replaces_sleep_polling_advice(self):
         for path in _adapter_files():

@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import tempfile
 import unittest
 
 from keel import jury
@@ -1299,6 +1300,11 @@ class ReusePostedVerdict(unittest.TestCase):
 
 
 class TestRunGateWithHeadSha(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = tmp.name
+
     def test_run_gate_creates_checkout_and_runs_in_it(self):
         calls = []
 
@@ -1314,6 +1320,7 @@ class TestRunGateWithHeadSha(unittest.TestCase):
 
         ok, findings, timed_out = jury.run_gate(
             "diff content",
+            cwd=self.root,
             mode="gating",
             head_sha="head123",
             _run=_runner,
@@ -1326,16 +1333,43 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         self.assertIn("head123", add_calls[0][0])
         jury_calls = [c for c in calls if c[0][0] == "jury" and "--version" not in c[0]]
         self.assertEqual(len(jury_calls), 1)
-        self.assertIn(".keel/worktrees/review-jury", jury_calls[0][1])
+        self.assertIn(".keel/worktrees/review-jury-", jury_calls[0][1])
+
+    def test_run_gate_skips_checkout_on_early_exits(self):
+        calls = []
+
+        def _runner(argv, cwd=None, **kw):
+            calls.append((list(argv), cwd))
+            if "--version" in argv:
+                return _Proc(1, "", "not installed")
+            return _Proc(0, "")
+
+        for diff_val in (None, "", "x" * (jury.MAX_DIFF_BYTES + 10), "valid diff"):
+            calls.clear()
+            ok, findings, _ = jury.run_gate(
+                diff_val,
+                cwd=self.root,
+                mode="gating",
+                head_sha="head123",
+                _run=_runner,
+            )
+            add_calls = [c for c in calls if "worktree" in c[0]]
+            self.assertEqual(add_calls, [], f"unexpected worktree call for diff={diff_val!r}")
+            if diff_val == "" or diff_val == "valid diff":
+                self.assertTrue(ok)
+                self.assertTrue(jury.could_not_run(findings))
 
     def test_run_gate_checkout_failure_blocks_in_gating_mode(self):
         def _failing_git(argv, cwd=None, **kw):
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
             if "worktree" in argv and "add" in argv:
                 return jury.CommandResult(False, 128, "fatal: bad object")
             return jury.CommandResult(True, 0, "")
 
         ok, findings, timed_out = jury.run_gate(
             "diff content",
+            cwd=self.root,
             mode="gating",
             head_sha="badhead",
             _run=_failing_git,
@@ -1346,15 +1380,19 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         self.assertEqual(findings[0].severity, "major")
         self.assertEqual(findings[0].source, "jury:review-checkout")
         self.assertIn("fatal: bad object", findings[0].message)
+        self.assertTrue(jury.could_not_run(findings))
 
-    def test_run_gate_checkout_failure_surfaces_as_minor_in_advisory_mode(self):
+    def test_run_gate_checkout_failure_surfaces_as_minor_and_skipped_in_advisory_mode(self):
         def _failing_git(argv, cwd=None, **kw):
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
             if "worktree" in argv and "add" in argv:
                 return _Proc(128, "", "fatal: bad object")
             return _Proc(0, "")
 
         ok, findings, timed_out = jury.run_gate(
             "diff content",
+            cwd=self.root,
             mode="advisory",
             head_sha="badhead",
             _run=_failing_git,
@@ -1365,6 +1403,25 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         self.assertEqual(findings[0].severity, "minor")
         self.assertEqual(findings[0].source, "jury:review-checkout")
         self.assertIn("fatal: bad object", findings[0].message)
+        self.assertTrue(jury.could_not_run(findings))
+
+    def test_run_gate_runtime_error_inside_jury_is_not_relabeled_as_checkout_failure(self):
+        def _exploding_jury(argv, cwd=None, **kw):
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            if "worktree" in argv:
+                return _Proc(0, "")
+            raise RuntimeError("unexpected internal runner error")
+
+        with self.assertRaises(RuntimeError) as cm:
+            jury.run_gate(
+                "diff content",
+                cwd=self.root,
+                mode="gating",
+                head_sha="head123",
+                _run=_exploding_jury,
+            )
+        self.assertIn("unexpected internal runner error", str(cm.exception))
 
 
 if __name__ == "__main__":

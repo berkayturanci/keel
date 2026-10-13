@@ -756,9 +756,12 @@ implementation commit, so a looped test-first branch passes it as a single-pass 
 ### s5 classify
 `keel ship .keel/project.yaml --root .` prints, deterministically: the **risk tier** (from
 `tier3_globs` against the diff) → reviewer count, the window state, the gate results, and
-the merge decision. Pass `--implementer-file <path>` (repeatable) or `--since <ref>` when
-available; `keel ship` checks the staged change set and warns (stderr + JSON field) if it
-includes deleted or modified files not touched by the implementer run (warns, never refuses).
+the merge decision. Pass `--implementer-file <path>` (repeatable) or `--since <ref>` (a
+committed-history heuristic when prior implementation commits exist; uncommitted work
+requires `--implementer-file`) on `keel ship` calls (at s5, before a fix-round commit at s9,
+or at s10/s11 after s7/s8 reviewers finish); `keel ship` checks the staged change set and
+warns (stderr + JSON field) if it includes deleted or modified files not touched by the
+implementer run (warns, never refuses).
 Tiers: **tier-3** (any `tier3_globs` match → most reviewers + jury
 auto-on), **tier-1** (all paths in `docs_gate_paths` → fewest reviewers), **tier-2**
 (everything else). `--reviewers N` overrides the count but does **not** suppress the
@@ -825,10 +828,15 @@ working tree. Read the panel off the contract, never off this prose:
 
 ```bash
 # 1. one panel run in its own detached checkout at $HEAD_SHA, read-only, machine-readable
+ROOT=$(pwd)
+HEAD_SHA=$(git rev-parse HEAD)
+DIFF_ABS=$(cd "$(dirname "$DIFF")" && pwd)/$(basename "$DIFF")
+JURY_WT=".keel/worktrees/review-$RUN_ID-jury"
 mkdir -p .keel/worktrees .keel/state/jury
-git worktree add --detach ".keel/worktrees/$RUN_ID.jury" "$HEAD_SHA"
-(cd ".keel/worktrees/$RUN_ID.jury" && jury --format json --diff-file "$DIFF" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
-keel worktree-remove ".keel/worktrees/$RUN_ID.jury" --root .
+keel worktree-remove "$JURY_WT" --root . 2>/dev/null || true
+git worktree add --detach "$JURY_WT" "$HEAD_SHA"
+(trap 'keel worktree-remove "$JURY_WT" --root "$ROOT"' EXIT
+ cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
 
 # 2. its ballots become the s7 evidence: one head-pinned verdict per panelist,
 #    carrying the vendor and model that produced it, plus the jury verdict
@@ -934,18 +942,23 @@ own `provider` (plus `:model` / `--effort` when the seat carries them), read str
 # one dispatch per slot; SLOT is an entry of review_merge_contract.reviewers.slots
 # give each reviewer seat its own detached read-only checkout of the head:
 mkdir -p .keel/worktrees
-git worktree add --detach ".keel/worktrees/$RUN_ID.review-$SLOT" "$HEAD_SHA"
-keel delegate run --provider "$SLOT_PROVIDER" --role review \
-  --prompt-file "$RUBRIC_AND_DIFF" --cwd ".keel/worktrees/$RUN_ID.review-$SLOT" --timeout 900 --project .keel/project.yaml \
-  --activity-run-id "$RUN_ID"
-keel worktree-remove ".keel/worktrees/$RUN_ID.review-$SLOT" --root .
+HEAD_SHA=$(git rev-parse HEAD)
+REVIEW_WT=".keel/worktrees/review-$RUN_ID-$SLOT"
+keel worktree-remove "$REVIEW_WT" --root . 2>/dev/null || true
+git worktree add --detach "$REVIEW_WT" "$HEAD_SHA"
+(trap 'keel worktree-remove "$REVIEW_WT" --root .' EXIT
+ keel delegate run --provider "$SLOT_PROVIDER" --role review \
+   --prompt-file "$RUBRIC_AND_DIFF" --cwd "$REVIEW_WT" --timeout 900 --project .keel/project.yaml \
+   --activity-run-id "$RUN_ID")
 
 # the gate review, when assignment.gate is present
-git worktree add --detach ".keel/worktrees/$RUN_ID.gate" "$HEAD_SHA"
-keel delegate run --provider "$GATE_PROVIDER" --role gate \
-  --prompt-file "$RUBRIC_AND_DIFF" --cwd ".keel/worktrees/$RUN_ID.gate" --timeout 900 --project .keel/project.yaml \
-  --activity-run-id "$RUN_ID"
-keel worktree-remove ".keel/worktrees/$RUN_ID.gate" --root .
+GATE_WT=".keel/worktrees/review-$RUN_ID-gate"
+keel worktree-remove "$GATE_WT" --root . 2>/dev/null || true
+git worktree add --detach "$GATE_WT" "$HEAD_SHA"
+(trap 'keel worktree-remove "$GATE_WT" --root .' EXIT
+ keel delegate run --provider "$GATE_PROVIDER" --role gate \
+   --prompt-file "$RUBRIC_AND_DIFF" --cwd "$GATE_WT" --timeout 900 --project .keel/project.yaml \
+   --activity-run-id "$RUN_ID")
 ```
 
 `--activity-run-id "$RUN_ID"` adds each reviewer's reported token counts to the run's record,
@@ -955,7 +968,8 @@ A slot whose `kind` is `subagent` never reaches `keel delegate run`: it is a hos
 (Claude-class) subagent named by `slot.name`, dispatched in its own detached checkout
 at `$HEAD_SHA` and removed afterwards with `keel worktree-remove`. Reviewer seats must never
 share the implementer's worktree so exploratory checks or temporary deletions cannot mutate
-or contaminate staged changes.
+or contaminate staged changes (note that a detached worktree contains only tracked files at
+`$HEAD_SHA`, without untracked `.venv`, `node_modules`, or `.keel/state`).
 
 Read the same JSON contract s4 documents: `text` is the verdict, `attribution` is what
 you record per reviewer, `error_code` is what you branch on. Long panels detach exactly
@@ -1678,4 +1692,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.32.0 source_sha256=eb7ab893dbe9d6e50ed38e2a36623bd20d73e38748243ba46d596ad9501d63c4 generated_sha256=036d901f2d45cda4ecae10e4a6cc159dc8b249130a8eeb479d775755e894f0fb -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.32.0 source_sha256=bedc9581aeab7fba60485dd33fcd0a2f6af214877dfb172a794f113a4991d9d4 generated_sha256=4e7d8386594757728264c4bce6a6b8c1a51546f3b9f241eb38bcbf93b012120e -->

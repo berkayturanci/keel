@@ -95,11 +95,13 @@ def check_staged_contamination(
 ) -> dict[str, Any]:
     """Check whether staged modified or deleted files include paths outside the implementer run.
 
-    Compares against ``implementer_files`` when available, else against
-    ``files_since_start``. If either baseline is provided and suspect paths are found,
-    returns a warning and sets ``has_contamination: True``. Warns, never blocks.
+    Compares against ``implementer_files`` when available, else against a non-empty
+    committed-history ``files_since_start`` baseline. When no commits exist since ``since``
+    (e.g., uncommitted work at ``HEAD`` or an opaque session label), ``files_since_start``
+    is empty and yields ``comparison_source: 'none'`` — pass ``implementer_files`` to
+    check uncommitted work. Warns, never blocks.
     """
-    if not staged_modified_or_deleted:
+    if staged_modified_or_deleted is None:
         return {
             "has_contamination": False,
             "suspect_paths": [],
@@ -109,7 +111,7 @@ def check_staged_contamination(
     if implementer_files is not None:
         expected = set(implementer_files)
         source = "implementer-files"
-    elif files_since_start is not None:
+    elif files_since_start:
         expected = set(files_since_start)
         source = "files-since-start"
     else:

@@ -17,6 +17,7 @@ unit-tested; the subprocess is behind the injectable ``_run`` seam.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -332,9 +333,12 @@ def reuse_posted_verdict(body: str, *, gating: bool) -> tuple[bool, list[Finding
     return (not blocked), findings
 
 
+REVIEW_CHECKOUT_SOURCE = "jury:review-checkout"
+
+
 def could_not_run(findings) -> bool:
-    """Did this jury gate result come back without running (no CLI, or an empty diff)?"""
-    return any(f.source == NOT_RUN_SOURCE for f in findings)
+    """Did this jury gate result come back without running (no CLI, empty diff, or no checkout)?"""
+    return any(f.source in (NOT_RUN_SOURCE, REVIEW_CHECKOUT_SOURCE) for f in findings)
 
 
 def run_gate(
@@ -376,51 +380,6 @@ def run_gate(
     "request changes", which is a completed review whose findings must be honoured,
     while an exit of zero carrying unreadable output is not a review at all.
     """
-    if head_sha is not None:
-        from . import swarm_runtime
-
-        def _wrap_runner(cmd: list[str], path: Path) -> CommandResult:
-            res = _run(cmd, cwd=str(path), stdin=subprocess.DEVNULL)
-            if isinstance(res, CommandResult):
-                return res
-            out = getattr(res, "stdout", "") or ""
-            err = getattr(res, "stderr", "") or ""
-            code = getattr(res, "returncode", 0)
-            return CommandResult(
-                code == 0,
-                code,
-                out + err,
-                stdout=out,
-                stderr=err,
-            )
-
-        checkout_runner = _wrap_runner if _run is not None else None
-        try:
-            with swarm_runtime.review_checkout(
-                head_sha, name="jury", root=cwd or ".", runner=checkout_runner
-            ) as checkout:
-                return run_gate(
-                    diff_text,
-                    cwd=str(checkout),
-                    mode=mode,
-                    timeout=timeout,
-                    head_sha=None,
-                    _run=_run,
-                )
-        except RuntimeError as exc:
-            gating = mode == "gating"
-            return (
-                (not gating),
-                [
-                    Finding(
-                        severity="major" if gating else "minor",
-                        message=str(exc),
-                        source="jury:review-checkout",
-                    )
-                ],
-                False,
-            )
-
     if diff_text is None:
         # The diff could not be read (git failed). That is not "nothing to review":
         # passing here would silently remove the review gate from the merge decision,
@@ -440,15 +399,60 @@ def run_gate(
         return True, [_oversize_finding(size)], False
     if not available(cwd=cwd, _run=_run):
         return True, [_not_run_finding(NOT_RUN_NO_CLI)], False
-    fd, path = tempfile.mkstemp(suffix=".diff")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(diff_text)
-        result = run_argv(
-            ["jury", "--format", "json", "--diff-file", path], cwd=cwd, timeout=timeout, **_kw(_run)
-        )
-    finally:
-        os.unlink(path)
+
+    run_cwd = cwd
+    with contextlib.ExitStack() as stack:
+        if head_sha is not None:
+            from . import swarm_runtime
+
+            def _wrap_runner(cmd: list[str], path: Path) -> CommandResult:
+                res = _run(cmd, cwd=str(path), stdin=subprocess.DEVNULL)
+                if isinstance(res, CommandResult):
+                    return res
+                out = getattr(res, "stdout", "") or ""
+                err = getattr(res, "stderr", "") or ""
+                code = getattr(res, "returncode", 0)
+                return CommandResult(
+                    code == 0,
+                    code,
+                    out + err,
+                    stdout=out,
+                    stderr=err,
+                )
+
+            checkout_runner = _wrap_runner if _run is not None else None
+            try:
+                checkout = stack.enter_context(
+                    swarm_runtime.review_checkout(
+                        head_sha, name="jury", root=cwd or ".", runner=checkout_runner
+                    )
+                )
+            except swarm_runtime.ReviewCheckoutError as exc:
+                gating = mode == "gating"
+                return (
+                    (not gating),
+                    [
+                        Finding(
+                            severity="major" if gating else "minor",
+                            message=str(exc),
+                            source=REVIEW_CHECKOUT_SOURCE,
+                        )
+                    ],
+                    False,
+                )
+            run_cwd = str(checkout)
+        fd, path = tempfile.mkstemp(suffix=".diff")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(diff_text)
+            result = run_argv(
+                ["jury", "--format", "json", "--diff-file", path],
+                cwd=run_cwd,
+                timeout=timeout,
+                **_kw(_run),
+            )
+        finally:
+            os.unlink(path)
     # stdout alone: ai-jury logs its progress (`[jury] …`) to stderr, and reading the
     # concatenation is what made every report unparseable (#624). `parse_report` still
     # tolerates trailing non-JSON, for a vendor that also chats on stdout.

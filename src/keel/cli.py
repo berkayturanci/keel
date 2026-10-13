@@ -1888,7 +1888,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             jury_mode=review_contract["jury"]["mode"],
             timeout=config.knobs.gate_timeout_s,
             posted_panel=posted[1] if posted is not None else None,
-            head_sha=args.head_sha,
+            head_sha=getattr(args, "head_sha", None),
         ),
         config=config,
         root=args.root,
@@ -2144,13 +2144,21 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             "rules": fallback.audit["rules"],
             "redaction_count": fallback.audit["redaction_count"],
         }
-    staged_md = git.staged_modified_or_deleted_files(cwd=args.root)
-    files_since = None
-    if getattr(args, "since", None):
-        files_since = git.changed_files_since(args.since, head="HEAD", cwd=args.root)
+    impl_files = getattr(args, "implementer_file", None)
+    since_arg = getattr(args, "since", None)
+    files_since = (
+        git.changed_files_since(since_arg, head="HEAD", cwd=args.root)
+        if since_arg and impl_files is None
+        else None
+    )
+    staged_md = (
+        git.staged_modified_or_deleted_files(cwd=args.root)
+        if impl_files is not None or files_since
+        else None
+    )
     staged_contamination = scope.check_staged_contamination(
         staged_md,
-        implementer_files=getattr(args, "implementer_file", None),
+        implementer_files=impl_files,
         files_since_start=files_since,
     )
     staged_warnings: list[str] = []
@@ -2168,7 +2176,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             *_implementer_vocabulary_warnings(args, config),
         ],
     }
-    all_ship_warnings = [*ledger_result["warnings"], *staged_warnings]
     if args.append_ledger and args.live:
         clash = capture_clash or ledger.existing_capture_marker(
             existing_ledger_records, ledger_record
@@ -2195,7 +2202,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                         assessment=a,
                         issue_intake=contract.get("issue_intake"),
                         run_ledger=ledger_result,
-                        warnings=all_ship_warnings if all_ship_warnings else None,
+                        warnings=staged_warnings or None,
                         staged_contamination=staged_contamination,
                     ),
                 },
@@ -2250,7 +2257,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
     for warning in ledger_result["warnings"]:
         print(f"  run context   : warning: {warning}")
-    if staged_contamination and staged_contamination["has_contamination"]:
+    if staged_contamination["has_contamination"]:
         print(f"  staged files  : warning: {staged_contamination['warning']}")
     if intake_record["questions"]:
         print(f"  questions     : {len(intake_record['questions'])}")
