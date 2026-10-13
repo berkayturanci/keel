@@ -1685,17 +1685,24 @@ keel verify-merge .keel/project.yaml --root . --pr 543 --json
 
 | status | meaning | exit |
 | --- | --- | --- |
-| `drift` | wrote to files another PR changed after this one branched and lost added lines (or unreadable diff) | 1 |
+| `drift` | wrote to files another PR changed after this one branched and lost added lines, re-added deletions, or inputs unreadable | 1 |
 | `out-of-scope` | changed files the PR's own diff did not list | 0, or 2 when `incomplete` |
 | `clean` | neither (including when added lines survived: `clean (N shared files, 0 lost lines)`) | 0 |
 | `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 2 |
 
 `drift` is a *stop and look* signal, not proof: two PRs editing one file in sequence
-is ordinary. When files overlap, `verify-merge` checks line survival: for each overtaking PR,
-the lines it added in its diff hunks must still be present in the merge commit's version of
-each shared file (#1511). Drift is reported only when added lines were lost (or when a diff
-cannot be read); if all added lines survived, it reports `clean (N shared files, 0 lost lines)`.
-The report names the colliding PR for each file where lines were lost so a human can judge.
+is ordinary. When files overlap, `verify-merge` checks line survival across every
+overtaking PR per shared path (#1511). For each overtaking PR and shared file, multiset
+counting compares the file content as of that PR's merge commit against the merge commit's
+content (ignoring blank lines): for every line the PR added, its count in the merge commit
+must be >= its count in the PR's landed version; for every line the PR deleted, its count
+in the merge commit must be <= its count in the PR's landed version (catching re-added
+deletions). If the overtaking PR deleted a whole file (`+++ /dev/null`), the file
+reappearing in the merge commit is flagged as drift. Drift is conservatively reported
+if any lines are lost, deletions re-added, or if diffs or file contents cannot be read
+(e.g. malformed or truncated diffs, binary files, or unreadable file content); if all
+changes survive, it reports `clean (N shared files, 0 lost lines)`. The report names all
+colliding PRs for each drifted file so a human can judge.
 
 `unknown` exits **2**, not 0. The status line has always said "not a pass", but the
 exit code said otherwise, and the exit code is what a caller wiring this in after

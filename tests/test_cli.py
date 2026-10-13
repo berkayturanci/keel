@@ -7823,7 +7823,7 @@ class TestVerifyMergeOverRest(unittest.TestCase):
         payload = json.loads(out)
         self.assertEqual(rc, 1, payload)
         self.assertEqual(payload["status"], "drift")
-        self.assertEqual(payload["overtaken"], {"a.py": 550})
+        self.assertEqual(payload["overtaken"], {"a.py": [550]})
         self.assertEqual(payload["transport"], cli.TRANSPORT_REST)
 
     def test_a_speculative_test_merge_sha_is_not_verified_as_the_merge(self):
@@ -11351,17 +11351,40 @@ class TestVerifyMergeCommand(unittest.TestCase):
         diff_by_pr = diff_by_pr or {}
         content_by_path = content_by_path or {}
 
+        def _window(pr, **kw):
+            if callable(window):
+                return window(pr)
+            if isinstance(window, dict):
+                if str(pr) != "543" and "merge_commit" in window:
+                    res = dict(window)
+                    res["merge_commit"] = f"commit_{pr}"
+                    return res
+                return window
+            return None
+
         def _git_show(sha, path, **kw):
-            if use_git_for_content:
+            if not use_git_for_content:
+                return None
+            if callable(content_by_path):
+                return content_by_path(sha, path)
+            if isinstance(content_by_path, dict):
+                if (sha, path) in content_by_path:
+                    return content_by_path[(sha, path)]
                 return content_by_path.get(path)
             return None
 
         def _gh_content(sha, path, **kw):
-            return content_by_path.get(path)
+            if callable(content_by_path):
+                return content_by_path(sha, path)
+            if isinstance(content_by_path, dict):
+                if (sha, path) in content_by_path:
+                    return content_by_path[(sha, path)]
+                return content_by_path.get(path)
+            return None
 
         with (
-            patch("keel.cli.github.pr_merge_window", return_value=window),
-            patch("keel.cli.github.rest_pr_merge_window", return_value=window),
+            patch("keel.cli.github.pr_merge_window", side_effect=_window),
+            patch("keel.cli.github.rest_pr_merge_window", side_effect=_window),
             patch("keel.cli.github.prs_merged_between", return_value=others),
             patch("keel.cli.github.rest_prs_merged_between", return_value=others),
             patch("keel.cli.github.commit_files", return_value=commit_files),
@@ -11383,7 +11406,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
             "diff --git a/CHANGELOG.md b/CHANGELOG.md\n"
             "--- a/CHANGELOG.md\n"
             "+++ b/CHANGELOG.md\n"
-            "@@ -1,1 +1,2 @@\n"
+            "@@ -0,0 +1,1 @@\n"
             "+* feature 550\n"
         )
         content = "## Unreleased\n* feature 550\n* PR 543\n"
@@ -11403,7 +11426,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
             "diff --git a/src/keel/github.py b/src/keel/github.py\n"
             "--- a/src/keel/github.py\n"
             "+++ b/src/keel/github.py\n"
-            "@@ -1,1 +1,2 @@\n"
+            "@@ -0,0 +1,1 @@\n"
             "+def rest_call(): pass\n"
         )
         content = "def other(): pass\n"
@@ -11412,7 +11435,10 @@ class TestVerifyMergeCommand(unittest.TestCase):
             files_by_pr={543: ["src/keel/github.py"], 550: ["src/keel/github.py"]},
             commit_files=["src/keel/github.py"],
             diff_by_pr={550: diff550},
-            content_by_path={"src/keel/github.py": content},
+            content_by_path={
+                ("commit_550", "src/keel/github.py"): "def rest_call(): pass\n",
+                ("7c140f3", "src/keel/github.py"): content,
+            },
         )
         self.assertEqual(rc, 1)
         self.assertIn("drift", out)
@@ -11420,7 +11446,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertIn("#550", out)
 
     def test_shared_files_rest_transport_with_content_fallback(self):
-        diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n+line 1\n"
+        diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line 1\n"
         content = "line 1\n"
         rc, out, _ = self._run(
             others=[550],
@@ -11490,8 +11516,124 @@ class TestVerifyMergeCommand(unittest.TestCase):
         payload = json.loads(out)
         self.assertEqual(rc, 1)
         self.assertEqual(payload["status"], "drift")
-        self.assertEqual(payload["overtaken"], {"a.py": 550})
+        self.assertEqual(payload["overtaken"], {"a.py": [550]})
         self.assertEqual(payload["pull_request"], 543)
+
+    def test_two_prs_overtaking_same_file_one_reverted_reports_drift(self):
+        diff550 = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+def pr550(): pass\n"
+        )
+        diff551 = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+def pr551(): pass\n"
+        )
+        content_550 = "def base(): pass\ndef pr550(): pass\n"
+        content_551 = "def base(): pass\ndef pr550(): pass\ndef pr551(): pass\n"
+        content_merge = "def base(): pass\ndef pr550(): pass\n"
+        rc, out, _ = self._run(
+            others=[550, 551],
+            files_by_pr={543: ["a.py"], 550: ["a.py"], 551: ["a.py"]},
+            commit_files=["a.py"],
+            diff_by_pr={550: diff550, 551: diff551},
+            content_by_path={
+                ("commit_550", "a.py"): content_550,
+                ("commit_551", "a.py"): content_551,
+                ("7c140f3", "a.py"): content_merge,
+            },
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("drift", out)
+        self.assertIn("a.py", out)
+        self.assertIn("#551", out)
+
+    def test_two_prs_overtaking_same_file_both_survive_reports_clean(self):
+        diff550 = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+def pr550(): pass\n"
+        )
+        diff551 = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+def pr551(): pass\n"
+        )
+        content_550 = "def base(): pass\ndef pr550(): pass\n"
+        content_551 = "def base(): pass\ndef pr550(): pass\ndef pr551(): pass\n"
+        content_merge = "def base(): pass\ndef pr550(): pass\ndef pr551(): pass\n"
+        rc, out, _ = self._run(
+            others=[550, 551],
+            files_by_pr={543: ["a.py"], 550: ["a.py"], 551: ["a.py"]},
+            commit_files=["a.py"],
+            diff_by_pr={550: diff550, 551: diff551},
+            content_by_path={
+                ("commit_550", "a.py"): content_550,
+                ("commit_551", "a.py"): content_551,
+                ("7c140f3", "a.py"): content_merge,
+            },
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean", out)
+        self.assertIn("1 shared file, 0 lost lines", out)
+
+    def test_diff_fetch_fails_reports_drift(self):
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},
+            commit_files=["a.py"],
+            diff_by_pr={550: None},
+            content_by_path={"a.py": "line 1\n"},
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("drift", out)
+
+    def test_content_fetch_fails_reports_drift(self):
+        diff550 = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+def pr550(): pass\n"
+        )
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},
+            commit_files=["a.py"],
+            diff_by_pr={550: diff550},
+            content_by_path={},
+            use_git_for_content=False,
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("drift", out)
+
+    def test_multiple_shared_paths_disjoint_overtaking_prs(self):
+        diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line a\n"
+        diff551 = "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -0,0 +1,1 @@\n+line b\n"
+        rc, out, _ = self._run(
+            others=[550, 551],
+            files_by_pr={543: ["a.py", "b.py"], 550: ["a.py"], 551: ["b.py"]},
+            commit_files=["a.py", "b.py"],
+            diff_by_pr={550: diff550, 551: diff551},
+            content_by_path={
+                ("commit_550", "a.py"): "line a\n",
+                ("commit_551", "b.py"): "line b\n",
+                ("7c140f3", "a.py"): "line a\n",
+                ("7c140f3", "b.py"): "line b\n",
+            },
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean", out)
+        self.assertIn("2 shared files, 0 lost lines", out)
 
     def test_an_explicit_merge_sha_skips_the_lookup(self):
         rc, out, _ = self._run(

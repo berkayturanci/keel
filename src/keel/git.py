@@ -458,6 +458,8 @@ def ls_tree(treeish: str, *, cwd: str | None = None, _run=None) -> str | None:
 
 def show_file(treeish: str, path: str, *, cwd: str | None = None, _run=None) -> str | None:
     """Read the content of ``path`` at ``treeish`` via ``git show <treeish>:<path>`` (#1511)."""
+    if not treeish or not path:
+        return None
     result = run_argv(["git", "show", f"{treeish}:{path}"], cwd=cwd, **_kw(_run))
     return result.stdout if result.ok else None
 

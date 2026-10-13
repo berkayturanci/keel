@@ -74,6 +74,10 @@ class TestGitLandingPlumbing(unittest.TestCase):
     def test_show_file_fail_soft(self):
         self.assertIsNone(git.show_file(SHA_B, "a.py", _run=_Recorder(code=128)))
 
+    def test_show_file_empty_inputs(self):
+        self.assertIsNone(git.show_file("", "a.py"))
+        self.assertIsNone(git.show_file("abc", ""))
+
     def test_mktree_sends_the_listing_on_stdin(self):
         listing = f"100644 blob {SHA_A}\ta.md\x00"
         captured = {}
@@ -627,6 +631,19 @@ class TestGitHub(unittest.TestCase):
 
     def test_commit_file_content_failsoft(self):
         self.assertIsNone(github.commit_file_content("abc", "src/x.py", _run=_Recorder(code=1)))
+
+    def test_commit_file_content_empty_inputs(self):
+        self.assertIsNone(github.commit_file_content("", "src/x.py"))
+        self.assertIsNone(github.commit_file_content("abc", ""))
+
+    def test_commit_file_content_url_encoding(self):
+        rec = _Recorder(out="raw content\n")
+        self.assertEqual(
+            github.commit_file_content("abc", "path/with #1? % space.py", _run=rec), "raw content\n"
+        )
+        self.assertIn(
+            "contents/path/with%20%231%3F%20%25%20space.py?ref=abc", " ".join(rec.calls[0])
+        )
 
     def test_rest_pr_diff_parsed(self):
         rec = _Recorder(out="diff --git a/x.py b/x.py\n")

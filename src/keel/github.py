@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import random
 import time
+import urllib.parse
 from collections.abc import Sequence
 
 from .runner import CommandResult, run_argv
@@ -334,11 +335,14 @@ def commit_file_content(
     sha: str, path: str, *, cwd: str | None = None, _run=None, _sleep=None
 ) -> str | None:
     """Raw content of ``path`` at commit ``sha`` from GitHub (#1511)."""
+    if not sha or not path:
+        return None
+    encoded_path = urllib.parse.quote(path, safe="/")
     result = run_argv_retry(
         [
             "gh",
             "api",
-            f"repos/{{owner}}/{{repo}}/contents/{path}?ref={sha}",
+            f"repos/{{owner}}/{{repo}}/contents/{encoded_path}?ref={sha}",
             "-H",
             "Accept: application/vnd.github.v3.raw",
         ],

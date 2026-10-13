@@ -4742,15 +4742,16 @@ def _cmd_evidence_verify(args: argparse.Namespace) -> int:
 
 def _overtaking_prs(
     args: argparse.Namespace, timing: dict, *, rest: bool = False
-) -> tuple[dict, bool]:
+) -> tuple[dict[str, list[int]], bool]:
     """Paths changed by a PR merged after ``args.pr`` branched, and whether that
-    list is complete (#561).
+    list is complete (#561, #1511).
 
     The window is (branch point, this merge). A pull request merged inside it landed
     work the branch does not contain, so a squash of that branch can undo it — which
     is precisely how #543 reverted #550 while every gate stayed green.
 
-    Returns ``(overtaken, complete)``. ``or []`` here meant a rate-limited ``gh``
+    Returns ``(overtaken, complete)``, where ``overtaken`` maps each path to all PR
+    numbers that touched it (#1511). ``or []`` here meant a rate-limited ``gh``
     produced "no overtaking pull requests", which reads downstream as ``clean`` —
     a pass for a question the check never got to ask (#933).
 
@@ -4766,7 +4767,7 @@ def _overtaking_prs(
     others = reader(timing["base"], timing["branched_at"], timing["merged_at"], cwd=args.root)
     if others is None:
         return {}, False
-    overtaken: dict = {}
+    overtaken: dict[str, list[int]] = {}
     complete = True
     for number in others:
         if number == args.pr:
@@ -4779,8 +4780,8 @@ def _overtaking_prs(
         if files is None:
             complete = False
             continue
-        for path in files:
-            overtaken.setdefault(path, number)
+        for path in set(files):
+            overtaken.setdefault(path, []).append(number)
     return overtaken, complete
 
 
@@ -4830,18 +4831,41 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
         shared_paths = [p for p in (overtaken or {}) if p in landed_set]
         diffs: dict[int, str | None] | None = None
         file_contents: dict[str, str | None] | None = None
+        pr_file_contents: dict[int, dict[str, str | None]] | None = None
         if shared_paths:
             diffs = {}
             file_contents = {}
+            pr_file_contents = {}
             diff_reader = github.rest_pr_diff if rest else github.pr_diff
-            prs_to_fetch = {overtaken[p] for p in shared_paths}
+            window_reader = github.rest_pr_merge_window if rest else github.pr_merge_window
+            prs_to_fetch: set[int] = set()
+            for p in shared_paths:
+                prs_to_fetch.update(overtaken[p])
+
             for pr_num in sorted(prs_to_fetch):
                 diffs[pr_num] = diff_reader(pr_num, cwd=args.root)
+
             for path in sorted(shared_paths):
                 content = git.show_file(merge_sha, path, cwd=args.root)
                 if content is None:
                     content = github.commit_file_content(merge_sha, path, cwd=args.root)
                 file_contents[path] = content
+
+            for pr_num in sorted(prs_to_fetch):
+                pr_window = window_reader(pr_num, cwd=args.root)
+                pr_merge_sha = (pr_window or {}).get("merge_commit")
+                pr_file_contents[pr_num] = {}
+                for path in sorted(shared_paths):
+                    if pr_num in overtaken[path]:
+                        if pr_merge_sha:
+                            pr_content = git.show_file(pr_merge_sha, path, cwd=args.root)
+                            if pr_content is None:
+                                pr_content = github.commit_file_content(
+                                    pr_merge_sha, path, cwd=args.root
+                                )
+                            pr_file_contents[pr_num][path] = pr_content
+                        else:
+                            pr_file_contents[pr_num][path] = None
         # Each input answers a specific question, so an unreadable one leaves that
         # question open rather than the whole report meaningless. Saying "no
         # conclusion about drift is possible" when only the PR's own file list was
@@ -4865,6 +4889,7 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             intended=intended,
             diffs=diffs,
             file_contents=file_contents,
+            pr_file_contents=pr_file_contents,
         )
         if unreadable:
             note = "could not read " + ", ".join(name for name, _ in unreadable)
