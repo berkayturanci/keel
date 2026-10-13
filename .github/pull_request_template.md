@@ -34,9 +34,9 @@ Closes #
 - [ ] `make lint`
 - [ ] `make validate`
 - [ ] `make coverage` (every module under `src/keel/` stays at 100% line + branch)
-- [ ] `CHANGELOG` updated
+- [ ] Changelog fragment added (`changelog.d/<issue>.<type>.md`; do not edit `CHANGELOG.md`)
 - [ ] #63 parity matrix row updated (if a command changed)
-- [ ] Docs / `CHANGELOG.md` updated if behaviour changed
+- [ ] Docs updated if behaviour changed
 
 ## Project-Agnostic Check
 

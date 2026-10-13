@@ -24,7 +24,10 @@
 #   make release-bump VERSION=x.y.z
 #                  bump the version everywhere a release must touch (pyproject, __init__,
 #                  Claude + Codex plugin manifests, pinned-install refs) and regenerate all
-#                  adapter surfaces
+#                  adapter surfaces, and collect changelog.d/ fragments into the new
+#                  CHANGELOG.md section (#1515)
+#   make changelog-preview
+#                  print the CHANGELOG section the next release-bump would write
 #   make doctor-python
 #                  print the interpreter these targets resolved, and its version
 
@@ -46,7 +49,7 @@ PY = $(error no usable Python — see the find_python message above, or set PY=/
 endif
 endif
 
-.PHONY: test lint coverage validate site site-params adapters plugin plugin-zip release-check release-bump doctor-python clean
+.PHONY: test lint coverage validate site site-params adapters plugin plugin-zip release-check release-bump changelog-preview doctor-python clean
 
 test:
 	PYTHONPATH=src $(PY) -m unittest discover -s tests -v
@@ -88,12 +91,15 @@ site-params:
 release-check:
 	$(PY) scripts/release_check.py
 
+changelog-preview:
+	$(PY) scripts/changelog_fragments.py
+
 release-bump:
 	@test -n "$(VERSION)" || { echo "usage: make release-bump VERSION=x.y.z"; exit 1; }
 	$(PY) scripts/release_bump.py "$(VERSION)" --strict
 	$(MAKE) plugin
 	$(MAKE) adapters
-	@echo "release-bump done. Add a CHANGELOG.md entry for $(VERSION) opening with 1-3 highlight lines, run the gates, then follow docs/keel/release.md to tag."
+	@echo "release-bump done. changelog.d fragments are now in CHANGELOG.md; write 1-3 highlight lines under the ## [$(VERSION)] heading, run the gates, then follow docs/keel/release.md to tag."
 
 doctor-python:
 	@echo "interpreter : $(PY)"

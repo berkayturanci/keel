@@ -1695,6 +1695,7 @@ _GH_WRITES = frozenset(
         ("pr", "comment"),
         ("pr", "close"),
         ("pr", "edit"),
+        ("run", "rerun"),
         ("issue", "close"),
         ("issue", "comment"),
         ("issue", "edit"),
@@ -2004,16 +2005,18 @@ class TestTheWriteGraphFindsHiddenWrites(unittest.TestCase):
         self.assertTrue(self.reaches({"w": worker, "c": after}, "c.h"), "refused too late")
         self.assertTrue(self.reaches({"w": worker, "c": unguarded}, "c.h"))
 
-    def test_the_cli_writes_from_exactly_fourteen_commands(self):
+    def test_the_cli_writes_from_exactly_fifteen_commands(self):
         """The hardening found nothing new. `ship` and `run-gates` joined with the opt-in
         `revert-check` gate, whose scratch worktree is added, reset and removed through git
         (#1289). `swarm-run` joined when `--live` stopped being refused: a live worker
         commits, pushes and opens a pull request under delegated consent (#1400).
         `swarm-status` joined with `--clean`, which removes the worktrees, directories and
         branches swarm runs left under keel's own paths (#1278). `swarm-review` joined with
-        #1423: a live review checks the head out per seat and posts the seats' verdicts."""
+        #1423: a live review checks the head out per seat and posts the seats' verdicts.
+        `finish` joined with #1505: it chains `review --live`, `ship --live` and `merge`."""
         self.assertEqual(
             {
+                "finish",
                 "ship",
                 "run-gates",
                 "merge",

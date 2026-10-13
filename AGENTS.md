@@ -209,7 +209,8 @@ the schema if the contract changes), not this prose.
   every push. `keel ship projects/keel.yaml --root .` is the full dry assessment (tier →
   reviewers, window, gates, decision).
 - **Docs impact.** When behaviour, config, or the CLI changes, update `docs/keel/` (and
-  `README.md` / `CHANGELOG.md`) or state `Docs Impact: none` with a reason. If a public
+  `README.md`, plus a `changelog.d/<issue>.<type>.md` fragment — never an edit to
+  `CHANGELOG.md` itself) or state `Docs Impact: none` with a reason. If a public
   claim changes (swarm status, coverage bar, revert-check numbers), update
   `docs/keel/claims.yaml`.
 - **A bot's branch is a read-only input.** Never rebase, amend, or push fixes onto a

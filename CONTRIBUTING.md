@@ -50,10 +50,13 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    `make test` also fails if any tracked file — `CHANGELOG.md` most often, since it conflicts
    on nearly every PR — still carries an unresolved `<<<<<<<`/`=======`/`>>>>>>>` marker after
    a merge or rebase.
-5. Update docs (`docs/keel/`, README) and `CHANGELOG.md` (`[Unreleased]`) when behaviour
-   changes. If a public claim changes (swarm status, coverage bar, revert-check numbers),
-   update `docs/keel/claims.yaml` — tests enforce that documentation surfaces quote it
-   verbatim. If you change the `/keel:<command>` adapters, re-install with
+5. Update docs (`docs/keel/`, README) and add a changelog fragment when behaviour
+   changes: `changelog.d/<issue>.<type>.md` (`added`, `changed`, `deprecated`, `removed`,
+   `fixed` or `security`) holding the bullet lines. Do not edit `CHANGELOG.md`; fragments exist
+   so parallel PRs never conflict on it, and `make release-bump` collects them
+   (`make changelog-preview` shows the result). If a public claim changes (swarm status,
+   coverage bar, revert-check numbers), update `docs/keel/claims.yaml` — tests enforce
+   that documentation surfaces quote it verbatim. If you change the `/keel:<command>` adapters, re-install with
    `keel install-adapter all --force`.
 6. Write a real PR description: a **Summary** in your own prose plus a **Related issues**
    reference (`Closes #N` / `Relates to #N`, or `no issue` for a pure chore). The

@@ -33,6 +33,7 @@ than ``keel@vX.Y.Z``.
 from __future__ import annotations
 
 import argparse
+import datetime
 import re
 import sys
 from pathlib import Path
@@ -45,6 +46,7 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+from changelog_fragments import apply_collection, plan_collection  # noqa: E402
 from release_surfaces import literal_surfaces, shape_surfaces  # noqa: E402
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -254,9 +256,15 @@ def main(argv: list[str] | None = None) -> int:
             "(default: warn and continue)"
         ),
     )
+    parser.add_argument(
+        "--date",
+        default=None,
+        help="date of the new CHANGELOG section, YYYY-MM-DD (default: today)",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root)
+    collection = None
 
     if args.package == "core":
         # A core bump never touches keel-visual, so a pre-existing drift between
@@ -274,7 +282,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.package == "keel-visual":
             old, changed = bump_visual(root, args.version)
         else:
+            if SEMVER.match(args.version):
+                # Planned before any write so malformed fragments refuse the bump
+                # with the tree untouched (#1515); applied after the version moved.
+                date = args.date or datetime.date.today().isoformat()
+                collection = plan_collection(root, args.version, date)
             old, changed = bump(root, args.version)
+            if collection is not None:
+                changed = [*apply_collection(root, collection), *changed]
     except (ValueError, OSError) as exc:
         print(f"release-bump failed: {exc}", file=sys.stderr)
         return 1
@@ -300,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             "Next: `make plugin && make adapters` (regenerate keel_version markers), "
-            "add a CHANGELOG.md entry opening with 1-3 highlight lines, then follow "
+            "write 1-3 highlight lines under the new CHANGELOG.md heading, then follow "
             "docs/keel/release.md to tag."
         )
     return 0
