@@ -26,13 +26,19 @@ TAG = "tag"
 
 CLEARED = "cleared"
 PENDING = "pending"
+#: Closed without the work landing: a PR closed unmerged, an issue closed as not planned or
+#: a duplicate. The blocker is gone but the thing it waited for never arrived, so it is
+#: reported and never counted as cleared.
+ABANDONED = "abandoned"
 UNKNOWN = "unknown"
 
 _REF = r"#\d+"
 _REF_LIST = rf"(?P<refs>{_REF}(?:\s*(?:,|&|and)\s*{_REF})*)"
 #: ``blocked by #N``, ``depends on: PR #N``, ``waiting on #1, #2 and #3`` — the intake
-#: phrase set followed by one or more same-repository references. ``owner/repo#N`` is
-#: refused (the lookbehind), since it would be resolved against the wrong repository.
+#: phrase set followed directly by one or more bare ``#N`` references. ``owner/repo#N`` is
+#: refused because the phrase must be followed by ``#N`` (or ``PR``/``issue`` then ``#N``),
+#: so it is never resolved against the wrong repository; the lookbehind only refuses a
+#: phrase glued to a longer word.
 _BLOCKED_REF_RE = re.compile(
     rf"(?<![\w/])(?:{BLOCKED_PHRASE_RE.pattern})\s*:?\s*"
     rf"(?:(?:pr|pull request|issue)\s+)?(?<![\w/]){_REF_LIST}",
@@ -42,11 +48,11 @@ _DO_NOT_MERGE = (
     r"(?:do not|don't|dont|must not|should not|shouldn't|cannot|can't)\s+"
     r"merge\s+(?:before|until|prior to)"
 )
-#: ``do not merge before #N`` / ``... before v1.2.0``. A bare word ("before release")
-#: is not a reference: only ``#N`` or a version-like tag (leading ``v`` or digit, with a
-#: digit in it) counts.
+#: ``do not merge before #N`` / ``... before v1.2.0``. A bare word ("before release") or a
+#: time/count ("before 5pm", "before 3 reviewers") is not a reference: only ``#N``, a
+#: ``v``-prefixed tag (``v2``, ``v1.2.0``) or a dotted version (``1.2``) counts.
 _BEFORE_RE = re.compile(
-    rf"(?<![\w/]){_DO_NOT_MERGE}\s+(?:the\s+)?(?:(?P<issue>#\d+)|(?P<tag>v?\d[\w.+\-/]*))",
+    rf"(?<![\w/]){_DO_NOT_MERGE}\s+(?:the\s+)?(?:(?P<issue>#\d+)|(?P<tag>v\d[\w.+\-/]*|\d+\.\d[\w.+\-/]*))",
     re.IGNORECASE,
 )
 _NEGATION_RE = re.compile(
@@ -99,6 +105,8 @@ def parse_blockers(body: str | None) -> tuple[Blocker, ...]:
         for num in re.findall(r"\d+", m.group("refs")):
             found.append(Blocker(ISSUE, num))
     for m in _BEFORE_RE.finditer(text):
+        if _NEGATION_RE.search(text[: m.start()]):
+            continue
         if m.group("issue"):
             found.append(Blocker(ISSUE, m.group("issue")[1:]))
         else:
@@ -112,33 +120,47 @@ def parse_blockers(body: str | None) -> tuple[Blocker, ...]:
     return tuple(ordered)
 
 
+#: One line: ``<state> <state_reason|-> <issue|unmerged|<merged_at>>``. The last field is
+#: how a PR is told from an issue, and whether it merged (``merged_at`` is null if not).
+_ISSUE_JQ = (
+    '.state + " " + (.state_reason // "-") + " " + '
+    '(if .pull_request then (.pull_request.merged_at // "unmerged") else "issue" end)'
+)
+
+
 def _kw(_run):
     return {"_run": _run} if _run is not None else {}
 
 
 def resolve_blocker(blocker: Blocker, *, cwd: str | None = None, _run=None) -> str:
-    """``cleared`` / ``pending`` / ``unknown`` for one blocker. Fail-soft, read-only.
+    """``cleared`` / ``pending`` / ``abandoned`` / ``unknown`` for one blocker. Read-only.
 
-    An issue or PR is cleared once it is closed (a merged PR reads as closed) and pending
-    while open. A tag is cleared once ``git/ref/tags/<tag>`` exists and pending only on a
-    definite 404. Anything else — no ``gh``, offline, no auth, odd output — is ``unknown``.
+    An open issue or PR is pending. A closed one is cleared only when the work landed: a PR
+    that was merged, an issue closed as ``completed`` (or with no reason, as old issues
+    are). A PR closed unmerged, or an issue closed ``not_planned`` / as a duplicate, is
+    ``abandoned``. A tag is cleared once ``git/ref/tags/<tag>`` exists and pending only on
+    an HTTP 404. Anything else — no ``gh``, offline, no auth, odd output — is ``unknown``,
+    never cleared: an operator told "the blocker is gone" merges on it.
     """
     if blocker.kind == ISSUE:
-        argv = ["gh", "api", f"repos/{{owner}}/{{repo}}/issues/{blocker.ref}", "--jq", ".state"]
+        argv = ["gh", "api", f"repos/{{owner}}/{{repo}}/issues/{blocker.ref}", "--jq", _ISSUE_JQ]
         result = run_argv(argv, cwd=cwd, **_kw(_run))
-        if not result.ok:
+        parts = result.stdout.split() if result.ok else []
+        if len(parts) != 3:
             return UNKNOWN
-        state = result.stdout.strip().lower()
-        if state in ("closed", "merged"):
-            return CLEARED
-        return PENDING if state == "open" else UNKNOWN
+        state, reason, merged = parts
+        if state == "open":
+            return PENDING
+        if state != "closed":
+            return UNKNOWN
+        if merged == "issue":
+            return CLEARED if reason in ("completed", "-") else ABANDONED
+        return ABANDONED if merged == "unmerged" else CLEARED
     argv = ["gh", "api", f"repos/{{owner}}/{{repo}}/git/ref/tags/{blocker.ref}", "--jq", ".ref"]
     result = run_argv(argv, cwd=cwd, **_kw(_run))
     if result.ok:
         return CLEARED if result.stdout.strip() else UNKNOWN
-    if "404" in result.stderr or "not found" in result.stderr.lower():
-        return PENDING
-    return UNKNOWN
+    return PENDING if "HTTP 404" in result.stderr else UNKNOWN
 
 
 def _open_prs(limit: int, cwd: str | None, _run) -> list[dict[str, Any]] | None:
@@ -164,7 +186,7 @@ def _open_prs(limit: int, cwd: str | None, _run) -> list[dict[str, Any]] | None:
 
 
 def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> dict[str, Any]:
-    """Open PRs with at least one cleared stated blocker.
+    """Open PRs with at least one cleared or abandoned stated blocker.
 
     ``ok`` is False (and ``error`` set) when the PR list itself cannot be read; a blocker
     that cannot be read is listed as ``unknown`` and never counts toward ``all_cleared``.
@@ -176,10 +198,12 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
     states: dict[Blocker, str] = {}
     prs: list[dict[str, Any]] = []
     for row in rows:
-        number = row.get("number")
+        if not isinstance(row, dict) or not isinstance(row.get("number"), int):
+            continue
+        number = row["number"]
         blockers = [
             b
-            for b in parse_blockers(row.get("body"))
+            for b in parse_blockers(row["body"] if isinstance(row.get("body"), str) else None)
             if not (b.kind == ISSUE and b.ref == str(number))
         ]
         if not blockers:
@@ -189,7 +213,7 @@ def stale_blockers(*, limit: int = 200, cwd: str | None = None, _run=None) -> di
             if b not in states:
                 states[b] = resolve_blocker(b, cwd=cwd, _run=_run)
             entries.append({**b.to_dict(), "state": states[b]})
-        if not any(e["state"] == CLEARED for e in entries):
+        if not any(e["state"] in (CLEARED, ABANDONED) for e in entries):
             continue
         prs.append(
             {
@@ -210,10 +234,10 @@ def render(report: dict[str, Any]) -> str:
     if not report["ok"]:
         return f"keel stale-blockers: {report['error']}"
     if not report["prs"]:
-        return "No open PRs with a cleared blocker."
+        return "No open PRs with a cleared or abandoned blocker."
     lines = []
     for pr in report["prs"]:
-        kind = "all blockers cleared" if pr["all_cleared"] else "some blockers cleared"
+        kind = "all blockers cleared" if pr["all_cleared"] else "blockers resolved or abandoned"
         draft = " (draft)" if pr["draft"] else ""
         lines.append(f"#{pr['number']}{draft} {pr['title']} — {kind}")
         for e in pr["blockers"]:

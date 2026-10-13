@@ -107,7 +107,8 @@ independent of the staleness cutoff:
 keel stale-blockers --root . --json
 ```
 
-For each PR in `prs`, add a line to the summary naming the cleared blockers, and say
+For each PR in `prs`, add a line to the summary naming the cleared blockers (`abandoned` ones —
+a PR closed unmerged, an issue closed as not planned — are reported as such, not as cleared), and say
 `all blockers cleared` when `all_cleared` is true (otherwise list the still-pending or
 `unknown` ones). A blocker whose state is `unknown` could not be read and is never treated
 as cleared. If the command exits non-zero (`ok: false`), print one note that blocker state
@@ -171,8 +172,9 @@ merging here.
 
 Print a summary table: PR · title · bucket · action, where action is one of `commented`,
 `already-commented-today`, `merge-pushed`, `conflict-skipped`, `dry-run-noted`,
-`error-skipped — <reason>`, followed by a "Blocker cleared" list from Step 2b. If no PR is stale at the threshold, print a single line
-`No stale PRs at threshold <days> days.`
+`error-skipped — <reason>`. If no PR is stale at the threshold, print a single line
+`No stale PRs at threshold <days> days.` instead of the table. Either way, then print the
+"Blocker cleared" list from Step 2b: it does not depend on the staleness cutoff.
 
 ## Stop conditions / invariants
 
@@ -186,4 +188,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=claude command=stale-prs keel_version=1.32.0 source_sha256=c96393bce3c2aa969e30086365ab17d04ee0901ad3b43b38de2fa1a01e30213e generated_sha256=c96393bce3c2aa969e30086365ab17d04ee0901ad3b43b38de2fa1a01e30213e -->
+<!-- keel-generated: surface=claude command=stale-prs keel_version=1.32.0 source_sha256=9e9a8c09361efac47eb7d5942718b42aed16aae9e19d58239c058fbfa29d71ef generated_sha256=9e9a8c09361efac47eb7d5942718b42aed16aae9e19d58239c058fbfa29d71ef -->

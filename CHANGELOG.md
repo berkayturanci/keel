@@ -7,7 +7,7 @@ All notable changes to keel are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **`keel stale-blockers` lists open PRs whose stated blocker has cleared** (#1512). A PR body that says `blocked by #N`, `depends on #N` or `do not merge before #N|<tag>` is checked against GitHub: the issue or PR closed or merged, or the tag now exists. Read-only and fail-soft: an unreadable blocker is `unknown`, never cleared. `/keel:stale-prs` and `/keel:morning` run it and surface the result.
+- **`keel stale-blockers` lists open PRs whose stated blocker has cleared** (#1512). A PR body that says `blocked by #N`, `depends on #N` or `do not merge before #N|<tag>` is checked against GitHub: the PR merged, the issue closed as completed, or the tag now exists. A PR closed unmerged or an issue closed as not planned or a duplicate is `abandoned`: reported, never cleared. Read-only and fail-soft: an unreadable blocker is `unknown`, never cleared. `/keel:stale-prs` and `/keel:morning` run it and surface the result.
 
 ## [1.32.0] - 2026-10-12
 

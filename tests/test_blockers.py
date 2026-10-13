@@ -6,10 +6,10 @@ import contextlib
 import io
 import json
 import unittest
-from unittest.mock import patch
+import unittest.mock as mock
 
 from keel import blockers, cli
-from keel.blockers import CLEARED, ISSUE, PENDING, TAG, UNKNOWN, Blocker
+from keel.blockers import ABANDONED, CLEARED, ISSUE, PENDING, TAG, UNKNOWN, Blocker
 from keel.runner import CommandResult
 
 
@@ -47,6 +47,9 @@ class ParseTests(unittest.TestCase):
             (Blocker(TAG, "1.2"),), blockers.parse_blockers("do not merge until `1.2`")
         )
 
+    def test_v_prefixed_tag(self):
+        self.assertEqual((Blocker(TAG, "v2"),), blockers.parse_blockers("do not merge before v2"))
+
     def test_multiple_and_dedupe(self):
         got = blockers.parse_blockers(
             "Blocked by #1, #2 and #3. Depends on #2. Do not merge before v9.0"
@@ -64,6 +67,10 @@ class ParseTests(unittest.TestCase):
             "This is not blocked by #5",
             "no longer blocked by #5",
             "Do not merge before release",
+            "do not merge before 5pm",
+            "do not merge until 2026-10-15",
+            "do not merge before 3 reviewers approve",
+            "no longer do not merge before #5",
             "depends on owner/repo#5",
             "blocked by #",
             "no dependencies",
@@ -92,18 +99,31 @@ class ResolveTests(unittest.TestCase):
             calls.append(argv)
             return result
 
-        with patch("keel.blockers.run_argv", lambda argv, **kw: run(argv, **kw)):
+        with mock.patch("keel.blockers.run_argv", lambda argv, **kw: run(argv, **kw)):
             return blockers.resolve_blocker(blocker), calls
 
     def test_issue_states(self):
         b = Blocker(ISSUE, "9")
-        self.assertEqual(CLEARED, self.resolve(b, _ok("closed\n"))[0])
-        self.assertEqual(CLEARED, self.resolve(b, _ok("MERGED"))[0])
-        self.assertEqual(PENDING, self.resolve(b, _ok("open"))[0])
-        self.assertEqual(UNKNOWN, self.resolve(b, _ok("weird"))[0])
+        cases = {
+            "closed completed issue": ("closed completed issue", CLEARED),
+            "closed, no reason (old issue)": ("closed - issue", CLEARED),
+            "closed not_planned": ("closed not_planned issue", ABANDONED),
+            "closed duplicate": ("closed duplicate issue", ABANDONED),
+            "merged PR": ("closed completed 2026-10-01T00:00:00Z", CLEARED),
+            "merged PR, no reason": ("closed - 2026-10-01T00:00:00Z", CLEARED),
+            "PR closed unmerged": ("closed - unmerged", ABANDONED),
+            "open issue": ("open - issue", PENDING),
+            "open PR": ("open - unmerged", PENDING),
+            "odd state": ("locked - issue", UNKNOWN),
+            "empty": ("", UNKNOWN),
+            "short": ("closed", UNKNOWN),
+        }
+        for name, (out, want) in cases.items():
+            self.assertEqual(want, self.resolve(b, _ok(out + "\n"))[0], name)
         self.assertEqual(UNKNOWN, self.resolve(b, _fail("HTTP 404 Not Found"))[0])
-        state, calls = self.resolve(b, _ok("closed"))
+        _, calls = self.resolve(b, _ok("closed - issue"))
         self.assertIn("repos/{owner}/{repo}/issues/9", calls[0])
+        self.assertIn("merged_at", calls[0][-1])
 
     def test_tag_states(self):
         b = Blocker(TAG, "v1")
@@ -112,7 +132,8 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("repos/{owner}/{repo}/git/ref/tags/v1", calls[0])
         self.assertEqual(UNKNOWN, self.resolve(b, _ok(""))[0])
         self.assertEqual(PENDING, self.resolve(b, _fail("gh: Not Found (HTTP 404)"))[0])
-        self.assertEqual(PENDING, self.resolve(b, _fail("gh: not found"))[0])
+        for err in ("gh: command not found", "repository not found", "Could not resolve host"):
+            self.assertEqual(UNKNOWN, self.resolve(b, _fail(err))[0], err)
 
     def test_read_failure_is_never_cleared(self):
         for b in (Blocker(ISSUE, "9"), Blocker(TAG, "v1")):
@@ -131,7 +152,7 @@ class ResolveTests(unittest.TestCase):
             return _ok("open")
 
         sentinel = object()
-        with patch("keel.blockers.run_argv", fake):
+        with mock.patch("keel.blockers.run_argv", fake):
             blockers.resolve_blocker(Blocker(ISSUE, "1"), _run=sentinel)
             blockers.resolve_blocker(Blocker(ISSUE, "1"))
         self.assertEqual([sentinel, None], seen)
@@ -139,6 +160,10 @@ class ResolveTests(unittest.TestCase):
 
 def _pr(number, body, draft=False, title="t"):
     return {"number": number, "title": title, "url": f"u/{number}", "isDraft": draft, "body": body}
+
+
+C = "closed completed issue"
+O = "open - issue"
 
 
 def _router(prs, issue_states=None, tags=None, list_result=None):
@@ -161,7 +186,7 @@ def _router(prs, issue_states=None, tags=None, list_result=None):
 
 class StaleBlockersTests(unittest.TestCase):
     def report(self, **kw):
-        with patch("keel.blockers.run_argv", _router(**kw)):
+        with mock.patch("keel.blockers.run_argv", _router(**kw)):
             return blockers.stale_blockers()
 
     def test_flags_cleared_and_orders(self):
@@ -173,9 +198,7 @@ class StaleBlockersTests(unittest.TestCase):
             _pr(50, "Blocked by #50 and #99"),
             _pr(60, None),
         ]
-        rep = self.report(
-            prs=prs, issue_states={"1": "closed", "2": "open", "99": "open"}, tags={"v2.0": "yes"}
-        )
+        rep = self.report(prs=prs, issue_states={"1": C, "2": O, "99": O}, tags={"v2.0": "yes"})
         self.assertTrue(rep["ok"])
         self.assertEqual([10, 30], [p["number"] for p in rep["prs"]])
         ten, thirty = rep["prs"]
@@ -189,9 +212,38 @@ class StaleBlockersTests(unittest.TestCase):
     def test_unreadable_blocker_is_not_cleared(self):
         rep = self.report(prs=[_pr(5, "Blocked by #77")], issue_states={})
         self.assertEqual([], rep["prs"])
-        rep = self.report(prs=[_pr(5, "Blocked by #77 and #1")], issue_states={"1": "closed"})
+        rep = self.report(prs=[_pr(5, "Blocked by #77 and #1")], issue_states={"1": C})
         self.assertEqual(UNKNOWN, rep["prs"][0]["blockers"][0]["state"])
         self.assertFalse(rep["prs"][0]["all_cleared"])
+
+    def test_abandoned_is_reported_never_cleared(self):
+        rep = self.report(
+            prs=[_pr(5, "Blocked by #1 and #2"), _pr(6, "Blocked by #2")],
+            issue_states={"1": C, "2": "closed - unmerged"},
+        )
+        self.assertEqual([5, 6], [p["number"] for p in rep["prs"]])
+        self.assertEqual([CLEARED, ABANDONED], [e["state"] for e in rep["prs"][0]["blockers"]])
+        self.assertFalse(rep["prs"][0]["all_cleared"])
+        self.assertFalse(rep["prs"][1]["all_cleared"])
+
+    def test_self_reference_is_dropped(self):
+        rep = self.report(prs=[_pr(50, "Blocked by #50 and #1")], issue_states={"1": C})
+        self.assertEqual(
+            [("1", CLEARED)], [(e["ref"], e["state"]) for e in rep["prs"][0]["blockers"]]
+        )
+        self.assertTrue(rep["prs"][0]["all_cleared"])
+
+    def test_malformed_rows_are_skipped(self):
+        rows = [
+            1,
+            None,
+            {"title": "no number"},
+            {"number": "7", "body": "Blocked by #1"},
+            _pr(8, "Blocked by #1"),
+            {"number": 9, "body": 5},
+        ]
+        rep = self.report(prs=rows, issue_states={"1": C})
+        self.assertEqual([8], [p["number"] for p in rep["prs"]])
 
     def test_pr_list_unreadable(self):
         for res in (_fail(), _ok("not json"), _ok('{"a": 1}')):
@@ -210,7 +262,7 @@ class StaleBlockersTests(unittest.TestCase):
             return _ok("[]")
 
         sentinel = object()
-        with patch("keel.blockers.run_argv", fake):
+        with mock.patch("keel.blockers.run_argv", fake):
             blockers.stale_blockers(_run=sentinel)
         self.assertEqual([sentinel], seen)
 
@@ -219,7 +271,7 @@ class RenderAndCliTests(unittest.TestCase):
     def test_render(self):
         self.assertIn("could not", blockers.render({"ok": False, "error": "could not", "prs": []}))
         self.assertEqual(
-            "No open PRs with a cleared blocker.",
+            "No open PRs with a cleared or abandoned blocker.",
             blockers.render({"ok": True, "error": None, "prs": []}),
         )
         out = blockers.render(
@@ -247,19 +299,19 @@ class RenderAndCliTests(unittest.TestCase):
                 ],
             }
         )
-        self.assertIn("#3 (draft) x — some blockers cleared", out)
+        self.assertIn("#3 (draft) x — blockers resolved or abandoned", out)
         self.assertIn("  - #1: cleared", out)
         self.assertIn("  - v1: pending", out)
         self.assertIn("#4 y — all blockers cleared", out)
 
     def run_cli(self, argv, router):
         buf = io.StringIO()
-        with patch("keel.blockers.run_argv", router), contextlib.redirect_stdout(buf):
+        with mock.patch("keel.blockers.run_argv", router), contextlib.redirect_stdout(buf):
             code = cli.main(argv)
         return code, buf.getvalue()
 
     def test_cli_text_and_json(self):
-        router = _router(prs=[_pr(8, "Blocked by #1")], issue_states={"1": "closed"})
+        router = _router(prs=[_pr(8, "Blocked by #1")], issue_states={"1": C})
         code, out = self.run_cli(["stale-blockers"], router)
         self.assertEqual(0, code)
         self.assertIn("#8 t — all blockers cleared", out)
