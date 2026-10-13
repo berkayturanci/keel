@@ -6,6 +6,9 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **`keel finish --pr N --issue I`: one command from an open pull request to a merge** (#1505). Posts `--reviews` through `keel review --live`, waits for CI with a bounded loop (`--ci-timeout`, `--ci-interval`; a timeout exits 1 and is reported as a timeout, pending and failing checks are named as `keel merge` names them), optionally reruns a failed check named by `--rerun-flaky NAME` once, stops if the merge window is closed, then runs `keel ship --live --append-ledger` and `keel merge` through the same handlers, so every existing refusal still applies and no bypass flag is accepted. `--dry-run` prints the plan; `--json` prints a `keel.finish.v1` document with a status per step.
+
 ## [1.32.0] - 2026-10-12
 
 - Fixes from the 2026-10-12 operator feedback round: `keel review` and `keel ship` find a missing `agent:` label before the CI wait and print the exact `gh pr edit` command; `keel merge` names the pending or failing checks, a branch behind its base or a merge conflict instead of echoing GitHub's merge state (the bare `UNSTABLE` text stays only when no check is named).

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
 from collections.abc import Sequence
 
@@ -542,6 +543,44 @@ def merge_pr(
     if head_sha:
         argv += ["--match-head-commit", head_sha]
     return run_argv(argv, cwd=cwd, **_kw(_run))
+
+
+def _run_id_of(link: object) -> str | None:
+    """The GitHub Actions run id in a check's details link, or ``None``."""
+    match = re.search(r"/actions/runs/(\d+)", link) if isinstance(link, str) else None
+    return match.group(1) if match else None
+
+
+def rerun_failed_check(
+    pr: int | str, name: str, *, cwd: str | None = None, _run=None
+) -> tuple[bool, str]:
+    """Rerun the failed jobs of the Actions run behind the check called exactly ``name``.
+
+    ``(ok, detail)``. The check is found through ``gh pr checks``, whose details link names
+    the run; ``gh run rerun --failed`` then reruns it. ``gh pr checks`` exits non-zero when
+    a check is pending or failing but still prints the rows, so its stdout is read whatever
+    the exit code. A check with no Actions run (a third-party status) cannot be rerun here.
+    """
+    listed = run_argv(
+        ["gh", "pr", "checks", str(pr), "--json", "name,link,bucket"], cwd=cwd, **_kw(_run)
+    )
+    try:
+        rows = json.loads(listed.stdout or "[]")
+    except ValueError:
+        rows = None
+    if not isinstance(rows, list):
+        return False, f"could not list the checks of PR #{pr}: {listed.output.strip()}"
+    run_id = None
+    for row in rows:
+        if isinstance(row, dict) and row.get("name") == name and row.get("bucket") == "fail":
+            run_id = _run_id_of(row.get("link"))
+            break
+    if run_id is None:
+        return False, f"no failed GitHub Actions run found for check {name!r}"
+    result = run_argv(["gh", "run", "rerun", run_id, "--failed"], cwd=cwd, **_kw(_run))
+    if not result.ok:
+        return False, f"gh run rerun {run_id} failed: {result.output.strip()}"
+    return True, f"reran the failed jobs of run {run_id}"
 
 
 def comment(pr: int | str, body: str, *, cwd: str | None = None, _run=None) -> CommandResult:

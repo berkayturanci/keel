@@ -379,6 +379,51 @@ the payload:
 A dry run, a refused merge or a failed `gh` merge never reaches this step, so it carries no
 `checkpoint_update`.
 
+## `keel finish <project.yaml> --pr N --issue I [--root DIR] [--reviews FILE] [--closure FILE] [--ci-timeout S] [--ci-interval S] [--rerun-flaky NAME]... [--method squash|merge|rebase] [--transport auto|graphql|rest] [--run-id ID] [--capture-status S] [--capture-reason TEXT] [--capture-artifact REF] [--implementer NAME] [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE] [--dry-run] [--json]`
+
+Finish an open pull request the way operators used to hand-chain it (#1505). It is a
+separate subcommand rather than a `keel ship --finish` flag because `ship` is one assessment
+of one head, with its own flag set and a ledger record; finish is a *sequence* over several
+commands, and a flag on `ship` would have had to refuse most of `ship`'s other flags.
+
+The steps run in this order and stop at the first one that does not pass:
+
+1. **`review`** (only with `--reviews FILE`): `keel review --live --reviews FILE`, the same
+   handler, so its attribution-label and head-pin refusals apply. Reviews are posted first so
+   they are on the pull request while CI is still running. `--closure FILE` is passed along.
+2. **`ci`**: poll the pull request's merge snapshot (the same rollup `keel merge` reads) until
+   it passes, a check fails, or `--ci-timeout` seconds (default 1800) have elapsed, every
+   `--ci-interval` seconds (default 30). Pending and failing checks are named with the same
+   wording `keel merge` uses (`2 checks still pending: build, lint`). **A timeout is reported
+   as a timeout and exits 1**; the loop is also capped at a fixed number of polls so a clock
+   that stops advancing cannot keep it alive. Three unreadable snapshots in a row fail the step
+   (one dropped request does not). An empty check set proceeds, because whether that is
+   acceptable (docs-only) is the merge gate's decision.
+   `--rerun-flaky NAME` (repeatable) allows one rerun of a failed check called *exactly*
+   `NAME` (`gh run rerun --failed` on its Actions run). It applies only when every failing
+   check is so named and has not been rerun; any other failure ends the wait. A failure still
+   showing on the poll right after the rerun is waited out once, not read as the rerun failing.
+3. **`window`**: if the project's merge window is closed, finish says so and stops with status
+   `window-closed` (exit 1). There is no bypass: finish has no `--hotfix`.
+4. **`ship`**: `keel ship --live --append-ledger --pr N --issue I`, with `--run-id`,
+   `--capture-status`, `--capture-reason`, `--capture-artifact` and `--implementer` passed
+   through. It records the gates-pass ledger entry the merge looks for.
+5. **`merge`**: `keel merge --pr N --issue I --method M`, which re-checks the window, CI,
+   evidence, attribution, the gates-pass for the head, the checkpoint gate and head drift.
+
+Every step runs the existing handler with the existing flags plus the consent flags
+(`--approve-scope`, `--operator`, `--consent-mode`) given to finish, so each refusal those
+commands have still applies. Finish adds none and offers no way around one:
+`--no-checkpoint-gate`, `--operator-override` and `--hotfix` are not accepted. After a merge,
+closing the issue and capture remain `keel close-reconcile` and `keel capture-land`.
+
+`--dry-run` prints the plan (the steps that would run, in order) and does nothing else.
+`--json` prints one `keel.finish.v1` document: `status` (`pass`, `fail`, `timeout`,
+`window-closed` or `dry-run`), `stopped_at`, `reason`, and a `steps` array with each step's
+`status`; the sub-commands' own output is embedded under `output`, and the `ci` step carries
+`polls`, `elapsed`, the last `ci` snapshot and the checks it `reran`. Exit code 0 means the
+pull request merged (or `--dry-run`); 1 means it stopped.
+
 ## `keel attribution --vendor VENDOR [--model MODEL] [--profile NAME] [--config FILE] [--json]`
 
 Print keel's own attribution labels for a delegate vendor/model pair. This is the **only**
