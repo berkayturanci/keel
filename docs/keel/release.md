@@ -126,11 +126,16 @@ Before tagging a release:
   If that test *does* fire — or a bump dies part-way — re-run the bump at the **current**
   version to repair it: `make release-bump VERSION=<current>` re-syncs the site surfaces
   without touching anything else, and reports which files it repaired.
-- Update `CHANGELOG.md` with the release notes (the one step `make release-bump` leaves to you).
-  Rename `## [Unreleased]` to `## [<x.y.z>]` — this is the step `make release-check` below
-  refuses a release for, because a tag that skipped it publishes notes headed "Unreleased"
-  to PyPI and to the GitHub Release, and PyPI files are immutable.
-- **Write the release highlights** directly under the renamed heading, before its first
+- **Changelog entries are fragments** (#1515). Each PR adds `changelog.d/<issue>.<type>.md`,
+  where `<type>` is `added`, `changed`, `deprecated`, `removed`, `fixed` or `security` and the
+  file holds one or more `- ` bullet lines. `make changelog-preview` prints the section the
+  next release would carry. `make release-bump` collects the fragments into a new
+  `## [<x.y.z>] - <date>` section under the matching `###` headings (Added, Changed,
+  Deprecated, Removed, Fixed, Security), ordered by issue number, merged with anything
+  still written under `## [Unreleased]`, and deletes the collected files. Re-running the bump
+  at a version whose section exists collects nothing. `make release-check` below refuses a
+  section with no entries and a fragment with a malformed name.
+- **Write the release highlights** directly under the new `## [<x.y.z>]` heading, before its first
   `###` section: two or three plain-language `- ` lines saying what changed for someone
   who uses keel — what they can now do, or what stopped going wrong — not which pull
   requests merged. A single-fix patch release may carry one. See
@@ -149,6 +154,8 @@ Before tagging a release:
   | `declared version` | `pyproject.toml` and `src/keel/__init__.py` naming different versions |
   | `changelog lockstep` | a top released `## [x.y.z]` that is not the declared version — i.e. a CHANGELOG never renamed from `## [Unreleased]` |
   | `release highlights` | a declared version after 1.24.2 whose section does not open with one to three `- ` highlight lines, or that carries anything else above its first `###` (#1342) |
+  | `changelog entries` | the declared version's section carrying no bullet under a `###` heading |
+  | `changelog fragments` | a file in `changelog.d/` not named `<issue>.<type>.md`, with an unknown type, or not opening with a `- ` bullet |
   | `release surfaces` | any surface in `scripts/release_surfaces.py` left behind: the plugin manifests, the pinned-install references in `README.md` / `keel-ship.yml` / `cutover.md`, the Action example in `github-actions.md` and its card in `integrations.js`, the four site fallbacks |
   | `keel-visual markers` | `keel-visual/pyproject.toml` and `keel_visual/__init__.py` disagreeing (#796) |
 
