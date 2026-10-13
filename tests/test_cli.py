@@ -11336,18 +11336,104 @@ class TestVerifyMergeCommand(unittest.TestCase):
     }
 
     def _run(
-        self, *, window=WINDOW, others=None, files_by_pr=None, commit_files=None, argv_extra=()
+        self,
+        *,
+        window=WINDOW,
+        others=None,
+        files_by_pr=None,
+        commit_files=None,
+        argv_extra=(),
+        diff_by_pr=None,
+        content_by_path=None,
+        use_git_for_content=True,
     ):
         files_by_pr = files_by_pr or {}
+        diff_by_pr = diff_by_pr or {}
+        content_by_path = content_by_path or {}
+
+        def _git_show(sha, path, **kw):
+            if use_git_for_content:
+                return content_by_path.get(path)
+            return None
+
+        def _gh_content(sha, path, **kw):
+            return content_by_path.get(path)
+
         with (
             patch("keel.cli.github.pr_merge_window", return_value=window),
+            patch("keel.cli.github.rest_pr_merge_window", return_value=window),
             patch("keel.cli.github.prs_merged_between", return_value=others),
+            patch("keel.cli.github.rest_prs_merged_between", return_value=others),
             patch("keel.cli.github.commit_files", return_value=commit_files),
             patch("keel.cli.github.pr_files", side_effect=lambda pr, **kw: files_by_pr.get(pr)),
+            patch(
+                "keel.cli.github.rest_pr_files", side_effect=lambda pr, **kw: files_by_pr.get(pr)
+            ),
+            patch("keel.cli.github.pr_diff", side_effect=lambda pr, **kw: diff_by_pr.get(pr)),
+            patch("keel.cli.github.rest_pr_diff", side_effect=lambda pr, **kw: diff_by_pr.get(pr)),
+            patch("keel.cli.git.show_file", side_effect=_git_show),
+            patch("keel.cli.github.commit_file_content", side_effect=_gh_content),
         ):
             return run(
                 ["verify-merge", _write_config("'true'"), "--root", ".", "--pr", "543", *argv_extra]
             )
+
+    def test_shared_files_with_surviving_lines_reports_clean(self):
+        diff550 = (
+            "diff --git a/CHANGELOG.md b/CHANGELOG.md\n"
+            "--- a/CHANGELOG.md\n"
+            "+++ b/CHANGELOG.md\n"
+            "@@ -1,1 +1,2 @@\n"
+            "+* feature 550\n"
+        )
+        content = "## Unreleased\n* feature 550\n* PR 543\n"
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["CHANGELOG.md"], 550: ["CHANGELOG.md"]},
+            commit_files=["CHANGELOG.md"],
+            diff_by_pr={550: diff550},
+            content_by_path={"CHANGELOG.md": content},
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean", out)
+        self.assertIn("1 shared file, 0 lost lines", out)
+
+    def test_shared_files_with_lost_lines_reports_drift(self):
+        diff550 = (
+            "diff --git a/src/keel/github.py b/src/keel/github.py\n"
+            "--- a/src/keel/github.py\n"
+            "+++ b/src/keel/github.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            "+def rest_call(): pass\n"
+        )
+        content = "def other(): pass\n"
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["src/keel/github.py"], 550: ["src/keel/github.py"]},
+            commit_files=["src/keel/github.py"],
+            diff_by_pr={550: diff550},
+            content_by_path={"src/keel/github.py": content},
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("drift", out)
+        self.assertIn("src/keel/github.py", out)
+        self.assertIn("#550", out)
+
+    def test_shared_files_rest_transport_with_content_fallback(self):
+        diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,1 +1,2 @@\n+line 1\n"
+        content = "line 1\n"
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},
+            commit_files=["a.py"],
+            argv_extra=("--transport", "rest"),
+            diff_by_pr={550: diff550},
+            content_by_path={"a.py": content},
+            use_git_for_content=False,
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean", out)
+        self.assertIn("1 shared file, 0 lost lines", out)
 
     def test_the_historical_incident_is_flagged(self):
         """#543 merged after #550 and wrote to #550's files."""

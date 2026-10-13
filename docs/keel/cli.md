@@ -1685,13 +1685,17 @@ keel verify-merge .keel/project.yaml --root . --pr 543 --json
 
 | status | meaning | exit |
 | --- | --- | --- |
-| `drift` | wrote to files another PR changed after this one branched — read the diff | 1 |
+| `drift` | wrote to files another PR changed after this one branched and lost added lines (or unreadable diff) | 1 |
 | `out-of-scope` | changed files the PR's own diff did not list | 0, or 2 when `incomplete` |
-| `clean` | neither | 0 |
+| `clean` | neither (including when added lines survived: `clean (N shared files, 0 lost lines)`) | 0 |
 | `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 2 |
 
 `drift` is a *stop and look* signal, not proof: two PRs editing one file in sequence
-is ordinary. The report names the colliding PR for each file so a human can judge.
+is ordinary. When files overlap, `verify-merge` checks line survival: for each overtaking PR,
+the lines it added in its diff hunks must still be present in the merge commit's version of
+each shared file (#1511). Drift is reported only when added lines were lost (or when a diff
+cannot be read); if all added lines survived, it reports `clean (N shared files, 0 lost lines)`.
+The report names the colliding PR for each file where lines were lost so a human can judge.
 
 `unknown` exits **2**, not 0. The status line has always said "not a pass", but the
 exit code said otherwise, and the exit code is what a caller wiring this in after

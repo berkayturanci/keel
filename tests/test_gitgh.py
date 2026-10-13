@@ -66,6 +66,14 @@ class TestGitLandingPlumbing(unittest.TestCase):
         # branch, which must read as "compose a new directory", not as an error.
         self.assertIsNone(git.ls_tree(f"{SHA_B}:.keel", _run=_Recorder(code=128)))
 
+    def test_show_file_returns_stdout(self):
+        rec = _Recorder(out="file content\n")
+        self.assertEqual(git.show_file(SHA_B, "a.py", _run=rec), "file content\n")
+        self.assertEqual(rec.calls[0], ["git", "show", f"{SHA_B}:a.py"])
+
+    def test_show_file_fail_soft(self):
+        self.assertIsNone(git.show_file(SHA_B, "a.py", _run=_Recorder(code=128)))
+
     def test_mktree_sends_the_listing_on_stdin(self):
         listing = f"100644 blob {SHA_A}\ta.md\x00"
         captured = {}
@@ -603,6 +611,30 @@ class TestGitHub(unittest.TestCase):
 
     def test_commit_files_failsoft(self):
         self.assertIsNone(github.commit_files("abc", _run=_Recorder(code=1)))
+
+    def test_pr_diff_parsed(self):
+        rec = _Recorder(out="diff --git a/x.py b/x.py\n")
+        self.assertEqual(github.pr_diff(42, _run=rec), "diff --git a/x.py b/x.py\n")
+        self.assertEqual(rec.calls[0], ["gh", "pr", "diff", "42", "--color", "never"])
+
+    def test_pr_diff_failsoft(self):
+        self.assertIsNone(github.pr_diff(42, _run=_Recorder(code=1)))
+
+    def test_commit_file_content_parsed(self):
+        rec = _Recorder(out="raw content\n")
+        self.assertEqual(github.commit_file_content("abc", "src/x.py", _run=rec), "raw content\n")
+        self.assertIn("contents/src/x.py?ref=abc", " ".join(rec.calls[0]))
+
+    def test_commit_file_content_failsoft(self):
+        self.assertIsNone(github.commit_file_content("abc", "src/x.py", _run=_Recorder(code=1)))
+
+    def test_rest_pr_diff_parsed(self):
+        rec = _Recorder(out="diff --git a/x.py b/x.py\n")
+        self.assertEqual(github.rest_pr_diff(42, _run=rec), "diff --git a/x.py b/x.py\n")
+        self.assertIn("pulls/42", " ".join(rec.calls[0]))
+
+    def test_rest_pr_diff_failsoft(self):
+        self.assertIsNone(github.rest_pr_diff(42, _run=_Recorder(code=1)))
 
     def test_pr_merge_window_parsed(self):
         rec = _Recorder(out="2026-07-08T23:02:16Z\t2026-07-10T15:19:57Z\tmain\t7c140f3\n")

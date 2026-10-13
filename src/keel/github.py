@@ -317,6 +317,40 @@ def commit_files(sha: str, *, cwd: str | None = None, _run=None, _sleep=None) ->
     )
 
 
+def pr_diff(pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None) -> str | None:
+    """The unified diff of a pull request from GitHub (#1511)."""
+    result = run_argv_retry(
+        ["gh", "pr", "diff", str(pr), "--color", "never"],
+        cwd=cwd,
+        _run=_run,
+        _sleep=_sleep,
+    )
+    if not result.ok:
+        return None
+    return result.stdout or result.output
+
+
+def commit_file_content(
+    sha: str, path: str, *, cwd: str | None = None, _run=None, _sleep=None
+) -> str | None:
+    """Raw content of ``path`` at commit ``sha`` from GitHub (#1511)."""
+    result = run_argv_retry(
+        [
+            "gh",
+            "api",
+            f"repos/{{owner}}/{{repo}}/contents/{path}?ref={sha}",
+            "-H",
+            "Accept: application/vnd.github.v3.raw",
+        ],
+        cwd=cwd,
+        _run=_run,
+        _sleep=_sleep,
+    )
+    if not result.ok:
+        return None
+    return result.stdout or result.output
+
+
 def _lines(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[str] | None:
     """Read newline-separated ``gh`` output, retrying transient failures.
 
@@ -954,6 +988,25 @@ def rest_pr_files(
         _run=_run,
         _sleep=_sleep,
     )
+
+
+def rest_pr_diff(pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None) -> str | None:
+    """The unified diff of a pull request over REST (#1511)."""
+    result = run_argv_retry(
+        [
+            "gh",
+            "api",
+            f"repos/{{owner}}/{{repo}}/pulls/{pr}",
+            "-H",
+            "Accept: application/vnd.github.v3.diff",
+        ],
+        cwd=cwd,
+        _run=_run,
+        _sleep=_sleep,
+    )
+    if not result.ok:
+        return None
+    return result.stdout or result.output
 
 
 def _rest_commit_on_branch(sha: str, base: str, *, cwd: str | None, _run) -> bool:

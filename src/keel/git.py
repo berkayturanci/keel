@@ -456,6 +456,12 @@ def ls_tree(treeish: str, *, cwd: str | None = None, _run=None) -> str | None:
     return result.stdout if result.ok else None
 
 
+def show_file(treeish: str, path: str, *, cwd: str | None = None, _run=None) -> str | None:
+    """Read the content of ``path`` at ``treeish`` via ``git show <treeish>:<path>`` (#1511)."""
+    result = run_argv(["git", "show", f"{treeish}:{path}"], cwd=cwd, **_kw(_run))
+    return result.stdout if result.ok else None
+
+
 def mktree(listing: str, *, cwd: str | None = None, _run=None) -> str | None:
     """Write a tree object from NUL-terminated ``ls-tree``-shaped ``listing``.
 

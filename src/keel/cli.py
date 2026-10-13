@@ -4826,6 +4826,22 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             if rest
             else github.pr_files(args.pr, cwd=args.root)
         )
+        landed_set = {p.strip() for p in landed if p.strip()} if landed else set()
+        shared_paths = [p for p in (overtaken or {}) if p in landed_set]
+        diffs: dict[int, str | None] | None = None
+        file_contents: dict[str, str | None] | None = None
+        if shared_paths:
+            diffs = {}
+            file_contents = {}
+            diff_reader = github.rest_pr_diff if rest else github.pr_diff
+            prs_to_fetch = {overtaken[p] for p in shared_paths}
+            for pr_num in sorted(prs_to_fetch):
+                diffs[pr_num] = diff_reader(pr_num, cwd=args.root)
+            for path in sorted(shared_paths):
+                content = git.show_file(merge_sha, path, cwd=args.root)
+                if content is None:
+                    content = github.commit_file_content(merge_sha, path, cwd=args.root)
+                file_contents[path] = content
         # Each input answers a specific question, so an unreadable one leaves that
         # question open rather than the whole report meaningless. Saying "no
         # conclusion about drift is possible" when only the PR's own file list was
@@ -4843,7 +4859,13 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             )
             if not ok
         ]
-        report = mergeverify.verify_merge(landed, overtaken=overtaken, intended=intended)
+        report = mergeverify.verify_merge(
+            landed,
+            overtaken=overtaken,
+            intended=intended,
+            diffs=diffs,
+            file_contents=file_contents,
+        )
         if unreadable:
             note = "could not read " + ", ".join(name for name, _ in unreadable)
             if report["status"] in ("drift", "out-of-scope"):

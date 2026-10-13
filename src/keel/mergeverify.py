@@ -33,16 +33,95 @@ Pure: lists in, report out. The CLI does every GitHub read.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 
 #: Report shape version, so a consumer can tell an old report from a new one.
 SCHEMA_VERSION = "keel.merge-verify.v1"
+
+_HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def extract_added_lines_by_file(diff_text: str) -> dict[str, list[str]]:
+    """Extract added lines from diff hunks, keyed by target file path (#1511)."""
+    if not diff_text:
+        return {}
+    result: dict[str, list[str]] = {}
+    current_file: str | None = None
+    in_hunk = False
+    rem_old = 0
+    rem_new = 0
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            in_hunk = False
+            current_file = None
+            continue
+        if not in_hunk:
+            if line.startswith("--- "):
+                continue
+            if line.startswith("+++ "):
+                target = line[4:].strip()
+                if target == "/dev/null":
+                    current_file = None
+                else:
+                    if target.startswith('"') and target.endswith('"'):
+                        target = target[1:-1]
+                    if target.startswith(("b/", "a/")):
+                        target = target[2:]
+                    current_file = target
+                    result.setdefault(current_file, [])
+                continue
+        m = _HUNK_HEADER_RE.match(line)
+        if m:
+            rem_old = int(m.group(2)) if m.group(2) is not None else 1
+            rem_new = int(m.group(4)) if m.group(4) is not None else 1
+            in_hunk = True
+            continue
+        if in_hunk:
+            if line.startswith("\\"):
+                continue
+            if line.startswith("+"):
+                result[current_file].append(line[1:])  # type: ignore[index]
+                rem_new -= 1
+            elif line.startswith("-"):
+                rem_old -= 1
+            else:
+                rem_old -= 1
+                rem_new -= 1
+            if rem_old <= 0 and rem_new <= 0:
+                in_hunk = False
+    return result
+
+
+def check_line_survival(added_lines: Sequence[str], file_content: str) -> tuple[int, list[str]]:
+    """Check how many added lines survive in the target file content (#1511).
+
+    Returns ``(lost_count, lost_lines)``. Blank lines are ignored as formatting/spacing
+    rather than reverted logic.
+    """
+    if not file_content:
+        lost = [line for line in added_lines if line.strip()]
+        return len(lost), lost
+
+    target_lines = set(file_content.splitlines())
+    target_stripped = {line.strip() for line in target_lines if line.strip()}
+    lost = []
+    for line in added_lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if line not in target_lines and stripped not in target_stripped:
+            lost.append(line)
+    return len(lost), lost
 
 
 def verify_merge(
     landed: Sequence[str] | None,
     overtaken: Mapping[str, int] | None = None,
     intended: Sequence[str] | None = None,
+    *,
+    diffs: Mapping[int, str | None] | None = None,
+    file_contents: Mapping[str, str | None] | None = None,
 ) -> dict:
     """Judge whether a merge may have silently reverted other merged work.
 
@@ -50,6 +129,8 @@ def verify_merge(
     pull request that changed it **after this PR branched and before this PR
     merged** — the window in which a stale branch can carry a revert. ``intended``
     is the PR's own file list, used only for the weaker secondary signal.
+    ``diffs`` maps an overtaking PR number to its unified diff string.
+    ``file_contents`` maps a file path to its content at the merge commit.
 
     ``None`` for ``landed`` means *not observed* and yields ``unknown`` rather than
     a clean bill: failing to look is not evidence that nothing drifted.
@@ -57,10 +138,11 @@ def verify_merge(
     ``status``:
 
     * ``drift``      — the merge wrote to files another PR changed after this one
-      branched. The silent-revert shape; loud, and names the overtaking PR.
-    * ``out-of-scope`` — no overtaking, but the merge changed files the PR's own
-      diff did not list. A different (rarer) way for a merge to do more than it said.
-    * ``clean``      — neither.
+      branched and lost added lines from that PR (or diffs could not be read).
+      The silent-revert shape; loud, and names the overtaking PR.
+    * ``out-of-scope`` — no overtaking drift, but the merge changed files the PR's
+      own diff did not list. A different (rarer) way for a merge to do more than it said.
+    * ``clean``      — neither (including when shared files have 0 lost lines).
     * ``unknown``    — nothing could be read.
     """
     if landed is None:
@@ -72,14 +154,37 @@ def verify_merge(
         if path.strip() and path.strip() in landed_set
     }
     if collisions:
-        listed = ", ".join(f"{p} (#{pr})" for p, pr in sorted(collisions.items()))
-        return _report(
-            "drift",
-            f"the merge wrote to {len(collisions)} file(s) that another pull request "
-            f"changed after this one branched — the shape of a silent revert: {listed}",
-            overtaken=dict(sorted(collisions.items())),
-            landed_count=len(landed_set),
-        )
+        drifted: dict[str, int] = {}
+        if diffs is None or file_contents is None:
+            drifted = dict(collisions)
+        else:
+            parsed_diffs: dict[int, dict[str, list[str]]] = {}
+            for path, pr in collisions.items():
+                pr_diff = diffs.get(pr)
+                content = file_contents.get(path)
+                if pr_diff is None or content is None:
+                    drifted[path] = pr
+                    continue
+                if pr not in parsed_diffs:
+                    parsed_diffs[pr] = extract_added_lines_by_file(pr_diff)
+                if path not in parsed_diffs[pr]:
+                    drifted[path] = pr
+                    continue
+                added_lines = parsed_diffs[pr][path]
+                lost_count, _ = check_line_survival(added_lines, content)
+                if lost_count > 0:
+                    drifted[path] = pr
+
+        if drifted:
+            listed = ", ".join(f"{p} (#{pr})" for p, pr in sorted(drifted.items()))
+            return _report(
+                "drift",
+                f"the merge wrote to {len(drifted)} file(s) that another pull request "
+                f"changed after this one branched — the shape of a silent revert: {listed}",
+                overtaken=dict(sorted(drifted.items())),
+                landed_count=len(landed_set),
+            )
+
     if intended is not None:
         unexpected = sorted(landed_set - {p.strip() for p in intended if p.strip()})
         if unexpected:
@@ -90,6 +195,15 @@ def verify_merge(
                 unexpected=unexpected,
                 landed_count=len(landed_set),
             )
+
+    if collisions:
+        file_suffix = "s" if len(collisions) != 1 else ""
+        return _report(
+            "clean",
+            f"clean ({len(collisions)} shared file{file_suffix}, 0 lost lines)",
+            landed_count=len(landed_set),
+        )
+
     return _report(
         "clean",
         "no file in this merge was changed by another pull request after this one branched",
