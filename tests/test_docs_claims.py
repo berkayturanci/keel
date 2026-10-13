@@ -1627,6 +1627,7 @@ _GH_WRITES = frozenset(
         ("pr", "comment"),
         ("pr", "close"),
         ("pr", "edit"),
+        ("run", "rerun"),
         ("issue", "close"),
         ("issue", "comment"),
         ("issue", "edit"),

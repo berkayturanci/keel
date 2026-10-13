@@ -10,7 +10,9 @@ Subcommands
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
+import io as stdio
 import json
 import os
 import re
@@ -9088,9 +9090,6 @@ def _finish_invoke(argv: list[str], *, capture: bool) -> dict[str, object]:
     finish document stays one JSON object; otherwise it prints as it would on its own."""
     if not capture:
         return {"exit_code": main(argv)}
-    import contextlib
-    import io as stdio
-
     out, err = stdio.StringIO(), stdio.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = main([*argv, "--json"])
@@ -9103,6 +9102,38 @@ def _finish_invoke(argv: list[str], *, capture: bool) -> dict[str, object]:
     if err.getvalue().strip():
         detail["stderr"] = err.getvalue().strip()
     return detail
+
+
+def _finish_ci_summary(ci: object, base: str, pr: int) -> str:
+    """One line for a CI snapshot, in the words ``keel merge`` uses for pending and failing."""
+    state = ci.get("state") if isinstance(ci, dict) else None
+    if state == "pass":
+        return "all checks passing"
+    if state == "no-checks":
+        return "no checks reported"
+    if isinstance(ci, dict) and (ci.get("failing_checks") or ci.get("pending_checks")):
+        return _merge_state_reason("UNSTABLE", ci, base, pr)[1]
+    return f"CI state is {state}"
+
+
+def _finish_ci_result(
+    status: str,
+    reason: str,
+    *,
+    polls: int,
+    elapsed: float,
+    ci: object,
+    reran: list[str],
+) -> dict[str, object]:
+    """The ``ci`` step's result: the same keys on every path, so a consumer can rely on them."""
+    return {
+        "status": status,
+        "reason": reason,
+        "polls": polls,
+        "elapsed": round(elapsed, 1),
+        "ci": ci,
+        "reran": list(reran),
+    }
 
 
 def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict[str, object]:
@@ -9118,6 +9149,7 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
     settling: list[str] = []
     unreadable = 0
     last_ci: object = None
+    elapsed = 0.0
     cap = finish.poll_cap(args.ci_timeout, args.ci_interval)
     for poll in range(1, cap + 1):
         elapsed = _finish_clock() - start
@@ -9126,12 +9158,14 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
         except _SnapshotFailed as exc:
             unreadable += 1
             if finish.read_failures_exhausted(unreadable) or elapsed >= args.ci_timeout:
-                return {
-                    "status": "fail",
-                    "reason": f"could not read CI state: {exc}",
-                    "polls": poll,
-                    "elapsed": round(elapsed, 1),
-                }
+                return _finish_ci_result(
+                    "fail",
+                    f"could not read CI state: {exc}",
+                    polls=poll,
+                    elapsed=elapsed,
+                    ci=last_ci,
+                    reran=reran,
+                )
             _finish_sleep(finish.next_sleep(args.ci_interval, args.ci_timeout, elapsed))
             continue
         unreadable = 0
@@ -9145,38 +9179,45 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
             settling=settling,
         )
         action = decision["action"]
-        _, summary = _merge_state_reason("UNSTABLE", last_ci, config.base_branch, args.pr)
+        summary = _finish_ci_summary(last_ci, config.base_branch, args.pr)
         if not args.json:
             print(f"  ci poll {poll} ({elapsed:.0f}s): {summary}")
-        result: dict[str, object] = {
-            "polls": poll,
-            "elapsed": round(elapsed, 1),
-            "ci": last_ci,
-            "reran": list(reran),
-        }
+
+        ctx = {"polls": poll, "elapsed": elapsed, "ci": last_ci, "reran": reran}
+
         if action == finish.ACTION_PROCEED:
-            return {**result, "status": "pass", "reason": "CI is green"}
+            return _finish_ci_result("pass", "CI is green", **ctx)
         if action == finish.ACTION_FAILED:
-            return {**result, "status": "fail", "reason": summary}
+            return _finish_ci_result("fail", summary, **ctx)
         if action == finish.ACTION_TIMEOUT:
-            reason = f"timed out after {args.ci_timeout}s waiting for CI: {summary}"
-            return {**result, "status": "timeout", "reason": reason}
+            return _finish_ci_result(
+                "timeout", f"timed out after {args.ci_timeout}s waiting for CI: {summary}", **ctx
+            )
         settling = []
         if action == finish.ACTION_RERUN:
-            for name in decision["names"]:
-                ok, why = github.rerun_failed_check(args.pr, name, cwd=args.root)
+            runs, why = github.failed_check_runs(args.pr, decision["names"], cwd=args.root)
+            if why is not None:
+                return _finish_ci_result("fail", why, **ctx)
+            # One rerun per Actions run: several failed checks can be jobs of one run, and
+            # a second `gh run rerun` on a run already restarted is refused.
+            by_run: dict[str, list[str]] = {}
+            for name, run_id in runs.items():
+                by_run.setdefault(run_id, []).append(name)
+            for run_id, names in by_run.items():
+                ok, why = github.rerun_run(run_id, cwd=args.root)
                 if not ok:
-                    return {**result, "status": "fail", "reason": why}
-                reran.append(name)
-                settling.append(name)
+                    return _finish_ci_result("fail", why, **ctx)
+                reran.extend(names)
+                settling.extend(names)
         _finish_sleep(finish.next_sleep(args.ci_interval, args.ci_timeout, elapsed))
-    return {
-        "status": "timeout",
-        "reason": f"timed out after {args.ci_timeout}s waiting for CI (poll limit reached)",
-        "polls": cap,
-        "ci": last_ci,
-        "reran": list(reran),
-    }
+    return _finish_ci_result(
+        "timeout",
+        f"timed out after {args.ci_timeout}s waiting for CI (poll limit reached)",
+        polls=cap,
+        elapsed=elapsed,
+        ci=last_ci,
+        reran=reran,
+    )
 
 
 def _finish_step(
@@ -9236,6 +9277,9 @@ def _finish_step(
 
 
 def _cmd_finish(args: argparse.Namespace) -> int:
+    if args.closure and args.reviews is None:
+        print("--closure is posted by the review step; it needs --reviews", file=sys.stderr)
+        return 1
     steps = finish.plan_steps(reviews=args.reviews is not None, rerun=args.rerun_flaky)
     try:
         config = cfg.load_config(args.path)
@@ -9582,7 +9626,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="how to reach GitHub: auto probes GraphQL once, rest forces the REST API",
     )
     p_finish.add_argument("--run-id", default=None, help="run id for the ledger and the merge")
-    p_finish.add_argument("--capture-status", default=None, help="passed to keel ship")
+    p_finish.add_argument(
+        "--capture-status",
+        type=_capture_status_arg,
+        default=CAPTURE_STATUS_NOT_RUN,
+        help=(
+            "capture outcome passed to keel ship (required there for a live ledger append); "
+            f"default '{CAPTURE_STATUS_NOT_RUN}', because finish runs before capture"
+        ),
+    )
     p_finish.add_argument("--capture-reason", default=None, help="passed to keel ship")
     p_finish.add_argument("--capture-artifact", default=None, help="passed to keel ship")
     p_finish.add_argument("--implementer", default=None, help="passed to keel ship")

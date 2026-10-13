@@ -111,6 +111,9 @@ def ci_decision(
         return {"action": ACTION_PROCEED, "names": []}
     if state == "fail":
         failing = _names(ci.get("failing_checks"))
+        if not failing:
+            # A failing state that names nothing is still a failure, not a wait.
+            return {"action": ACTION_FAILED, "names": []}
         real = [n for n in failing if n not in settling]
         if not real:
             return _wait_or_timeout(failing, elapsed, timeout)

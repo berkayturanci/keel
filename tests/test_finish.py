@@ -9,12 +9,14 @@ import contextlib
 import io
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
+import unittest.mock as mock
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 from keel import cli, finish, github
+from keel.runner import CommandResult
 
 
 def _run(argv):
@@ -82,6 +84,10 @@ class TestCiDecision(unittest.TestCase):
     def test_an_unrecognised_state_is_waited_on_not_passed(self):
         self.assertEqual(self.decide(None)["action"], "wait")
         self.assertEqual(self.decide({"state": "weird"})["action"], "wait")
+
+    def test_a_failing_state_that_names_nothing_fails_instead_of_waiting(self):
+        got = self.decide(_ci("fail"))
+        self.assertEqual((got["action"], got["names"]), ("failed", []))
 
     def test_a_failure_fails_without_waiting_for_the_rest(self):
         got = self.decide(_ci("fail", failing=["a"], pending=["b"]))
@@ -187,15 +193,15 @@ class TestArgvBuilders(unittest.TestCase):
         self.assertEqual(finish.consent_argv([], None, None), [])
 
 
-class TestRerunFailedCheck(unittest.TestCase):
-    def _runner(self, rows, *, rerun_ok=True, list_ok=True):
+class TestFailedCheckRuns(unittest.TestCase):
+    def _runner(self, rows, *, rerun_ok=True, list_code=0, stderr=""):
         calls = []
 
         def fake(argv, **_kw):
             calls.append(argv)
             if argv[:3] == ["gh", "pr", "checks"]:
                 text = rows if isinstance(rows, str) else json.dumps(rows)
-                return subprocess.CompletedProcess(argv, 0 if list_ok else 8, text, "")
+                return subprocess.CompletedProcess(argv, list_code, text, stderr)
             return subprocess.CompletedProcess(argv, 0 if rerun_ok else 1, "", "boom")
 
         return fake, calls
@@ -203,50 +209,61 @@ class TestRerunFailedCheck(unittest.TestCase):
     def _row(self, name="lint", bucket="fail", link="https://x/actions/runs/99/job/5"):
         return {"name": name, "bucket": bucket, "link": link}
 
-    def test_reruns_the_failed_run_behind_the_named_check(self):
-        fake, calls = self._runner([self._row("other"), self._row()])
-        ok, detail = github.rerun_failed_check(7, "lint", _run=fake)
-        self.assertTrue(ok)
-        self.assertIn("run 99", detail)
-        self.assertEqual(calls[1], ["gh", "run", "rerun", "99", "--failed"])
+    def test_maps_each_name_to_the_run_behind_it(self):
+        fake, calls = self._runner(
+            [self._row("a"), self._row("b", link="https://x/actions/runs/7/job/1"), self._row("c")]
+        )
+        runs, why = github.failed_check_runs(7, ["a", "b"], _run=fake)
+        self.assertEqual((runs, why), ({"a": "99", "b": "7"}, None))
+        self.assertEqual(len(calls), 1)
 
     def test_reads_the_rows_even_though_gh_exits_non_zero(self):
-        fake, _ = self._runner([self._row()], list_ok=False)
-        self.assertTrue(github.rerun_failed_check(7, "lint", _run=fake)[0])
+        fake, _ = self._runner([self._row()], list_code=8)
+        self.assertEqual(github.failed_check_runs(7, ["lint"], _run=fake)[0], {"lint": "99"})
 
-    def test_unreadable_listing_is_reported(self):
-        for bad in ("not json", "{}"):
-            fake, _ = self._runner(bad)
-            ok, detail = github.rerun_failed_check(7, "lint", _run=fake)
-            self.assertFalse(ok)
-            self.assertIn("could not list", detail)
+    def test_a_cancelled_job_counts_as_failed(self):
+        fake, _ = self._runner([self._row(bucket="cancel")])
+        self.assertEqual(github.failed_check_runs(7, ["lint"], _run=fake)[1], None)
 
-    def test_empty_stdout_is_an_empty_listing(self):
+    def test_unreadable_listing_is_reported_with_gh_s_own_words(self):
+        for text, code in (("not json", 0), ("{}", 0), ("", 1)):
+            fake, _ = self._runner(text, list_code=code, stderr="auth required")
+            runs, why = github.failed_check_runs(7, ["lint"], _run=fake)
+            self.assertEqual(runs, {})
+            self.assertIn("could not list", why)
+        self.assertIn("auth required", why)
+
+    def test_empty_stdout_with_a_zero_exit_is_an_empty_listing(self):
         fake, _ = self._runner("")
-        ok, detail = github.rerun_failed_check(7, "lint", _run=fake)
-        self.assertFalse(ok)
-        self.assertIn("no failed GitHub Actions run", detail)
+        why = github.failed_check_runs(7, ["lint"], _run=fake)[1]
+        self.assertIn("no failed GitHub Actions run", why)
 
-    def test_only_a_failed_check_of_that_exact_name_is_rerun(self):
+    def test_only_a_failed_check_of_that_exact_name_is_found(self):
         for rows in (
             [self._row(name="lint (3.12)")],
             [self._row(bucket="pass")],
             ["junk"],
         ):
-            fake, calls = self._runner(rows)
-            ok, detail = github.rerun_failed_check(7, "lint", _run=fake)
-            self.assertFalse(ok)
-            self.assertIn("no failed GitHub Actions run", detail)
-            self.assertEqual(len(calls), 1)
+            fake, _ = self._runner(rows)
+            runs, why = github.failed_check_runs(7, ["lint"], _run=fake)
+            self.assertEqual(runs, {})
+            self.assertIn("no failed GitHub Actions run", why)
 
     def test_a_check_without_an_actions_link_cannot_be_rerun(self):
         for link in ("https://ci.example/build/1", None):
             fake, _ = self._runner([self._row(link=link)])
-            self.assertFalse(github.rerun_failed_check(7, "lint", _run=fake)[0])
+            self.assertIn("no failed", github.failed_check_runs(7, ["lint"], _run=fake)[1])
+
+    def test_rerun_run_reruns_the_failed_jobs(self):
+        fake, calls = self._runner([])
+        self.assertEqual(
+            github.rerun_run("99", _run=fake), (True, "reran the failed jobs of run 99")
+        )
+        self.assertEqual(calls, [["gh", "run", "rerun", "99", "--failed"]])
 
     def test_a_failing_rerun_command_is_reported(self):
-        fake, _ = self._runner([self._row()], rerun_ok=False)
-        ok, detail = github.rerun_failed_check(7, "lint", _run=fake)
+        fake, _ = self._runner([], rerun_ok=False)
+        ok, detail = github.rerun_run("99", _run=fake)
         self.assertFalse(ok)
         self.assertIn("gh run rerun 99 failed: boom", detail)
 
@@ -264,17 +281,29 @@ class FinishCase(unittest.TestCase):
         self.snapshots = []
         self.invocations = []
         self.exit_codes = {}
-        self.rerun = MagicMock(return_value=(True, "reran"))
+        self.runs = mock.MagicMock(
+            side_effect=lambda pr, names, cwd: ({n: "1" for n in names}, None)
+        )
+        self.rerun = mock.MagicMock(return_value=(True, "reran"))
+        self.snapshot_patch = mock.patch(
+            "keel.cli._merge_snapshot_over_best_transport", side_effect=self._snapshot
+        )
         patches = [
-            patch("keel.cli._finish_clock", side_effect=lambda: self.now),
-            patch("keel.cli._finish_sleep", side_effect=self._sleep),
-            patch("keel.cli._merge_snapshot_over_best_transport", side_effect=self._snapshot),
-            patch("keel.cli._finish_invoke", side_effect=self._invoke),
-            patch("keel.cli.github.rerun_failed_check", self.rerun),
+            mock.patch("keel.cli._finish_clock", side_effect=lambda: self.now),
+            mock.patch("keel.cli._finish_sleep", side_effect=self._sleep),
+            self.snapshot_patch,
+            mock.patch("keel.cli._finish_invoke", side_effect=self._invoke),
+            mock.patch("keel.cli.github.failed_check_runs", self.runs),
+            mock.patch("keel.cli.github.rerun_run", self.rerun),
         ]
         for p in patches:
             p.start()
-            self.addCleanup(p.stop)
+            self.addCleanup(self._stop, p)
+
+    @staticmethod
+    def _stop(patcher):
+        with contextlib.suppress(RuntimeError):  # already stopped by a test
+            patcher.stop()
 
     def _write(self, extra):
         path = Path(self.dir) / "project.yaml"
@@ -369,7 +398,7 @@ class TestFinishChain(FinishCase):
     def test_a_closed_merge_window_stops_before_ship_and_merge(self):
         self.config = self._write("timezone: Europe/Istanbul\nmerge_window: '07:00-01:30'\n")
         self.snapshots = [_ci("pass")]
-        with patch("keel.cli.window.is_merge_open", return_value=False):
+        with mock.patch("keel.cli.window.is_merge_open", return_value=False):
             rc, doc, _ = self.finish()
         self.assertEqual(rc, 1)
         self.assertEqual((doc["status"], doc["stopped_at"]), ("window-closed", "window"))
@@ -379,10 +408,28 @@ class TestFinishChain(FinishCase):
     def test_an_open_merge_window_continues(self):
         self.config = self._write("timezone: Europe/Istanbul\nmerge_window: '07:00-01:30'\n")
         self.snapshots = [_ci("pass")]
-        with patch("keel.cli.window.is_merge_open", return_value=True):
+        with mock.patch("keel.cli.window.is_merge_open", return_value=True):
             rc, doc, _ = self.finish()
         self.assertEqual(rc, 0)
         self.assertTrue(doc["steps"][1]["open"])
+
+    def test_capture_status_defaults_to_not_run_so_ship_accepts_the_live_append(self):
+        self.snapshots = [_ci("pass")]
+        self.finish()
+        ship = self.invocations[0][0]
+        self.assertEqual(ship[ship.index("--capture-status") + 1], "not-run")
+
+    def test_an_explicit_capture_status_is_forwarded(self):
+        self.snapshots = [_ci("pass")]
+        self.finish("--capture-status", "applied")
+        ship = self.invocations[0][0]
+        self.assertEqual(ship[ship.index("--capture-status") + 1], "applied")
+
+    def test_closure_without_reviews_is_refused_before_anything_runs(self):
+        rc, _, err = _run(["finish", self.config, "--pr", "7", "--issue", "3", "--closure", "c"])
+        self.assertEqual(rc, 1)
+        self.assertIn("needs --reviews", err)
+        self.assertEqual(self.invocations, [])
 
     def test_missing_and_invalid_config(self):
         rc, _, err = _run(["finish", "/no/such.yaml", "--pr", "1", "--issue", "1"])
@@ -440,7 +487,7 @@ class TestFinishCiWait(FinishCase):
 
     def test_a_clock_that_never_advances_still_ends_in_a_timeout(self):
         self.snapshots = [_ci("pending", pending=["a"])]
-        with patch("keel.cli._finish_sleep"):  # the clock stays at 0
+        with mock.patch("keel.cli._finish_sleep"):  # the clock stays at 0
             rc, doc, _ = self.finish("--ci-timeout", "60", "--ci-interval", "30")
         self.assertEqual((rc, doc["status"]), (1, "timeout"))
         self.assertIn("poll limit reached", doc["reason"])
@@ -466,7 +513,8 @@ class TestFinishCiWait(FinishCase):
         self.snapshots = [fail, fail, _ci("pending", pending=["lint"]), _ci("pass")]
         rc, doc, _ = self.finish("--rerun-flaky", "lint", "--ci-interval", "5")
         self.assertEqual(rc, 0)
-        self.rerun.assert_called_once_with(7, "lint", cwd=self.dir)
+        self.runs.assert_called_once_with(7, ["lint"], cwd=self.dir)
+        self.rerun.assert_called_once_with("1", cwd=self.dir)
         self.assertEqual(doc["steps"][0]["reran"], ["lint"])
 
     def test_a_second_failure_after_the_rerun_fails(self):
@@ -485,11 +533,55 @@ class TestFinishCiWait(FinishCase):
         self.rerun.assert_not_called()
 
     def test_a_failed_rerun_request_fails_the_step(self):
-        self.rerun.return_value = (False, "no failed GitHub Actions run found")
+        self.rerun.return_value = (False, "gh run rerun 1 failed: boom")
         self.snapshots = [_ci("fail", failing=["lint"])]
         rc, doc, _ = self.finish("--rerun-flaky", "lint")
         self.assertEqual((rc, doc["stopped_at"]), (1, "ci"))
-        self.assertIn("no failed GitHub Actions run", doc["reason"])
+        self.assertIn("gh run rerun 1 failed", doc["reason"])
+        self.assertEqual(doc["steps"][0]["reran"], [])
+
+    def test_checks_that_cannot_be_matched_to_a_run_fail_the_step(self):
+        self.runs.side_effect = lambda pr, names, cwd: ({}, "no failed GitHub Actions run found")
+        self.snapshots = [_ci("fail", failing=["lint"])]
+        rc, doc, _ = self.finish("--rerun-flaky", "lint")
+        self.assertEqual((rc, doc["stopped_at"]), (1, "ci"))
+        self.rerun.assert_not_called()
+
+    def test_checks_of_one_actions_run_are_rerun_once_not_per_name(self):
+        self.runs.side_effect = lambda pr, names, cwd: (
+            {"a": "10", "b": "10", "c": "20"},
+            None,
+        )
+        fail = _ci("fail", failing=["a", "b", "c"])
+        self.snapshots = [fail, _ci("pass")]
+        rc, doc, _ = self.finish("--rerun-flaky", "a", "--rerun-flaky", "b", "--rerun-flaky", "c")
+        self.assertEqual(rc, 0)
+        self.assertEqual([c.args for c in self.rerun.call_args_list], [("10",), ("20",)])
+        self.assertEqual(doc["steps"][0]["reran"], ["a", "b", "c"])
+
+    def test_a_rerun_that_fails_midway_still_reports_the_runs_already_rerun(self):
+        self.runs.side_effect = lambda pr, names, cwd: ({"a": "10", "c": "20"}, None)
+        self.rerun.side_effect = [(True, "ok"), (False, "boom")]
+        self.snapshots = [_ci("fail", failing=["a", "c"])]
+        rc, doc, _ = self.finish("--rerun-flaky", "a", "--rerun-flaky", "c")
+        self.assertEqual((rc, doc["steps"][0]["reran"]), (1, ["a"]))
+
+    def test_every_ci_result_carries_the_documented_keys(self):
+        keys = {"status", "reason", "polls", "elapsed", "ci", "reran", "name"}
+        unreadable = cli._SnapshotFailed("gh-graphql", "boom")
+        for snaps, extra in (
+            ([_ci("pass")], []),
+            ([_ci("fail", failing=["x"])], []),
+            ([unreadable], []),
+            ([_ci("pending", pending=["a"])], ["--ci-timeout", "5", "--ci-interval", "5"]),
+        ):
+            self.snapshots = snaps
+            _, doc, _ = self.finish(*extra)
+            self.assertEqual(set(doc["steps"][0]), keys)
+        self.snapshots = [_ci("pending", pending=["a"])]
+        with mock.patch("keel.cli._finish_sleep"):
+            _, doc, _ = self.finish("--ci-timeout", "60", "--ci-interval", "30")
+        self.assertEqual(set(doc["steps"][0]), keys)
 
     def test_one_unreadable_snapshot_is_retried(self):
         self.snapshots = [cli._SnapshotFailed("gh-graphql", "boom"), _ci("pass")]
@@ -521,6 +613,22 @@ class TestFinishCiWait(FinishCase):
         self.assertIn("keel finish — pass  PR #7 merged", out)
         self.assertTrue(all(not capture for _, capture in self.invocations))
 
+    def test_the_passing_poll_says_so_instead_of_naming_a_merge_state(self):
+        for ci, said in (
+            (_ci("pass"), "all checks passing"),
+            (_ci("no-checks"), "no checks reported"),
+        ):
+            self.snapshots = [ci]
+            _, out, _ = self.finish(json_out=False)
+            self.assertIn(f"ci poll 1 (0s): {said}", out)
+            self.assertNotIn("UNSTABLE", out)
+
+    def test_a_state_naming_no_check_is_summarised_by_its_state(self):
+        self.snapshots = [{"state": "weird"}, _ci("pass")]
+        _, out, _ = self.finish("--ci-interval", "5", json_out=False)
+        self.assertIn("ci poll 1 (0s): CI state is weird", out)
+        self.assertNotIn("UNSTABLE", out)
+
     def test_human_failure_output_names_the_step_and_reason(self):
         self.snapshots = [_ci("pending", pending=["a"])]
         rc, out, _ = self.finish("--ci-timeout", "5", "--ci-interval", "5", json_out=False)
@@ -529,19 +637,96 @@ class TestFinishCiWait(FinishCase):
         self.assertIn("reason : timed out after 5s", out)
 
 
+class TestFinishAgainstTheRealHandlers(FinishCase):
+    """What the patched tests above cannot see: the real `ship` and the real snapshot reader."""
+
+    def test_the_documented_minimal_command_is_accepted_by_the_real_ship(self):
+        shipped = {}
+
+        def invoke(argv, *, capture):
+            if argv[0] != "ship":
+                return {"exit_code": 0}
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cli.main(argv)
+            shipped.update(code=code, out=out.getvalue(), err=err.getvalue())
+            return {"exit_code": code}
+
+        subprocess.run(["git", "init", "-q", self.dir], check=True)
+        report = cli.runtime.CapabilityReport(
+            tuple(
+                cli.runtime.Capability(n, True, "ok", "test")
+                for n in ("shell", "git", "worktree", "gh", "gh-auth")
+            )
+        )
+        self.snapshots = [_ci("pass")]
+        with (
+            mock.patch("keel.cli._finish_invoke", side_effect=invoke),
+            mock.patch("keel.cli.runtime.detect", return_value=report),
+            mock.patch("keel.cli.github.ci_conclusion", return_value="SUCCESS"),
+            mock.patch("keel.cli.github.ci_check_names", return_value=["build"]),
+            mock.patch("keel.cli.github.pr_labels", return_value=None),
+            mock.patch("keel.cli.github.pr_files", return_value=[]),
+            mock.patch("keel.cli.github.pr_state", return_value="OPEN"),
+        ):
+            rc, doc, _ = self.finish("--approve-scope", "filesystem,git,github", "--operator", "t")
+        self.assertNotIn("--capture-status is required", shipped["out"] + shipped["err"])
+        self.assertEqual(shipped["code"], 0, shipped["out"][-400:] + shipped["err"])
+        self.assertEqual(rc, 0, doc)
+
+    def _gh(self, answers):
+        seen = []
+
+        def fake(argv, **_kw):
+            seen.append(argv)
+            text = next((v for k, v in answers.items() if k in " ".join(argv)), "[]")
+            return CommandResult(True, 0, text, stdout=text)
+
+        return seen, fake
+
+    def test_the_real_snapshot_reader_accepts_the_namespace_the_wait_builds(self):
+        rollup = [{"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+        payload = {"headRefOid": "abc", "mergeStateStatus": "CLEAN", "statusCheckRollup": rollup}
+        seen, fake = self._gh({"pr view": json.dumps(payload)})
+        self.snapshot_patch.stop()
+        with (
+            mock.patch("keel.cli._finish_invoke", return_value={"exit_code": 0}),
+            mock.patch("keel.github.run_argv", side_effect=fake),
+        ):
+            rc, doc, _ = self.finish()
+        self.assertEqual(rc, 0, doc)
+        self.assertEqual(seen[0][:3], ["gh", "pr", "view"])
+        self.assertEqual(doc["steps"][0]["ci"]["state"], "pass")
+
+    def test_the_real_snapshot_reader_over_rest_also_accepts_it(self):
+        pull = {"head": {"sha": "abc"}, "mergeable_state": "clean"}
+        empty = {"check_runs": [], "total_count": 0}
+        seen, fake = self._gh(
+            {"check-runs": json.dumps(empty), "pulls/7": json.dumps(pull), "status": "[]"}
+        )
+        self.snapshot_patch.stop()
+        with (
+            mock.patch("keel.cli._finish_invoke", return_value={"exit_code": 0}),
+            mock.patch("keel.github.run_argv", side_effect=fake),
+        ):
+            rc, doc, _ = self.finish("--transport", "rest")
+        self.assertEqual(rc, 0, doc)
+        self.assertEqual(doc["steps"][0]["ci"]["state"], "no-checks")
+
+
 class TestFinishInvoke(unittest.TestCase):
     def test_uncaptured_returns_only_the_exit_code(self):
-        with patch("keel.cli.main", return_value=3) as main:
+        with mock.patch("keel.cli.main", return_value=3) as main:
             self.assertEqual(cli._finish_invoke(["merge", "p"], capture=False), {"exit_code": 3})
         main.assert_called_once_with(["merge", "p"])
 
     def test_captured_json_output_is_embedded_and_json_is_requested(self):
         def fake(argv):
             print(json.dumps({"status": "pass"}))
-            print("note", file=__import__("sys").stderr)
+            print("note", file=sys.stderr)
             return 0
 
-        with patch("keel.cli.main", side_effect=fake) as main:
+        with mock.patch("keel.cli.main", side_effect=fake) as main:
             got = cli._finish_invoke(["merge", "p"], capture=True)
         main.assert_called_once_with(["merge", "p", "--json"])
         self.assertEqual(got, {"exit_code": 0, "output": {"status": "pass"}, "stderr": "note"})
@@ -551,14 +736,14 @@ class TestFinishInvoke(unittest.TestCase):
             print("plain text")
             return 1
 
-        with patch("keel.cli.main", side_effect=fake):
+        with mock.patch("keel.cli.main", side_effect=fake):
             got = cli._finish_invoke(["ship", "p"], capture=True)
         self.assertEqual(got, {"exit_code": 1, "output": "plain text"})
 
     def test_the_real_clock_and_sleep_are_the_monotonic_ones(self):
-        with patch("keel.cli.time.monotonic", return_value=5.0):
+        with mock.patch("keel.cli.time.monotonic", return_value=5.0):
             self.assertEqual(cli._finish_clock(), 5.0)
-        with patch("keel.cli.time.sleep") as sleep:
+        with mock.patch("keel.cli.time.sleep") as sleep:
             cli._finish_sleep(2)
         sleep.assert_called_once_with(2)
 

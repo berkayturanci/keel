@@ -551,32 +551,45 @@ def _run_id_of(link: object) -> str | None:
     return match.group(1) if match else None
 
 
-def rerun_failed_check(
-    pr: int | str, name: str, *, cwd: str | None = None, _run=None
-) -> tuple[bool, str]:
-    """Rerun the failed jobs of the Actions run behind the check called exactly ``name``.
+def failed_check_runs(
+    pr: int | str, names: Sequence[str], *, cwd: str | None = None, _run=None
+) -> tuple[dict[str, str], str | None]:
+    """``({name: run id}, error)`` for the failed checks called exactly ``names``.
 
-    ``(ok, detail)``. The check is found through ``gh pr checks``, whose details link names
-    the run; ``gh run rerun --failed`` then reruns it. ``gh pr checks`` exits non-zero when
-    a check is pending or failing but still prints the rows, so its stdout is read whatever
-    the exit code. A check with no Actions run (a third-party status) cannot be rerun here.
+    The checks are found through ``gh pr checks``, whose details link names the Actions run.
+    ``gh pr checks`` exits non-zero when a check is pending or failing but still prints the
+    rows, so stdout is read whatever the exit code; empty stdout *with* a failing exit is an
+    error (authentication, network), not an empty listing. A cancelled or timed-out job
+    (``cancel``) counts as failed. A check with no Actions run (a third-party status) cannot
+    be rerun here. Several names can share one run, which is why the caller reruns by run id.
     """
     listed = run_argv(
         ["gh", "pr", "checks", str(pr), "--json", "name,link,bucket"], cwd=cwd, **_kw(_run)
     )
     try:
-        rows = json.loads(listed.stdout or "[]")
+        rows = json.loads(listed.stdout) if listed.stdout.strip() else ([] if listed.ok else None)
     except ValueError:
         rows = None
     if not isinstance(rows, list):
-        return False, f"could not list the checks of PR #{pr}: {listed.output.strip()}"
-    run_id = None
-    for row in rows:
-        if isinstance(row, dict) and row.get("name") == name and row.get("bucket") == "fail":
-            run_id = _run_id_of(row.get("link"))
-            break
-    if run_id is None:
-        return False, f"no failed GitHub Actions run found for check {name!r}"
+        return {}, f"could not list the checks of PR #{pr}: {listed.output.strip()}"
+    runs: dict[str, str] = {}
+    for name in names:
+        for row in rows:
+            if (
+                isinstance(row, dict)
+                and row.get("name") == name
+                and row.get("bucket") in ("fail", "cancel")
+                and _run_id_of(row.get("link"))
+            ):
+                runs[name] = str(_run_id_of(row.get("link")))
+                break
+        else:
+            return {}, f"no failed GitHub Actions run found for check {name!r}"
+    return runs, None
+
+
+def rerun_run(run_id: str, *, cwd: str | None = None, _run=None) -> tuple[bool, str]:
+    """Rerun the failed jobs of one Actions run: ``(ok, detail)``."""
     result = run_argv(["gh", "run", "rerun", run_id, "--failed"], cwd=cwd, **_kw(_run))
     if not result.ok:
         return False, f"gh run rerun {run_id} failed: {result.output.strip()}"
