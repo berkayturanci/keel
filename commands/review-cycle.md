@@ -107,7 +107,14 @@ here.
 A non-host reviewer is dispatched with `keel delegate run --role review` — the one
 executor for every transport, which picks the vendor's read-only invocation for that role
 and returns the JSON contract ship.md s4 documents (`text` is the verdict, `attribution`
-is what you record per reviewer, `error_code` is what you branch on). Do not hand-build
+is what you record per reviewer, `error_code` is what you branch on).
+
+Each reviewer seat (host agent or delegate) MUST run in a separate read-only checkout of
+the head (`git worktree add --detach .keel/worktrees/review-$PR-$CODENAME "$HEAD_SHA"`),
+with delegate invocations passing `--cwd .keel/worktrees/review-$PR-$CODENAME`, and must
+be removed afterwards (`keel worktree-remove .keel/worktrees/review-$PR-$CODENAME --root .`).
+Reviewers must never run in or share the implementer's worktree so exploratory checks or
+red-proofing file deletions cannot contaminate staged changes. Do not hand-build
 the invocation, and do not read a vendor's flags out of this file. Check
 **`read_only_backed`** before trusting a reviewer: `read_only` is the role you asked for,
 that field is whether anything enforces it, and for a configured profile with no
@@ -285,4 +292,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.32.0 source_sha256=7fefc25d4921ad741fdb56d372c2255263496c6b4d4178ba521d16ec23ec7d2c generated_sha256=7fefc25d4921ad741fdb56d372c2255263496c6b4d4178ba521d16ec23ec7d2c -->
+<!-- keel-generated: surface=plugin command=review-cycle keel_version=1.32.0 source_sha256=02a647ef868746f4d0c055d90f7528828fd8f6f7764f69075760afc076818371 generated_sha256=02a647ef868746f4d0c055d90f7528828fd8f6f7764f69075760afc076818371 -->

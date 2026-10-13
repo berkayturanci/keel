@@ -85,3 +85,57 @@ def verify(
         "scope_creep": creep,
         "docs_exempt": docs_exempt,
     }
+
+
+def check_staged_contamination(
+    staged_modified_or_deleted: list[str] | None,
+    *,
+    implementer_files: list[str] | None = None,
+    files_since_start: list[str] | None = None,
+) -> dict[str, Any]:
+    """Check whether staged modified or deleted files include paths outside the implementer run.
+
+    Compares against ``implementer_files`` when available, else against
+    ``files_since_start``. If either baseline is provided and suspect paths are found,
+    returns a warning and sets ``has_contamination: True``. Warns, never blocks.
+    """
+    if not staged_modified_or_deleted:
+        return {
+            "has_contamination": False,
+            "suspect_paths": [],
+            "warning": None,
+            "comparison_source": "none",
+        }
+    if implementer_files is not None:
+        expected = set(implementer_files)
+        source = "implementer-files"
+    elif files_since_start is not None:
+        expected = set(files_since_start)
+        source = "files-since-start"
+    else:
+        return {
+            "has_contamination": False,
+            "suspect_paths": [],
+            "warning": None,
+            "comparison_source": "none",
+        }
+
+    suspect = [path for path in staged_modified_or_deleted if path not in expected]
+    if suspect:
+        sorted_suspect = sorted(suspect)
+        warning = (
+            "staged change set includes deleted or modified paths not touched by the "
+            f"implementer run: {', '.join(sorted_suspect)}"
+        )
+        return {
+            "has_contamination": True,
+            "suspect_paths": sorted_suspect,
+            "warning": warning,
+            "comparison_source": source,
+        }
+    return {
+        "has_contamination": False,
+        "suspect_paths": [],
+        "warning": None,
+        "comparison_source": source,
+    }

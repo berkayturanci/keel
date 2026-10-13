@@ -126,7 +126,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
         for path in _adapter_files():
             text = path.read_text(encoding="utf-8")
             for line in text.splitlines():
-                if "--detach" not in line:
+                if "--detach" not in line or "worktree" in line:
                     continue
                 with self.subTest(path=str(path.relative_to(REPO_ROOT)), line=line.strip()):
                     # the flag may sit on a continuation line of the same example

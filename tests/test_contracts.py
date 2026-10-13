@@ -779,8 +779,34 @@ class TestBuildCommandContract(unittest.TestCase):
             command="unknown",
             config=config,
             target="custom",
+            warnings=["warning 1"],
+            staged_contamination={"has_contamination": True, "suspect_paths": ["x.py"]},
         )
-        self.assertEqual(unknown, {"command": "unknown", "target": "custom"})
+        self.assertEqual(
+            unknown,
+            {
+                "command": "unknown",
+                "target": "custom",
+                "warnings": ["warning 1"],
+                "staged_contamination": {
+                    "has_contamination": True,
+                    "suspect_paths": ["x.py"],
+                },
+            },
+        )
+
+    def test_standalone_result_wrap_with_staged_contamination(self):
+        config = cfg.load_config(PROJECTS / "example-android.yaml")
+        res = contracts.standalone_result_as_dict(
+            command="wrap",
+            config=config,
+            warnings=["staged contamination warning"],
+            staged_contamination={"has_contamination": True, "suspect_paths": ["bad.py"]},
+        )
+        self.assertEqual(res["warnings"], ["staged contamination warning"])
+        self.assertEqual(
+            res["staged_contamination"], {"has_contamination": True, "suspect_paths": ["bad.py"]}
+        )
 
     def test_morning_contract_is_project_extensible(self):
         android = cfg.load_config(PROJECTS / "example-android.yaml")
@@ -1449,6 +1475,21 @@ class TestShipResultClosureComment(unittest.TestCase):
         )
         self.assertIsNone(result["closure_comment"])
         self.assertIn("reviewer: reviewer", result["artifact_bodies"]["review_verdict_template"])
+
+    def test_ship_result_carries_warnings_and_staged_contamination(self):
+        result = contracts.ship_result_as_dict(
+            changed_files=[],
+            outcomes=[],
+            verdict=self._verdict(),
+            assessment=self._assessment(),
+            warnings=["staged warning"],
+            staged_contamination={"has_contamination": True, "suspect_paths": ["bad.py"]},
+        )
+        self.assertEqual(result["warnings"], ["staged warning"])
+        self.assertEqual(
+            result["staged_contamination"],
+            {"has_contamination": True, "suspect_paths": ["bad.py"]},
+        )
 
 
 class GateOutcomeCarriesTheReusedPanel(unittest.TestCase):

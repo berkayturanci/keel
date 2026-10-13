@@ -15,6 +15,7 @@ delegated (:mod:`keel.swarm_worker`, where each of those decisions is made).
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import datetime
 import functools
 import hashlib
@@ -274,6 +275,42 @@ def remove_swarm_worktree(
     if not res.ok:
         run(["git", "worktree", "prune"], repo_root)
     return not worktree_path.exists()
+
+
+remove_review_worktree = remove_swarm_worktree
+
+
+def review_worktree_path(name: str, root: str | Path = ".") -> Path:
+    """A reviewer seat's checkout path under .keel/worktrees/."""
+    return Path(root) / ".keel" / "worktrees" / f"review-{name}"
+
+
+@contextlib.contextmanager
+def review_checkout(
+    head_sha: str,
+    name: str = "review",
+    *,
+    root: str | Path = ".",
+    runner: SubprocessRunner | None = None,
+):
+    """Context manager providing an isolated detached worktree at ``head_sha`` for a reviewer seat.
+
+    Ensures the checkout is removed afterwards using :func:`remove_swarm_worktree`.
+    """
+    root_path = Path(root)
+    checkout = review_worktree_path(name, root=root_path)
+    checkout.parent.mkdir(parents=True, exist_ok=True)
+    run = runner or default_runner
+    if checkout.exists():
+        remove_swarm_worktree(root_path, checkout, runner=run)
+    added = run(["git", "worktree", "add", "--detach", str(checkout), head_sha], root_path)
+    if not added.ok:
+        why = added.output.strip()[:200] or f"exit {added.code}"
+        raise RuntimeError(f"could not create review checkout at {checkout}: {why}")
+    try:
+        yield checkout
+    finally:
+        remove_swarm_worktree(root_path, checkout, runner=run)
 
 
 def prune_worktrees(repo_root: Path, runner: SubprocessRunner | None = None) -> str:

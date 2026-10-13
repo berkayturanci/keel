@@ -1298,5 +1298,74 @@ class ReusePostedVerdict(unittest.TestCase):
         )
 
 
+class TestRunGateWithHeadSha(unittest.TestCase):
+    def test_run_gate_creates_checkout_and_runs_in_it(self):
+        calls = []
+
+        def _runner(argv, cwd=None, **kw):
+            calls.append((list(argv), cwd))
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            if "worktree" in argv and "add" in argv:
+                return _Proc(0, "")
+            if "worktree" in argv and "remove" in argv:
+                return _Proc(0, "")
+            return _Proc(0, json.dumps(_ballot_report("APPROVE")))
+
+        ok, findings, timed_out = jury.run_gate(
+            "diff content",
+            mode="gating",
+            head_sha="head123",
+            _run=_runner,
+        )
+        self.assertTrue(ok)
+        self.assertFalse(timed_out)
+        self.assertEqual(findings, [])
+        add_calls = [c for c in calls if "worktree" in c[0] and "add" in c[0]]
+        self.assertEqual(len(add_calls), 1)
+        self.assertIn("head123", add_calls[0][0])
+        jury_calls = [c for c in calls if c[0][0] == "jury" and "--version" not in c[0]]
+        self.assertEqual(len(jury_calls), 1)
+        self.assertIn(".keel/worktrees/review-jury", jury_calls[0][1])
+
+    def test_run_gate_checkout_failure_blocks_in_gating_mode(self):
+        def _failing_git(argv, cwd=None, **kw):
+            if "worktree" in argv and "add" in argv:
+                return jury.CommandResult(False, 128, "fatal: bad object")
+            return jury.CommandResult(True, 0, "")
+
+        ok, findings, timed_out = jury.run_gate(
+            "diff content",
+            mode="gating",
+            head_sha="badhead",
+            _run=_failing_git,
+        )
+        self.assertFalse(ok)
+        self.assertFalse(timed_out)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "major")
+        self.assertEqual(findings[0].source, "jury:review-checkout")
+        self.assertIn("fatal: bad object", findings[0].message)
+
+    def test_run_gate_checkout_failure_surfaces_as_minor_in_advisory_mode(self):
+        def _failing_git(argv, cwd=None, **kw):
+            if "worktree" in argv and "add" in argv:
+                return _Proc(128, "", "fatal: bad object")
+            return _Proc(0, "")
+
+        ok, findings, timed_out = jury.run_gate(
+            "diff content",
+            mode="advisory",
+            head_sha="badhead",
+            _run=_failing_git,
+        )
+        self.assertTrue(ok)
+        self.assertFalse(timed_out)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "minor")
+        self.assertEqual(findings[0].source, "jury:review-checkout")
+        self.assertIn("fatal: bad object", findings[0].message)
+
+
 if __name__ == "__main__":
     unittest.main()

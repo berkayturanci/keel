@@ -156,6 +156,7 @@ def _gate_runner(
     run_jury: bool = True,
     phases: frozenset[str] | None = None,
     posted_panel: tuple[bool, list[fnd.Finding]] | None = None,
+    head_sha: str | None = None,
 ):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
 
@@ -192,8 +193,11 @@ def _gate_runner(
                 reused_ok, reused_found = posted_panel
                 return reused_ok, reused_found, False, False, False
             jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
+            jury_kw = {}
+            if head_sha is not None:
+                jury_kw["head_sha"] = head_sha
             ok, found, timed_out = jury.run_gate(
-                diff_text, cwd=root, mode=jury_mode, timeout=jury_limit
+                diff_text, cwd=root, mode=jury_mode, timeout=jury_limit, **jury_kw
             )
             # A jury that could not run (no CLI, empty diff) judged nothing: `SKIPPED`,
             # never `ok` (#1369).
@@ -1884,6 +1888,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             jury_mode=review_contract["jury"]["mode"],
             timeout=config.knobs.gate_timeout_s,
             posted_panel=posted[1] if posted is not None else None,
+            head_sha=args.head_sha,
         ),
         config=config,
         root=args.root,
@@ -2139,6 +2144,20 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             "rules": fallback.audit["rules"],
             "redaction_count": fallback.audit["redaction_count"],
         }
+    staged_md = git.staged_modified_or_deleted_files(cwd=args.root)
+    files_since = None
+    if getattr(args, "since", None):
+        files_since = git.changed_files_since(args.since, head="HEAD", cwd=args.root)
+    staged_contamination = scope.check_staged_contamination(
+        staged_md,
+        implementer_files=getattr(args, "implementer_file", None),
+        files_since_start=files_since,
+    )
+    staged_warnings: list[str] = []
+    if staged_contamination["has_contamination"] and staged_contamination["warning"]:
+        staged_warnings.append(staged_contamination["warning"])
+        print(f"warning: {staged_contamination['warning']}", file=sys.stderr)
+
     ledger_result = {
         "contract": contract["run_ledger"],
         "path": str(ledger_path),
@@ -2149,6 +2168,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             *_implementer_vocabulary_warnings(args, config),
         ],
     }
+    all_ship_warnings = [*ledger_result["warnings"], *staged_warnings]
     if args.append_ledger and args.live:
         clash = capture_clash or ledger.existing_capture_marker(
             existing_ledger_records, ledger_record
@@ -2175,6 +2195,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                         assessment=a,
                         issue_intake=contract.get("issue_intake"),
                         run_ledger=ledger_result,
+                        warnings=all_ship_warnings if all_ship_warnings else None,
+                        staged_contamination=staged_contamination,
                     ),
                 },
                 indent=2,
@@ -2228,6 +2250,8 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
     for warning in ledger_result["warnings"]:
         print(f"  run context   : warning: {warning}")
+    if staged_contamination and staged_contamination["has_contamination"]:
+        print(f"  staged files  : warning: {staged_contamination['warning']}")
     if intake_record["questions"]:
         print(f"  questions     : {len(intake_record['questions'])}")
     if transport.degraded:
@@ -11035,6 +11059,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_wrap.add_argument("--root", default=".", help="repo root for git and capability checks")
     p_wrap.add_argument("--since", default=None, help="optional session start label or timestamp")
     p_wrap.add_argument(
+        "--implementer-file",
+        action="append",
+        default=None,
+        help=(
+            "path touched by the implementer (repeatable); "
+            "checked against staged changes to warn on contamination"
+        ),
+    )
+    p_wrap.add_argument(
         "--target", default=None, help="target text to include in the wrap contract"
     )
     p_wrap.add_argument(
@@ -12017,6 +12050,21 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         default=None,
         help="implementer's declared in-scope file path (repeatable); "
         "recorded for keel scope-verify branch-contamination checks",
+    )
+    parser.add_argument(
+        "--implementer-file",
+        action="append",
+        default=None,
+        help="path touched by the implementer (repeatable); "
+        "checked against staged changes to warn on contamination",
+    )
+    parser.add_argument(
+        "--since",
+        default=None,
+        help=(
+            "commit, ref, or git log date to compare staged changes against "
+            "when checking contamination"
+        ),
     )
     parser.add_argument(
         "--capture-status",

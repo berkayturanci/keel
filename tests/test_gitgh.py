@@ -1113,5 +1113,48 @@ class AJustMergedPrIsPolledForItsMergeCommit(unittest.TestCase):
         self.assertEqual([], sleeps)
 
 
+class StagedAndChangedSinceTests(unittest.TestCase):
+    def test_staged_modified_or_deleted_files_success(self):
+        rec = _Recorder(out="src/a.py\0src/b.py\0")
+        files = git.staged_modified_or_deleted_files(cwd="myroot", _run=rec)
+        self.assertEqual(files, ["src/a.py", "src/b.py"])
+        self.assertIn("--diff-filter=MD", rec.calls[0])
+        self.assertIn("--cached", rec.calls[0])
+
+    def test_staged_modified_or_deleted_files_error(self):
+        rec = _Recorder(code=1, err="fatal: not a git repo")
+        self.assertIsNone(git.staged_modified_or_deleted_files(_run=rec))
+
+    def test_staged_modified_or_deleted_files_empty(self):
+        rec = _Recorder(out="")
+        self.assertEqual(git.staged_modified_or_deleted_files(_run=rec), [])
+
+    def test_changed_files_since_diff_names(self):
+        def run(argv, **kw):
+            if "diff" in argv:
+                return _Proc(0, "file1.py\0file2.py\0", "")
+            return _Proc(1, "", "")
+
+        files = git.changed_files_since("v1.0.0", _run=run)
+        self.assertEqual(files, ["file1.py", "file2.py"])
+
+    def test_changed_files_since_git_log_date_success(self):
+        def run(argv, **kw):
+            if "diff" in argv:
+                return _Proc(1, "", "unknown revision")
+            if "log" in argv:
+                return _Proc(0, "b.py\0a.py\0b.py\0", "")
+            return _Proc(1, "", "")
+
+        files = git.changed_files_since("2 hours ago", _run=run)
+        self.assertEqual(files, ["a.py", "b.py"])
+
+    def test_changed_files_since_git_log_error(self):
+        def run(argv, **kw):
+            return _Proc(1, "", "fatal: log error")
+
+        self.assertIsNone(git.changed_files_since("invalid-date", _run=run))
+
+
 if __name__ == "__main__":
     unittest.main()

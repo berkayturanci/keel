@@ -92,6 +92,10 @@ If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 
 ## Step 3 — Commit
 
+- Check for staged contamination: `keel wrap .keel/project.yaml --root .`
+  (pass `--implementer-file <path>` or `--since <ref|timestamp>` when available).
+  `keel wrap` warns (stderr + JSON field) if the staged change set includes deleted or
+  modified files not touched by the implementer run. Inspect any warnings before committing.
 - `git add -A`
 - Write a commit message in Conventional Commits format
   (feat/fix/chore/docs/refactor/test).
@@ -126,4 +130,4 @@ skips, deferred capture, and missing markers. If `capture_health.status` is
 `capture_health.reconcile_actions` and hand the gap to the morning queue; do not mutate the
 ledger, GitHub, or project capture destinations from this reporting step.
 
-<!-- keel-generated: surface=claude command=wrap keel_version=1.32.0 source_sha256=6d6b85fa68abda9dc20c031ff4f78c42840817f31d91070051e7410f8587379a generated_sha256=6d6b85fa68abda9dc20c031ff4f78c42840817f31d91070051e7410f8587379a -->
+<!-- keel-generated: surface=claude command=wrap keel_version=1.32.0 source_sha256=fc63ae6404323eecb26b3e16ea832539d9eacf86314646f3a848a654974a8426 generated_sha256=fc63ae6404323eecb26b3e16ea832539d9eacf86314646f3a848a654974a8426 -->

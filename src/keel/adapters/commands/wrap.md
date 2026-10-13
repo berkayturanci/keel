@@ -92,6 +92,10 @@ If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 
 ## Step 3 — Commit
 
+- Check for staged contamination: `keel wrap .keel/project.yaml --root .`
+  (pass `--implementer-file <path>` or `--since <ref|timestamp>` when available).
+  `keel wrap` warns (stderr + JSON field) if the staged change set includes deleted or
+  modified files not touched by the implementer run. Inspect any warnings before committing.
 - `git add -A`
 - Write a commit message in Conventional Commits format
   (feat/fix/chore/docs/refactor/test).

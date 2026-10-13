@@ -107,7 +107,14 @@ here.
 A non-host reviewer is dispatched with `keel delegate run --role review` — the one
 executor for every transport, which picks the vendor's read-only invocation for that role
 and returns the JSON contract ship.md s4 documents (`text` is the verdict, `attribution`
-is what you record per reviewer, `error_code` is what you branch on). Do not hand-build
+is what you record per reviewer, `error_code` is what you branch on).
+
+Each reviewer seat (host agent or delegate) MUST run in a separate read-only checkout of
+the head (`git worktree add --detach .keel/worktrees/review-$PR-$CODENAME "$HEAD_SHA"`),
+with delegate invocations passing `--cwd .keel/worktrees/review-$PR-$CODENAME`, and must
+be removed afterwards (`keel worktree-remove .keel/worktrees/review-$PR-$CODENAME --root .`).
+Reviewers must never run in or share the implementer's worktree so exploratory checks or
+red-proofing file deletions cannot contaminate staged changes. Do not hand-build
 the invocation, and do not read a vendor's flags out of this file. Check
 **`read_only_backed`** before trusting a reviewer: `read_only` is the role you asked for,
 that field is whether anything enforces it, and for a configured profile with no

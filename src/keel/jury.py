@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from . import artifacts, evidence
@@ -341,6 +343,7 @@ def run_gate(
     cwd: str | None = None,
     mode: str = "advisory",
     timeout: int = DEFAULT_JURY_TIMEOUT_S,
+    head_sha: str | None = None,
     _run=None,
 ) -> tuple[bool, list[Finding], bool]:
     """Run ``jury`` on ``diff_text`` and map its findings.
@@ -373,6 +376,51 @@ def run_gate(
     "request changes", which is a completed review whose findings must be honoured,
     while an exit of zero carrying unreadable output is not a review at all.
     """
+    if head_sha is not None:
+        from . import swarm_runtime
+
+        def _wrap_runner(cmd: list[str], path: Path) -> CommandResult:
+            res = _run(cmd, cwd=str(path), stdin=subprocess.DEVNULL)
+            if isinstance(res, CommandResult):
+                return res
+            out = getattr(res, "stdout", "") or ""
+            err = getattr(res, "stderr", "") or ""
+            code = getattr(res, "returncode", 0)
+            return CommandResult(
+                code == 0,
+                code,
+                out + err,
+                stdout=out,
+                stderr=err,
+            )
+
+        checkout_runner = _wrap_runner if _run is not None else None
+        try:
+            with swarm_runtime.review_checkout(
+                head_sha, name="jury", root=cwd or ".", runner=checkout_runner
+            ) as checkout:
+                return run_gate(
+                    diff_text,
+                    cwd=str(checkout),
+                    mode=mode,
+                    timeout=timeout,
+                    head_sha=None,
+                    _run=_run,
+                )
+        except RuntimeError as exc:
+            gating = mode == "gating"
+            return (
+                (not gating),
+                [
+                    Finding(
+                        severity="major" if gating else "minor",
+                        message=str(exc),
+                        source="jury:review-checkout",
+                    )
+                ],
+                False,
+            )
+
     if diff_text is None:
         # The diff could not be read (git failed). That is not "nothing to review":
         # passing here would silently remove the review gate from the merge decision,

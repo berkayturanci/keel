@@ -1547,6 +1547,136 @@ class TestShip(unittest.TestCase):
         self.assertIn("MERGE", out)
         self.assertIn("github        :", out)
 
+    def test_ship_staged_contamination_warning_json_and_stderr(self):
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/keel/cli.py", "unrelated.py"],
+                ),
+            ):
+                rc, out, err = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--implementer-file",
+                        "src/keel/cli.py",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc, 0)
+                self.assertIn("warning: staged change set includes deleted or modified paths", err)
+                payload = json.loads(out)
+                self.assertTrue(payload["result"]["staged_contamination"]["has_contamination"])
+                self.assertEqual(
+                    payload["result"]["staged_contamination"]["suspect_paths"], ["unrelated.py"]
+                )
+                self.assertIn(
+                    "staged change set includes deleted or modified paths "
+                    "not touched by the implementer run: unrelated.py",
+                    payload["result"]["warnings"],
+                )
+
+                # Non-JSON output
+                rc_h, out_h, err_h = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--implementer-file",
+                        "src/keel/cli.py",
+                    ]
+                )
+                self.assertEqual(rc_h, 0)
+                self.assertIn(
+                    "warning: staged change set includes deleted or modified paths", err_h
+                )
+                self.assertIn("staged files  : warning:", out_h)
+
+    def test_ship_staged_contamination_clean_no_warning(self):
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/keel/cli.py"],
+                ),
+            ):
+                rc, out, err = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--implementer-file",
+                        "src/keel/cli.py",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc, 0)
+                self.assertNotIn("warning:", err)
+                payload = json.loads(out)
+                self.assertFalse(payload["result"]["staged_contamination"]["has_contamination"])
+
+    def test_ship_staged_contamination_since_flag(self):
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/keel/cli.py", "unrelated.py"],
+                ),
+                patch("keel.git.changed_files_since", return_value=["src/keel/cli.py"]),
+            ):
+                rc, out, err = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--since",
+                        "HEAD~1",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc, 0)
+                payload = json.loads(out)
+                self.assertTrue(payload["result"]["staged_contamination"]["has_contamination"])
+                self.assertEqual(
+                    payload["result"]["staged_contamination"]["comparison_source"],
+                    "files-since-start",
+                )
+
+    def test_wrap_cli_accepts_implementer_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/app.py", "unrelated.py"],
+                ),
+            ):
+                rc, out, err = run(
+                    [
+                        "wrap",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--implementer-file",
+                        "src/app.py",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc, 0)
+                payload = json.loads(out)
+                self.assertTrue(payload["result"]["staged_contamination"]["has_contamination"])
+
     def test_docs_only_allowlist_reaches_the_ship_classification(self):
         # The knob was declared, parsed, hashed and echoed into the contract, and read
         # by nothing (#632). Pin the wire from config to the assessed tier: without the

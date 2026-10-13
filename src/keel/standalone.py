@@ -10,14 +10,17 @@ import argparse
 import json
 import os
 import sys
+from typing import Any
 
 from . import config as cfg
 from . import (
     consent,
     contracts,
+    git,
     github_transport,
     providerprobe,
     runtime,
+    scope,
     wizardrun,
     workblock,
 )
@@ -212,6 +215,22 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         jury_availability=providerprobe.jury_availability(config, tier=None, profile=team_profile),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
+    warnings: list[str] = []
+    staged_contamination: dict[str, Any] | None = None
+    if command == "wrap":
+        staged_md = git.staged_modified_or_deleted_files(cwd=args.root)
+        files_since = None
+        if getattr(args, "since", None):
+            files_since = git.changed_files_since(args.since, head="HEAD", cwd=args.root)
+        staged_contamination = scope.check_staged_contamination(
+            staged_md,
+            implementer_files=getattr(args, "implementer_file", None),
+            files_since_start=files_since,
+        )
+        if staged_contamination["has_contamination"] and staged_contamination["warning"]:
+            warnings.append(staged_contamination["warning"])
+            print(f"warning: {staged_contamination['warning']}", file=sys.stderr)
+
     result = contracts.standalone_result_as_dict(
         command=command,
         config=config,
@@ -220,6 +239,8 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         transport=transport,
         evaluation=evaluation,
         delegation=delegation,
+        warnings=warnings or None,
+        staged_contamination=staged_contamination,
     )
     if not consent_ok:
         if args.json:
@@ -289,6 +310,8 @@ def cmd_standalone(args: argparse.Namespace) -> int:
             ]
             print(f"  worktree      : linked required={linked_required}")
             print("  pr            : ready PR after configured gates")
+            if staged_contamination and staged_contamination["has_contamination"]:
+                print(f"  staged files  : warning: {staged_contamination['warning']}")
         elif command == "work-block":
             print("  mode source   : keel work-block")
             print("  queue         : explicit issues or selector")

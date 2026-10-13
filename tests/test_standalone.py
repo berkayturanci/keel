@@ -97,7 +97,103 @@ class TestStandaloneHelpers(unittest.TestCase):
         with patch("sys.stderr", err):
             code = standalone.cmd_standalone(args)
         self.assertEqual(code, 1)
-        self.assertIn("no such config", err.getvalue())
+
+    def test_cmd_standalone_wrap_staged_contamination_warns(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = Path(d) / "project.yaml"
+            cfg_path.write_text(
+                "extends: keel\nbase_branch: main\ncore_version: '>=0.1'\n"
+                "knobs:\n  build_gate_cmd: 'true'\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                dry_run=False,
+                live=False,
+                standalone_command="wrap",
+                path=str(cfg_path),
+                root=d,
+                pr=None,
+                approve_scope=[],
+                operator=None,
+                target=None,
+                json=False,
+                delegate=None,
+                since=None,
+                implementer_file=["src/app.py"],
+            )
+            with patch(
+                "keel.git.staged_modified_or_deleted_files",
+                return_value=["src/app.py", "unrelated.py"],
+            ):
+                err = io.StringIO()
+                out = io.StringIO()
+                with patch("sys.stderr", err), patch("sys.stdout", out):
+                    code = standalone.cmd_standalone(args)
+                self.assertEqual(code, 0)
+                self.assertIn(
+                    "warning: staged change set includes deleted or modified paths",
+                    err.getvalue(),
+                )
+                self.assertIn("staged files  : warning:", out.getvalue())
+
+            args.json = True
+            with patch(
+                "keel.git.staged_modified_or_deleted_files",
+                return_value=["src/app.py", "unrelated.py"],
+            ):
+                err = io.StringIO()
+                out = io.StringIO()
+                with patch("sys.stderr", err), patch("sys.stdout", out):
+                    code = standalone.cmd_standalone(args)
+                self.assertEqual(code, 0)
+                data = json.loads(out.getvalue())
+                self.assertTrue(data["result"]["staged_contamination"]["has_contamination"])
+                self.assertIn(
+                    "unrelated.py",
+                    data["result"]["staged_contamination"]["suspect_paths"],
+                )
+                self.assertIn("warnings", data["result"])
+
+            args.json = True
+            args.implementer_file = None
+            args.since = "HEAD~1"
+            with (
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/app.py", "unrelated.py"],
+                ),
+                patch("keel.git.changed_files_since", return_value=["src/app.py"]),
+            ):
+                err = io.StringIO()
+                out = io.StringIO()
+                with patch("sys.stderr", err), patch("sys.stdout", out):
+                    code = standalone.cmd_standalone(args)
+                self.assertEqual(code, 0)
+                data = json.loads(out.getvalue())
+                self.assertTrue(data["result"]["staged_contamination"]["has_contamination"])
+                self.assertEqual(
+                    data["result"]["staged_contamination"]["comparison_source"],
+                    "files-since-start",
+                )
+
+            args.json = False
+            args.implementer_file = ["src/app.py"]
+            args.since = None
+            with patch(
+                "keel.git.staged_modified_or_deleted_files",
+                return_value=["src/app.py"],
+            ):
+                err = io.StringIO()
+                out = io.StringIO()
+                with patch("sys.stderr", err), patch("sys.stdout", out):
+                    code = standalone.cmd_standalone(args)
+                self.assertEqual(code, 0)
+                self.assertNotIn("warning:", err.getvalue())
+                self.assertNotIn("staged files  : warning:", out.getvalue())
 
 
 if __name__ == "__main__":

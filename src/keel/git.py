@@ -550,6 +550,64 @@ def push_commit(
     return run_argv(["git", "push", remote, f"{commit}:{ref}"], cwd=cwd, **_kw(_run))
 
 
+def staged_modified_or_deleted_files(*, cwd: str | None = None, _run=None) -> list[str] | None:
+    """Paths staged in the index (cached) that are modified or deleted; None on error.
+
+    Runs ``git diff --cached --no-renames --name-only --diff-filter=MD -z``.
+    Deleted and modified paths in the staged change set are returned.
+    """
+    result = run_argv(
+        [
+            "git",
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "--cached",
+            "--no-renames",
+            "--name-only",
+            "--diff-filter=MD",
+            "-z",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    if not result.ok:
+        return None
+    return [name for name in result.stdout.split("\0") if name]
+
+
+def changed_files_since(
+    since: str, *, head: str = "HEAD", cwd: str | None = None, _run=None
+) -> list[str] | None:
+    """Paths changed since ``since`` (a commit, ref, or git log date/time string).
+
+    Tries ``diff_names(since, head)`` first when ``since`` resolves as a revision.
+    Falls back to ``git log --since=<since> --name-only --format= -z <head>``.
+    Returns ``None`` when git could not read the history.
+    """
+    diffed = diff_names(since, head, cwd=cwd, _run=_run)
+    if diffed is not None:
+        return diffed
+    result = run_argv(
+        [
+            "git",
+            "-c",
+            "core.quotePath=false",
+            "log",
+            f"--since={since}",
+            "--name-only",
+            "--format=",
+            "-z",
+            head,
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    if not result.ok:
+        return None
+    return sorted({name for name in result.stdout.split("\0") if name})
+
+
 def _kw(_run):
     """Pass ``_run`` through only when provided (so the default subprocess is used otherwise)."""
     return {"_run": _run} if _run is not None else {}

@@ -1442,7 +1442,8 @@ keel morning .keel/project.yaml --live --approve-scope filesystem --operator "$U
 Render the standalone session-wrap preflight contract.
 
 ```
-keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN] [--target TEXT]
+keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN]
+          [--implementer-file PATH]... [--target TEXT]
           [--dry-run] [--live] [--approve-scope SCOPE] [--operator ID]
           [--consent-mode MODE] [--json]
 ```
@@ -1453,6 +1454,7 @@ keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN] [--target TEXT]
 | `TITLE` | optional positional string | `None` | PR title override; when present it becomes the contract target. |
 | `--root DIR` | path | `.` | Root for git and capability checks. |
 | `--since WHEN` | free-form label or timestamp | `None` | Session start label — opaque to core, same semantics as `morning --since`. |
+| `--implementer-file PATH` | repo-relative path, repeatable | none | File touched by the implementer; checked against staged modified/deleted files before commit to warn on contamination. |
 | `--target TEXT` | string | `None` | Extra target text. |
 | `--dry-run` / `--live` | shared | dry | Mutually exclusive. |
 | `--approve-scope` / `--operator` / `--consent-mode` | shared | — | Consent flags. |
@@ -1794,7 +1796,8 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
           [--loop-iteration K=SHA:pass|fail]
           [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]...
           [--effort low|medium|high] [--team PROFILE]
-          [--declared-file PATH]... [--gate-result ID=pass|fail]...
+          [--declared-file PATH]... [--implementer-file PATH]... [--since WHEN]
+          [--gate-result ID=pass|fail]...
           [--wizard] [--wizard-answer KEY=VALUE]... [--json]
 ```
 
@@ -1830,6 +1833,8 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--role` / `--delegate` / `--review-delegate` (repeatable) | shared | — | Per-run overrides of `knobs.team`; shape `assignment` and `review_merge_contract.reviewers.slots`. |
 | `--effort` / `--team` | shared staffing flags | seat, then bench | See [Staffing a batch](#staffing-a-batch---team---effort-and-the-difficulty-bench); pass the same values to `evidence-verify` and `merge`. |
 | `--declared-file PATH` | repo-relative path, repeatable | none | The implementer's declared in-scope files: recorded in the `ship_run` ledger record for `keel scope-verify`'s branch-contamination check, and used (before the diff) to retrieve relevant learnings. |
+| `--implementer-file PATH` | repo-relative path, repeatable | none | File touched by the implementer; checked against staged modified/deleted files before commit to warn on contamination. |
+| `--since WHEN` | commit, ref, or git log date | `None` | Reference point to compare staged changes against when checking contamination if `--implementer-file` is not provided. |
 | `--gate-result ID=pass\|fail` | repeatable | none | Record the verdict of a gate this command cannot execute (an `agentic` gate the agent dispatched). Naming a gate keel executed, or one not in the plan, exits 1. See [`cli.md`](cli.md). |
 | `--profile` | `standard` \| `compound` | `standard` | Workflow profile in the contract. |
 | `--compound` | flag | off | Alias for `--profile compound`. |

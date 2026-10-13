@@ -126,5 +126,66 @@ class TestDeclaredFilesLedgerRoundTrip(unittest.TestCase):
         self.assertIsNone(ledger.declared_files_for_record({"declared": {"files": "x"}}))
 
 
+class TestStagedContamination(unittest.TestCase):
+    def test_empty_or_none_staged_returns_no_contamination(self):
+        self.assertEqual(
+            scope.check_staged_contamination(None, implementer_files=["a.py"]),
+            {
+                "has_contamination": False,
+                "suspect_paths": [],
+                "warning": None,
+                "comparison_source": "none",
+            },
+        )
+        self.assertEqual(
+            scope.check_staged_contamination([], implementer_files=["a.py"]),
+            {
+                "has_contamination": False,
+                "suspect_paths": [],
+                "warning": None,
+                "comparison_source": "none",
+            },
+        )
+
+    def test_no_baseline_returns_no_contamination(self):
+        self.assertEqual(
+            scope.check_staged_contamination(["a.py"]),
+            {
+                "has_contamination": False,
+                "suspect_paths": [],
+                "warning": None,
+                "comparison_source": "none",
+            },
+        )
+
+    def test_clean_against_implementer_files(self):
+        res = scope.check_staged_contamination(["a.py"], implementer_files=["a.py", "b.py"])
+        self.assertFalse(res["has_contamination"])
+        self.assertEqual(res["suspect_paths"], [])
+        self.assertIsNone(res["warning"])
+        self.assertEqual(res["comparison_source"], "implementer-files")
+
+    def test_contaminated_against_implementer_files(self):
+        res = scope.check_staged_contamination(
+            ["a.py", "deleted_other.py", "modified_other.py"], implementer_files=["a.py"]
+        )
+        self.assertTrue(res["has_contamination"])
+        self.assertEqual(res["suspect_paths"], ["deleted_other.py", "modified_other.py"])
+        self.assertIn("deleted_other.py, modified_other.py", res["warning"])
+        self.assertEqual(res["comparison_source"], "implementer-files")
+
+    def test_clean_against_files_since_start(self):
+        res = scope.check_staged_contamination(["a.py"], files_since_start=["a.py"])
+        self.assertFalse(res["has_contamination"])
+        self.assertEqual(res["comparison_source"], "files-since-start")
+
+    def test_contaminated_against_files_since_start(self):
+        res = scope.check_staged_contamination(["a.py", "surplus.py"], files_since_start=["a.py"])
+        self.assertTrue(res["has_contamination"])
+        self.assertEqual(res["suspect_paths"], ["surplus.py"])
+        self.assertIn("surplus.py", res["warning"])
+        self.assertEqual(res["comparison_source"], "files-since-start")
+
+
 if __name__ == "__main__":
     unittest.main()

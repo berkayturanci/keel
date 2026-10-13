@@ -45,7 +45,10 @@ from keel.swarm_runtime import (
     create_swarm_worktree,
     default_runner,
     execute_cluster_worker,
+    remove_review_worktree,
     remove_swarm_worktree,
+    review_checkout,
+    review_worktree_path,
     run_swarm_orchestration,
 )
 
@@ -3321,6 +3324,80 @@ class ALiveWorkerLeavesWhatLandingNeeds(unittest.TestCase):
         self.assertEqual((res.ok, res.output), (False, "422"))
         self.assertEqual([c.args[0] for c in made.call_args_list], ["agent:codex"])
         add.assert_called_once()
+
+
+class ReviewCheckoutTests(unittest.TestCase):
+    def test_review_worktree_path(self):
+        self.assertEqual(
+            review_worktree_path("seat1"),
+            Path(".keel/worktrees/review-seat1"),
+        )
+        self.assertEqual(
+            review_worktree_path("seat1", root="/tmp/repo"),
+            Path("/tmp/repo/.keel/worktrees/review-seat1"),
+        )
+
+    def test_remove_review_worktree_alias(self):
+        self.assertIs(remove_review_worktree, remove_swarm_worktree)
+
+    def test_review_checkout_creates_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = review_worktree_path("test-seat", root=root)
+            calls = []
+
+            def fake_runner(cmd, cwd):
+                calls.append((list(cmd), cwd))
+                if "add" in cmd:
+                    target.mkdir(parents=True, exist_ok=True)
+                return CommandResult(True, 0, "")
+
+            with review_checkout("head123", name="test-seat", root=root, runner=fake_runner) as wt:
+                self.assertEqual(wt, target)
+                self.assertTrue(wt.exists())
+                self.assertIn(
+                    ["git", "worktree", "add", "--detach", str(target), "head123"],
+                    [c[0] for c in calls],
+                )
+
+            # Afterwards, remove_swarm_worktree was invoked
+            self.assertIn(
+                ["git", "worktree", "remove", "--force", str(target)],
+                [c[0] for c in calls],
+            )
+            self.assertFalse(target.exists())
+
+    def test_review_checkout_cleans_preexisting_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = review_worktree_path("test-seat", root=root)
+            target.mkdir(parents=True, exist_ok=True)
+            calls = []
+
+            def fake_runner(cmd, cwd):
+                calls.append((list(cmd), cwd))
+                if "add" in cmd:
+                    target.mkdir(parents=True, exist_ok=True)
+                return CommandResult(True, 0, "")
+
+            with review_checkout("head123", name="test-seat", root=root, runner=fake_runner) as wt:
+                self.assertEqual(wt, target)
+
+            remove_calls = [c[0] for c in calls if "remove" in c[0]]
+            self.assertEqual(len(remove_calls), 2)
+
+    def test_review_checkout_raises_when_add_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def failing_runner(cmd, cwd):
+                return CommandResult(False, 128, "fatal: not a valid object name: head123")
+
+            with self.assertRaises(RuntimeError) as cm:
+                with review_checkout("head123", name="test-seat", root=root, runner=failing_runner):
+                    pass
+            self.assertIn("could not create review checkout", str(cm.exception))
+            self.assertIn("fatal: not a valid object name: head123", str(cm.exception))
 
 
 if __name__ == "__main__":
