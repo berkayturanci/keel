@@ -336,11 +336,13 @@ session a clean slate that can re-merge or duplicate comments. The decision is p
 ([`keel.checkpoint.covering_checkpoint`](../../src/keel/checkpoint.py)); the CLI only reads
 the checkpoint file. The result is reported in the `checkpoint_gate` block of the payload:
 
-- **`covered`** — a current checkpoint for this run reached `s10` (its `current_step` is at
-  or past `s10`, or `s10` is in `completed_steps`). The merge proceeds.
-- **`missing`** — no checkpoint, or the checkpoint is for a different run. Refused with
-  `no current checkpoint for run <id> at step s10`.
-- **`stale-step`** — a checkpoint for this run that has not reached `s10`. Refused.
+- **`covered`** — a current checkpoint reached `s10` (its `current_step` is at
+  or past `s10`, or `s10` is in `completed_steps`). When retrying a merge on a PR whose
+  previous run reached `s10`, `keel merge` accepts the PR's latest checkpoint at `s10` across
+  run IDs and carries it forward to the new run upon landing (#1507). The merge proceeds.
+- **`missing`** — no checkpoint, or the checkpoint is for a different run and PR. Refused with
+  `no current checkpoint for run <id> at step s10`, naming the `keel checkpoint ... --write` command.
+- **`stale-step`** — a checkpoint that has not reached `s10`. Refused naming the advancing command.
 
 The run-id is the gates-SHA `run_id` by default; override it with `--run-id`.
 
@@ -354,10 +356,12 @@ the gate for callers that legitimately do not checkpoint. It **requires a named
 `--operator`** and records the bypass in the merge payload
 (`checkpoint_gate: {status: "bypassed", operator}`).
 
-**After the merge lands, the checkpoint records it (#1448).** Once GitHub has merged the
-head, `keel merge` reads the run's checkpoint and, when it belongs to the same run-id,
-writes it back through the pure `keel.checkpoint.mark_merged`:
+**After the merge lands, the checkpoint records it (#1448, #1507).** Once GitHub has merged the
+head, `keel merge` reads the run's checkpoint and, when it belongs to the same run-id (or is
+carried forward from a previous run covering this PR at `s10`, #1507), writes it back through
+the pure `keel.checkpoint.mark_merged`:
 
+- `run_id` is updated to the current merge run ID
 - `state.merge` becomes `merged`
 - `s10` is added to `completed_steps`
 - `current_step` moves to `s11` (a run already past `s10` keeps its step)
@@ -368,11 +372,12 @@ capture and close run. Before #1448, every merged run stayed at `s10 / not-start
 long as its checkpoint existed.
 
 This write happens whether the gate above was enforced, advisory or bypassed: it touches only
-a checkpoint that names this run. It is **fail-soft**: a missing, foreign, unreadable or
-unwritable checkpoint never turns a landed merge into a failure. The outcome is reported in
-the payload:
+a checkpoint that names this run or was carried forward for this PR. It is **fail-soft**: a
+missing, foreign, unreadable or unwritable checkpoint never turns a landed merge into a failure.
+The outcome is reported in the payload:
 
-- `checkpoint_update: {updated: true, run_id, current_step}` — the checkpoint was rewritten.
+- `checkpoint_update: {updated: true, run_id, current_step[, carried_from]}` — the checkpoint
+  was rewritten (and adopted if carried forward).
 - `checkpoint_update: {updated: false, reason}` — nothing was written. The reason is
   `no run-id`, `no checkpoint for run <id>`, or `checkpoint not updated: <error>`.
 

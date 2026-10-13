@@ -355,12 +355,76 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertFalse(result["covered"])
         self.assertIn("checkpoint is for run RUN-OTHER", result["reason"])
 
+    def test_missing_names_resolution_command(self):
+        result = checkpoint.covering_checkpoint(None, "RUN-149", "s10", config_path="p.yaml")
+        self.assertEqual(result["status"], "missing")
+        self.assertIn(
+            "record one with: keel checkpoint p.yaml --write --run-id RUN-149 --step s10",
+            result["reason"],
+        )
+
+        record = _record(run_id="RUN-OTHER", current_step="s10", pull_request=999)
+        res_other = checkpoint.covering_checkpoint(
+            record, "RUN-149", "s10", pr_number=170, config_path="p.yaml", root="/custom"
+        )
+        self.assertEqual(res_other["status"], "missing")
+        self.assertIn(
+            "record one with: keel checkpoint p.yaml --root /custom --write "
+            "--run-id RUN-149 --step s10",
+            res_other["reason"],
+        )
+
     def test_stale_step_when_run_has_not_reached_the_expected_step(self):
         record = _record(current_step="s6")
-        result = checkpoint.covering_checkpoint(record, "RUN-149", "s10")
+        result = checkpoint.covering_checkpoint(record, "RUN-149", "s10", config_path="p.yaml")
         self.assertEqual(result["status"], "stale-step")
         self.assertFalse(result["covered"])
         self.assertIn("run is at s6", result["reason"])
+        self.assertIn(
+            "advance it with: keel checkpoint p.yaml --write --run-id RUN-149 --step s10",
+            result["reason"],
+        )
+
+    def test_covered_when_pr_matches_even_if_run_id_differs(self):
+        record = _record(run_id="RUN-1", pull_request=170, current_step="s10")
+        result = checkpoint.covering_checkpoint(record, "RUN-2", "s10", pr_number=170)
+        self.assertEqual(result["status"], "covered")
+        self.assertTrue(result["covered"])
+        self.assertEqual(result["carried_from_run_id"], "RUN-1")
+        self.assertIn("checkpoint for PR #170 (run RUN-1) reached step s10", result["reason"])
+
+    def test_covered_when_accepted_run_ids_matches(self):
+        record = _record(run_id="RUN-1", current_step="s10")
+        result = checkpoint.covering_checkpoint(record, "RUN-2", "s10", accepted_run_ids=["RUN-1"])
+        self.assertEqual(result["status"], "covered")
+        self.assertTrue(result["covered"])
+        self.assertEqual(result["carried_from_run_id"], "RUN-1")
+        self.assertIn("checkpoint for run RUN-1 reached step s10", result["reason"])
+
+    def test_stale_step_with_pr_match_names_resolution_command(self):
+        record = _record(run_id="RUN-1", pull_request=170, current_step="s6")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", pr_number=170, config_path="proj.yaml", root="/custom"
+        )
+        self.assertEqual(result["status"], "stale-step")
+        self.assertFalse(result["covered"])
+        self.assertIn("checkpoint for PR #170 is at s6", result["reason"])
+        self.assertIn(
+            "advance it with: keel checkpoint proj.yaml --root /custom --write "
+            "--run-id RUN-1 --step s10",
+            result["reason"],
+        )
+
+    def test_stale_step_with_accepted_run_id_names_resolution_command(self):
+        record = _record(run_id="RUN-1", current_step="s6")
+        result = checkpoint.covering_checkpoint(record, "RUN-2", "s10", accepted_run_ids=["RUN-1"])
+        self.assertEqual(result["status"], "stale-step")
+        self.assertFalse(result["covered"])
+        self.assertIn("run RUN-1 is at s6", result["reason"])
+        self.assertIn(
+            "advance it with: keel checkpoint <project.yaml> --write --run-id RUN-1 --step s10",
+            result["reason"],
+        )
 
     def test_invalid_expected_step_is_rejected(self):
         with self.assertRaisesRegex(checkpoint.CheckpointError, "backbone step id"):
@@ -381,6 +445,20 @@ class TestMarkMerged(unittest.TestCase):
         # The input is not mutated.
         self.assertEqual(record["state"]["merge"], "not-started")
         self.assertEqual(record["position"]["current_step"], "s10")
+
+    def test_mark_merged_adopts_checkpoint_when_carried_from_run_id_matches(self):
+        record = _record(run_id="RUN-OLD", current_step="s10")
+        merged = checkpoint.mark_merged(record, "RUN-NEW", carried_from_run_id="RUN-OLD")
+        self.assertIsNotNone(merged)
+        self.assertEqual(merged["run_id"], "RUN-NEW")
+        self.assertEqual(merged["state"]["merge"], "merged")
+        self.assertEqual(merged["position"]["current_step"], "s11")
+        self.assertIn("s10", merged["position"]["completed_steps"])
+
+    def test_mark_merged_rejects_when_carried_from_run_id_does_not_match(self):
+        record = _record(run_id="RUN-OLD", current_step="s10")
+        merged = checkpoint.mark_merged(record, "RUN-NEW", carried_from_run_id="RUN-MISMATCH")
+        self.assertIsNone(merged)
 
     def test_a_run_already_past_s10_keeps_its_step(self):
         merged = checkpoint.mark_merged(_record(current_step="s12"), "RUN-149")

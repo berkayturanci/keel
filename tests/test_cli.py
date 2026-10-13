@@ -2872,6 +2872,96 @@ class TestShip(unittest.TestCase):
         self.assertIs(records[0]["capture"]["not_run"], True)
         self.assertFalse(ledger._is_merged_ship_run(records[0]))
 
+    def test_duplicate_capture_marker_skipped_with_resolution_command(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            head = "d" * 40
+            # First ship run records deferred capture (which creates a capture marker).
+            rc_first, _, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    d,
+                    "--live",
+                    "--append-ledger",
+                    "--run-id",
+                    "RUN-1",
+                    "--pull-request",
+                    "940",
+                    "--head-sha",
+                    head,
+                    "--capture-status",
+                    "deferred",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+            # Second ship run on the same head without not-run is skipped
+            # as duplicate-capture-marker.
+            rc_second_json, out_json, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    d,
+                    "--live",
+                    "--append-ledger",
+                    "--json",
+                    "--run-id",
+                    "RUN-2",
+                    "--pull-request",
+                    "940",
+                    "--head-sha",
+                    head,
+                    "--capture-status",
+                    "deferred",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+            # Human-readable output without --json includes the resolution command.
+            rc_second_human, out_human, _ = run(
+                [
+                    "ship",
+                    config,
+                    "--root",
+                    d,
+                    "--live",
+                    "--append-ledger",
+                    "--run-id",
+                    "RUN-2",
+                    "--pull-request",
+                    "940",
+                    "--head-sha",
+                    head,
+                    "--capture-status",
+                    "deferred",
+                    "--approve-scope",
+                    "filesystem,git,github",
+                    "--operator",
+                    "tester",
+                ]
+            )
+
+        self.assertEqual(rc_first, 0)
+        self.assertEqual(rc_second_json, 0)
+        self.assertEqual(rc_second_human, 0)
+        ledger_result = json.loads(out_json)["result"]["run_ledger"]
+        self.assertEqual(ledger_result["skipped"], "duplicate-capture-marker")
+        self.assertEqual(ledger_result["existing_run_id"], "RUN-1")
+        self.assertIn("--capture-status not-run", ledger_result["resolution"])
+        self.assertIn("--run-id <new-run-id>", ledger_result["resolution"])
+        self.assertIn("skipped — this head already has a capture marker (run RUN-1)", out_human)
+        self.assertIn("record a new gates-pass with: keel ship", out_human)
+        self.assertIn("--capture-status not-run", out_human)
+
     def test_a_missing_marker_is_still_reported_without_the_declaration(self):
         # The counterweight to the test above. `not_run` must earn its exemption by
         # being declared: inferring "never attempted" from a null marker would
@@ -11587,7 +11677,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
 class TestMergeCheckpointGate(unittest.TestCase):
     """The s10 checkpoint gate in `keel merge` (audit GAP-13)."""
 
-    def _run_merge(self, *, config, root, extra=(), run_id="RUN-1"):
+    def _run_merge(self, *, config, root, extra=(), run_id="RUN-1", matched=True):
         fake_report = _merge_capability_report()
         with (
             patch("keel.cli.runtime.detect", return_value=fake_report),
@@ -11611,7 +11701,10 @@ class TestMergeCheckpointGate(unittest.TestCase):
                 },
             ),
             patch("keel.cli.ledger.read_records", return_value=[]),
-            patch("keel.cli.ledger.gates_pass_for_head", return_value=(True, {"run_id": run_id})),
+            patch(
+                "keel.cli.ledger.gates_pass_for_head",
+                return_value=(matched, {"run_id": run_id} if matched else None),
+            ),
             patch(
                 "keel.cli._merge_drift_report",
                 return_value={"status": "clean", "reason": "no overtaking merge"},
@@ -11757,6 +11850,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertFalse(data["merged"])
         self.assertEqual(data["checkpoint_gate"]["status"], "missing")
         self.assertIn("no current checkpoint for run RUN-1 at step s10", data["reason"])
+        self.assertIn("record one with: keel checkpoint", data["reason"])
 
     def test_merge_refused_when_checkpoint_is_stale_step(self):
         config = _write_config_with_checkpoint("'true'")
@@ -11768,6 +11862,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertFalse(data["merged"])
         self.assertEqual(data["checkpoint_gate"]["status"], "stale-step")
         self.assertIn("run is at s6", data["reason"])
+        self.assertIn("advance it with: keel checkpoint", data["reason"])
 
     def test_merge_refused_when_no_run_id_available(self):
         config = _write_config_with_checkpoint("'true'")
@@ -11777,6 +11872,55 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(data["checkpoint_gate"]["status"], "missing")
         self.assertIn("no run-id is available", data["reason"])
+        self.assertIn("record a gates-pass", data["reason"])
+
+    def test_retry_merge_accepts_prior_run_checkpoint_for_pr_at_s10(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-PREV", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 0)
+        self.assertTrue(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+        self.assertEqual(data["checkpoint_gate"]["carried_from_run_id"], "RUN-PREV")
+        self.assertEqual(
+            data["checkpoint_update"],
+            {
+                "updated": True,
+                "run_id": "RUN-RETRY",
+                "current_step": "s11",
+                "carried_from": "RUN-PREV",
+            },
+        )
+        self.assertEqual(record["run_id"], "RUN-RETRY")
+        self.assertEqual(record["state"]["merge"], "merged")
+        self.assertEqual(record["position"]["current_step"], "s11")
+        self.assertIn("s10", record["position"]["completed_steps"])
+
+    def test_retry_merge_refused_when_prior_run_checkpoint_stale_step(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-PREV", step="s6")
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "stale-step")
+        self.assertIn("checkpoint for PR #123 is at s6", data["reason"])
+        self.assertIn("advance it with: keel checkpoint", data["reason"])
+
+    def test_merge_refused_when_no_gates_pass_for_head_names_resolution_command(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self._run_merge(config=config, root=d, matched=False)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertIn("no gates-pass recorded for the current head abc", data["reason"])
+        self.assertIn("record one with: keel ship", data["reason"])
+        self.assertIn("--capture-status not-run", data["reason"])
 
     def test_explicit_run_id_overrides_gates_pass_run_id(self):
         config = _write_config_with_checkpoint("'true'")

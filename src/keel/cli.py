@@ -1068,6 +1068,7 @@ def _checkpoint_gate(
     *,
     run_id: str | None,
     operator: str | None,
+    gates_run_id: str | None = None,
 ) -> tuple[dict[str, object], str | None]:
     """Gate the merge on a covering checkpoint for the run at step s10.
 
@@ -1120,6 +1121,12 @@ def _checkpoint_gate(
         )
 
     if not run_id:
+        pr_val = getattr(args, "pr", None)
+        pr_arg = f" --pr {pr_val}" if pr_val is not None else ""
+        gates_cmd = (
+            f"keel ship {args.path} --root {args.root} --live --append-ledger "
+            f"--run-id <new-run-id> --capture-status {CAPTURE_STATUS_NOT_RUN}{pr_arg}"
+        )
         return (
             {
                 "enforced": True,
@@ -1128,12 +1135,13 @@ def _checkpoint_gate(
                 "expected_step": CHECKPOINT_MERGE_STEP,
                 "reason": (
                     "checkpointing is configured but no run-id is available "
-                    "(pass --run-id or record a gates-pass for this head)"
+                    f"(pass --run-id or record a gates-pass for this head: {gates_cmd})"
                 ),
             },
             (
                 "checkpointing is configured but no run-id is available for the "
-                "checkpoint gate; pass --run-id or use --no-checkpoint-gate"
+                f"checkpoint gate; pass --run-id, record a gates-pass ({gates_cmd}), "
+                "or use --no-checkpoint-gate"
             ),
         )
 
@@ -1145,8 +1153,16 @@ def _checkpoint_gate(
             {"enforced": True, "status": "invalid", "bypassed": False, "reason": str(exc)},
             f"invalid checkpoint: {exc}",
         )
-    coverage = checkpoint.covering_checkpoint(record, run_id, CHECKPOINT_MERGE_STEP)
-    gate_payload = {
+    coverage = checkpoint.covering_checkpoint(
+        record,
+        run_id,
+        CHECKPOINT_MERGE_STEP,
+        pr_number=getattr(args, "pr", None),
+        accepted_run_ids=(gates_run_id,) if gates_run_id else (),
+        config_path=args.path,
+        root=args.root,
+    )
+    gate_payload: dict[str, object] = {
         "enforced": True,
         "status": coverage["status"],
         "bypassed": False,
@@ -1155,15 +1171,21 @@ def _checkpoint_gate(
         "checkpoint_step": coverage["checkpoint_step"],
         "reason": coverage["reason"],
     }
+    if "carried_from_run_id" in coverage:
+        gate_payload["carried_from_run_id"] = coverage["carried_from_run_id"]
     if coverage["covered"]:
         return gate_payload, None
     return gate_payload, coverage["reason"]
 
 
 def _record_merge_in_checkpoint(
-    args: argparse.Namespace, config: cfg.ProjectConfig, run_id: str | None
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    run_id: str | None,
+    *,
+    carried_from_run_id: str | None = None,
 ) -> dict[str, object]:
-    """Write the landed merge into the run's checkpoint (#1448). Fail-soft.
+    """Write the landed merge into the run's checkpoint (#1448, #1507). Fail-soft.
 
     The thin I/O around :func:`keel.checkpoint.mark_merged`. The merge has already landed, so
     nothing here may turn it into a failure: an unreadable or unwritable checkpoint is
@@ -1173,18 +1195,25 @@ def _record_merge_in_checkpoint(
         return {"updated": False, "reason": "no run-id"}
     try:
         path = checkpoint.resolve_path(args.root, config)
-        merged = checkpoint.mark_merged(checkpoint.read_checkpoint(path), run_id)
+        merged = checkpoint.mark_merged(
+            checkpoint.read_checkpoint(path),
+            run_id,
+            carried_from_run_id=carried_from_run_id,
+        )
         if merged is None:
             return {"updated": False, "reason": f"no checkpoint for run {run_id}"}
         checkpoint.write_checkpoint(path, merged)
+        res: dict[str, object] = {
+            "updated": True,
+            "run_id": run_id,
+            "current_step": merged["position"]["current_step"],
+        }
+        if carried_from_run_id and carried_from_run_id != run_id:
+            res["carried_from"] = carried_from_run_id
+        return res
     # ValueError covers CheckpointError and a checkpoint that is not UTF-8 (UnicodeDecodeError).
     except (OSError, ValueError) as exc:
         return {"updated": False, "reason": f"checkpoint not updated: {exc}"}
-    return {
-        "updated": True,
-        "run_id": run_id,
-        "current_step": merged["position"]["current_step"],
-    }
 
 
 def _cmd_merge(args: argparse.Namespace) -> int:
@@ -1392,15 +1421,26 @@ def _cmd_merge(args: argparse.Namespace) -> int:
                 "run_id": gates_run_id,
             }
             if not matched:
+                pr_val = getattr(args, "pr", None)
+                pr_arg = f" --pr {pr_val}" if pr_val is not None else ""
+                res_cmd = (
+                    f"keel ship {args.path} --root {args.root} --live --append-ledger "
+                    f"--run-id <new-run-id> --capture-status {CAPTURE_STATUS_NOT_RUN}{pr_arg}"
+                )
                 return _finish_merge(
                     args,
                     payload,
-                    f"no gates-pass recorded for the current head {head_sha}",
+                    f"no gates-pass recorded for the current head {head_sha} "
+                    f"(record one with: {res_cmd})",
                     code=1,
                 )
 
         gate_payload, gate_error = _checkpoint_gate(
-            args, config, run_id=args.run_id or gates_run_id, operator=approval_operator
+            args,
+            config,
+            run_id=args.run_id or gates_run_id,
+            operator=approval_operator,
+            gates_run_id=gates_run_id,
         )
         payload["checkpoint_gate"] = gate_payload
         if gate_error is not None:
@@ -1426,8 +1466,14 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         landed = github.rest_json(merged) if transport == TRANSPORT_REST else None
         if isinstance(landed, dict) and isinstance(landed.get("sha"), str):
             args.merge_sha = landed["sha"]
+        carried_id = (
+            gate_payload.get("carried_from_run_id") if isinstance(gate_payload, dict) else None
+        )
         payload["checkpoint_update"] = _record_merge_in_checkpoint(
-            args, config, getattr(args, "run_id", None) or gates_run_id
+            args,
+            config,
+            getattr(args, "run_id", None) or gates_run_id,
+            carried_from_run_id=carried_id,
         )
         _autostamp(
             config,
@@ -2159,6 +2205,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             # append is the natural retry after a crash mid-s11, so it no-ops instead.
             ledger_result["skipped"] = "duplicate-capture-marker"
             ledger_result["existing_run_id"] = clash.get("run_id")
+            pr_val = getattr(args, "ledger_pr", None) or getattr(args, "pr", None)
+            pr_arg = f" --pr {pr_val}" if pr_val is not None else ""
+            res_cmd = (
+                f"keel ship {args.path} --root {args.root} --live --append-ledger "
+                f"--run-id <new-run-id> --capture-status {CAPTURE_STATUS_NOT_RUN}{pr_arg}"
+            )
+            ledger_result["resolution"] = res_cmd
 
     if args.json:
         print(
@@ -2216,10 +2269,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     print(f"  run controls  : {run_control_report['status']}")
     if args.append_ledger:
         if ledger_result.get("skipped") == "duplicate-capture-marker":
+            res_cmd = ledger_result.get("resolution")
+            res_hint = f" (record a new gates-pass with: {res_cmd})" if res_cmd else ""
             print(
                 "  ledger append : skipped — this head already has a capture marker "
                 f"(run {ledger_result['existing_run_id']}); a second one on the same "
-                "head would block capture-verify with no automated repair"
+                f"head would block capture-verify with no automated repair{res_hint}"
             )
         else:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")

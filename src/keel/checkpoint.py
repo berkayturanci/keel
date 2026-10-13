@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -337,27 +338,55 @@ def resume_plan_as_dict(
 COVERAGE_STATES = ("covered", "missing", "stale-step")
 
 
+def _resolution_checkpoint_command(
+    *,
+    step: str,
+    run_id: str,
+    config_path: str | None = None,
+    root: str | None = None,
+) -> str:
+    parts = ["keel checkpoint", config_path or "<project.yaml>"]
+    if root and root != ".":
+        parts.extend(["--root", root])
+    parts.extend(["--write", "--run-id", run_id, "--step", step])
+    return " ".join(parts)
+
+
 def covering_checkpoint(
     record: dict[str, Any] | None,
     run_id: str,
     expected_step: str,
+    *,
+    pr_number: int | None = None,
+    accepted_run_ids: Collection[str] = (),
+    config_path: str | None = None,
+    root: str | None = None,
 ) -> dict[str, Any]:
     """Decide whether a checkpoint covers ``run_id`` at ``expected_step``.
 
     Pure and deterministic — no I/O. ``record`` is the current checkpoint
     (or ``None`` when no checkpoint file exists); ``expected_step`` must be a
-    backbone step id. A run is *covered* when its checkpoint is for the same
-    ``run_id`` and the run actually progressed to ``expected_step`` (the
-    recorded ``current_step`` is at or past it, or the step is in
-    ``completed_steps``). The result distinguishes:
+    backbone step id. A run is *covered* when its checkpoint reached ``expected_step``
+    (the recorded ``current_step`` is at or past it, or the step is in
+    ``completed_steps``) and either:
 
-    * ``covered`` — a current checkpoint for this run reached ``expected_step``;
-    * ``missing`` — no checkpoint, or a checkpoint for a different run;
-    * ``stale-step`` — a checkpoint for this run that has not reached the step.
+    * the checkpoint is for the same ``run_id``;
+    * or the checkpoint is for the same pull request (``pr_number``) or an accepted
+      run id (such as a second merge attempt accepting the PR's latest gates run
+      at s10, carrying the checkpoint forward — #1507).
+
+    The result distinguishes:
+
+    * ``covered`` — a current checkpoint reached ``expected_step``;
+    * ``missing`` — no checkpoint, or a checkpoint for a different run / PR;
+    * ``stale-step`` — a checkpoint that has not reached the step.
     """
     if expected_step not in STEP_IDS:
         raise CheckpointError("expected_step must be a backbone step id")
     expected_index = STEP_IDS.index(expected_step)
+    res_cmd = _resolution_checkpoint_command(
+        step=expected_step, run_id=run_id, config_path=config_path, root=root
+    )
     if record is None:
         return {
             "status": "missing",
@@ -366,45 +395,94 @@ def covering_checkpoint(
             "expected_step": expected_step,
             "checkpoint_run_id": None,
             "checkpoint_step": None,
-            "reason": f"no current checkpoint for run {run_id} at step {expected_step}",
+            "reason": (
+                f"no current checkpoint for run {run_id} at step {expected_step} "
+                f"(record one with: {res_cmd})"
+            ),
         }
     validate_checkpoint(record)
     checkpoint_run_id = record.get("run_id")
     position = record["position"]
     current_step = position["current_step"]
     completed = position.get("completed_steps", [])
+    raw_identifiers = record.get("identifiers")
+    identifiers = raw_identifiers if isinstance(raw_identifiers, dict) else {}
+    checkpoint_pr = identifiers.get("pull_request")
     base = {
         "run_id": run_id,
         "expected_step": expected_step,
         "checkpoint_run_id": checkpoint_run_id,
         "checkpoint_step": current_step,
     }
-    if checkpoint_run_id != run_id:
-        return {
-            **base,
-            "status": "missing",
-            "covered": False,
-            "reason": (
-                f"no current checkpoint for run {run_id} at step {expected_step} "
-                f"(checkpoint is for run {checkpoint_run_id})"
-            ),
-        }
     reached = expected_step in completed or STEP_IDS.index(current_step) >= expected_index
-    if not reached:
+
+    if checkpoint_run_id == run_id:
+        if not reached:
+            return {
+                **base,
+                "status": "stale-step",
+                "covered": False,
+                "reason": (
+                    f"no current checkpoint for run {run_id} at step {expected_step} "
+                    f"(run is at {current_step}; advance it with: {res_cmd})"
+                ),
+            }
         return {
             **base,
-            "status": "stale-step",
-            "covered": False,
-            "reason": (
-                f"no current checkpoint for run {run_id} at step {expected_step} "
-                f"(run is at {current_step})"
-            ),
+            "status": "covered",
+            "covered": True,
+            "reason": f"checkpoint for run {run_id} reached step {expected_step}",
         }
+
+    pr_matches = pr_number is not None and checkpoint_pr == pr_number
+    id_matches = bool(checkpoint_run_id and checkpoint_run_id in accepted_run_ids)
+    if pr_matches or id_matches:
+        if not reached:
+            advance_run_id = checkpoint_run_id or run_id
+            advance_cmd = _resolution_checkpoint_command(
+                step=expected_step,
+                run_id=advance_run_id,
+                config_path=config_path,
+                root=root,
+            )
+            detail = (
+                f"checkpoint for PR #{checkpoint_pr} is at {current_step}"
+                if pr_matches
+                else f"run {checkpoint_run_id} is at {current_step}"
+            )
+            return {
+                **base,
+                "status": "stale-step",
+                "covered": False,
+                "reason": (
+                    f"no current checkpoint for run {run_id} at step {expected_step} "
+                    f"({detail}; advance it with: {advance_cmd})"
+                ),
+            }
+        reason = (
+            (
+                f"checkpoint for PR #{checkpoint_pr} (run {checkpoint_run_id}) "
+                f"reached step {expected_step}"
+            )
+            if pr_matches
+            else f"checkpoint for run {checkpoint_run_id} reached step {expected_step}"
+        )
+        return {
+            **base,
+            "status": "covered",
+            "covered": True,
+            "carried_from_run_id": checkpoint_run_id,
+            "reason": reason,
+        }
+
     return {
         **base,
-        "status": "covered",
-        "covered": True,
-        "reason": f"checkpoint for run {run_id} reached step {expected_step}",
+        "status": "missing",
+        "covered": False,
+        "reason": (
+            f"no current checkpoint for run {run_id} at step {expected_step} "
+            f"(checkpoint is for run {checkpoint_run_id}; record one with: {res_cmd})"
+        ),
     }
 
 
@@ -412,17 +490,27 @@ def covering_checkpoint(
 MERGE_STEP = "s10"
 
 
-def mark_merged(record: dict[str, Any] | None, run_id: str) -> dict[str, Any] | None:
+def mark_merged(
+    record: dict[str, Any] | None,
+    run_id: str,
+    *,
+    carried_from_run_id: str | None = None,
+) -> dict[str, Any] | None:
     """The checkpoint after ``run_id``'s merge landed, or ``None`` when it is not that run's.
 
     Pure. ``keel merge`` refuses unless a checkpoint covers the run at s10, and once the merge
     lands that checkpoint has to say so: left alone it reads ``merge: not-started`` at s10, and
     ``keel status`` calls a merged run *waiting on the merge window* for as long as it exists
-    (#1448). The merged record says ``merge: merged``, counts s10 as completed and moves the
+    (#1448). When ``carried_from_run_id`` is given, a covering checkpoint from a previous run
+    (such as a retried merge carrying s10 forward) is adopted and stamped with the new ``run_id``
+    (#1507). The merged record says ``merge: merged``, counts s10 as completed and moves the
     run to the next step, and clears the stop that held it; a run already past s10 keeps its
     position.
     """
-    if record is None or record.get("run_id") != run_id:
+    if record is None:
+        return None
+    rec_run_id = record.get("run_id")
+    if rec_run_id != run_id and (carried_from_run_id is None or rec_run_id != carried_from_run_id):
         return None
     validate_checkpoint(record)
     position = record["position"]
@@ -435,6 +523,7 @@ def mark_merged(record: dict[str, Any] | None, run_id: str) -> dict[str, Any] | 
         current = STEP_IDS[merge_index + 1]
     merged = {
         **record,
+        "run_id": run_id,
         "position": {**position, "current_step": current, "completed_steps": completed},
         # The stop that held the run at s10 is over once the merge lands; left in place, it
         # would keep `keel status` reading the run as interrupted or waiting on it.
