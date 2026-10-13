@@ -20,9 +20,11 @@ class TestOvertakenIsTheSignal(unittest.TestCase):
         )
         self.assertEqual(report["status"], "drift")
         self.assertEqual(report["overtaken"], {"src/keel/github.py": [550]})
+        # The overtaking PR must be named: "some file drifted" is not actionable.
         self.assertIn("#550", report["reason"])
 
     def test_an_overtaking_pr_that_touched_other_files_is_not_drift(self):
+        # Another PR merged in the window, but nowhere near this merge's files.
         report = mv.verify_merge(
             landed=["website/index.html"],
             overtaken={"src/keel/github.py": [550]},
@@ -61,6 +63,7 @@ class TestScopeIsTheSecondarySignal(unittest.TestCase):
         self.assertEqual(report["unexpected"], ["b.py"])
 
     def test_overtaking_outranks_scope(self):
+        # Both true; the operator needs the revert-shaped one first.
         report = mv.verify_merge(
             landed=["a.py", "b.py"], overtaken={"a.py": [550]}, intended=["a.py"]
         )
@@ -70,6 +73,8 @@ class TestScopeIsTheSecondarySignal(unittest.TestCase):
         self.assertEqual(mv.verify_merge(["a.py"], {}, None)["status"], "clean")
 
     def test_a_merge_narrower_than_the_pr_is_not_flagged(self):
+        # An identical change already on the base makes a file's diff empty; that
+        # is ordinary, not a revert.
         self.assertEqual(mv.verify_merge(["a.py"], {}, ["a.py", "b.py"])["status"], "clean")
 
 
@@ -80,6 +85,7 @@ class TestUnknownIsNotClean(unittest.TestCase):
         self.assertFalse(mv.is_drift(report))
 
     def test_unknown_never_reads_as_a_pass(self):
+        # Failing to look is not evidence that nothing drifted (#675's rule).
         self.assertNotEqual(mv.verify_merge(None)["status"], "clean")
 
 
@@ -124,8 +130,6 @@ class TestReportSurface(unittest.TestCase):
 
 class TestDiffParser(unittest.TestCase):
     def test_empty_diff_returns_empty_mapping(self):
-        self.assertEqual(mv.extract_added_lines_by_file(""), {})
-        self.assertEqual(mv.extract_added_lines_by_file(None), {})
         self.assertEqual(mv.parse_diff_by_file(""), {})
         self.assertIsNone(mv.parse_diff_by_file(None))
 
@@ -145,10 +149,6 @@ class TestDiffParser(unittest.TestCase):
         self.assertEqual(parsed["src/a.py"].added_lines, ("added 1", "added 2"))
         self.assertEqual(parsed["src/a.py"].deleted_lines, ("removed",))
         self.assertFalse(parsed["src/a.py"].is_deleted)
-        self.assertEqual(
-            mv.extract_added_lines_by_file(diff),
-            {"src/a.py": ["added 1", "added 2"]},
-        )
 
     def test_new_file_mode(self):
         diff = (
@@ -181,7 +181,6 @@ class TestDiffParser(unittest.TestCase):
         self.assertEqual(parsed["old.py"].added_lines, ())
         self.assertEqual(parsed["old.py"].deleted_lines, ("old line 1", "old line 2"))
         self.assertTrue(parsed["old.py"].is_deleted)
-        self.assertEqual(mv.extract_added_lines_by_file(diff), {"old.py": []})
 
     def test_multiple_files_and_multiple_hunks(self):
         diff = (
@@ -201,8 +200,10 @@ class TestDiffParser(unittest.TestCase):
             " ctx3\n"
             "+line b1\n"
         )
+        parsed = mv.parse_diff_by_file(diff)
+        self.assertIsNotNone(parsed)
         self.assertEqual(
-            mv.extract_added_lines_by_file(diff),
+            {p: list(fd.added_lines) for p, fd in parsed.items()},
             {"a.py": ["line a1", "line a2"], "b.py": ["line b1"]},
         )
 
@@ -224,8 +225,10 @@ class TestDiffParser(unittest.TestCase):
             "@@ -0,0 +1,1 @@\n"
             "+no prefix line\n"
         )
+        parsed = mv.parse_diff_by_file(diff)
+        self.assertIsNotNone(parsed)
         self.assertEqual(
-            mv.extract_added_lines_by_file(diff),
+            {p: list(fd.added_lines) for p, fd in parsed.items()},
             {
                 "path with spaces.py": ["spaced line"],
                 "alt.py": ["alt prefix line"],
@@ -247,17 +250,24 @@ class TestDiffParser(unittest.TestCase):
         self.assertIn("a/foo.py", parsed)
 
     def test_quoted_path_with_c_octal_escapes(self):
-        # Git escapes tabs as \t and octal escapes like \303\251 for non-ASCII
+        # Git escapes tabs as \t and octal escapes like \303\251 for non-ASCII ('é')
         diff = (
             'diff --git "a/tab\\tname.py" "b/tab\\tname.py"\n'
             '--- "a/tab\\tname.py"\n'
             '+++ "b/tab\\tname.py"\n'
             "@@ -0,0 +1,1 @@\n"
             "+tab line\n"
+            'diff --git "a/\\303\\251.py" "b/\\303\\251.py"\n'
+            '--- "a/\\303\\251.py"\n'
+            '+++ "b/\\303\\251.py"\n'
+            "@@ -0,0 +1,1 @@\n"
+            "+accented line\n"
         )
         parsed = mv.parse_diff_by_file(diff)
         self.assertIsNotNone(parsed)
         self.assertIn("tab\tname.py", parsed)
+        self.assertIn("é.py", parsed)
+        self.assertEqual(parsed["é.py"].added_lines, ("accented line",))
 
     def test_malformed_quoted_path_fallback(self):
         # A quoted path with invalid escape falls back safely
@@ -274,7 +284,6 @@ class TestDiffParser(unittest.TestCase):
     def test_truncated_diff_ending_after_plus_header_is_rejected(self):
         diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
         self.assertIsNone(mv.parse_diff_by_file(diff))
-        self.assertEqual(mv.extract_added_lines_by_file(diff), {})
 
     def test_truncated_diff_incomplete_hunk_is_rejected(self):
         # Header promises 2 new lines (+1,2), but only 1 line provided before EOF
@@ -328,26 +337,32 @@ class TestDiffParser(unittest.TestCase):
 
 class TestCheckLineSurvival(unittest.TestCase):
     def test_empty_file_content_loses_all_non_blank_lines(self):
-        lost_count, lost = mv.check_line_survival(["line 1", "  ", "line 2"], "")
+        lost_count, lost = mv.check_multiset_survival(
+            ["line 1", "  ", "line 2"], (), "line 1\nline 2\n", ""
+        )
         self.assertEqual(lost_count, 2)
         self.assertEqual(lost, ["line 1", "line 2"])
 
     def test_blank_lines_are_ignored(self):
-        lost_count, lost = mv.check_line_survival(["", "   "], "content")
+        lost_count, lost = mv.check_multiset_survival(["", "   "], (), "", "content")
         self.assertEqual(lost_count, 0)
         self.assertEqual(lost, [])
 
     def test_all_added_lines_survived_exact(self):
-        lost_count, lost = mv.check_line_survival(
+        lost_count, lost = mv.check_multiset_survival(
             ["line 1", "line 2"],
+            (),
+            "line 1\nline 2\n",
             "header\nline 1\nmiddle\nline 2\ntrailer\n",
         )
         self.assertEqual(lost_count, 0)
         self.assertEqual(lost, [])
 
     def test_lost_lines_detected(self):
-        lost_count, lost = mv.check_line_survival(
+        lost_count, lost = mv.check_multiset_survival(
             ["line 1", "reverted line 2"],
+            (),
+            "line 1\nreverted line 2\n",
             "line 1\nother stuff\n",
         )
         self.assertEqual(lost_count, 1)
@@ -392,7 +407,7 @@ class TestCheckLineSurvival(unittest.TestCase):
         lost_count, lost = mv.check_multiset_survival(
             added_lines=[],
             deleted_lines=["old line"],
-            landed_content=None,
+            landed_content=mv.FILE_ABSENT,
             merge_content="old line\n",
             is_deleted=True,
         )
@@ -402,7 +417,7 @@ class TestCheckLineSurvival(unittest.TestCase):
         lost_count, lost = mv.check_multiset_survival(
             added_lines=[],
             deleted_lines=["old line"],
-            landed_content=None,
+            landed_content=mv.FILE_ABSENT,
             merge_content=mv.FILE_ABSENT,
             is_deleted=True,
         )
@@ -413,7 +428,7 @@ class TestCheckLineSurvival(unittest.TestCase):
         lost_count, lost = mv.check_multiset_survival(
             added_lines=[],
             deleted_lines=["old line"],
-            landed_content=None,
+            landed_content=mv.FILE_ABSENT,
             merge_content=None,
             is_deleted=True,
         )
@@ -513,6 +528,8 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         )
         self.assertEqual(report["status"], "clean")
         self.assertEqual(report["reason"], "clean (3 shared files, 0 lost lines)")
+        self.assertEqual(report["overtaken"], {})
+        self.assertEqual(report["shared_files"], ["CHANGELOG.md", "docs/guide.md", "src/shared.py"])
 
     def test_shared_file_with_lost_lines_is_drift(self):
         diff = (
@@ -566,6 +583,7 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertEqual(report["status"], "drift")
         # Only #551 was reverted!
         self.assertEqual(report["overtaken"], {"a.py": [551]})
+        self.assertEqual(report["shared_files"], ["a.py"])
         self.assertIn("#551", report["reason"])
 
     def test_two_prs_adding_to_same_file_both_reverted(self):
@@ -652,10 +670,13 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
             overtaken={"a.py": [550]},
             diffs={550: diff},
             file_contents={"a.py": "recreated\n"},
-            pr_file_contents={550: {"a.py": None}},
+            pr_file_contents={550: {"a.py": mv.FILE_ABSENT}},
         )
         self.assertEqual(report["status"], "drift")
         self.assertEqual(report["overtaken"], {"a.py": [550]})
+        self.assertIn(
+            "deleted file reappeared in merge commit (#550)", report["drift_details"]["a.py"]
+        )
 
     def test_whole_file_deletion_that_stays_deleted_is_clean(self):
         diff = (
@@ -671,7 +692,7 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
             overtaken={"a.py": [550]},
             diffs={550: diff},
             file_contents={"a.py": mv.FILE_ABSENT},
-            pr_file_contents={550: {"a.py": None}},
+            pr_file_contents={550: {"a.py": mv.FILE_ABSENT}},
         )
         self.assertEqual(report["status"], "clean")
 
@@ -689,7 +710,7 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
             overtaken={"a.py": [550]},
             diffs={550: diff},
             file_contents={"a.py": None},
-            pr_file_contents={550: {"a.py": None}},
+            pr_file_contents={550: {"a.py": mv.FILE_ABSENT}},
         )
         self.assertEqual(report["status"], "drift")
         self.assertEqual(report["overtaken"], {"a.py": [550]})
@@ -840,6 +861,7 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         )
         self.assertEqual(report["status"], "drift")
         self.assertEqual(report["overtaken"], {"src/keel/github.py": [550]})
+        self.assertEqual(report["shared_files"], ["CHANGELOG.md", "src/keel/github.py"])
         self.assertNotIn("CHANGELOG.md", report["overtaken"])
 
     def test_overtaking_pr_with_surviving_deletion(self):
@@ -938,11 +960,6 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertEqual(lost, 1)
         self.assertEqual(viols, ["del"])
 
-    def test_check_line_survival_with_merge_content_and_deleted_lines(self):
-        lost, viols = mv.check_line_survival(["add"], "add\n", "add\nold\n", ["old"])
-        self.assertEqual(lost, 1)
-        self.assertEqual(viols, ["old"])
-
     def test_verify_merge_when_pr_file_contents_is_none(self):
         diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line\n"
         report = mv.verify_merge(
@@ -1002,19 +1019,6 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertEqual(lost_count, 0)
         self.assertEqual(viols, [])
 
-    def test_check_multiset_survival_with_this_pr_added_lines_excluded(self):
-        # Overtaking PR deleted generic line, but this PR legitimately added it too.
-        # Without this_pr_added_lines it is flagged as re-added deletion; with it, excluded.
-        lost_count, viols = mv.check_multiset_survival(
-            added_lines=[],
-            deleted_lines=["return None"],
-            landed_content="",
-            merge_content="return None\n",
-            this_pr_added_lines=["return None"],
-        )
-        self.assertEqual(lost_count, 0)
-        self.assertEqual(viols, [])
-
     def test_render_renders_drift_details(self):
         report = {
             "status": "drift",
@@ -1027,3 +1031,126 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertIn("#550", rendered)
         self.assertIn("* lost line: x", rendered)
         self.assertIn("* unreadable content", rendered)
+
+    def test_invalid_hunk_line_prefix_produces_drift(self):
+        diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\ngarbage\n"
+        self.assertIsNone(mv.parse_diff_by_file(diff))
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550]},
+            diffs={550: diff},
+            file_contents={"a.py": "merge content\n"},
+            pr_file_contents={550: {"a.py": "landed content\n"}},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"a.py": [550]})
+
+    def test_octal_escaped_utf8_filename_survives_cleanly_in_verify_merge(self):
+        diff = (
+            'diff --git "a/\\303\\251.py" "b/\\303\\251.py"\n'
+            '--- "a/\\303\\251.py"\n'
+            '+++ "b/\\303\\251.py"\n'
+            "@@ -0,0 +1,1 @@\n"
+            "+accented = True\n"
+        )
+        report = mv.verify_merge(
+            landed=["é.py"],
+            overtaken={"é.py": [550]},
+            diffs={550: diff},
+            file_contents={"é.py": "accented = True\n"},
+            pr_file_contents={550: {"é.py": "accented = True\n"}},
+        )
+        self.assertEqual(report["status"], "clean")
+
+    def test_whole_file_deletion_with_unreadable_landed_content_is_drift(self):
+        lost_count, lost = mv.check_multiset_survival(
+            added_lines=[],
+            deleted_lines=["old line"],
+            landed_content=None,
+            merge_content=mv.FILE_ABSENT,
+            is_deleted=True,
+        )
+        self.assertEqual(lost_count, 1)
+        self.assertEqual(lost, ["unreadable file content"])
+
+        lost_count_present, lost_present = mv.check_multiset_survival(
+            added_lines=[],
+            deleted_lines=["old line"],
+            landed_content="old line\n",
+            merge_content=mv.FILE_ABSENT,
+            is_deleted=True,
+        )
+        self.assertEqual(lost_count_present, 1)
+        self.assertEqual(lost_present, ["deleted file still present in overtaking commit"])
+
+        diff = (
+            "diff --git a/a.py b/a.py\n"
+            "deleted file mode 100644\n"
+            "--- a/a.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,1 +0,0 @@\n"
+            "-deleted content\n"
+        )
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550]},
+            diffs={550: diff},
+            file_contents={"a.py": mv.FILE_ABSENT},
+            pr_file_contents={550: {"a.py": None}},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertIn("unreadable landed content for a.py (#550)", report["drift_details"]["a.py"])
+
+        report_present = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550]},
+            diffs={550: diff},
+            file_contents={"a.py": mv.FILE_ABSENT},
+            pr_file_contents={550: {"a.py": "deleted content\n"}},
+        )
+        self.assertEqual(report_present["status"], "drift")
+        self.assertIn(
+            "deleted file still present in overtaking commit for a.py (#550)",
+            report_present["drift_details"]["a.py"],
+        )
+
+    def test_diff_with_lone_carriage_return_inside_line(self):
+        diff = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line\rwith_cr\n"
+        parsed = mv.parse_diff_by_file(diff)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["a.py"].added_lines, ("line\rwith_cr",))
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550]},
+            diffs={550: diff},
+            file_contents={"a.py": "line\rwith_cr\n"},
+            pr_file_contents={550: {"a.py": "line\rwith_cr\n"}},
+        )
+        self.assertEqual(report["status"], "clean")
+
+    def test_later_overtaking_pr_editing_earlier_overtaking_pr_line_is_conservative_drift(self):
+        diff550 = (
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+TIMEOUT = 30\n"
+        )
+        diff551 = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-TIMEOUT = 30\n"
+            "+TIMEOUT = 60\n"
+        )
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550, 551]},
+            diffs={550: diff550, 551: diff551},
+            file_contents={"a.py": "TIMEOUT = 60\n"},
+            pr_file_contents={
+                550: {"a.py": "TIMEOUT = 30\n"},
+                551: {"a.py": "TIMEOUT = 60\n"},
+            },
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"a.py": [550]})
+        self.assertEqual(report["shared_files"], ["a.py"])
+        self.assertEqual(report["drift_details"], {"a.py": ["TIMEOUT = 30"]})

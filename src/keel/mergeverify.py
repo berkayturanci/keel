@@ -19,12 +19,22 @@ no test for the removed behaviour — so the suite stayed green throughout.
    lines (like `}`, `return None`, or boilerplate) were reverted while existing elsewhere
    in the file, or when deletions were silently re-added.
 
-**What does work** is multiset line counting per overtaking PR (#1511):
-The timing fingerprint the incident actually leaves:
+**What does work** is the timing fingerprint the incident actually leaves:
+
 * #550 merged at 13:02, touching ``src/keel/github.py`` and three others;
 * #543 had branched on the 8th, **before** that;
 * #543 merged at 15:19 and its commit **removed 41 lines** from ``github.py`` —
   a file a "label the search input" change has no reason to touch at all.
+
+So the first question to ask is: *did this merge write to files that some other pull
+request changed after this one branched?* That is the only way an update-branch
+squash can undo merged work, and it is cheap to answer. Because two PRs editing one
+file in sequence is ordinary, we refine file overlap with multiset line counting per
+overtaking PR (#1511). It remains a **look at this** signal rather than a proof —
+for example, if a later overtaking PR modifies a line an earlier overtaking PR added,
+or if an overtaking PR deleted a generic line that this PR legitimately adds, it is
+conservatively flagged so the report names the violating overtaking PR(s) for each
+drifted file and lets a human judge.
 
 For every file shared between this merge and pull requests that merged in the window
 (branch point, merge commit), compare the file content as of each overtaking PR's merge
@@ -34,8 +44,9 @@ For every file shared between this merge and pull requests that merged in the wi
 - For every line the PR deleted, its count in the merge commit must be <= its count in
   the PR's landed version (catching re-added deletions).
 - Blank lines are ignored.
-- A PR that deleted a whole file (`+++ /dev/null`): the file reappearing in the merge
-  commit is drift; staying absent is clean.
+- A PR that deleted a whole file (`+++ /dev/null`): the file must be confirmed absent
+  at both the overtaking PR's merge commit and this merge commit (`FILE_ABSENT`); the
+  file reappearing in the merge commit is drift.
 - Unreadable content at either commit is distinguished from confirmed absent files
   via :data:`FILE_ABSENT`, ensuring failed reads are reported as drift, not stayed deletions.
 - Any unreadable input (missing diff, malformed diff, unreadable file content) stays
@@ -70,8 +81,8 @@ _HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 def _split_lines(text: str) -> list[str]:
-    """Split text on newlines (\\r\\n, \\r, \\n) without splitting on form feeds/VT (#1511)."""
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    """Split text on LF or CRLF line endings without splitting on CR, FF, or VT (#1511)."""
+    text = text.replace("\r\n", "\n")
     if text.endswith("\n"):
         text = text[:-1]
     return text.split("\n") if text else []
@@ -91,7 +102,7 @@ def _clean_diff_path(raw: str, *, is_new: bool) -> str:
     raw = raw.strip()
     if raw.startswith('"') and raw.endswith('"'):
         try:
-            raw = ast.literal_eval(raw)
+            raw = ast.literal_eval(raw).encode("latin-1").decode("utf-8")
         except Exception:
             raw = raw[1:-1]
     if is_new and raw.startswith("b/"):
@@ -198,9 +209,11 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
             elif line.startswith("-"):
                 current_deleted.append(line[1:])
                 rem_old -= 1
-            else:
+            elif line.startswith(" "):
                 rem_old -= 1
                 rem_new -= 1
+            else:
+                return None
             if rem_old < 0 or rem_new < 0:
                 return None
             if rem_old == 0 and rem_new == 0:
@@ -214,22 +227,13 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
     return result
 
 
-def extract_added_lines_by_file(diff_text: str | None) -> dict[str, list[str]]:
-    """Extract added lines from diff hunks, keyed by target file path (#1511)."""
-    parsed = parse_diff_by_file(diff_text)
-    if parsed is None:
-        return {}
-    return {path: list(fd.added_lines) for path, fd in parsed.items()}
-
-
 def check_multiset_survival(
     added_lines: Sequence[str],
     deleted_lines: Sequence[str],
-    landed_content: str | object | None,
-    merge_content: str | object | None,
+    landed_content: str | _FileAbsent | None,
+    merge_content: str | _FileAbsent | None,
     *,
     is_deleted: bool = False,
-    this_pr_added_lines: Sequence[str] | None = None,
 ) -> tuple[int, list[str]]:
     """Check line survival via multiset counting (#1511).
 
@@ -237,20 +241,19 @@ def check_multiset_survival(
     Ignore blank lines only.
     """
     if is_deleted:
+        if landed_content is None or merge_content is None:
+            return 1, ["unreadable file content"]
+        if landed_content is not FILE_ABSENT:
+            return 1, ["deleted file still present in overtaking commit"]
         if merge_content is FILE_ABSENT:
             return 0, []
-        if merge_content is None:
-            return 1, ["unreadable file content"]
         return 1, ["deleted file reappeared in merge commit"]
 
     if landed_content is None or merge_content is None:
         return 1, ["unreadable file content"]
 
-    if landed_content is FILE_ABSENT or merge_content is FILE_ABSENT:
+    if not isinstance(landed_content, str) or not isinstance(merge_content, str):
         return 1, ["file missing in merge commit"]
-
-    assert isinstance(landed_content, str)
-    assert isinstance(merge_content, str)
 
     landed_lines = [line for line in _split_lines(landed_content) if line.strip()]
     merge_lines = [line for line in _split_lines(merge_content) if line.strip()]
@@ -267,14 +270,8 @@ def check_multiset_survival(
             if line not in violations:
                 violations.append(line)
 
-    excluded_lines = (
-        {line.strip() for line in this_pr_added_lines if line.strip()}
-        if this_pr_added_lines is not None
-        else set()
-    )
-
     for line in deleted_lines:
-        if not line.strip() or line.strip() in excluded_lines:
+        if not line.strip():
             continue
         if merge_counts[line] > landed_counts[line]:
             if line not in violations:
@@ -283,48 +280,15 @@ def check_multiset_survival(
     return len(violations), violations
 
 
-def check_line_survival(
-    added_lines: Sequence[str],
-    landed_or_merge_content: str | object | None,
-    merge_content: str | object | None = None,
-    deleted_lines: Sequence[str] | None = None,
-    *,
-    is_deleted: bool = False,
-    this_pr_added_lines: Sequence[str] | None = None,
-) -> tuple[int, list[str]]:
-    """Check how many added/deleted lines survive in the target file content (#1511).
-
-    Supports both 2-arg legacy call and full multiset call.
-    """
-    if merge_content is None and deleted_lines is None:
-        landed_content = "\n".join(added_lines) if added_lines else ""
-        return check_multiset_survival(
-            added_lines,
-            (),
-            landed_content,
-            landed_or_merge_content,
-            is_deleted=is_deleted,
-            this_pr_added_lines=this_pr_added_lines,
-        )
-    return check_multiset_survival(
-        added_lines,
-        deleted_lines or (),
-        landed_or_merge_content,
-        merge_content,
-        is_deleted=is_deleted,
-        this_pr_added_lines=this_pr_added_lines,
-    )
-
-
 def verify_merge(
     landed: Sequence[str] | None,
     overtaken: Mapping[str, int | Sequence[int]] | None = None,
     intended: Sequence[str] | None = None,
     *,
     diffs: Mapping[int, str | None] | None = None,
-    file_contents: Mapping[str, str | None] | None = None,
-    pr_file_contents: Mapping[int, Mapping[str, str | None]]
-    | Mapping[tuple[int, str], str | None]
+    file_contents: Mapping[str, str | _FileAbsent | None] | None = None,
+    pr_file_contents: Mapping[int, Mapping[str, str | _FileAbsent | None]]
+    | Mapping[tuple[int, str], str | _FileAbsent | None]
     | None = None,
 ) -> dict:
     """Judge whether a merge may have silently reverted other merged work.
@@ -336,6 +300,11 @@ def verify_merge(
     ``file_contents`` maps a file path to its content at the merge commit.
     ``pr_file_contents`` maps an overtaking PR and file path to the file content as of
     that PR's merge commit (its landed version).
+
+    In the returned report, ``overtaken`` maps each drifted path to the list of
+    overtaking PRs whose changes did not survive (or could not be verified), and is
+    ``{}`` when ``status`` is ``clean``; ``shared_files`` always lists all paths shared
+    between the merge commit and overtaking PRs in the window.
 
     ``None`` for ``landed`` means *not observed* and yields ``unknown`` rather than
     a clean bill: failing to look is not evidence that nothing drifted.
@@ -398,8 +367,28 @@ def verify_merge(
                         )
                         continue
 
+                    pr_landed_content = None
+                    if pr_file_contents is not None:
+                        if isinstance(pr_file_contents.get(pr), Mapping):
+                            pr_landed_content = pr_file_contents[pr].get(path)
+                        elif (pr, path) in pr_file_contents:
+                            pr_landed_content = pr_file_contents.get((pr, path))
+
                     fd = pr_parsed[path]
                     if fd.is_deleted:
+                        if pr_landed_content is None:
+                            drifted.setdefault(path, []).append(pr)
+                            drift_details.setdefault(path, []).append(
+                                f"unreadable landed content for {path} (#{pr})"
+                            )
+                            continue
+                        if pr_landed_content is not FILE_ABSENT:
+                            drifted.setdefault(path, []).append(pr)
+                            drift_details.setdefault(path, []).append(
+                                "deleted file still present in overtaking commit "
+                                f"for {path} (#{pr})"
+                            )
+                            continue
                         if merge_content is FILE_ABSENT:
                             continue
                         if merge_content is None:
@@ -427,13 +416,6 @@ def verify_merge(
                             f"file missing in merge commit for {path}"
                         )
                         continue
-
-                    pr_landed_content = None
-                    if pr_file_contents is not None:
-                        if isinstance(pr_file_contents.get(pr), Mapping):
-                            pr_landed_content = pr_file_contents[pr].get(path)
-                        elif (pr, path) in pr_file_contents:
-                            pr_landed_content = pr_file_contents.get((pr, path))
 
                     if pr_landed_content is None:
                         drifted.setdefault(path, []).append(pr)

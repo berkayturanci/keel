@@ -11885,6 +11885,34 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertIn(550, rest_diff_called)
         self.assertIn(550, rest_window_called)
 
+    def test_whole_file_deletion_via_git_show_file_absent_does_not_call_github_api(self):
+        diff550 = (
+            "diff --git a/a.py b/a.py\n"
+            "deleted file mode 100644\n"
+            "--- a/a.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,1 +0,0 @@\n"
+            "-deleted\n"
+        )
+        with patch.object(
+            cli.github,
+            "commit_file_content",
+            side_effect=AssertionError("commit_file_content should not be called"),
+        ):
+            rc, out, _ = self._run(
+                others=[550],
+                files_by_pr={543: ["a.py"], 550: ["a.py"]},
+                commit_files=["a.py"],
+                diff_by_pr={550: diff550},
+                content_by_path={
+                    ("commit_550", "a.py"): cli.mergeverify.FILE_ABSENT,
+                    ("7c140f3", "a.py"): cli.mergeverify.FILE_ABSENT,
+                },
+                use_git_for_content=True,
+            )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean (1 shared file, 0 lost lines)", out)
+
     def test_a_bad_config_path_fails_cleanly(self):
         rc, _, err = run(["verify-merge", "/nope/x.yaml", "--pr", "1"])
         self.assertEqual(rc, 1)

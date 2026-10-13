@@ -656,13 +656,47 @@ class TestGitHub(unittest.TestCase):
         self.assertIsNone(github.commit_file_content("", "src/x.py"))
         self.assertIsNone(github.commit_file_content("abc", ""))
 
-    def test_commit_file_content_absent_returns_sentinel(self):
-        rec = _Recorder(code=1, err="gh: Not Found (HTTP 404)\n")
-        self.assertIs(github.commit_file_content("abc", "src/x.py", _run=rec), github.FILE_ABSENT)
+    def test_commit_file_content_absent_returns_sentinel_when_commit_exists(self):
+        calls = []
 
-    def test_commit_file_content_not_found_in_stdout_returns_sentinel(self):
-        rec = _Recorder(code=1, out='{"message": "Not Found"}')
-        self.assertIs(github.commit_file_content("abc", "src/x.py", _run=rec), github.FILE_ABSENT)
+        def _run(argv, **kw):
+            calls.append(argv)
+            if "contents/" in " ".join(argv):
+                return _Proc(1, "", "gh: Not Found (HTTP 404)\n")
+            return _Proc(0, "abc\n", "")
+
+        self.assertIs(github.commit_file_content("abc", "src/x.py", _run=_run), github.FILE_ABSENT)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("commits/abc", " ".join(calls[1]))
+
+    def test_commit_file_content_404_when_commit_or_repo_missing_returns_none(self):
+        rec = _Recorder(code=1, err="gh: Not Found (HTTP 404)\n")
+        self.assertIsNone(github.commit_file_content("abc", "src/x.py", _run=rec))
+
+    def test_commit_file_content_timeout_with_404_in_path_or_sha_returns_none(self):
+        rec_path = _Recorder(
+            code=1,
+            err=(
+                "Get https://api.github.com/repos/o/r/contents/website/404.html?ref=abc: "
+                "i/o timeout\n"
+            ),
+            out='{"message": "Not Found"}',
+        )
+        self.assertIsNone(
+            github.commit_file_content(
+                "abc", "website/404.html", _run=rec_path, _sleep=lambda _: None
+            )
+        )
+        rec_sha = _Recorder(
+            code=1,
+            err=(
+                "Get https://api.github.com/repos/o/r/contents/a.py?ref=dead404beef: "
+                "network error\n"
+            ),
+        )
+        self.assertIsNone(
+            github.commit_file_content("dead404beef", "a.py", _run=rec_sha, _sleep=lambda _: None)
+        )
 
     def test_commit_file_content_url_encoding(self):
         rec = _Recorder(out="raw content\n")

@@ -339,8 +339,8 @@ def commit_file_content(
 
     Returns:
     - the ``str`` file content if present and read,
-    - ``FILE_ABSENT`` if the path is confirmed absent at commit ``sha`` (404 Not Found),
-    - ``None`` if reading failed (network error, rate limit, 5xx, etc.).
+    - ``FILE_ABSENT`` if the path is confirmed absent at a readable commit ``sha``,
+    - ``None`` if reading failed (network error, rate limit, 5xx, missing commit/repo, etc.).
     """
     if not sha or not path:
         return None
@@ -358,9 +358,15 @@ def commit_file_content(
         _sleep=_sleep,
     )
     if not result.ok:
-        combined = f"{result.stderr} {result.stdout} {result.output}".lower()
-        if "404" in combined or "not found" in combined:
-            return FILE_ABSENT
+        if "http 404" in result.stderr.lower():
+            commit_res = run_argv_retry(
+                ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}", "--jq", ".sha"],
+                cwd=cwd,
+                _run=_run,
+                _sleep=_sleep,
+            )
+            if commit_res.ok and commit_res.stdout.strip():
+                return FILE_ABSENT
         return None
     return result.stdout or result.output
 

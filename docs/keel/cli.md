@@ -1685,33 +1685,24 @@ keel verify-merge .keel/project.yaml --root . --pr 543 --json
 
 | status | meaning | exit |
 | --- | --- | --- |
-| `drift` | wrote to files another PR changed after this one branched and lost added lines, re-added deletions, or inputs unreadable | 1 |
+| `drift` | wrote to files another PR changed after this one branched and lost added lines, re-added deletions, or had unreadable inputs | 1, or 2 when `incomplete` |
 | `out-of-scope` | changed files the PR's own diff did not list | 0, or 2 when `incomplete` |
-| `clean` | neither (including when added lines survived: `clean (N shared files, 0 lost lines)`) | 0 |
-| `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 2 |
+| `clean` | neither (including when all shared changes survived: `clean (N shared files, 0 lost lines)`) | 0 |
+| `unknown` | not merged yet, or merge/window inputs unreadable — **not** a pass | 2 |
 
 `drift` is a *stop and look* signal, not proof: two PRs editing one file in sequence
 is ordinary. When files overlap, `verify-merge` checks line survival across every
-overtaking PR per shared path (#1511). For each overtaking PR and shared file, multiset
-counting compares the file content as of that PR's merge commit against the merge commit's
-content (ignoring blank lines): for every line the PR added, its count in the merge commit
-must be >= its count in the PR's landed version; for every line the PR deleted, its count
-in the merge commit must be <= its count in the PR's landed version (catching re-added
-deletions). If the overtaking PR deleted a whole file (`+++ /dev/null`), the file
-reappearing in the merge commit is flagged as drift, while staying absent is clean.
-Unreadable content (network failures, rate limits, 5xx, or unfetched commits) is
-distinguished from confirmed absent files (`FILE_ABSENT`), ensuring an unreadable file is
-reported as drift and never silently treated as a stayed deletion. Multiset counting is
-conservative: if an overtaking PR deleted a generic line (like `return None` or `}`) and
-this PR legitimately adds that same line, it is conservatively flagged as drift. Drift is
-conservatively reported if any lines are lost, deletions re-added, or if diffs or file
-contents cannot be read (e.g. malformed or truncated diffs, binary files, or unreadable
-file content); if all changes survive, it reports `clean (N shared files, 0 lost lines)`.
-The report names all colliding PRs and specific violations for each drifted file so a human
-can judge.
+overtaking PR per shared path (#1511) by comparing the file at each overtaking PR's
+merge commit against this merge commit (ignoring blank lines):
+
+* **Added lines:** each line the overtaking PR added must appear at least as many times in the merge commit as in the overtaking PR's landed version.
+* **Deleted lines:** each line the overtaking PR deleted must appear no more times in the merge commit than in the overtaking PR's landed version (catching re-added deletions).
+* **Whole-file deletions (`+++ /dev/null`):** the file must be confirmed absent (`FILE_ABSENT`) at both the overtaking PR's merge commit and this merge commit; reappearing in the merge commit is drift.
+* **Unreadable inputs fail closed:** truncated or malformed diffs, binary files, or unreadable file contents at either commit are reported as drift, never as a stayed deletion.
+* **Conservative by design:** if a later overtaking PR modifies a line an earlier overtaking PR added, or if an overtaking PR deleted a generic line (such as `return None` or `}`) that this PR legitimately adds, it is flagged as drift so a human can judge.
 
 The JSON report uses schema `keel.merge-verify.v2`:
-* `overtaken` maps `{path: [int, ...]}` to list all colliding PRs for that path (in v1 it was `{path: int}`);
+* `overtaken` maps `{path: [int, ...]}` to the overtaking PRs whose changes drifted or could not be verified on that path (`{}` when `clean`; in v1 it was `{path: int}` recording only the first collider);
 * `shared_files` lists all paths shared between the merge commit and overtaking PRs in the window (`list[str]`);
 * `drift_details` maps `{path: [str, ...]}` detailing specific lost lines, re-added deletions, or unreadable inputs (`dict[str, list[str]]`).
 
