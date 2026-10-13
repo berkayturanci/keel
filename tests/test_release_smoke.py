@@ -8,8 +8,8 @@ import io
 import subprocess
 import sys
 import unittest
+import unittest.mock as mock
 from pathlib import Path
-from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "release_smoke.py"
 
