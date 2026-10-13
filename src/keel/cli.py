@@ -1072,16 +1072,18 @@ def _resolution_ship_command(
     approve_scope: str | Collection[str] | None = None,
     run_id: str = "<new-run-id>",
 ) -> str:
-    """Build a runnable ``keel ship`` command to resolve a gates-pass refusal."""
-    parts = ["keel", "ship", config_path]
+    """Build a suggested ``keel ship`` command to resolve a gates-pass refusal."""
+    parts = ["keel", "ship", shlex.quote(config_path)]
     if root and root != ".":
-        parts.extend(["--root", str(root)])
+        parts.extend(["--root", shlex.quote(str(root))])
     parts.extend(
         [
             "--live",
             "--append-ledger",
             "--run-id",
-            run_id,
+            shlex.quote(run_id)
+            if run_id and not (run_id.startswith("<") and run_id.endswith(">"))
+            else run_id,
             "--capture-status",
             CAPTURE_STATUS_NOT_RUN,
         ]
@@ -1089,15 +1091,15 @@ def _resolution_ship_command(
     if pr_number is not None:
         parts.extend(["--pull-request", str(pr_number)])
     if head_sha is not None:
-        parts.extend(["--head-sha", str(head_sha)])
+        parts.extend(["--head-sha", shlex.quote(str(head_sha))])
     scope_str = ""
     if approve_scope:
         if isinstance(approve_scope, (list, tuple, set)):
-            scope_str = ",".join(str(s) for s in approve_scope if s)
+            scope_str = ",".join(str(s) for s in sorted(approve_scope) if s)
         else:
             scope_str = str(approve_scope)
-    parts.extend(["--approve-scope", scope_str or "filesystem,git,github"])
-    parts.extend(["--operator", str(operator) if operator else "<operator>"])
+    parts.extend(["--approve-scope", shlex.quote(scope_str) if scope_str else "<scope>"])
+    parts.extend(["--operator", shlex.quote(str(operator)) if operator else "<operator>"])
     return " ".join(parts)
 
 

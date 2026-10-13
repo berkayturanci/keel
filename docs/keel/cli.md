@@ -339,18 +339,22 @@ the checkpoint file. The result is reported in the `checkpoint_gate` block of th
 - **`covered`** — a current checkpoint reached `s10` (its `current_step` is at
   or past `s10`, or `s10` is in `completed_steps`). When retrying a merge on a PR on the same head
   whose previous run reached `s10`, `keel merge` accepts the PR's latest checkpoint at `s10`
-  (keyed on `identifiers.pull_request` and `identifiers.head_sha`, or an accepted run ID) across
-  run IDs and carries it forward to the new run upon landing (#1507). In that case,
-  `checkpoint_gate.carried_from_run_id` records the source run ID. The merge proceeds.
+  (keyed on matching `identifiers.pull_request` and equal `identifiers.head_sha`, or an accepted run ID
+  for the same PR and head) across run IDs and carries it forward to the new run upon landing (#1507).
+  The head check fails closed: records lacking a recorded head SHA or callers without a head are not
+  accepted across runs. In that case, `checkpoint_gate.carried_from_run_id` records the source run ID.
+  The merge proceeds.
 - **`missing`** — no checkpoint, or the checkpoint is for a different run and PR. Refused with
-  `no current checkpoint for run <id> at step s10`, naming the `keel checkpoint ... --write` command
-  (valid only after the run has genuinely reached `s10`, e.g. recovering from a lost checkpoint;
-  otherwise drive or resume the run through `s10` via `keel resume`).
-- **`stale-step`** — a checkpoint that has not reached `s10`. Refused naming the advancing command.
-- **`stale-head`** — a checkpoint for the PR covering an earlier head commit (head mismatch). Refused.
+  `no current checkpoint for run <id> at step s10`, naming the suggested `keel checkpoint ... --write` command
+  (placeholders like `<project.yaml>` must be filled in; valid only after the run has genuinely reached `s10`,
+  e.g. recovering from a lost checkpoint; otherwise drive or resume the run through `s10` via `keel resume`).
+- **`stale-step`** — a checkpoint that has not reached `s10`. Refused naming the advancing command
+  (placeholders must be filled in).
+- **`stale-head`** — a checkpoint for the PR covering an earlier head commit or lacking verifiable head
+  provenance (head mismatch). Refused without an advancing command; drive the current head through `s10`.
 
 The run-id is the gates-SHA `run_id` by default; override it with `--run-id`. Cross-run acceptance
-keys on the PR number and matching current head SHA.
+requires both the PR number and matching current head SHA.
 
 **Back-compat / degrade gracefully.** The gate is enforced **only when checkpointing is
 configured** for the project (`policy_pack.reports.checkpoint`). When that key is absent the

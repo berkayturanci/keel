@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
@@ -346,12 +347,12 @@ def _resolution_checkpoint_command(
     root: str | None = None,
     head_sha: str | None = None,
 ) -> str:
-    parts = ["keel checkpoint", config_path or "<project.yaml>"]
+    parts = ["keel checkpoint", shlex.quote(config_path) if config_path else "<project.yaml>"]
     if root and root != ".":
-        parts.extend(["--root", root])
-    parts.extend(["--write", "--run-id", run_id, "--step", step])
+        parts.extend(["--root", shlex.quote(str(root))])
+    parts.extend(["--write", "--run-id", shlex.quote(run_id), "--step", step])
     if head_sha:
-        parts.extend(["--head-sha", head_sha])
+        parts.extend(["--head-sha", shlex.quote(head_sha)])
     return " ".join(parts)
 
 
@@ -406,7 +407,7 @@ def covering_checkpoint(
             "checkpoint_step": None,
             "reason": (
                 f"no current checkpoint for run {run_id} at step {expected_step} "
-                f"(record one with: {res_cmd})"
+                f"(if {expected_step} completed, record one with: {res_cmd})"
             ),
         }
     validate_checkpoint(record)
@@ -414,8 +415,7 @@ def covering_checkpoint(
     position = record["position"]
     current_step = position["current_step"]
     completed = position.get("completed_steps", [])
-    raw_identifiers = record.get("identifiers")
-    identifiers = raw_identifiers if isinstance(raw_identifiers, dict) else {}
+    identifiers = record["identifiers"]
     checkpoint_pr = identifiers.get("pull_request")
     checkpoint_head = identifiers.get("head_sha")
     base = {
@@ -434,7 +434,8 @@ def covering_checkpoint(
                 "covered": False,
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
-                    f"(run is at {current_step}; advance it with: {res_cmd})"
+                    f"(run is at {current_step}; if {expected_step} completed, "
+                    f"advance it with: {res_cmd})"
                 ),
             }
         return {
@@ -445,18 +446,34 @@ def covering_checkpoint(
         }
 
     pr_matches = pr_number is not None and checkpoint_pr == pr_number
-    id_matches = bool(checkpoint_run_id and checkpoint_run_id in accepted_run_ids)
+    id_matches = bool(
+        checkpoint_run_id
+        and checkpoint_run_id in accepted_run_ids
+        and (pr_number is None or checkpoint_pr == pr_number)
+    )
     if pr_matches or id_matches:
-        if checkpoint_head is not None and head_sha is not None and checkpoint_head != head_sha:
-            head_detail = (
-                f"checkpoint for PR #{checkpoint_pr} covers head {checkpoint_head}, "
-                f"current head is {head_sha}"
-                if pr_matches
-                else (
-                    f"checkpoint for run {checkpoint_run_id} covers head {checkpoint_head}, "
+        if not (checkpoint_head and head_sha and checkpoint_head == head_sha):
+            target_label = f"PR #{checkpoint_pr}" if pr_matches else f"run {checkpoint_run_id}"
+            if checkpoint_head and head_sha:
+                head_detail = (
+                    f"checkpoint for {target_label} covers head {checkpoint_head}, "
                     f"current head is {head_sha}"
                 )
-            )
+            elif not checkpoint_head and head_sha:
+                head_detail = (
+                    f"checkpoint for {target_label} has no recorded head SHA, "
+                    f"current head is {head_sha}"
+                )
+            elif checkpoint_head and not head_sha:
+                head_detail = (
+                    f"checkpoint for {target_label} covers head {checkpoint_head}, "
+                    "current head is unspecified"
+                )
+            else:
+                head_detail = (
+                    f"checkpoint for {target_label} has no recorded head SHA "
+                    "and current head is unspecified"
+                )
             return {
                 **base,
                 "status": "stale-head",
@@ -474,7 +491,7 @@ def covering_checkpoint(
                 run_id=advance_run_id,
                 config_path=config_path,
                 root=root,
-                head_sha=checkpoint_head or head_sha,
+                head_sha=checkpoint_head,
             )
             detail = (
                 f"checkpoint for PR #{checkpoint_pr} is at {current_step}"
@@ -487,7 +504,7 @@ def covering_checkpoint(
                 "covered": False,
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
-                    f"({detail}; advance it with: {advance_cmd})"
+                    f"({detail}; if {expected_step} completed, advance it with: {advance_cmd})"
                 ),
             }
         reason = (
@@ -512,7 +529,8 @@ def covering_checkpoint(
         "covered": False,
         "reason": (
             f"no current checkpoint for run {run_id} at step {expected_step} "
-            f"(checkpoint is for run {checkpoint_run_id}; record one with: {res_cmd})"
+            f"(checkpoint is for run {checkpoint_run_id}; if {expected_step} completed, "
+            f"record one with: {res_cmd})"
         ),
     }
 

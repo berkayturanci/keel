@@ -386,25 +386,54 @@ class TestCoveringCheckpoint(unittest.TestCase):
         )
 
     def test_covered_when_pr_matches_even_if_run_id_differs(self):
-        record = _record(run_id="RUN-1", pull_request=170, current_step="s10")
-        result = checkpoint.covering_checkpoint(record, "RUN-2", "s10", pr_number=170)
+        record = _record(run_id="RUN-1", pull_request=170, head_sha="abc123", current_step="s10")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", pr_number=170, head_sha="abc123"
+        )
         self.assertEqual(result["status"], "covered")
         self.assertTrue(result["covered"])
         self.assertEqual(result["carried_from_run_id"], "RUN-1")
         self.assertIn("checkpoint for PR #170 (run RUN-1) reached step s10", result["reason"])
 
     def test_covered_when_accepted_run_ids_matches(self):
-        record = _record(run_id="RUN-1", current_step="s10")
-        result = checkpoint.covering_checkpoint(record, "RUN-2", "s10", accepted_run_ids=["RUN-1"])
+        record = _record(run_id="RUN-1", pull_request=170, head_sha="abc123", current_step="s10")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", pr_number=170, accepted_run_ids=["RUN-1"], head_sha="abc123"
+        )
+        self.assertEqual(result["status"], "covered")
+        self.assertTrue(result["covered"])
+        self.assertEqual(result["carried_from_run_id"], "RUN-1")
+        self.assertIn("checkpoint for PR #170 (run RUN-1) reached step s10", result["reason"])
+
+    def test_covered_when_accepted_run_ids_matches_without_pr_number(self):
+        record = _record(run_id="RUN-1", head_sha="abc123", current_step="s10")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", accepted_run_ids=["RUN-1"], head_sha="abc123"
+        )
         self.assertEqual(result["status"], "covered")
         self.assertTrue(result["covered"])
         self.assertEqual(result["carried_from_run_id"], "RUN-1")
         self.assertIn("checkpoint for run RUN-1 reached step s10", result["reason"])
 
-    def test_stale_step_with_pr_match_names_resolution_command(self):
-        record = _record(run_id="RUN-1", pull_request=170, current_step="s6")
+    def test_refused_when_accepted_run_ids_matches_but_pr_differs(self):
+        record = _record(run_id="RUN-1", pull_request=999, head_sha="abc123", current_step="s10")
         result = checkpoint.covering_checkpoint(
-            record, "RUN-2", "s10", pr_number=170, config_path="proj.yaml", root="/custom"
+            record, "RUN-2", "s10", pr_number=123, accepted_run_ids=["RUN-1"], head_sha="abc123"
+        )
+        self.assertEqual(result["status"], "missing")
+        self.assertFalse(result["covered"])
+        self.assertIn("checkpoint is for run RUN-1", result["reason"])
+
+    def test_stale_step_with_pr_match_names_resolution_command(self):
+        record = _record(run_id="RUN-1", pull_request=170, head_sha="abc123", current_step="s6")
+        result = checkpoint.covering_checkpoint(
+            record,
+            "RUN-2",
+            "s10",
+            pr_number=170,
+            head_sha="abc123",
+            config_path="proj.yaml",
+            root="/custom",
         )
         self.assertEqual(result["status"], "stale-step")
         self.assertFalse(result["covered"])
@@ -416,8 +445,10 @@ class TestCoveringCheckpoint(unittest.TestCase):
         )
 
     def test_stale_step_with_accepted_run_id_names_resolution_command(self):
-        record = _record(run_id="RUN-1", current_step="s6")
-        result = checkpoint.covering_checkpoint(record, "RUN-2", "s10", accepted_run_ids=["RUN-1"])
+        record = _record(run_id="RUN-1", head_sha="abc123", current_step="s6")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", accepted_run_ids=["RUN-1"], head_sha="abc123"
+        )
         self.assertEqual(result["status"], "stale-step")
         self.assertFalse(result["covered"])
         self.assertIn("run RUN-1 is at s6", result["reason"])
@@ -425,6 +456,16 @@ class TestCoveringCheckpoint(unittest.TestCase):
             "advance it with: keel checkpoint <project.yaml> --write --run-id RUN-1 --step s10",
             result["reason"],
         )
+
+    def test_stale_step_with_pr_match_and_missing_checkpoint_run_id_uses_current_run_id(self):
+        record = _record(run_id="", pull_request=170, head_sha="abc123", current_step="s6")
+        record["run_id"] = None
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-FALLBACK", "s10", pr_number=170, head_sha="abc123"
+        )
+        self.assertEqual(result["status"], "stale-step")
+        self.assertFalse(result["covered"])
+        self.assertIn("--run-id RUN-FALLBACK", result["reason"])
 
     def test_stale_head_with_pr_match_names_head_mismatch(self):
         record = _record(run_id="RUN-1", pull_request=170, head_sha="headA", current_step="s10")
@@ -449,6 +490,54 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertIn("head mismatch", result["reason"])
         self.assertIn(
             "checkpoint for run RUN-1 covers head headA, current head is headB",
+            result["reason"],
+        )
+
+    def test_stale_head_when_checkpoint_head_missing(self):
+        record = _record(run_id="RUN-1", pull_request=170, head_sha=None, current_step="s10")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", pr_number=170, head_sha="abc123"
+        )
+        self.assertEqual(result["status"], "stale-head")
+        self.assertFalse(result["covered"])
+        self.assertIn(
+            "checkpoint for PR #170 has no recorded head SHA, current head is abc123",
+            result["reason"],
+        )
+
+    def test_stale_head_when_caller_head_missing(self):
+        record = _record(run_id="RUN-1", pull_request=170, head_sha="abc123", current_step="s10")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", pr_number=170, head_sha=None
+        )
+        self.assertEqual(result["status"], "stale-head")
+        self.assertFalse(result["covered"])
+        self.assertIn(
+            "checkpoint for PR #170 covers head abc123, current head is unspecified",
+            result["reason"],
+        )
+
+    def test_stale_head_when_both_heads_missing(self):
+        record = _record(run_id="RUN-1", pull_request=170, head_sha=None, current_step="s10")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", pr_number=170, head_sha=None
+        )
+        self.assertEqual(result["status"], "stale-head")
+        self.assertFalse(result["covered"])
+        self.assertIn(
+            "checkpoint for PR #170 has no recorded head SHA and current head is unspecified",
+            result["reason"],
+        )
+
+    def test_stale_head_when_accepted_run_id_and_checkpoint_head_missing(self):
+        record = _record(run_id="RUN-1", head_sha=None, current_step="s10")
+        result = checkpoint.covering_checkpoint(
+            record, "RUN-2", "s10", accepted_run_ids=["RUN-1"], head_sha="abc123"
+        )
+        self.assertEqual(result["status"], "stale-head")
+        self.assertFalse(result["covered"])
+        self.assertIn(
+            "checkpoint for run RUN-1 has no recorded head SHA, current head is abc123",
             result["reason"],
         )
 

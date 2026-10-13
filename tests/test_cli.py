@@ -11952,10 +11952,28 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertIn("covers head headA, current head is abc", data["reason"])
 
     def test_retry_merge_accepts_prior_run_checkpoint_via_accepted_run_ids(self):
+        # Differing PR is refused even with accepted_run_ids (#1507)
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:
             self._write_checkpoint(
                 d, config, run_id="RUN-GATES", step="s10", pull_request=999, head_sha="abc"
+            )
+            rc, out, _ = self._run_merge(
+                config=config, root=d, run_id="RUN-GATES", extra=["--run-id", "RUN-MERGE"]
+            )
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+        self.assertIn("checkpoint is for run RUN-GATES", data["reason"])
+        self.assertEqual(record["run_id"], "RUN-GATES")
+
+    def test_retry_merge_accepts_prior_run_checkpoint_when_pr_matches_via_accepted_run_ids(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(
+                d, config, run_id="RUN-GATES", step="s10", pull_request=123, head_sha="abc"
             )
             rc, out, _ = self._run_merge(
                 config=config, root=d, run_id="RUN-GATES", extra=["--run-id", "RUN-MERGE"]
@@ -11978,6 +11996,18 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(record["run_id"], "RUN-MERGE")
         self.assertEqual(record["carried_from_run_id"], "RUN-GATES")
         self.assertEqual(record["position"]["current_step"], "s11")
+
+    def test_retry_merge_refused_when_prior_run_checkpoint_missing_head(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-PREV", step="s10", head_sha=None)
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "stale-head")
+        self.assertIn("head mismatch", data["reason"])
+        self.assertIn("has no recorded head SHA", data["reason"])
 
     def test_retry_merge_carry_forward_past_s10_keeps_step_and_updates_run_id(self):
         config = _write_config_with_checkpoint("'true'")
@@ -12064,7 +12094,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(args_min.root, ".")
         self.assertIsNone(args_min.ledger_pr)
         self.assertIsNone(args_min.head_sha)
-        self.assertEqual(args_min.approve_scope, ["filesystem,git,github"])
+        self.assertEqual(args_min.approve_scope, ["<scope>"])
         self.assertEqual(args_min.operator, "<operator>")
 
         cmd_scope_str = cli._resolution_ship_command(
@@ -12072,6 +12102,32 @@ class TestMergeCheckpointGate(unittest.TestCase):
         )
         args_scope_str = cli.build_parser().parse_args(shlex.split(cmd_scope_str)[1:])
         self.assertEqual(args_scope_str.approve_scope, ["git"])
+
+        cmd_custom = cli._resolution_ship_command(
+            "p with space.yaml",
+            root="/custom dir",
+            pr_number=123,
+            head_sha="sha123",
+            operator="alice",
+            approve_scope={"filesystem", "git"},
+        )
+        args_custom = cli.build_parser().parse_args(shlex.split(cmd_custom)[1:])
+        self.assertEqual(args_custom.path, "p with space.yaml")
+        self.assertEqual(args_custom.root, "/custom dir")
+        self.assertEqual(args_custom.ledger_pr, 123)
+        self.assertEqual(args_custom.head_sha, "sha123")
+        self.assertEqual(args_custom.operator, "alice")
+        self.assertEqual(args_custom.approve_scope, ["filesystem,git"])
+
+        cmd_tuple = cli._resolution_ship_command(
+            "p.yaml",
+            root=None,
+            pr_number=None,
+            approve_scope=("git", "github"),
+        )
+        args_tuple = cli.build_parser().parse_args(shlex.split(cmd_tuple)[1:])
+        self.assertIsNone(args_tuple.ledger_pr)
+        self.assertEqual(args_tuple.approve_scope, ["git,github"])
 
     def test_explicit_run_id_overrides_gates_pass_run_id(self):
         config = _write_config_with_checkpoint("'true'")
