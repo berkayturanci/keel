@@ -76,13 +76,21 @@ def verify_merge(
     }
     collisions: dict[str, int] = {}
     if raw_collisions:
-        collisions, lost_lines, unverifiable = _check_survival(
+        collisions, lost_lines, unverifiable, unverifiable_by_path = _check_survival(
             raw_collisions, added_by_pr, merged_contents
         )
         if lost_lines or unverifiable:
-            parts = [
-                f"{p} (#{info['pr']}: {info['count']} lost)" for p, info in lost_lines.items()
-            ] + [f"{p} (#{collisions[p]}: unverifiable)" for p in unverifiable]
+            parts: list[str] = []
+            for p, info in lost_lines.items():
+                by_pr = info.get("by_pr") or {info["pr"]: {"count": info["count"]}}
+                sub = [f"#{pr_num}: {pr_info['count']} lost" for pr_num, pr_info in by_pr.items()]
+                if p in unverifiable_by_path:
+                    sub.extend(f"#{pr_num}: unverifiable" for pr_num in unverifiable_by_path[p])
+                parts.append(f"{p} ({', '.join(sub)})")
+            for p in unverifiable:
+                if p not in lost_lines:
+                    sub = [f"#{pr_num}: unverifiable" for pr_num in unverifiable_by_path[p]]
+                    parts.append(f"{p} ({', '.join(sub)})")
             return _report(
                 "drift",
                 f"the merge wrote to {len(collisions)} file(s) that another pull request "
@@ -122,10 +130,11 @@ def _check_survival(
     collisions: Mapping[str, Sequence[int]],
     added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None,
     merged_contents: Mapping[str, str | None] | None,
-) -> tuple[dict[str, int], dict[str, dict], list[str]]:
+) -> tuple[dict[str, int], dict[str, dict], list[str], dict[str, list[int]]]:
     overtaken: dict[str, int] = {}
     lost_lines: dict[str, dict] = {}
     unverifiable: list[str] = []
+    unverifiable_by_path: dict[str, list[int]] = {}
     for path, prs in collisions.items():
         content = (merged_contents or {}).get(path)
         present = (
@@ -134,30 +143,37 @@ def _check_survival(
             else set()
         )
         missing_all: list[str] = []
-        lost_pr: int | None = None
-        unverifiable_pr: int | None = None
+        by_pr: dict[int, dict] = {}
+        unverifiable_prs: list[int] = []
         for pr in prs:
             added = ((added_by_pr or {}).get(pr) or {}).get(path)
             if content is None or added is None:
-                unverifiable_pr = unverifiable_pr or pr
+                unverifiable_prs.append(pr)
                 continue
             missing = [line for line in added if line.strip() and line not in present]
             if missing:
-                lost_pr = lost_pr or pr
+                by_pr[pr] = {"count": len(missing), "samples": missing[:3]}
                 missing_all.extend(missing)
-        if lost_pr is not None:
-            overtaken[path] = lost_pr
-            lost_lines[path] = {
-                "pr": lost_pr,
+        if by_pr:
+            first_pr = next(iter(by_pr))
+            overtaken[path] = first_pr
+            entry: dict = {
+                "pr": first_pr,
                 "count": len(missing_all),
                 "samples": missing_all[:3],
             }
-        elif unverifiable_pr is not None:
-            overtaken[path] = unverifiable_pr
+            if len(by_pr) > 1 or unverifiable_prs:
+                entry["by_pr"] = by_pr
+            if unverifiable_prs:
+                entry["unverifiable_prs"] = unverifiable_prs
+            lost_lines[path] = entry
+        if unverifiable_prs:
+            overtaken.setdefault(path, unverifiable_prs[0])
             unverifiable.append(path)
-        else:
+            unverifiable_by_path[path] = unverifiable_prs
+        if path not in overtaken:
             overtaken[path] = prs[0]
-    return overtaken, lost_lines, unverifiable
+    return overtaken, lost_lines, unverifiable, unverifiable_by_path
 
 
 def _report(status: str, reason: str, **extra) -> dict:
@@ -195,9 +211,20 @@ def render(report: dict) -> str:
     for path, pr in (report.get("overtaken") or {}).items():
         if path in lost:
             info = lost[path]
-            lines.append(f"    {path}  — also changed by #{pr} ({info['count']} lost line(s))")
-            for sample in info.get("samples") or []:
-                lines.append(f"      - {sample}")
+            by_pr = info.get("by_pr") or {
+                info.get("pr", pr): {
+                    "count": info["count"],
+                    "samples": info.get("samples") or [],
+                }
+            }
+            for pr_num, pr_info in by_pr.items():
+                lines.append(
+                    f"    {path}  — also changed by #{pr_num} ({pr_info['count']} lost line(s))"
+                )
+                for sample in pr_info.get("samples") or []:
+                    lines.append(f"      - {sample}")
+            for pr_num in info.get("unverifiable_prs") or []:
+                lines.append(f"    {path}  — also changed by #{pr_num} (unverifiable)")
         elif path in unverifiable:
             lines.append(f"    {path}  — also changed by #{pr} (unverifiable)")
     for path in report.get("unexpected") or []:

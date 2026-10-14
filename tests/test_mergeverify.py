@@ -226,3 +226,53 @@ class TestLineSurvival(unittest.TestCase):
         self.assertEqual(both_clean["status"], "out-of-scope")
         self.assertEqual(both_clean["overtaken"], {"CHANGELOG.md": 550})
         self.assertEqual(both_clean["unexpected"], ["extra.py"])
+
+    def test_multiple_overtaking_prs_losing_different_lines_preserves_per_pr_attribution(self):
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550, 551]},
+            added_by_pr={
+                550: {"a.py": ["x"]},
+                551: {"a.py": ["y"]},
+            },
+            merged_contents={"a.py": ""},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertIn("#550: 1 lost", report["reason"])
+        self.assertIn("#551: 1 lost", report["reason"])
+        self.assertEqual(
+            report["lost_lines"],
+            {
+                "a.py": {
+                    "pr": 550,
+                    "count": 2,
+                    "samples": ["x", "y"],
+                    "by_pr": {
+                        550: {"count": 1, "samples": ["x"]},
+                        551: {"count": 1, "samples": ["y"]},
+                    },
+                }
+            },
+        )
+        rendered = mv.render(report)
+        self.assertIn("a.py  — also changed by #550 (1 lost line(s))", rendered)
+        self.assertIn("a.py  — also changed by #551 (1 lost line(s))", rendered)
+
+    def test_mixed_lost_and_unverifiable_prs_on_same_file_records_both(self):
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550, 551]},
+            added_by_pr={
+                550: {"a.py": ["x"]},
+                551: {"a.py": None},
+            },
+            merged_contents={"a.py": ""},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertIn("a.py", report["lost_lines"])
+        self.assertEqual(report["unverifiable"], ["a.py"])
+        self.assertIn("#550: 1 lost", report["reason"])
+        self.assertIn("#551: unverifiable", report["reason"])
+        rendered = mv.render(report)
+        self.assertIn("a.py  — also changed by #550 (1 lost line(s))", rendered)
+        self.assertIn("a.py  — also changed by #551 (unverifiable)", rendered)
