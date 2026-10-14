@@ -85,10 +85,12 @@ _NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 #: A terminated fence only: a stray unterminated opener must not swallow (hide) the rest of
-#: the body, and an opener must only close at a valid closing-fence line (the fence characters
-#: and optional trailing spaces/tabs).
+#: the body, an opener line may not carry a backtick after its opening run (so a one-line
+#: `````foo````` inline code span at line start is not read as a fence opener), and an opener
+#: must only close at a valid closing-fence line (the fence characters and optional trailing
+#: spaces/tabs).
 _FENCE_RE = re.compile(
-    r"^[ \t]*+([`~])(\1{2,}+)[^\n]*\n(?:(?!^[ \t]*\1\2\1*[ \t]*$)[^\n]*\n)*?^[ \t]*\1\2\1*[ \t]*$",
+    r"^[ \t]*+([`~])(\1{2,}+)[^\n`]*\n(?:(?!^[ \t]*\1\2\1*[ \t]*$)[^\n]*\n)*?^[ \t]*\1\2\1*[ \t]*$",
     re.MULTILINE,
 )
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -114,11 +116,17 @@ class Blocker:
         return {"kind": self.kind, "ref": self.ref}
 
 
+def _is_blocked_phrase(text: str, m: re.Match[str]) -> bool:
+    return m.group(1).lower() not in _NOUN_PHRASES or text[m.end() :].lstrip(" \t").startswith(":")
+
+
 def _unwrap_inline(match: re.Match[str]) -> str:
     """Keep backticked content (a tag is routinely written ``v1.2.0``) unless the span
     is itself a blocker phrase, which is documentation about the phrase, not a claim."""
     inner = match.groups()[-1]
-    if BLOCKED_PHRASE_RE.search(inner) or _BEFORE_PHRASE_RE.search(inner):
+    if any(
+        _is_blocked_phrase(inner, m) for m in BLOCKED_PHRASE_RE.finditer(inner)
+    ) or _BEFORE_PHRASE_RE.search(inner):
         return ""
     return inner
 
@@ -265,10 +273,7 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
     text = _prose(body or "", repo)
     matches: list[tuple[re.Match[str], str]] = []
     for m in BLOCKED_PHRASE_RE.finditer(text):
-        if _negated(text, m.start()):
-            continue
-        label = m.group(1).lower() in _NOUN_PHRASES
-        if label and not text[m.end() :].lstrip(" \t").startswith(":"):
+        if _negated(text, m.start()) or not _is_blocked_phrase(text, m):
             continue
         if NON_BLOCKING_DEPENDENCY_RE.match(text, m.start()):
             continue
@@ -285,7 +290,7 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
         next_start = matches[i + 1][0].start() if i + 1 < len(matches) else len(text)
         zone = _zone(text[:next_start], m.end())
         zone_ref_spans = [
-            (rm.start(), rm.start() + len(rm.group(0).rstrip(".")))
+            (rm.start(), rm.start() + len(rm.group(0).rstrip(".,;:!?)]}")))
             for rm in _REFLIKE_RE.finditer(zone)
         ]
         this_found: list[Blocker] = []

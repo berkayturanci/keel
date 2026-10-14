@@ -296,9 +296,18 @@ class ParseTests(unittest.TestCase):
             "``Use `Blocked by #12` here``",
             "`Don\u2019t merge before #12`",
             "``Don\u2019t merge before #12``",
+            "Use `Dependency: #3` in a body.",
         ):
             self.assertEqual(((), False), blockers.scan_blockers(body), body)
         self.assertEqual((("7",), False), self.refs("Blocked by ``#7``"))
+        self.assertEqual(
+            ((Blocker(ISSUE, "2"),), False),
+            blockers.scan_blockers("```Blocked by #1```\nBlocked by #2\n```\ncode\n```"),
+        )
+        self.assertEqual(
+            ((Blocker(ISSUE, "1"), Blocker(TAG, "v1-dependency")), False),
+            blockers.scan_blockers("Blocked by #1\nDo not merge before `v1-dependency`"),
+        )
 
     def test_list_grammar(self):
         want = ["1", "2", "3"]
@@ -418,6 +427,15 @@ class ParseTests(unittest.TestCase):
             ("Do not merge before v2 is released", "v2"),
             ("Do not merge before v1.2.0 ships", "v1.2.0"),
             ("do not merge until 1.2.0 is cut", "1.2.0"),
+            ("Do not merge before v1.2.0.", "v1.2.0"),
+            ("Do not merge before v1.2.0, please", "v1.2.0"),
+            ("Do not merge before v1.2.0; see notes", "v1.2.0"),
+            ("Do not merge before v1.2.0: see notes", "v1.2.0"),
+            ("Do not merge before v1.2.0! Thanks", "v1.2.0"),
+            ("Do not merge before v1.2.0? Ask first", "v1.2.0"),
+            ("(Do not merge before v1.2.0) thanks", "v1.2.0"),
+            ("[Do not merge before v1.2.0]", "v1.2.0"),
+            ("{Do not merge before v1.2.0}", "v1.2.0"),
         ):
             self.assertEqual(((Blocker(TAG, want),), False), blockers.scan_blockers(body), body)
 
@@ -825,6 +843,33 @@ class StaleBlockersTests(unittest.TestCase):
         )
         self.assertFalse(rep_clean["prs"][0]["incomplete"])
         self.assertTrue(rep_clean["prs"][0]["all_cleared"])
+
+    def test_before_tag_punctuation_and_dependency_noun_in_report(self):
+        rep = self.report(
+            prs=[
+                _pr(10, "Do not merge before v1.2.0, please"),
+                _pr(20, "Do not merge before v1.2.0; see notes"),
+                _pr(30, "(Do not merge before v1.2.0) thanks"),
+                _pr(40, "Blocked by #1\nDo not merge before `v1-dependency`"),
+            ],
+            issue_states={"1": C},
+            tags={"v1.2.0": "yes"},
+        )
+        self.assertEqual([10, 20, 30, 40], [p["number"] for p in rep["prs"]])
+        for pr in rep["prs"][:3]:
+            self.assertFalse(pr["incomplete"], pr)
+            self.assertTrue(pr["all_cleared"], pr)
+            self.assertEqual([{"kind": TAG, "ref": "v1.2.0", "state": CLEARED}], pr["blockers"])
+        forty = rep["prs"][3]
+        self.assertFalse(forty["incomplete"])
+        self.assertFalse(forty["all_cleared"])
+        self.assertEqual(
+            [
+                {"kind": ISSUE, "ref": "1", "state": CLEARED},
+                {"kind": TAG, "ref": "v1-dependency", "state": PENDING},
+            ],
+            forty["blockers"],
+        )
 
     def test_incomplete_pr_with_pending_blocker_is_reported(self):
         rep = self.report(
