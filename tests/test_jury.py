@@ -1333,7 +1333,52 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         self.assertIn("head123", add_calls[0][0])
         jury_calls = [c for c in calls if c[0][0] == "jury" and "--version" not in c[0]]
         self.assertEqual(len(jury_calls), 1)
-        self.assertIn(".keel/worktrees/review-jury-", jury_calls[0][1])
+        checkout_cwd = jury_calls[0][1]
+        self.assertIn(".keel/worktrees/review-jury-", checkout_cwd)
+        remove_calls = [c for c in calls if "worktree" in c[0] and "remove" in c[0]]
+        self.assertEqual(len(remove_calls), 1)
+        self.assertIn(checkout_cwd, remove_calls[0][0])
+
+    def test_run_gate_with_default_runner_uses_review_checkout_and_removes_it(self):
+        import unittest.mock as mock
+        from pathlib import Path
+
+        from keel import swarm_runtime
+
+        wt_calls = []
+
+        def _fake_default_runner(cmd, cwd):
+            wt_calls.append((list(cmd), Path(cwd)))
+            return jury.CommandResult(True, 0, "")
+
+        argv_calls = []
+
+        def _fake_run_argv(argv, *, cwd=None, timeout=None, **_kw):
+            argv_calls.append((list(argv), cwd))
+            if "--version" in argv:
+                return jury.CommandResult(True, 0, "jury 1.0", stdout="jury 1.0")
+            out = json.dumps(_ballot_report("APPROVE"))
+            return jury.CommandResult(True, 0, out, stdout=out)
+
+        with (
+            mock.patch.object(swarm_runtime, "default_runner", side_effect=_fake_default_runner),
+            mock.patch.object(jury, "run_argv", side_effect=_fake_run_argv),
+        ):
+            ok, findings, timed_out = jury.run_gate(
+                "diff content",
+                cwd=self.root,
+                mode="gating",
+                head_sha="head123",
+            )
+        self.assertTrue(ok)
+        self.assertFalse(timed_out)
+        self.assertEqual(findings, [])
+        self.assertEqual(len(wt_calls), 2)
+        self.assertIn("add", wt_calls[0][0])
+        self.assertIn("remove", wt_calls[1][0])
+        jury_runs = [c for c in argv_calls if "--diff-file" in c[0]]
+        self.assertEqual(len(jury_runs), 1)
+        self.assertIn(".keel/worktrees/review-jury-", jury_runs[0][1])
 
     def test_run_gate_skips_checkout_on_early_exits(self):
         calls = []
@@ -1380,9 +1425,9 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         self.assertEqual(findings[0].severity, "major")
         self.assertEqual(findings[0].source, "jury:review-checkout")
         self.assertIn("fatal: bad object", findings[0].message)
-        self.assertTrue(jury.could_not_run(findings))
+        self.assertFalse(jury.could_not_run(findings))
 
-    def test_run_gate_checkout_failure_surfaces_as_minor_and_skipped_in_advisory_mode(self):
+    def test_run_gate_checkout_failure_surfaces_as_minor_in_advisory_mode(self):
         def _failing_git(argv, cwd=None, **kw):
             if "--version" in argv:
                 return _Proc(0, "jury 1.0")
@@ -1403,10 +1448,13 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         self.assertEqual(findings[0].severity, "minor")
         self.assertEqual(findings[0].source, "jury:review-checkout")
         self.assertIn("fatal: bad object", findings[0].message)
-        self.assertTrue(jury.could_not_run(findings))
+        self.assertFalse(jury.could_not_run(findings))
 
     def test_run_gate_runtime_error_inside_jury_is_not_relabeled_as_checkout_failure(self):
+        calls = []
+
         def _exploding_jury(argv, cwd=None, **kw):
+            calls.append((list(argv), cwd))
             if "--version" in argv:
                 return _Proc(0, "jury 1.0")
             if "worktree" in argv:
@@ -1422,6 +1470,8 @@ class TestRunGateWithHeadSha(unittest.TestCase):
                 _run=_exploding_jury,
             )
         self.assertIn("unexpected internal runner error", str(cm.exception))
+        remove_calls = [c for c in calls if "worktree" in c[0] and "remove" in c[0]]
+        self.assertEqual(len(remove_calls), 1)
 
 
 if __name__ == "__main__":

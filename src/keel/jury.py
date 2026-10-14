@@ -337,8 +337,8 @@ REVIEW_CHECKOUT_SOURCE = "jury:review-checkout"
 
 
 def could_not_run(findings) -> bool:
-    """Did this jury gate result come back without running (no CLI, empty diff, or no checkout)?"""
-    return any(f.source in (NOT_RUN_SOURCE, REVIEW_CHECKOUT_SOURCE) for f in findings)
+    """Did this jury gate result come back without running (no CLI, or an empty diff)?"""
+    return any(f.source == NOT_RUN_SOURCE for f in findings)
 
 
 def run_gate(

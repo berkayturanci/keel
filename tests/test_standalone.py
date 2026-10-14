@@ -220,6 +220,21 @@ class TestStandaloneHelpers(unittest.TestCase):
                 self.assertNotIn("warning:", err.getvalue())
                 self.assertNotIn("staged files  : warning:", out.getvalue())
 
+            # Unreadable staged index with baseline surfaces warning
+            args.json = False
+            args.implementer_file = ["src/app.py"]
+            with patch(
+                "keel.git.staged_modified_or_deleted_files",
+                return_value=None,
+            ):
+                err = io.StringIO()
+                out = io.StringIO()
+                with patch("sys.stderr", err), patch("sys.stdout", out):
+                    code = standalone.cmd_standalone(args)
+                self.assertEqual(code, 0)
+                self.assertIn("warning: could not read staged files", err.getvalue())
+                self.assertIn("staged files  : warning:", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

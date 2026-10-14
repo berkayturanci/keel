@@ -45,7 +45,6 @@ from keel.swarm_runtime import (
     create_swarm_worktree,
     default_runner,
     execute_cluster_worker,
-    remove_review_worktree,
     remove_swarm_worktree,
     review_checkout,
     review_worktree_path,
@@ -3340,9 +3339,6 @@ class ReviewCheckoutTests(unittest.TestCase):
             review_worktree_path("seat1", root="rel/repo", run_id="run42"),
             Path("rel/repo").resolve() / ".keel" / "worktrees" / "review-seat1-run42",
         )
-
-    def test_remove_review_worktree_alias(self):
-        self.assertIs(remove_review_worktree, remove_swarm_worktree)
 
     def test_review_checkout_creates_and_cleans_up_with_relative_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:

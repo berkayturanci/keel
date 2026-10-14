@@ -126,7 +126,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
         for path in _adapter_files():
             text = path.read_text(encoding="utf-8")
             for line in text.splitlines():
-                if "--detach" not in line.replace("git worktree add --detach", ""):
+                if "--detach" not in line:
                     continue
                 with self.subTest(path=str(path.relative_to(REPO_ROOT)), line=line.strip()):
                     # the flag may sit on a continuation line of the same example
@@ -142,13 +142,92 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             "git add -A must precede the staged contamination check so unstaged edits are caught",
         )
 
-    def test_ship_adapter_resolves_diff_and_guards_review_worktree_cleanup(self):
+    def test_ship_and_review_cycle_adapters_use_safe_isolated_checkouts(self):
+        import os
+        import subprocess
+        import tempfile
+
         ship_md = (REPO_ROOT / "src/keel/adapters/commands/ship.md").read_text(encoding="utf-8")
-        self.assertIn("DIFF_ABS=", ship_md)
-        self.assertIn('--diff-file "$DIFF_ABS"', ship_md)
-        self.assertIn(".keel/worktrees/review-$RUN_ID-jury", ship_md)
-        self.assertIn(".keel/worktrees/review-$RUN_ID-$SLOT", ship_md)
-        self.assertIn("trap 'keel worktree-remove", ship_md)
+        review_cycle_md = (REPO_ROOT / "src/keel/adapters/commands/review-cycle.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("read-only checkout", ship_md)
+        self.assertNotIn("read-only checkout", review_cycle_md)
+        self.assertIn("separate detached checkout", review_cycle_md)
+        self.assertIn("git fetch origin", review_cycle_md)
+        self.assertIn("SLOT_INDEX", ship_md)
+        self.assertNotIn('review-$RUN_ID-$SLOT"', ship_md)
+
+        # Extract the s7 reviewer dispatch bash block from ship.md and verify its behaviour:
+        blocks = re.findall(r"```bash\n(.*?)```", ship_md, re.DOTALL)
+        reviewer_block = next(b for b in blocks if "--role review" in b and "REVIEW_WT=" in b)
+        # Drop the gate review half so we can test the reviewer slot dispatch in isolation
+        slot_script = reviewer_block.split("# the gate review", 1)[0]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            log_file = root / "calls.log"
+
+            (bin_dir / "git").write_text(
+                "#!/bin/sh\n"
+                'if [ "$1" = "rev-parse" ]; then echo "abc1234"; exit 0; fi\n'
+                'echo "git $*" >> "$CALL_LOG"\n'
+                'if [ "$FAIL_WORKTREE_ADD" = "1" ]; then exit 128; fi\n'
+                'mkdir -p "$4"\n'
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            (bin_dir / "keel").write_text(
+                '#!/bin/sh\necho "keel $*" >> "$CALL_LOG"\nexit 0\n',
+                encoding="utf-8",
+            )
+            os.chmod(bin_dir / "git", 0o755)
+            os.chmod(bin_dir / "keel", 0o755)
+
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                "CALL_LOG": str(log_file),
+                "RUN_ID": "r1",
+                "SLOT_INDEX": "0",
+                "SLOT_PROVIDER": "claude",
+                "RUBRIC_AND_DIFF": "/tmp/prompt.md",
+            }
+
+            # 1. When git worktree add fails, keel delegate run must NOT be dispatched
+            res_fail = subprocess.run(
+                ["bash", "-c", slot_script],
+                cwd=root,
+                env={**env, "FAIL_WORKTREE_ADD": "1"},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(res_fail.returncode, 0)
+            calls_on_fail = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
+            self.assertNotIn("keel delegate run", calls_on_fail)
+            self.assertNotIn("keel worktree-remove", calls_on_fail)
+
+            # 2. When git worktree add succeeds, delegate run executes and worktree-remove cleans up
+            log_file.unlink(missing_ok=True)
+            res_ok = subprocess.run(
+                ["bash", "-c", slot_script],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+            calls_on_ok = log_file.read_text(encoding="utf-8").splitlines()
+            self.assertTrue(any(c.startswith("git worktree add -d ") for c in calls_on_ok))
+            self.assertTrue(any(c.startswith("keel delegate run ") for c in calls_on_ok))
+            self.assertTrue(
+                any(
+                    c.startswith("keel worktree-remove ") and f"--root {root.resolve()}" in c
+                    for c in calls_on_ok
+                )
+            )
 
     def test_the_detach_primitive_replaces_sleep_polling_advice(self):
         for path in _adapter_files():

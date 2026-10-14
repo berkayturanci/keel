@@ -1877,6 +1877,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     diff_text = git.diff(base_ref, "HEAD", cwd=args.root)
+    jury_head_sha = getattr(args, "head_sha", None) or (
+        git.rev_parse("HEAD", cwd=args.root)
+        if any(spec.kind == "builtin" and spec.id == gates.JURY_ID for spec in specs)
+        else None
+    )
     posted = _posted_panel(
         args, config, specs, transport, gating=review_contract["jury"]["mode"] == "gating"
     )
@@ -1888,7 +1893,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             jury_mode=review_contract["jury"]["mode"],
             timeout=config.knobs.gate_timeout_s,
             posted_panel=posted[1] if posted is not None else None,
-            head_sha=getattr(args, "head_sha", None),
+            head_sha=jury_head_sha,
         ),
         config=config,
         root=args.root,
@@ -2160,9 +2165,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         staged_md,
         implementer_files=impl_files,
         files_since_start=files_since,
+        root=args.root,
     )
     staged_warnings: list[str] = []
-    if staged_contamination["has_contamination"] and staged_contamination["warning"]:
+    if staged_contamination["warning"]:
         staged_warnings.append(staged_contamination["warning"])
         print(f"warning: {staged_contamination['warning']}", file=sys.stderr)
 
@@ -2257,7 +2263,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
     for warning in ledger_result["warnings"]:
         print(f"  run context   : warning: {warning}")
-    if staged_contamination["has_contamination"]:
+    if staged_contamination["warning"]:
         print(f"  staged files  : warning: {staged_contamination['warning']}")
     if intake_record["questions"]:
         print(f"  questions     : {len(intake_record['questions'])}")

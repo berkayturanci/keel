@@ -278,9 +278,6 @@ def remove_swarm_worktree(
     return not worktree_path.exists()
 
 
-remove_review_worktree = remove_swarm_worktree
-
-
 class ReviewCheckoutError(RuntimeError):
     """Raised when an isolated review checkout cannot be created."""
 

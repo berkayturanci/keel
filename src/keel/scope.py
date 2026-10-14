@@ -15,6 +15,7 @@ classification so docs-only extras are exempt rather than flagged.
 from __future__ import annotations
 
 import fnmatch
+import posixpath
 from typing import Any
 
 
@@ -87,11 +88,29 @@ def verify(
     }
 
 
+def _normalize_repo_path(path: str, root: str | None = None) -> str:
+    norm = posixpath.normpath(path.replace("\\", "/"))
+    if root:
+        root_norm = posixpath.normpath(root.replace("\\", "/")).rstrip("/")
+        if norm == root_norm:
+            return "."
+        elif norm.startswith(root_norm + "/"):
+            norm = norm[len(root_norm) + 1 :]
+    return norm
+
+
+def _is_within_expected(path: str, expected: set[str]) -> bool:
+    if path in expected or "." in expected:
+        return True
+    return any(path.startswith(exp + "/") for exp in expected)
+
+
 def check_staged_contamination(
     staged_modified_or_deleted: list[str] | None,
     *,
     implementer_files: list[str] | None = None,
     files_since_start: list[str] | None = None,
+    root: str | None = None,
 ) -> dict[str, Any]:
     """Check whether staged modified or deleted files include paths outside the implementer run.
 
@@ -99,20 +118,14 @@ def check_staged_contamination(
     committed-history ``files_since_start`` baseline. When no commits exist since ``since``
     (e.g., uncommitted work at ``HEAD`` or an opaque session label), ``files_since_start``
     is empty and yields ``comparison_source: 'none'`` — pass ``implementer_files`` to
-    check uncommitted work. Warns, never blocks.
+    check uncommitted work. When a baseline is present and ``staged_modified_or_deleted``
+    is ``None`` (unreadable git index), surfaces a warning. Warns, never blocks.
     """
-    if staged_modified_or_deleted is None:
-        return {
-            "has_contamination": False,
-            "suspect_paths": [],
-            "warning": None,
-            "comparison_source": "none",
-        }
     if implementer_files is not None:
-        expected = set(implementer_files)
+        expected = {_normalize_repo_path(p, root) for p in implementer_files}
         source = "implementer-files"
     elif files_since_start:
-        expected = set(files_since_start)
+        expected = {_normalize_repo_path(p, root) for p in files_since_start}
         source = "files-since-start"
     else:
         return {
@@ -122,9 +135,18 @@ def check_staged_contamination(
             "comparison_source": "none",
         }
 
-    suspect = [path for path in staged_modified_or_deleted if path not in expected]
+    if staged_modified_or_deleted is None:
+        return {
+            "has_contamination": False,
+            "suspect_paths": [],
+            "warning": "could not read staged files from git index to check for contamination",
+            "comparison_source": source,
+        }
+
+    normalized_staged = [_normalize_repo_path(p, root) for p in staged_modified_or_deleted]
+    suspect = [path for path in normalized_staged if not _is_within_expected(path, expected)]
     if suspect:
-        sorted_suspect = sorted(suspect)
+        sorted_suspect = sorted(set(suspect))
         warning = (
             "staged change set includes deleted or modified paths not touched by the "
             f"implementer run: {', '.join(sorted_suspect)}"

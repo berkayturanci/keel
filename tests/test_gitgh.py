@@ -1129,25 +1129,85 @@ class StagedAndChangedSinceTests(unittest.TestCase):
         rec = _Recorder(out="")
         self.assertEqual(git.staged_modified_or_deleted_files(_run=rec), [])
 
-    def test_changed_files_since_diff_names(self):
+    def test_changed_files_since_revision_range(self):
+        calls = []
+
         def run(argv, **kw):
-            if "diff" in argv:
-                return _Proc(0, "file1.py\0file2.py\0", "")
+            calls.append(list(argv))
+            if "log" in argv and "v1.0.0..HEAD" in argv:
+                return _Proc(0, "file2.py\0file1.py\0file2.py\0", "")
             return _Proc(1, "", "")
 
         files = git.changed_files_since("v1.0.0", _run=run)
         self.assertEqual(files, ["file1.py", "file2.py"])
+        self.assertEqual(calls[0][-1], "--")
+
+    def test_changed_files_since_enumerates_intervening_commits_including_restored_file(self):
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+
+            def g(*args):
+                subprocess.run(
+                    ["git", *args],
+                    cwd=tmp,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+            g("init", "-b", "main")
+            g("config", "user.email", "t@example.com")
+            g("config", "user.name", "Tester")
+            Path(tmp, "a.py").write_text("orig-a\n", encoding="utf-8")
+            Path(tmp, "b.py").write_text("orig-b\n", encoding="utf-8")
+            g("add", "a.py", "b.py")
+            g("commit", "-m", "base")
+            base_sha = git.rev_parse("HEAD", cwd=tmp)
+            self.assertIsNotNone(base_sha)
+
+            Path(tmp, "a.py").write_text("changed-a\n", encoding="utf-8")
+            Path(tmp, "b.py").write_text("changed-b\n", encoding="utf-8")
+            g("add", "a.py", "b.py")
+            g("commit", "-m", "touch both")
+
+            Path(tmp, "a.py").write_text("orig-a\n", encoding="utf-8")
+            g("add", "a.py")
+            g("commit", "-m", "restore a.py")
+
+            # Net diff only has b.py, but committed history touched both a.py and b.py.
+            self.assertEqual(git.diff_names(base_sha, "HEAD", cwd=tmp), ["b.py"])
+            self.assertEqual(
+                git.changed_files_since(base_sha, head="HEAD", cwd=tmp),
+                ["a.py", "b.py"],
+            )
+
+    def test_changed_files_since_rejects_option_like_since_or_head(self):
+        calls = []
+
+        def run(argv, **kw):
+            calls.append(list(argv))
+            return _Proc(0, "a.py\0", "")
+
+        self.assertIsNone(git.changed_files_since("-n", _run=run))
+        self.assertIsNone(git.changed_files_since("", _run=run))
+        self.assertIsNone(git.changed_files_since("HEAD~1", head="--all", _run=run))
+        self.assertEqual(calls, [])
 
     def test_changed_files_since_git_log_date_success(self):
+        calls = []
+
         def run(argv, **kw):
-            if "diff" in argv:
-                return _Proc(1, "", "unknown revision")
-            if "log" in argv:
+            calls.append(list(argv))
+            if "log" in argv and any(a.startswith("--since=") for a in argv):
                 return _Proc(0, "b.py\0a.py\0b.py\0", "")
-            return _Proc(1, "", "")
+            return _Proc(1, "", "unknown revision")
 
         files = git.changed_files_since("2 hours ago", _run=run)
         self.assertEqual(files, ["a.py", "b.py"])
+        self.assertEqual(calls[-1][-1], "--")
 
     def test_changed_files_since_git_log_error(self):
         def run(argv, **kw):

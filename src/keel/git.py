@@ -581,15 +581,32 @@ def changed_files_since(
 ) -> list[str] | None:
     """Paths touched in committed history since ``since`` (a commit, ref, or git log timestamp).
 
-    Committed-history heuristic: tries ``diff_names(since, head)`` first when ``since``
-    resolves as a revision, falling back to
-    ``git log --since=<since> --name-only --format= -z <head>``. Uncommitted edits are not
+    Committed-history heuristic: enumerates paths across intervening commits in
+    ``<since>..<head>`` first when ``since`` resolves as a revision, falling back to
+    ``git log --since=<since> --name-only --format= -z <head> --``. Uncommitted edits are not
     in commit history (use ``--implementer-file`` when no implementation commit exists yet).
-    Returns ``None`` when git could not read the history.
+    Returns ``None`` when git could not read the history or when ``since`` / ``head``
+    starts with ``-``.
     """
-    diffed = diff_names(since, head, cwd=cwd, _run=_run)
-    if diffed is not None:
-        return diffed
+    if not since or since.startswith("-") or head.startswith("-"):
+        return None
+    rev_result = run_argv(
+        [
+            "git",
+            "-c",
+            "core.quotePath=false",
+            "log",
+            "--name-only",
+            "--format=",
+            "-z",
+            f"{since}..{head}",
+            "--",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+    if rev_result.ok:
+        return sorted({name for name in rev_result.stdout.split("\0") if name})
     result = run_argv(
         [
             "git",
@@ -601,6 +618,7 @@ def changed_files_since(
             "--format=",
             "-z",
             head,
+            "--",
         ],
         cwd=cwd,
         **_kw(_run),

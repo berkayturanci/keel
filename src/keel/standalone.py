@@ -234,8 +234,9 @@ def cmd_standalone(args: argparse.Namespace) -> int:
             staged_md,
             implementer_files=impl_files,
             files_since_start=files_since,
+            root=args.root,
         )
-        if staged_contamination["has_contamination"] and staged_contamination["warning"]:
+        if staged_contamination["warning"]:
             warnings.append(staged_contamination["warning"])
             print(f"warning: {staged_contamination['warning']}", file=sys.stderr)
 
@@ -318,7 +319,7 @@ def cmd_standalone(args: argparse.Namespace) -> int:
             ]
             print(f"  worktree      : linked required={linked_required}")
             print("  pr            : ready PR after configured gates")
-            if staged_contamination["has_contamination"]:  # type: ignore[index]
+            if staged_contamination["warning"]:  # type: ignore[index]
                 print(f"  staged files  : warning: {staged_contamination['warning']}")  # type: ignore[index]
         elif command == "work-block":
             print("  mode source   : keel work-block")

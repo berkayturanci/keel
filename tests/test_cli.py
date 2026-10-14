@@ -1718,6 +1718,168 @@ class TestShip(unittest.TestCase):
                     payload["result"]["staged_contamination"]["comparison_source"], "none"
                 )
 
+    def test_ship_unreadable_staged_index_with_implementer_file_warns(self):
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch("keel.git.staged_modified_or_deleted_files", return_value=None),
+            ):
+                rc, out, err = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--implementer-file",
+                        "src/keel/cli.py",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc, 0)
+                self.assertIn("warning: could not read staged files", err)
+                payload = json.loads(out)
+                self.assertEqual(
+                    payload["result"]["staged_contamination"]["comparison_source"],
+                    "implementer-files",
+                )
+                self.assertIn(
+                    "could not read staged files",
+                    payload["result"]["staged_contamination"]["warning"],
+                )
+                self.assertTrue(payload["result"]["warnings"])
+
+    def test_ship_without_explicit_head_sha_runs_jury_in_isolated_checkout(self):
+        from keel import jury as jury_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+            _run_git(root, "add", "app.py")
+            _run_git(root, "commit", "-m", "add app")
+            expected_head = git.rev_parse("HEAD", cwd=d)
+            self.assertIsNotNone(expected_head)
+
+            config = _write_raw(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+                "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n"
+            )
+            observed_jury_cwds: list[str] = []
+            observed_checkout_files_exist: list[bool] = []
+
+            def fake_jury_run_argv(argv, *, cwd=None, timeout=None, **_kw):
+                if "--version" in argv:
+                    return CommandResult(True, 0, "jury 1.0", stdout="jury 1.0")
+                observed_jury_cwds.append(str(cwd))
+                observed_checkout_files_exist.append((Path(cwd) / "app.py").exists())
+                report = json.dumps(
+                    {
+                        "schema_version": "1.2",
+                        "findings": [],
+                        "reviewers": [
+                            {
+                                "name": "alpha",
+                                "vendor": "anthropic",
+                                "verdict": "APPROVE",
+                                "scope": "Read app.py.",
+                            },
+                            {
+                                "name": "chair",
+                                "role": "chair",
+                                "vendor": "openai",
+                                "verdict": "APPROVE",
+                            },
+                        ],
+                    }
+                )
+                return CommandResult(True, 0, report, stdout=report)
+
+            with (
+                patch.object(jury_mod, "available", return_value=True),
+                patch.object(jury_mod, "run_argv", side_effect=fake_jury_run_argv),
+            ):
+                rc, out, err = run(["ship", config, "--root", d, "--jury", "--json"])
+
+            self.assertEqual(rc, 0, out + err)
+            self.assertEqual(len(observed_jury_cwds), 1)
+            self.assertNotEqual(Path(observed_jury_cwds[0]).resolve(), root.resolve())
+            self.assertIn(".keel/worktrees/review-jury-", observed_jury_cwds[0])
+            self.assertEqual(observed_checkout_files_exist, [True])
+            self.assertFalse(Path(observed_jury_cwds[0]).exists())
+
+    def test_ship_gating_jury_checkout_failure_blocks_not_skipped(self):
+        from keel import jury as jury_mod
+        from keel import swarm_runtime
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+            _run_git(root, "add", "app.py")
+            _run_git(root, "commit", "-m", "add app")
+
+            config = _write_raw(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+                "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n"
+            )
+            with (
+                patch.object(jury_mod, "available", return_value=True),
+                patch.object(
+                    swarm_runtime,
+                    "default_runner",
+                    return_value=CommandResult(False, 128, "fatal: worktree add failed"),
+                ),
+            ):
+                rc, out, err = run(["ship", config, "--root", d, "--jury", "--json"])
+
+            self.assertEqual(rc, 1, out + err)
+            payload = json.loads(out)
+            self.assertEqual(payload["result"]["assessment"]["merge"]["action"], "block")
+            jury_outcome = next(
+                o for o in payload["result"]["gate_outcomes"] if o["gate"] == "jury"
+            )
+            self.assertFalse(jury_outcome["ok"])
+            self.assertFalse(jury_outcome["skipped"])
+            self.assertEqual(jury_outcome["findings"][0]["source"], "jury:review-checkout")
+
+    def test_worktree_remove_resolves_relative_path_against_root_when_cwd_differs(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            wt_rel = ".keel/worktrees/review-rel-test"
+            wt_abs = root / wt_rel
+            wt_abs.parent.mkdir(parents=True, exist_ok=True)
+            _run_git(root, "worktree", "add", "--detach", str(wt_abs), "HEAD")
+            self.assertTrue(wt_abs.exists())
+
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(wt_abs)
+                rc, out, err = run(["worktree-remove", wt_rel, "--root", str(root), "--json"])
+            finally:
+                os.chdir(old_cwd)
+            self.assertEqual(rc, 0, out + err)
+            self.assertTrue(json.loads(out)["removed"])
+            self.assertFalse(wt_abs.exists())
+
     def test_docs_only_allowlist_reaches_the_ship_classification(self):
         # The knob was declared, parsed, hashed and echoed into the contract, and read
         # by nothing (#632). Pin the wire from config to the assessed tier: without the

@@ -127,9 +127,9 @@ class TestDeclaredFilesLedgerRoundTrip(unittest.TestCase):
 
 
 class TestStagedContamination(unittest.TestCase):
-    def test_empty_or_none_staged_returns_no_contamination(self):
+    def test_none_staged_without_baseline_returns_none_source(self):
         self.assertEqual(
-            scope.check_staged_contamination(None, implementer_files=["a.py"]),
+            scope.check_staged_contamination(None),
             {
                 "has_contamination": False,
                 "suspect_paths": [],
@@ -146,6 +146,19 @@ class TestStagedContamination(unittest.TestCase):
                 "comparison_source": "implementer-files",
             },
         )
+
+    def test_unreadable_staged_index_with_baseline_surfaces_warning(self):
+        res = scope.check_staged_contamination(None, implementer_files=["a.py"])
+        self.assertFalse(res["has_contamination"])
+        self.assertEqual(res["suspect_paths"], [])
+        self.assertEqual(res["comparison_source"], "implementer-files")
+        self.assertIsNotNone(res["warning"])
+        self.assertIn("could not read staged files", res["warning"])
+
+        res_since = scope.check_staged_contamination(None, files_since_start=["a.py"])
+        self.assertFalse(res_since["has_contamination"])
+        self.assertEqual(res_since["comparison_source"], "files-since-start")
+        self.assertIsNotNone(res_since["warning"])
 
     def test_no_baseline_or_empty_committed_since_returns_no_contamination(self):
         for kwargs in ({}, {"files_since_start": []}):
@@ -165,6 +178,24 @@ class TestStagedContamination(unittest.TestCase):
         self.assertEqual(res["suspect_paths"], [])
         self.assertIsNone(res["warning"])
         self.assertEqual(res["comparison_source"], "implementer-files")
+
+    def test_normalizes_dot_slash_absolute_and_directory_paths(self):
+        res = scope.check_staged_contamination(
+            ["./a.py", "src/b.py", "pkg/sub/mod.py", "dir2/x.py"],
+            implementer_files=["./a.py", "/repo/src/b.py", "pkg/", "dir2"],
+            root="/repo",
+        )
+        self.assertFalse(res["has_contamination"])
+        self.assertEqual(res["suspect_paths"], [])
+        self.assertIsNone(res["warning"])
+        self.assertEqual(res["comparison_source"], "implementer-files")
+
+        res_root = scope.check_staged_contamination(
+            ["any/file.py"],
+            implementer_files=["/repo"],
+            root="/repo",
+        )
+        self.assertFalse(res_root["has_contamination"])
 
     def test_contaminated_against_implementer_files(self):
         res = scope.check_staged_contamination(

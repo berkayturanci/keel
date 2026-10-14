@@ -827,16 +827,20 @@ in its own detached checkout of the head so reviewer probes never mutate or cont
 working tree. Read the panel off the contract, never off this prose:
 
 ```bash
-# 1. one panel run in its own detached checkout at $HEAD_SHA, read-only, machine-readable
+# 1. one panel run in its own separate detached checkout at $HEAD_SHA, machine-readable
 ROOT=$(pwd)
 HEAD_SHA=$(git rev-parse HEAD)
 DIFF_ABS=$(cd "$(dirname "$DIFF")" && pwd)/$(basename "$DIFF")
-JURY_WT=".keel/worktrees/review-$RUN_ID-jury"
-mkdir -p .keel/worktrees .keel/state/jury
-keel worktree-remove "$JURY_WT" --root . 2>/dev/null || true
-git worktree add --detach "$JURY_WT" "$HEAD_SHA"
-(trap 'keel worktree-remove "$JURY_WT" --root "$ROOT"' EXIT
- cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
+JURY_WT="$ROOT/.keel/worktrees/review-$RUN_ID-jury-$$"
+mkdir -p "$ROOT/.keel/worktrees" "$ROOT/.keel/state/jury"
+if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
+  (cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
+  JURY_RC=$?
+  keel worktree-remove "$JURY_WT" --root "$ROOT"
+  (exit "$JURY_RC")
+else
+  echo "error: could not create isolated jury checkout $JURY_WT" >&2; false
+fi
 
 # 2. its ballots become the s7 evidence: one head-pinned verdict per panelist,
 #    carrying the vendor and model that produced it, plus the jury verdict
@@ -939,42 +943,57 @@ own `provider` (plus `:model` / `--effort` when the seat carries them), read str
 `review_merge_contract.reviewers.slots[i]` — never one vendor reused for every slot:
 
 ```bash
-# one dispatch per slot; SLOT is an entry of review_merge_contract.reviewers.slots
-# give each reviewer seat its own detached read-only checkout of the head:
-mkdir -p .keel/worktrees
+# one dispatch per slot i (SLOT_INDEX=0, 1, ... in review_merge_contract.reviewers.slots[i])
+# give each reviewer seat its own separate detached checkout of the head:
+ROOT=$(pwd)
+mkdir -p "$ROOT/.keel/worktrees"
 HEAD_SHA=$(git rev-parse HEAD)
-REVIEW_WT=".keel/worktrees/review-$RUN_ID-$SLOT"
-keel worktree-remove "$REVIEW_WT" --root . 2>/dev/null || true
-git worktree add --detach "$REVIEW_WT" "$HEAD_SHA"
-(trap 'keel worktree-remove "$REVIEW_WT" --root .' EXIT
- keel delegate run --provider "$SLOT_PROVIDER" --role review \
-   --prompt-file "$RUBRIC_AND_DIFF" --cwd "$REVIEW_WT" --timeout 900 --project .keel/project.yaml \
-   --activity-run-id "$RUN_ID")
+REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX-$$"
+if test ! -e "$REVIEW_WT" && git worktree add -d "$REVIEW_WT" "$HEAD_SHA"; then
+  keel delegate run --provider "$SLOT_PROVIDER" --role review \
+    --prompt-file "$RUBRIC_AND_DIFF" --cwd "$REVIEW_WT" --timeout 900 --project .keel/project.yaml \
+    --activity-run-id "$RUN_ID"
+  REVIEW_RC=$?
+  keel worktree-remove "$REVIEW_WT" --root "$ROOT"
+  (exit "$REVIEW_RC")
+else
+  echo "error: could not create isolated review checkout $REVIEW_WT" >&2; false
+fi
 
 # the gate review, when assignment.gate is present
-GATE_WT=".keel/worktrees/review-$RUN_ID-gate"
-keel worktree-remove "$GATE_WT" --root . 2>/dev/null || true
-git worktree add --detach "$GATE_WT" "$HEAD_SHA"
-(trap 'keel worktree-remove "$GATE_WT" --root .' EXIT
- keel delegate run --provider "$GATE_PROVIDER" --role gate \
-   --prompt-file "$RUBRIC_AND_DIFF" --cwd "$GATE_WT" --timeout 900 --project .keel/project.yaml \
-   --activity-run-id "$RUN_ID")
+GATE_WT="$ROOT/.keel/worktrees/review-$RUN_ID-gate-$$"
+if test ! -e "$GATE_WT" && git worktree add -d "$GATE_WT" "$HEAD_SHA"; then
+  keel delegate run --provider "$GATE_PROVIDER" --role gate \
+    --prompt-file "$RUBRIC_AND_DIFF" --cwd "$GATE_WT" --timeout 900 --project .keel/project.yaml \
+    --activity-run-id "$RUN_ID"
+  GATE_RC=$?
+  keel worktree-remove "$GATE_WT" --root "$ROOT"
+  (exit "$GATE_RC")
+else
+  echo "error: could not create isolated gate checkout $GATE_WT" >&2; false
+fi
 ```
 
 `--activity-run-id "$RUN_ID"` adds each reviewer's reported token counts to the run's record,
 exactly as in s4; parallel reviewers finishing together are serialised by core.
 
 A slot whose `kind` is `subagent` never reaches `keel delegate run`: it is a host
-(Claude-class) subagent named by `slot.name`, dispatched in its own detached checkout
-at `$HEAD_SHA` and removed afterwards with `keel worktree-remove`. Reviewer seats must never
-share the implementer's worktree so exploratory checks or temporary deletions cannot mutate
-or contaminate staged changes (note that a detached worktree contains only tracked files at
-`$HEAD_SHA`, without untracked `.venv`, `node_modules`, or `.keel/state`).
+(Claude-class) subagent named by `slot.name`, dispatched in its own separate detached
+checkout at `$HEAD_SHA` and removed afterwards with `keel worktree-remove`. Every
+reviewer seat (jury, delegate, gate, or subagent) must run in a separate detached checkout
+and never share the implementer's worktree so exploratory checks or temporary deletions
+cannot mutate or contaminate staged changes. Because a fresh detached checkout contains
+only tracked files at `$HEAD_SHA` — without untracked `.venv`, `node_modules`,
+`.keel/state`, or `.jury` configuration — seats inspect tracked files and the diff rather
+than running the test suite in the review checkout.
 
 Read the same JSON contract s4 documents: `text` is the verdict, `attribution` is what
 you record per reviewer, `error_code` is what you branch on. Long panels detach exactly
 as s4 does — `--detach` per reviewer with `--timeout`, then `keel delegate wait <run-id>
---timeout <s>` on each; never a sleep loop. The `secrets`-scope and
+--timeout <s>` on each, running `keel worktree-remove "$REVIEW_WT" --root "$ROOT"` only
+after `keel delegate wait` has collected the detached reviewer (never on launch exit, or
+the checkout is deleted while the reviewer is still reading it); never a sleep loop. The
+`secrets`-scope and
 no-retry-on-`rate-limit` rules are unchanged; there is **no tier restriction**, because
 review output is advisory, not a mutation. The orchestrator still posts — the
 **orchestrator owns all writes**; reviewers never call a GitHub write API.
@@ -1692,4 +1711,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.32.0 source_sha256=bedc9581aeab7fba60485dd33fcd0a2f6af214877dfb172a794f113a4991d9d4 generated_sha256=4e7d8386594757728264c4bce6a6b8c1a51546f3b9f241eb38bcbf93b012120e -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.32.0 source_sha256=811dad9ae5a8219cfcadcf7089e337f61011e405f663d7b29dfcfd6b4bf950bf generated_sha256=a6a8987ad8231f1e1ecd1e3ea5639fb81b1e8ec43aac1865d41155c94854db89 -->
