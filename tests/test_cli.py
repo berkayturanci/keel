@@ -11936,6 +11936,138 @@ class TestMergeCheckpointGate(unittest.TestCase):
                         self.assertEqual(parsed_cp.merge_state, "failed")
                         self.assertTrue(parsed_cp.write)
 
+    def test_in_flight_recovery_command_preserves_populated_checkpoint_fields(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            cfg_obj = cli.cfg.load_config(config)
+            path = cli.checkpoint.resolve_path(d, cfg_obj)
+            populated = cli.checkpoint.build_checkpoint_record(
+                run_id="RUN-1",
+                command="overnight",
+                current_step="s10",
+                base_branch="main",
+                target="issue #149",
+                issue_queue=[149, 146],
+                active_issue=149,
+                branch="feat/issue-149",
+                worktree="worktrees/issue-149",
+                pull_request=123,
+                head_sha="abc",
+                completed_steps=["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9"],
+                last_gate="build",
+                last_review="rv-1",
+                last_check="ci",
+                jury_mode="gating",
+                merge_state="pending",
+                capture_state="deferred",
+                close_state="failed",
+                stop_reason="waiting on merge",
+                carried_from_run_id="RUN-0",
+            )
+            cli.checkpoint.write_checkpoint(path, populated)
+
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-1")
+            data = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(data["checkpoint_gate"]["status"], "in-flight")
+
+            match = re.search(r"(keel checkpoint .+?)\)$", data["reason"])
+            self.assertIsNotNone(match)
+            recovery_argv = shlex.split(match.group(1))[1:]
+            rc_rec, _, _ = run(recovery_argv)
+            self.assertEqual(rc_rec, 0)
+            after = self._read_checkpoint(d, config)
+
+        expected = json.loads(json.dumps(populated))
+        expected["state"]["merge"] = "failed"
+        self.assertEqual(after, expected)
+
+        # Explicitly passed flags on a same-run --write override the preserved fields.
+        with tempfile.TemporaryDirectory() as d2:
+            cfg_obj2 = cli.cfg.load_config(config)
+            path2 = cli.checkpoint.resolve_path(d2, cfg_obj2)
+            cli.checkpoint.write_checkpoint(path2, populated)
+            rc_ov, _, _ = run(
+                [
+                    "checkpoint",
+                    config,
+                    "--root",
+                    d2,
+                    "--write",
+                    "--run-id",
+                    "RUN-1",
+                    "--checkpoint-command",
+                    "ship",
+                    "--step",
+                    "s11",
+                    "--target",
+                    "issue #200",
+                    "--issue-queue",
+                    "200",
+                    "--active-issue",
+                    "200",
+                    "--branch",
+                    "feat/200",
+                    "--worktree",
+                    "worktrees/200",
+                    "--pull-request",
+                    "456",
+                    "--head-sha",
+                    "def",
+                    "--completed-step",
+                    "s10",
+                    "--last-gate",
+                    "lint",
+                    "--last-review",
+                    "rv-2",
+                    "--last-check",
+                    "ci2",
+                    "--jury-mode",
+                    "advisory",
+                    "--merge-state",
+                    "merged",
+                    "--capture-state",
+                    "applied",
+                    "--close-state",
+                    "closed",
+                    "--stop-reason",
+                    "done",
+                ]
+            )
+            self.assertEqual(rc_ov, 0)
+            overridden = self._read_checkpoint(d2, config)
+            self.assertEqual(overridden["command"], "ship")
+            self.assertEqual(overridden["target"], "issue #200")
+            self.assertEqual(overridden["queue"], {"issues": [200], "active_issue": 200})
+            self.assertEqual(
+                overridden["identifiers"],
+                {
+                    "base_branch": "main",
+                    "branch": "feat/200",
+                    "worktree": "worktrees/200",
+                    "pull_request": 456,
+                    "head_sha": "def",
+                },
+            )
+            self.assertEqual(
+                overridden["position"],
+                {"current_step": "s11", "completed_steps": ["s10"]},
+            )
+            self.assertEqual(
+                overridden["state"],
+                {
+                    "last_gate": "lint",
+                    "last_review": "rv-2",
+                    "last_check": "ci2",
+                    "jury_mode": "advisory",
+                    "merge": "merged",
+                    "capture": "applied",
+                    "close": "closed",
+                    "stop_reason": "done",
+                },
+            )
+            self.assertEqual(overridden["carried_from_run_id"], "RUN-0")
+
     def test_retry_merge_accepts_and_updates_checkpoint_with_missing_run_id(self):
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:

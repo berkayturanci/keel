@@ -1061,6 +1061,11 @@ CHECKPOINT_MERGE_STEP = "s10"
 #: falls through, so a marker that genuinely went missing is still reported.
 CAPTURE_STATUS_NOT_RUN = "not-run"
 
+_RESOLUTION_SHIP_NOTE = (
+    "-- note: pass --run-id <new-run-id> and --capture-status <status> "
+    "(use not-run only if capture was not run prior to merge)"
+)
+
 
 def _resolution_ship_command(
     config_path: str,
@@ -1173,16 +1178,13 @@ def _checkpoint_gate(
                 "reason": (
                     "checkpointing is configured but no run-id is available "
                     f"(pass --run-id, or record a gates-pass for this head: {gates_cmd}) "
-                    "-- note: pass --run-id <new-run-id> and --capture-status <status> "
-                    "(use not-run only if capture was not run prior to merge)"
+                    f"{_RESOLUTION_SHIP_NOTE}"
                 ),
             },
             (
                 "checkpointing is configured but no run-id is available for the "
                 f"checkpoint gate; pass --run-id, record a gates-pass ({gates_cmd}), "
-                "or use --no-checkpoint-gate "
-                "-- note: pass --run-id <new-run-id> and --capture-status <status> "
-                "(use not-run only if capture was not run prior to merge)"
+                f"or use --no-checkpoint-gate {_RESOLUTION_SHIP_NOTE}"
             ),
         )
 
@@ -1493,8 +1495,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
                     payload,
                     f"no gates-pass recorded for the current head {head_sha} "
                     f"(record one with: {res_cmd}) "
-                    "-- note: pass --run-id <new-run-id> and --capture-status <status> "
-                    "(use not-run only if capture was not run prior to merge)",
+                    f"{_RESOLUTION_SHIP_NOTE}",
                     code=1,
                 )
 
@@ -5327,34 +5328,58 @@ def _cmd_checkpoint(args: argparse.Namespace) -> int:
             existing = checkpoint.read_checkpoint(path)
         except (OSError, ValueError):
             existing = None
-        preserved_carried = (
-            existing.get("carried_from_run_id")
+        same_run = (
+            existing
             if isinstance(existing, dict) and existing.get("run_id") == args.run_id
             else None
         )
+        ex_q = same_run["queue"] if same_run else {}
+        ex_pos = same_run["position"] if same_run else {}
+        ex_id = same_run["identifiers"] if same_run else {}
+        ex_st = same_run["state"] if same_run else {}
         try:
             record = checkpoint.build_checkpoint_record(
                 run_id=args.run_id,
-                command=args.checkpoint_command_name,
+                command=args.checkpoint_command_name
+                if args.checkpoint_command_name is not None
+                else (same_run.get("command") if same_run else None) or "ship",
                 current_step=args.step,
                 base_branch=config.base_branch,
-                target=args.target,
-                issue_queue=args.issue_queue,
-                active_issue=args.active_issue,
-                branch=args.branch,
-                worktree=args.worktree,
-                pull_request=args.pull_request,
-                head_sha=args.head_sha,
-                completed_steps=args.completed_step,
-                last_gate=args.last_gate,
-                last_review=args.last_review,
-                last_check=args.last_check,
-                jury_mode=args.jury_mode,
-                merge_state=args.merge_state,
-                capture_state=args.capture_state,
-                close_state=args.close_state,
-                stop_reason=args.stop_reason,
-                carried_from_run_id=preserved_carried,
+                target=args.target
+                if args.target is not None
+                else (same_run.get("target") if same_run else None),
+                issue_queue=args.issue_queue or ex_q.get("issues"),
+                active_issue=args.active_issue
+                if args.active_issue is not None
+                else ex_q.get("active_issue"),
+                branch=args.branch if args.branch is not None else ex_id.get("branch"),
+                worktree=args.worktree if args.worktree is not None else ex_id.get("worktree"),
+                pull_request=args.pull_request
+                if args.pull_request is not None
+                else ex_id.get("pull_request"),
+                head_sha=args.head_sha if args.head_sha is not None else ex_id.get("head_sha"),
+                completed_steps=args.completed_step or ex_pos.get("completed_steps"),
+                last_gate=args.last_gate if args.last_gate is not None else ex_st.get("last_gate"),
+                last_review=args.last_review
+                if args.last_review is not None
+                else ex_st.get("last_review"),
+                last_check=args.last_check
+                if args.last_check is not None
+                else ex_st.get("last_check"),
+                jury_mode=args.jury_mode if args.jury_mode is not None else ex_st.get("jury_mode"),
+                merge_state=args.merge_state
+                if args.merge_state is not None
+                else ex_st.get("merge") or "not-started",
+                capture_state=args.capture_state
+                if args.capture_state is not None
+                else ex_st.get("capture") or "not-started",
+                close_state=args.close_state
+                if args.close_state is not None
+                else ex_st.get("close") or "not-started",
+                stop_reason=args.stop_reason
+                if args.stop_reason is not None
+                else ex_st.get("stop_reason"),
+                carried_from_run_id=same_run.get("carried_from_run_id") if same_run else None,
             )
             checkpoint.write_checkpoint(path, record)
         except checkpoint.CheckpointError as exc:
@@ -10498,7 +10523,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--checkpoint-command",
         dest="checkpoint_command_name",
         choices=checkpoint.COMMANDS,
-        default="ship",
+        default=None,
         help="workflow command being checkpointed",
     )
     p_checkpoint.add_argument(
@@ -10542,15 +10567,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="resolved jury mode at this step (off/advisory/gating); "
         "lets a live consumer show jury status before run end",
     )
-    p_checkpoint.add_argument(
-        "--merge-state", choices=checkpoint.MERGE_STATES, default="not-started"
-    )
-    p_checkpoint.add_argument(
-        "--capture-state", choices=checkpoint.CAPTURE_STATES, default="not-started"
-    )
-    p_checkpoint.add_argument(
-        "--close-state", choices=checkpoint.CLOSE_STATES, default="not-started"
-    )
+    p_checkpoint.add_argument("--merge-state", choices=checkpoint.MERGE_STATES, default=None)
+    p_checkpoint.add_argument("--capture-state", choices=checkpoint.CAPTURE_STATES, default=None)
+    p_checkpoint.add_argument("--close-state", choices=checkpoint.CLOSE_STATES, default=None)
     p_checkpoint.add_argument(
         "--stop-reason", default=None, help="why the run stopped at this checkpoint"
     )

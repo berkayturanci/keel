@@ -652,6 +652,10 @@ class TestCoveringCheckpoint(unittest.TestCase):
         result = checkpoint.covering_checkpoint(record, "RUN-2", "s10", pr_number=None)
         self.assertEqual(result["status"], "missing")
         self.assertFalse(result["covered"])
+        self.assertEqual(
+            result["reason"],
+            "no current checkpoint for run RUN-2 at step s10 (checkpoint is for run RUN-1)",
+        )
 
     def test_refused_when_checkpoint_run_id_is_none_and_accepted_run_ids_restricted(self):
         record = _record(run_id="", pull_request=170, head_sha="abc123", current_step="s10")
