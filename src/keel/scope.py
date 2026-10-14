@@ -15,8 +15,6 @@ classification so docs-only extras are exempt rather than flagged.
 from __future__ import annotations
 
 import fnmatch
-import os
-import posixpath
 from typing import Any
 
 
@@ -86,107 +84,4 @@ def verify(
         "in_scope": in_scope,
         "scope_creep": creep,
         "docs_exempt": docs_exempt,
-    }
-
-
-def _normalize_repo_path(path: str, root: str | None = None) -> str:
-    norm = posixpath.normpath(path.replace("\\", "/"))
-    if root:
-        candidates: list[str] = []
-        for raw in (root, os.path.abspath(root), os.path.realpath(root)):
-            cand = posixpath.normpath(raw.replace("\\", "/")).rstrip("/")
-            if cand != "." and cand not in candidates:
-                candidates.append(cand)
-        for root_norm in candidates:
-            if norm == root_norm:
-                return "."
-            if norm.startswith(root_norm + "/"):
-                return norm[len(root_norm) + 1 :]
-    return norm
-
-
-def _is_within_expected(path: str, expected: set[str]) -> bool:
-    if path in expected or "." in expected:
-        return True
-    return any(path.startswith(exp + "/") for exp in expected)
-
-
-def check_staged_contamination(
-    staged_modified_or_deleted: list[str] | None,
-    *,
-    implementer_files: list[str] | None = None,
-    files_since_start: list[str] | None = None,
-    since_unreadable: bool = False,
-    root: str | None = None,
-) -> dict[str, Any]:
-    """Check whether staged modified or deleted files include paths outside the implementer run.
-
-    Compares against ``implementer_files`` when available, else against a non-empty
-    committed-history ``files_since_start`` baseline. When ``since_unreadable`` is true or
-    ``files_since_start`` is an empty list (no commits since ``since``), surfaces an
-    explicit warning rather than silently reporting clean — pass ``implementer_files`` to
-    check uncommitted work. When a baseline is present and ``staged_modified_or_deleted``
-    is ``None`` (unreadable git index), surfaces a warning. Warns, never blocks.
-    """
-    if implementer_files is not None:
-        expected = {_normalize_repo_path(p, root) for p in implementer_files}
-        source = "implementer-files"
-    elif since_unreadable:
-        return {
-            "has_contamination": False,
-            "suspect_paths": [],
-            "warning": (
-                "could not resolve --since baseline from git history "
-                "to check for staged contamination"
-            ),
-            "comparison_source": "files-since-start",
-        }
-    elif files_since_start is not None:
-        if not files_since_start:
-            return {
-                "has_contamination": False,
-                "suspect_paths": [],
-                "warning": (
-                    "no committed files found since --since baseline; "
-                    "pass --implementer-file to check uncommitted work"
-                ),
-                "comparison_source": "files-since-start",
-            }
-        expected = {_normalize_repo_path(p, root) for p in files_since_start}
-        source = "files-since-start"
-    else:
-        return {
-            "has_contamination": False,
-            "suspect_paths": [],
-            "warning": None,
-            "comparison_source": "none",
-        }
-
-    if staged_modified_or_deleted is None:
-        return {
-            "has_contamination": False,
-            "suspect_paths": [],
-            "warning": "could not read staged files from git index to check for contamination",
-            "comparison_source": source,
-        }
-
-    normalized_staged = [_normalize_repo_path(p, root) for p in staged_modified_or_deleted]
-    suspect = [path for path in normalized_staged if not _is_within_expected(path, expected)]
-    if suspect:
-        sorted_suspect = sorted(set(suspect))
-        warning = (
-            "staged change set includes deleted or modified paths not touched by the "
-            f"implementer run: {', '.join(sorted_suspect)}"
-        )
-        return {
-            "has_contamination": True,
-            "suspect_paths": sorted_suspect,
-            "warning": warning,
-            "comparison_source": source,
-        }
-    return {
-        "has_contamination": False,
-        "suspect_paths": [],
-        "warning": None,
-        "comparison_source": source,
     }

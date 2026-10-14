@@ -945,8 +945,6 @@ def ship_result_as_dict(
     issue_intake: dict[str, Any] | None = None,
     run_ledger: dict[str, Any] | None = None,
     jury_consensus: str | None = None,
-    warnings: list[str] | None = None,
-    staged_contamination: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Normalized deterministic result record for ``keel ship --json``.
 
@@ -1034,7 +1032,7 @@ def ship_result_as_dict(
             implementer_attribution=implementer_attribution,
         ),
     }
-    result = {
+    return {
         # None stays None: "could not read the diff" must not report as "0 files".
         "changed_files": None if changed_files is None else list(changed_files),
         "changed_file_count": None if changed_files is None else len(changed_files),
@@ -1064,11 +1062,6 @@ def ship_result_as_dict(
             "assignment": assessment.assignment,
         },
     }
-    if warnings is not None:
-        result["warnings"] = list(warnings)
-    if staged_contamination is not None:
-        result["staged_contamination"] = dict(staged_contamination)
-    return result
 
 
 def _testing_summary(outcomes: list[gates.GateOutcome]) -> list[str]:
@@ -1125,14 +1118,11 @@ def standalone_result_as_dict(
     transport: github_transport.GitHubTransport | None = None,
     evaluation: runtime.CapabilityEvaluation | None = None,
     delegation: dict[str, Any] | None = None,
-    warnings: list[str] | None = None,
-    staged_contamination: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deterministic dry-run result records for standalone non-ship commands."""
-    result: dict[str, Any]
     if command == "implement":
         issue_id = _target_identifier(target)
-        result = {
+        return {
             "command": command,
             "target": target,
             "base_branch": config.base_branch,
@@ -1151,9 +1141,9 @@ def standalone_result_as_dict(
                 "next_commands": ["ship", "pr-loop"],
             },
         }
-    elif command == "ci-check":
+    if command == "ci-check":
         resolved = transport.as_dict() if transport is not None else {}
-        result = {
+        return {
             "command": command,
             "target": target,
             "base_branch": config.base_branch,
@@ -1175,8 +1165,8 @@ def standalone_result_as_dict(
                 "recommendations": ["review-cycle", "pr-loop", "ship", "flake-audit"],
             },
         }
-    elif command == "morning":
-        result = {
+    if command == "morning":
+        return {
             "command": command,
             "target": target,
             "base_branch": config.base_branch,
@@ -1191,8 +1181,8 @@ def standalone_result_as_dict(
                 "live_work_owner": "adapter-or-extension-after-consent",
             },
         }
-    elif command in {"wrap", "work-block", "overnight"}:
-        result = {
+    if command in {"wrap", "work-block", "overnight"}:
+        return {
             "command": command,
             "target": target,
             "base_branch": config.base_branch,
@@ -1210,9 +1200,9 @@ def standalone_result_as_dict(
                 "live_work_owner": "adapter-after-consent",
             },
         }
-    elif command in {"pr-loop", "review-cycle"}:
+    if command in {"pr-loop", "review-cycle"}:
         workflow = feedback_workflow_as_dict(config, command)
-        result = {
+        return {
             "command": command,
             "target": target,
             "base_branch": config.base_branch,
@@ -1225,8 +1215,8 @@ def standalone_result_as_dict(
                 "live_work_owner": "adapter-after-consent",
             },
         }
-    elif command in {"regression", "review-all-day"}:
-        result = {
+    if command in {"regression", "review-all-day"}:
+        return {
             "command": command,
             "target": target,
             "base_branch": config.base_branch,
@@ -1243,14 +1233,7 @@ def standalone_result_as_dict(
                 "live_work_owner": "adapter-after-consent",
             },
         }
-    else:
-        result = {"command": command, "target": target}
-
-    if warnings is not None:
-        result["warnings"] = list(warnings)
-    if staged_contamination is not None:
-        result["staged_contamination"] = dict(staged_contamination)
-    return result
+    return {"command": command, "target": target}
 
 
 def feedback_workflow_as_dict(config: cfg.ProjectConfig, command: str) -> dict[str, Any]:

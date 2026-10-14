@@ -128,7 +128,8 @@ role you asked for, that field is whether anything enforces it, and for a config
 profile with no `review_args` the answer is no. For a panel that will outlive your turn,
 start each reviewer with `--timeout <s> --detach --run-id <id>`, collect them with
 `keel delegate wait <id> --timeout <s>`, and remove `"$SEAT_WT"` with
-`keel worktree-remove "$SEAT_WT" --root "$ROOT"` only after `keel delegate wait` finishes: a
+`keel worktree-remove "$SEAT_WT" --root "$ROOT"` only when `keel delegate wait` succeeds
+(leaving it in place and printing the cleanup command on timeout/failure): a
 sleep-and-poll loop cannot survive the turn ending, and the state file under
 `.keel/state/delegate/` can.
 

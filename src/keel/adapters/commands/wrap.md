@@ -93,14 +93,6 @@ If any gate FAILS — STOP. Report the failure. Do not commit broken code.
 ## Step 3 — Commit
 
 - `git add -A`
-- Check for staged contamination after staging and before committing:
-  `keel wrap .keel/project.yaml --root .` (defaults to the branch's committed diff
-  against `base_branch`; pass `--implementer-file <path>` for each path the
-  implementer touched when work is uncommitted, or `--since <ref|timestamp>` when
-  prior implementation commits exist). `keel wrap` checks `git diff --cached
-  --diff-filter=MD` and warns (stderr + JSON field) if the staged change set
-  includes deleted (`D`) or modified (`M`) files not touched by the implementer run
-  (newly added `A` files are not flagged). Inspect any warnings before committing.
 - Write a commit message in Conventional Commits format
   (feat/fix/chore/docs/refactor/test).
 - Include `Closes #N` if this implements an issue.

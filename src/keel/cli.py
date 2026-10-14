@@ -2151,40 +2151,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             "rules": fallback.audit["rules"],
             "redaction_count": fallback.audit["redaction_count"],
         }
-    impl_files = getattr(args, "implementer_file", None) or getattr(args, "declared_file", None)
-    if impl_files is None and (args.ledger_pr or args.pr) is not None:
-        prior_run = ledger.latest_ship_run_for_pr(
-            existing_ledger_records, args.ledger_pr or args.pr
-        )
-        if prior_run is not None:
-            impl_files = ledger.declared_files_for_record(prior_run)
-    since_arg = getattr(args, "since", None)
-    files_since = (
-        git.changed_files_since(since_arg, head="HEAD", cwd=args.root)
-        if since_arg and impl_files is None
-        else None
-    )
-    since_unreadable = bool(since_arg and impl_files is None and files_since is None)
-    default_branch_baseline = bool(impl_files is None and not since_arg and changed_read)
-    staged_md = (
-        git.staged_modified_or_deleted_files(cwd=args.root)
-        if impl_files is not None or files_since or default_branch_baseline
-        else None
-    )
-    if default_branch_baseline and staged_md is not None:
-        files_since = changed_read
-    staged_contamination = scope.check_staged_contamination(
-        staged_md,
-        implementer_files=impl_files,
-        files_since_start=files_since,
-        since_unreadable=since_unreadable,
-        root=args.root,
-    )
-    staged_warnings: list[str] = []
-    if staged_contamination["warning"]:
-        staged_warnings.append(staged_contamination["warning"])
-        print(f"warning: {staged_contamination['warning']}", file=sys.stderr)
-
     ledger_result = {
         "contract": contract["run_ledger"],
         "path": str(ledger_path),
@@ -2221,8 +2187,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                         assessment=a,
                         issue_intake=contract.get("issue_intake"),
                         run_ledger=ledger_result,
-                        warnings=staged_warnings or None,
-                        staged_contamination=staged_contamination,
                     ),
                 },
                 indent=2,
@@ -2276,8 +2240,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
     for warning in ledger_result["warnings"]:
         print(f"  run context   : warning: {warning}")
-    if staged_contamination["warning"]:
-        print(f"  staged files  : warning: {staged_contamination['warning']}")
     if intake_record["questions"]:
         print(f"  questions     : {len(intake_record['questions'])}")
     if transport.degraded:
@@ -11099,15 +11061,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_wrap.add_argument("--root", default=".", help="repo root for git and capability checks")
     p_wrap.add_argument("--since", default=None, help="optional session start label or timestamp")
     p_wrap.add_argument(
-        "--implementer-file",
-        action="append",
-        default=None,
-        help=(
-            "path touched by the implementer (repeatable); "
-            "checked against staged changes to warn on contamination"
-        ),
-    )
-    p_wrap.add_argument(
         "--target", default=None, help="target text to include in the wrap contract"
     )
     p_wrap.add_argument(
@@ -12104,21 +12057,6 @@ def _add_ship_parser(parser: argparse.ArgumentParser, *, command: str) -> None:
         default=None,
         help="implementer's declared in-scope file path (repeatable); "
         "recorded for keel scope-verify branch-contamination checks",
-    )
-    parser.add_argument(
-        "--implementer-file",
-        action="append",
-        default=None,
-        help="path touched by the implementer (repeatable); "
-        "checked against staged changes to warn on contamination",
-    )
-    parser.add_argument(
-        "--since",
-        default=None,
-        help=(
-            "commit, ref, or git log date to compare staged changes against "
-            "when checking contamination"
-        ),
     )
     parser.add_argument(
         "--capture-status",

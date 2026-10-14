@@ -1925,7 +1925,7 @@ health-provider capabilities are shown as unavailable/degraded, not as a success
 health section. Live mode is only a preflight contract; adapters perform approved report
 writes or provider execution after checking consent.
 
-## `keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN] [--implementer-file PATH]... [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
+## `keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--json]`
 
 Render the standalone session-wrap contract. The core owns the generic session closeout
 shape: linked-worktree and base-branch guards, configured gate source, Conventional Commit
@@ -1933,14 +1933,6 @@ and `Closes #N` conventions, ready PR creation requirements, session recap desti
 and the shared deferral queue. Project-specific changed-file gates and recap destinations
 stay in policy packs and extensions. Wrap also receives the run-ledger contract so session
 recaps can include structured ship outcomes offline.
-
-When changes are staged in the git index (`git diff --cached --diff-filter=MD`), `keel wrap`
-compares staged modified (`M`) and deleted (`D`) paths (newly added `A` files are excluded)
-against `--implementer-file`, `--since`, or by default the branch's committed diff against
-`base_branch`, and warns (stderr + JSON `staged_contamination` / `warnings` fields) if
-staged modified or deleted paths fall outside the implementer run, or if `--since` cannot be
-resolved from git history or has no committed files (uncommitted work requires
-`--implementer-file`). Warns, never refuses.
 
 ```bash
 keel wrap .keel/project.yaml --json
@@ -2776,7 +2768,7 @@ keel window .keel/project.yaml
 # merge window OPEN  [Europe/Istanbul 07:00-01:30]
 ```
 
-## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--loop] [--loop-iteration K=SHA:pass|fail]... [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--implementer-file PATH]... [--since WHEN] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
+## `keel ship <project.yaml> [--root DIR] [--pr N] [--compound|--profile standard|compound] [--tdd] [--loop] [--loop-iteration K=SHA:pass|fail]... [--role LABEL] [--delegate PROVIDER] [--review-delegate PROVIDER]... [--effort low|medium|high] [--team PROFILE] [--dry-run] [--live] [--consent-mode MODE] [--approve-scope SCOPE] [--operator ID] [--target TARGET] [--issue-title TITLE] [--issue-body BODY] [--issue-label LABEL] [--review-comments inline|summary] [--reviewers 1|2|3] [--jury|--no-jury] [--jury-advisory] [--json] [--wizard] [--wizard-answer KEY=VALUE]...`
 
 Run the **deterministic slice of a ship** against the current checkout and print the
 assessment: how many files changed vs. the base branch, the **risk tier** (→ reviewer
@@ -2784,15 +2776,6 @@ count), whether the **merge window** is open, optional **CI** status (`--pr N` r
 check-rollup through the selected GitHub transport), each gate's result, and the final
 **merge decision**
 (`MERGE` / `DEFER` / `BLOCK`).
-
-`--implementer-file <path>` (repeatable; falling back to `--declared-file` or the PR's
-ledger `declared.files`), `--since <ref|when>` (committed-history heuristic when commits
-exist since `WHEN`; uncommitted work requires `--implementer-file`), or by default the
-branch's committed diff against `base_branch` check the staged change set (`git diff --cached
---diff-filter=MD`) for contamination: if deleted (`D`) or modified (`M`) paths outside the
-baseline are staged in the index (newly added `A` files are excluded), a warning is emitted
-on stderr and recorded in the JSON result's `warnings` and `staged_contamination` blocks
-(warns, never blocks).
 
 With `--pr N`, `keel ship` also reads the pull request's labels and, when the evidence gate
 governs the PR (the same `gate_decision` as `evidence-verify`, fed the PR's own head ref and reviews from the pulls API, its comments from the issues API, its labels

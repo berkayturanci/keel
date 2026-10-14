@@ -10,17 +10,14 @@ import argparse
 import json
 import os
 import sys
-from typing import Any
 
 from . import config as cfg
 from . import (
     consent,
     contracts,
-    git,
     github_transport,
     providerprobe,
     runtime,
-    scope,
     wizardrun,
     workblock,
 )
@@ -215,39 +212,6 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         jury_availability=providerprobe.jury_availability(config, tier=None, profile=team_profile),
     )
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
-    warnings: list[str] = []
-    staged_contamination: dict[str, Any] | None = None
-    staged_warning: str | None = None
-    if command == "wrap":
-        impl_files = getattr(args, "implementer_file", None)
-        since_arg = getattr(args, "since", None)
-        files_since = (
-            git.changed_files_since(since_arg, head="HEAD", cwd=args.root)
-            if since_arg and impl_files is None
-            else (
-                git.changed_files(config.base_branch, "HEAD", cwd=args.root) or None
-                if impl_files is None
-                else None
-            )
-        )
-        since_unreadable = bool(since_arg and impl_files is None and files_since is None)
-        staged_md = (
-            git.staged_modified_or_deleted_files(cwd=args.root)
-            if impl_files is not None or files_since
-            else None
-        )
-        staged_contamination = scope.check_staged_contamination(
-            staged_md,
-            implementer_files=impl_files,
-            files_since_start=files_since,
-            since_unreadable=since_unreadable,
-            root=args.root,
-        )
-        if isinstance(staged_contamination["warning"], str):
-            staged_warning = staged_contamination["warning"]
-            warnings.append(staged_warning)
-            print(f"warning: {staged_warning}", file=sys.stderr)
-
     result = contracts.standalone_result_as_dict(
         command=command,
         config=config,
@@ -256,8 +220,6 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         transport=transport,
         evaluation=evaluation,
         delegation=delegation,
-        warnings=warnings or None,
-        staged_contamination=staged_contamination,
     )
     if not consent_ok:
         if args.json:
@@ -327,8 +289,6 @@ def cmd_standalone(args: argparse.Namespace) -> int:
             ]
             print(f"  worktree      : linked required={linked_required}")
             print("  pr            : ready PR after configured gates")
-            if staged_warning:
-                print(f"  staged files  : warning: {staged_warning}")
         elif command == "work-block":
             print("  mode source   : keel work-block")
             print("  queue         : explicit issues or selector")

@@ -128,7 +128,8 @@ role you asked for, that field is whether anything enforces it, and for a config
 profile with no `review_args` the answer is no. For a panel that will outlive your turn,
 start each reviewer with `--timeout <s> --detach --run-id <id>`, collect them with
 `keel delegate wait <id> --timeout <s>`, and remove `"$SEAT_WT"` with
-`keel worktree-remove "$SEAT_WT" --root "$ROOT"` only after `keel delegate wait` finishes: a
+`keel worktree-remove "$SEAT_WT" --root "$ROOT"` only when `keel delegate wait` succeeds
+(leaving it in place and printing the cleanup command on timeout/failure): a
 sleep-and-poll loop cannot survive the turn ending, and the state file under
 `.keel/state/delegate/` can.
 
@@ -301,4 +302,4 @@ Do every read plus `keel validate` / `keel plan` / `keel run-gates` and the revi
 but redirect every state-changing `gh` write (comments, label) to a logged
 `DRY-RUN: <action>` line.
 
-<!-- keel-generated: surface=claude command=review-cycle keel_version=1.32.0 source_sha256=f28c01d6b4a1f24e1723f3c2b5c7551290a17bf3eb8cb3442f49e8112ff87123 generated_sha256=f28c01d6b4a1f24e1723f3c2b5c7551290a17bf3eb8cb3442f49e8112ff87123 -->
+<!-- keel-generated: surface=claude command=review-cycle keel_version=1.32.0 source_sha256=e889005019e5f1178fa04f55defb935796c135b40f1e082f9306612ba63d5a89 generated_sha256=e889005019e5f1178fa04f55defb935796c135b40f1e082f9306612ba63d5a89 -->

@@ -753,17 +753,7 @@ implementation commit, so a looped test-first branch passes it as a single-pass 
 ### s5 classify
 `keel ship .keel/project.yaml --root .` prints, deterministically: the **risk tier** (from
 `tier3_globs` against the diff) → reviewer count, the window state, the gate results, and
-the merge decision. When changes are staged in the git index (for example before a
-fix-round commit at s9, or at s10/s11 after s7/s8 reviewers finish), `keel ship` checks
-`git diff --cached --diff-filter=MD` against the baseline — `--implementer-file <path>`
-(repeatable) or `--declared-file <path>`, falling back to the PR's recorded `declared.files`
-in the ledger, `--since <ref>` (a committed-history baseline when prior implementation
-commits exist; uncommitted work requires `--implementer-file`), or by default the branch's
-committed diff against `base_branch` — and warns (stderr + JSON field) if staged modified
-(`M`) or deleted (`D`) files fall outside that baseline (newly added `A` files are not
-flagged; warns, never refuses; `comparison_source` is `none` only when no baseline is
-available).
-Tiers: **tier-3** (any `tier3_globs` match → most reviewers + jury
+the merge decision. Tiers: **tier-3** (any `tier3_globs` match → most reviewers + jury
 auto-on), **tier-1** (all paths in `docs_gate_paths` → fewest reviewers), **tier-2**
 (everything else). `--reviewers N` overrides the count but does **not** suppress the
 tier-3 jury auto-trigger logic below; log the detected tier and reason
@@ -1015,9 +1005,10 @@ runs), without uncommitted working-tree state or untracked `.venv`/`node_modules
 Read the same JSON contract s4 documents: `text` is the verdict, `attribution` is what
 you record per reviewer, `error_code` is what you branch on. Long panels detach exactly
 as s4 does — launch with `--detach`, `--timeout` and a deterministic `--run-id`, then collect with
-`keel delegate wait --timeout` and call `keel worktree-remove` only after `keel delegate wait`
-finishes (never on launch exit, or the checkout is deleted while the reviewer is still
-reading it); never a sleep loop:
+`keel delegate wait --timeout` and call `keel worktree-remove` only when `keel delegate wait`
+succeeds (never on launch exit, and on wait timeout/failure leave the checkout in place and
+print its cleanup command so a still-running reviewer is not cut off mid-read); never a sleep
+loop:
 
 ```bash
 # detached panel launch (do NOT call worktree-remove here):
@@ -1036,10 +1027,13 @@ fi
 # collect + cleanup (in the same or a later shell using the same $RUN_ID and $SLOT_INDEX):
 ROOT=$(pwd)
 REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
-keel delegate wait "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --timeout 900
-WAIT_RC=$?
-keel worktree-remove "$REVIEW_WT" --root "$ROOT" || WAIT_RC=1
-(exit "$WAIT_RC")
+if keel delegate wait "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --timeout 900; then
+  keel worktree-remove "$REVIEW_WT" --root "$ROOT"
+else
+  WAIT_RC=$?
+  echo "warning: delegate wait failed or timed out; leaving checkout in place — clean up with: keel worktree-remove \"$REVIEW_WT\" --root \"$ROOT\"" >&2
+  (exit "$WAIT_RC")
+fi
 ```
 
 The `secrets`-scope and

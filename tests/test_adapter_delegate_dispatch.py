@@ -133,15 +133,6 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                     block = text[max(0, text.index(line) - 400) : text.index(line) + 400]
                     self.assertIn("--timeout", block)
 
-    def test_wrap_adapter_stages_before_checking_staged_contamination(self):
-        wrap_md = (REPO_ROOT / "src/keel/adapters/commands/wrap.md").read_text(encoding="utf-8")
-        step3 = wrap_md.split("## Step 3 — Commit", 1)[1]
-        self.assertLess(
-            step3.index("git add -A"),
-            step3.index("keel wrap .keel/project.yaml"),
-            "git add -A must precede the staged contamination check so unstaged edits are caught",
-        )
-
     def test_ship_and_review_cycle_adapters_use_safe_isolated_checkouts(self):
         import os
         import subprocess
@@ -160,7 +151,6 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
         self.assertNotIn("-$$", ship_md)
         self.assertNotIn("-$$", review_cycle_md)
         self.assertNotIn("rather than running the test suite", ship_md)
-        self.assertNotIn("when the index is empty or neither baseline flag is passed", ship_md)
 
         from keel import cli
 
@@ -298,6 +288,10 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             )
             (bin_dir / "keel").write_text(
                 '#!/bin/sh\necho "keel $*" >> "$CALL_LOG"\n'
+                'if [ "$1" = "delegate" ] && [ "$2" = "wait" ]; then\n'
+                '  [ "$FAIL_DELEGATE_WAIT" = "1" ] && exit 124\n'
+                "  exit 0\n"
+                "fi\n"
                 'if [ "$1" = "worktree-remove" ]; then\n'
                 '  [ "$FAIL_WORKTREE_REMOVE" = "1" ] && exit 1\n'
                 '  rm -rf "$2"\n'
@@ -543,6 +537,28 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             # 5b. Detached collect propagates worktree-remove failure even when wait succeeded
             res_collect_rm_fail = _run_bash(detach_collect_script, {"FAIL_WORKTREE_REMOVE": "1"})
             self.assertNotEqual(res_collect_rm_fail.returncode, 0)
+
+            # 5c. Detached collect leaves checkout in place and prints exact cleanup command
+            # when wait times out or fails
+            log_file.unlink(missing_ok=True)
+            res_launch2 = _run_bash(detach_launch_script)
+            self.assertEqual(res_launch2.returncode, 0, res_launch2.stderr)
+            wt_dir = root / ".keel" / "worktrees" / "review-r1-slot-0"
+            self.assertTrue(wt_dir.exists())
+            log_file.unlink(missing_ok=True)
+            res_collect_wait_fail = _run_bash(detach_collect_script, {"FAIL_DELEGATE_WAIT": "1"})
+            self.assertEqual(res_collect_wait_fail.returncode, 124)
+            wait_fail_calls = log_file.read_text(encoding="utf-8").splitlines()
+            self.assertFalse(
+                any(c.startswith("keel worktree-remove ") for c in wait_fail_calls),
+                wait_fail_calls,
+            )
+            self.assertTrue(wt_dir.exists())
+            self.assertIn(
+                f'keel worktree-remove "{bash_root}/.keel/worktrees/review-r1-slot-0" '
+                f'--root "{bash_root}"',
+                res_collect_wait_fail.stderr,
+            )
 
     def test_the_detach_primitive_replaces_sleep_polling_advice(self):
         for path in _adapter_files():
