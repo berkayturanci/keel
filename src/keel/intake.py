@@ -18,12 +18,18 @@ _BLOCKED_RE = re.compile(
     r"\b(blocked by|depends on|dependency|waiting on|needs dependency|blocked until)\b",
     re.IGNORECASE,
 )
+#: The public name for the blocked-by phrase set, so other readers of "this is waiting on
+#: something" (``keel stale-blockers``, #1512) extend one definition instead of copying it.
+BLOCKED_PHRASE_RE = _BLOCKED_RE
 _NON_BLOCKING_DEPENDENCY_RE = re.compile(
     r"\b(no dependenc(?:y|ies)|dependenc(?:y|ies):\s*(?:none|no|n/a)|"
     r"depends on:\s*(?:none|no|n/a)|blocked by:\s*(?:none|no|n/a)|"
     r"waiting on\s+(?:none|no one|nobody|no-one))\b",
     re.IGNORECASE,
 )
+#: Public name for the "no blocker, despite the phrase" set (``Depends on: none``), shared
+#: with ``keel stale-blockers`` (#1512) for the same reason as ``BLOCKED_PHRASE_RE``.
+NON_BLOCKING_DEPENDENCY_RE = _NON_BLOCKING_DEPENDENCY_RE
 _AMBIGUOUS_RE = re.compile(
     r"\b(tbd|todo|unclear|ambiguous|maybe|not sure|needs clarification|decide later)\b",
     re.IGNORECASE,

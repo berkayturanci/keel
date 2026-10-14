@@ -9076,6 +9076,20 @@ def _cmd_cost_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_stale_blockers(args: argparse.Namespace) -> int:
+    from . import blockers
+
+    report = blockers.stale_blockers(limit=args.limit, cwd=args.root)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(blockers.render(report))
+    if not report["ok"]:
+        return 1
+    # 2: some blocker could not be read, so an empty or short list is not "all clear".
+    return 2 if report["unknown_blockers"] else 0
+
+
 def _finish_clock() -> float:
     return time.monotonic()
 
@@ -11857,6 +11871,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_cost.add_argument("--root", default=".", help="repo root containing .keel/activity")
     p_cost.add_argument("--json", action="store_true", help="emit structured JSON")
     p_cost.set_defaults(func=_cmd_cost_report)
+
+    p_sb = sub.add_parser(
+        "stale-blockers",
+        help=(
+            "list open PRs whose stated blocker (PR merged, issue completed, tag created) "
+            "has cleared, was abandoned or could not be checked"
+        ),
+    )
+    p_sb.add_argument("--root", default=".", help="repo root (the checkout `gh` reads)")
+    p_sb.add_argument(
+        "--limit", type=_positive_int, default=200, help="open PRs to read (default 200)"
+    )
+    p_sb.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_sb.set_defaults(func=_cmd_stale_blockers)
 
     return parser
 
