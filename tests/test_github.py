@@ -475,14 +475,16 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
         )
 
     def test_pr_added_lines_extracts_added_lines_and_marks_unverifiable(self):
+        from keel import mergeverify as mv
+
         payload = json.dumps(
             [
                 {
-                    "filename": "a.py",
+                    "filename": "a.js",
                     "status": "modified",
                     "patch": (
-                        "@@ -1,2 +1,4 @@\n context\n-removed\n"
-                        "+added 1\n+\n+   \n+added 2\n+++ b/fake\n"
+                        "@@ -1,2 +1,5 @@\n context\n-removed\n"
+                        "+added 1\n+\n+   \n+added 2\n+++counter;\n"
                     ),
                 },
                 {"filename": "renamed.py", "status": "renamed", "patch": "@@ -0,0 +1 @@\n+x\n"},
@@ -496,11 +498,22 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
         self.assertEqual(
             res,
             {
-                "a.py": ["added 1", "", "   ", "added 2"],
+                "a.js": ["added 1", "", "   ", "added 2", "++counter;"],
                 "renamed.py": None,
                 "deleted.py": None,
                 "binary.bin": None,
             },
+        )
+        report = mv.verify_merge(
+            landed=["a.js"],
+            overtaken={"a.js": 550},
+            added_by_pr={550: res},
+            merged_contents={"a.js": "context\nadded 1\nadded 2\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(
+            report["lost_lines"],
+            {"a.js": {"pr": 550, "count": 1, "samples": ["++counter;"]}},
         )
         self.assertIsNone(
             github.pr_added_lines(
@@ -515,7 +528,10 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
         payload = json.dumps({"type": "file", "encoding": "base64", "content": encoded})
         self.assertEqual(
             github.commit_file_content(
-                "deadbeef", "a/b.py", _run=MagicMock(return_value=_proc(payload))
+                "deadbeef",
+                "a/b.py",
+                _run=MagicMock(return_value=_proc(payload)),
+                _sleep=lambda _s: None,
             ),
             "line 1\nline 2\n",
         )
@@ -536,7 +552,12 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
         ):
             with self.subTest(bad=bad):
                 self.assertIsNone(
-                    github.commit_file_content("deadbeef", "a.py", _run=MagicMock(return_value=bad))
+                    github.commit_file_content(
+                        "deadbeef",
+                        "a.py",
+                        _run=MagicMock(return_value=bad),
+                        _sleep=lambda _s: None,
+                    )
                 )
 
 

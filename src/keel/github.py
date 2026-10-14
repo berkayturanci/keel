@@ -340,11 +340,7 @@ def pr_added_lines(
         if row.get("status") not in ("added", "modified") or not isinstance(patch, str):
             out[path] = None
         else:
-            out[path] = [
-                line[1:]
-                for line in patch.splitlines()
-                if line.startswith("+") and not line.startswith("+++")
-            ]
+            out[path] = [line[1:] for line in patch.splitlines() if line.startswith("+")]
     return out
 
 
