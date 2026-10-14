@@ -91,7 +91,7 @@ _FENCE_RE = re.compile(
 )
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _DETAILS_TAG_RE = re.compile(r"<\s*(/)?\s*details(?=[\s>])[^>]*>", re.IGNORECASE)
-_INLINE_CODE_RE = re.compile(r"`([^`\n]*)`")
+_INLINE_CODE_RE = re.compile(r"(?<!`)(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)")
 #: ``[#12](https://...)`` reads as its link text; a link whose text carries no ``#N`` keeps
 #: its URL, so an issue URL behind prose stays visible to the "could not read" check.
 _LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
@@ -113,7 +113,7 @@ class Blocker:
 def _unwrap_inline(match: re.Match[str]) -> str:
     """Keep backticked content (a tag is routinely written ``v1.2.0``) unless the span
     is itself a blocker phrase, which is documentation about the phrase, not a claim."""
-    inner = match.group(1)
+    inner = match.groups()[-1]
     if BLOCKED_PHRASE_RE.search(inner) or _BEFORE_PHRASE_RE.search(inner):
         return ""
     return inner
@@ -202,14 +202,15 @@ def _strip_details(text: str) -> str:
 
 
 def _prose(body: str, repo: str | None) -> str:
-    text = _HTML_COMMENT_RE.sub(" ", body.replace("\r\n", "\n").replace("\r", "\n"))
+    text = body.replace("\r\n", "\n").replace("\r", "\n").replace("\u2019", "'")
+    text = _HTML_COMMENT_RE.sub(" ", text)
     text = _FENCE_RE.sub(" ", text)
     text = _strip_blockquotes(text)
     text = _strip_details(text)
     text = _INLINE_CODE_RE.sub(_unwrap_inline, text)
     text = _LINK_RE.sub(lambda m: _unwrap_link(m, repo), text)
     text = text.replace("**", "").replace("__", "")
-    return _EMPHASIS_REF_RE.sub(r"\2", text.replace("\u2019", "'"))
+    return _EMPHASIS_REF_RE.sub(r"\2", text)
 
 
 def _zone(text: str, pos: int) -> str:
@@ -272,24 +273,24 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
         this_found: list[Blocker] = []
         captured_spans: list[tuple[int, int]] = []
         if kind == "blocked":
-            ref = _AFTER_BLOCKED_RE.match(text, m.end())
+            ref = _AFTER_BLOCKED_RE.match(zone)
             if ref:
-                base = ref.start("refs") - m.end()
+                base = ref.start("refs")
                 for rm in re.finditer(r"#(\d+)", ref.group("refs")):
                     this_found.append(Blocker(ISSUE, rm.group(1)))
                     captured_spans.append((base + rm.start(), base + rm.end()))
         else:
-            target = _AFTER_BEFORE_RE.match(text, m.end())
+            target = _AFTER_BEFORE_RE.match(zone)
             if target is not None:
                 if target.group("issue"):
                     num = re.sub(r"\D", "", target.group("issue"))
-                    end = target.end("issue") - m.end()
+                    end = target.end("issue")
                     this_found.append(Blocker(ISSUE, num))
                     captured_spans.append((end - len(num) - 1, end))
                 else:
                     tag = target.group("tag").rstrip(".")
                     if not (".." in tag or tag.endswith("/")):
-                        start = target.start("tag") - m.end()
+                        start = target.start("tag")
                         this_found.append(Blocker(TAG, tag))
                         captured_spans.append((start, start + len(tag)))
         found.extend(this_found)

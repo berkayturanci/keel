@@ -248,6 +248,8 @@ class ParseTests(unittest.TestCase):
             ("Needs dependency: https://github.com/o/r/issues/9", (), True),
             ("Blocked by #1 and https://example.com/ticket/9", ("1",), True),
             ("Blocked by #1 (merged) and #2", ("1",), True),
+            ("Blocked by #5 (needs python 3.12.1)", ("5",), True),
+            ("Blocked by #5 (v8 engine)", ("5",), True),
         )
         for body, want_refs, want_incomplete in cases:
             self.assertEqual((want_refs, want_incomplete), self.refs(body), body)
@@ -256,6 +258,14 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(((), False), self.refs("Blocked by\n\n#5 is the next ticket"))
         self.assertEqual((("5",), False), self.refs("Blocked by\n#5"))
         self.assertEqual(((), False), self.refs("Depends on:"))
+
+    def test_blank_line_ends_before_and_list_separator_zones(self):
+        self.assertEqual(((), False), self.refs("Do not merge before\n\n#5"))
+        self.assertEqual(((), False), self.refs("Do not merge before\n\nv1.2.0"))
+        self.assertEqual((("5",), False), self.refs("Do not merge before\n#5"))
+        self.assertEqual((("1",), False), self.refs("Blocked by #1,\n\n#2"))
+        self.assertEqual((("1",), False), self.refs("Blocked by #1 and\n\n#2"))
+        self.assertEqual((("1",), False), self.refs("Depends on:\n- #1,\n\n#2"))
 
     def test_phrase_ending_its_line_stops_at_non_bullet_line(self):
         self.assertEqual((("12",), False), self.refs("Depends on:\n- #12\nFixes #15"))
@@ -266,6 +276,17 @@ class ParseTests(unittest.TestCase):
     def test_inline_code_quoting_a_phrase_is_not_a_claim(self):
         for body in ("Use `do not merge before #2` in a body.", "Say `depends on #3` here."):
             self.assertEqual((), blockers.parse_blockers(body), body)
+
+    def test_multi_backtick_and_curly_apostrophe_inline_code_are_not_claims(self):
+        for body in (
+            "``Blocked by #12``",
+            "```Do not merge before #12```",
+            "``Use `Blocked by #12` here``",
+            "`Don\u2019t merge before #12`",
+            "``Don\u2019t merge before #12``",
+        ):
+            self.assertEqual(((), False), blockers.scan_blockers(body), body)
+        self.assertEqual((("7",), False), self.refs("Blocked by ``#7``"))
 
     def test_list_grammar(self):
         want = ["1", "2", "3"]
@@ -439,6 +460,7 @@ class ParseTests(unittest.TestCase):
             "Blocked by owner/repo#9",
             "waiting on [#12](//github.com/other/repo/issues/12)",
             "waiting on [#12](../other/issues/12)",
+            "blocked until v2.0",
         ):
             self.assertEqual(((), True), self.refs(body, "me/keel"), body)
 
@@ -815,8 +837,21 @@ class StaleBlockersTests(unittest.TestCase):
             self.assertFalse(pr["all_cleared"])
 
     def test_readable_markdown_ref_resolves(self):
-        rep = self.report(prs=[_pr(5, "Blocked by [#1](/issues/1)")], issue_states={"1": C})
+        calls = []
+        base = _router(
+            prs=[_pr(5, "Blocked by [#1](/issues/1)")],
+            issue_states={"1": C},
+            slug_result=_fail(),
+        )
+
+        def router(argv, **kw):
+            calls.append(argv[:3])
+            return base(argv, **kw)
+
+        with mock.patch("keel.blockers.run_argv", router):
+            rep = blockers.stale_blockers()
         self.assertTrue(rep["prs"][0]["all_cleared"])
+        self.assertNotIn(["gh", "repo", "view"], calls)
 
     def test_slash_tag(self):
         rep = self.report(prs=[_pr(5, "do not merge before v1/rc2")], tags={"v1/rc2": "yes"})

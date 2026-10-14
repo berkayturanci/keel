@@ -3182,9 +3182,12 @@ not in the list is not detected at all and produces no flag of any kind: `Blocke
 `Stacked on #5`, `Requires #5`, `Merge after #5` and `Do not merge this PR into main until #5` are all
 invisible to this command. Bodies with `\r\n` or `\r` line endings are read like `\n` ones.
 
-- **Strict target grammar:** items are `#N`, `PR #N`, `PR#N`, `issue #N` or `pull request #N`,
-  joined by `,`, `, and`, `, or`, `and`, `or`, `/`, `&`, `+`, or written as a markdown bullet list
-  on the lines directly under the phrase (a blank line ends the list). A `before` target is `#N`,
+- **Strict target grammar:** after a blocked phrase (`blocked by`, `depends on`, `waiting on`,
+  `blocked until`, `dependency:` / `needs dependency:`), items are `#N`, `PR #N`, `PR#N`, `issue #N`
+  or `pull request #N`, joined by `,`, `, and`, `, or`, `and`, `or`, `/`, `&`, `+`, or written as a
+  markdown bullet list on the lines directly under the phrase (a blank line ends the list). Tag targets
+  are read only after `do not merge before|until [after]|prior to` (so `blocked until v2.0` is not read
+  as a tag blocker and marks the PR `incomplete: true` with `blockers: []`). A `before` target is `#N`,
   a `v`-prefixed tag (`v2`, `v1.2.0`) or a three-part version (`1.2.0`; it checks for a tag named
   exactly that, not `v1.2.0`). A tag target must not be followed by `#\d` (or an `/owner/repo#N`
   continuation, such as `do not merge before v2/sdk#12`); such a target is recognized as a foreign
@@ -3207,13 +3210,13 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
 - **Deliberately not read:** negated or historical phrases (`not blocked by`, `no longer blocked by`,
   `previously` / `formerly` / `was` immediately preceding the phrase on the same line), phrases with no
   reference-like token at all ("behaviour depends on the config", `Dependency: bump`, "do not merge before release"),
-  phrases or headings separated from their targets by a blank line (`Blocked by\n\n#5`, `## Blocked by\n\n- #5` —
-  the blank line ends the zone, so no blocker is read and `incomplete` is false),
+  phrases or headings separated from their targets by a blank line (`Blocked by\n\n#5`, `Do not merge before\n\n#5`,
+  `## Blocked by\n\n- #5` — the blank line ends the zone, so no blocker is read and `incomplete` is false),
   and unrecognised phrasings (`blocked on`, `waiting for`, `stacked on`, `requires`). Note that label
   forms like `Dependency: #123` are parsed, but `Dependency: bump, see #4` sees prose and flags the PR
   as incomplete. Also ignored as non-claims: the bare noun `dependency` / `needs dependency` without a
   colon ("Upgrade dependency lodash (#123)"), `Depends on: none`, fenced code (` ``` ` or `~~~` of three
-  or more characters, closed by a matching or longer fence), inline code quoting a
+  or more characters, closed by a matching or longer fence), inline code spans (single- or multi-backtick) quoting a
   phrase, HTML comments, standard blockquotes (`> ...`, including nested `> >`), and text collapsed inside
   `<details>...</details>` blocks (case-insensitive, nested, or unterminated — an unterminated `<details>`
   drops through the end of the body without setting `incomplete`, so truncated bot release notes are not
@@ -3221,10 +3224,12 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
   GitHub alert blocks (`> [!NOTE]`, `> [!WARNING]`, `> [!IMPORTANT]`, `> [!CAUTION]`, `> [!TIP]` and the
   lines quoted under them) are the author's own text and are scanned rather than stripped.
 - **Markdown:** `**#12**`, `_#12_`, `**Blocked by:** #12` and a link whose text is `#12` read as
-  `#12` when the link is to this repository's own `#12` (root-relative `/issues/12` or `/pull/12`, `#12`,
-  or absolute and matching `gh repo view`). The same label over another repository's URL (including
-  `//host/...`, `../other/...`, `issues/12` without a leading `/`, or a path or `#N` fragment naming a different number than the label) is a
-  foreign reference: `incomplete`, not resolved here.
+  `#12` when the link is to this repository's own `#12` (a bare `/issues/12` or `/pull/12` path with no
+  `owner/repo` prefix — even though GitHub resolves a leading `/` against the site root, a path without
+  `owner/repo` segments cannot name another repository — `#12`, or absolute and matching `gh repo view`).
+  The same label over another repository's URL (including `/owner/repo/issues/12`, `//host/...`,
+  `../other/...`, `issues/12` without a leading `/`, or a path or `#N` fragment naming a different number
+  than the label) is a foreign reference: `incomplete`, not resolved here.
 - **States:** a PR is `cleared` once **merged** (`merged_at` timestamp); an issue once closed as `completed` (or with no
   reason, as old issues are) (`repos/{owner}/{repo}/issues/N`). A PR closed unmerged, or an issue
   closed `not_planned` or as a duplicate, is `abandoned` — reported, not counted as cleared. A
