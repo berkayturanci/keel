@@ -83,12 +83,16 @@ class TestGitLandingPlumbing(unittest.TestCase):
         self.assertIs(git.show_file(SHA_B, "a.py", _run=rec), git.FILE_ABSENT)
 
     def test_show_file_absent_path_via_ls_tree(self):
+        calls = []
+
         def _run(argv, **kw):
+            calls.append(argv)
             if argv[1] == "show":
                 return _Proc(128, "", "fatal: git failure")
             return _Proc(0, "", "")
 
         self.assertIs(git.show_file(SHA_B, "a.py", _run=_run), git.FILE_ABSENT)
+        self.assertEqual(calls[1], ["git", "ls-tree", "--full-tree", SHA_B, "--", "a.py"])
 
     def test_show_file_ls_tree_nonempty_returns_none(self):
         def _run(argv, **kw):

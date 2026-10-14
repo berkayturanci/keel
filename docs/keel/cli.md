@@ -227,14 +227,14 @@ failing|still pending: <names>` appended only when the snapshot has them. The pa
 carries `pending_checks` and `failing_checks` name lists (empty when none).
 
 Once the merge lands, `keel merge` runs the [`verify-merge`](#keel-verify-merge-projectyaml---root-dir---pr-n---merge-sha-sha---transport-autographqlrest---json)
-drift check on it and reports the result as `merge_verification` in the payload and a
-`drift :` line in human output. Exit codes: **0** merged and clean, **1** the merge did not
-happen, **3** it happened *and* may have written over work another PR merged after this one
-branched — a distinct code because "fail" on a landed merge reads as "retry it". On drift
-the overtaking pull request is named in full, since the merge is already irreversible and
-the operator has to act on it now. Before #934 this check was documented as running after
-s10 and was called from nowhere; a stale-base squash reverted #811 on main and nothing
-noticed for six days.
+drift check on it and reports the result as `merge_verification` (`keel.merge-verify.v2`) in
+the payload and a `drift :` line in human output. Exit codes: **0** merged and clean, **1**
+the merge did not happen, **3** it happened *and* may have written over work another PR
+merged after this one branched — a distinct code because "fail" on a landed merge reads as
+"retry it". On drift the overtaking pull request(s) are named in full, since the merge is
+already irreversible and the operator has to act on it now. Before #934 this check was
+documented as running after s10 and was called from nowhere; a stale-base squash reverted
+#811 on main and nothing noticed for six days.
 
 ### Transport: GraphQL, or REST when the endpoint is blocked
 
@@ -1697,14 +1697,14 @@ merge commit against this merge commit (ignoring blank lines):
 
 * **Added lines:** each line the overtaking PR added must appear at least as many times in the merge commit as in the overtaking PR's landed version.
 * **Deleted lines:** each line the overtaking PR deleted must appear no more times in the merge commit than in the overtaking PR's landed version (catching re-added deletions).
-* **Whole-file deletions (`+++ /dev/null`):** the file must be confirmed absent (`FILE_ABSENT`) at both the overtaking PR's merge commit and this merge commit; reappearing in the merge commit is drift.
-* **Unreadable inputs fail closed:** truncated or malformed diffs, binary files, or unreadable file contents at either commit are reported as drift, never as a stayed deletion.
+* **Whole-file deletions (`+++ /dev/null`) and renames:** a deleted file (or the old path of a rename) must be confirmed absent (`FILE_ABSENT`) at both the overtaking PR's merge commit and this merge commit; reappearing in the merge commit is drift. Metadata-only diffs (such as executable-bit mode changes or unchanged-content renames) are parsed and verified without false "not found in parsed diff" drift.
+* **Unreadable inputs fail closed:** truncated or malformed diffs (including truncated hunk headers after a completed hunk) or unreadable file contents at either commit are reported as drift with reason `could not verify line survival (fail-closed)` (distinct from `the shape of a silent revert` when lines are lost or re-added), never as a stayed deletion.
 * **Conservative by design:** if a later overtaking PR modifies a line an earlier overtaking PR added, or if an overtaking PR deleted a generic line (such as `return None` or `}`) that this PR legitimately adds, it is flagged as drift so a human can judge.
 
 The JSON report uses schema `keel.merge-verify.v2`:
 * `overtaken` maps `{path: [int, ...]}` to the overtaking PRs whose changes drifted or could not be verified on that path (`{}` when `clean`; in v1 it was `{path: int}` recording only the first collider);
 * `shared_files` lists all paths shared between the merge commit and overtaking PRs in the window (`list[str]`);
-* `drift_details` maps `{path: [str, ...]}` detailing specific lost lines, re-added deletions, or unreadable inputs (`dict[str, list[str]]`).
+* `drift_details` maps `{path: [str, ...]}` detailing specific lost lines, re-added deletions, or unreadable inputs with `(#pr)` attribution (`dict[str, list[str]]`).
 
 `unknown` exits **2**, not 0. The status line has always said "not a pass", but the
 exit code said otherwise, and the exit code is what a caller wiring this in after

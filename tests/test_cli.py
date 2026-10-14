@@ -11346,6 +11346,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
         diff_by_pr=None,
         content_by_path=None,
         use_git_for_content=True,
+        gh_content=None,
     ):
         files_by_pr = files_by_pr or {}
         diff_by_pr = diff_by_pr or {}
@@ -11374,6 +11375,8 @@ class TestVerifyMergeCommand(unittest.TestCase):
             return None
 
         def _gh_content(sha, path, **kw):
+            if gh_content is not None:
+                return gh_content(sha, path, **kw)
             if callable(content_by_path):
                 return content_by_path(sha, path)
             if isinstance(content_by_path, dict):
@@ -11425,13 +11428,15 @@ class TestVerifyMergeCommand(unittest.TestCase):
             "@@ -0,0 +1,1 @@\n"
             "+* feature 550\n"
         )
-        content = "## Unreleased\n* feature 550\n* PR 543\n"
         rc, out, _ = self._run(
             others=[550],
             files_by_pr={543: ["CHANGELOG.md"], 550: ["CHANGELOG.md"]},
             commit_files=["CHANGELOG.md"],
             diff_by_pr={550: diff550},
-            content_by_path={"CHANGELOG.md": content},
+            content_by_path={
+                ("commit_550", "CHANGELOG.md"): "## Unreleased\n* feature 550\n",
+                ("7c140f3", "CHANGELOG.md"): "## Unreleased\n* feature 550\n* PR 543\n",
+            },
         )
         self.assertEqual(rc, 0)
         self.assertIn("clean", out)
@@ -11463,14 +11468,16 @@ class TestVerifyMergeCommand(unittest.TestCase):
 
     def test_shared_files_rest_transport_with_content_fallback(self):
         diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line 1\n"
-        content = "line 1\n"
         rc, out, _ = self._run(
             others=[550],
             files_by_pr={543: ["a.py"], 550: ["a.py"]},
             commit_files=["a.py"],
             argv_extra=("--transport", "rest"),
             diff_by_pr={550: diff550},
-            content_by_path={"a.py": content},
+            content_by_path={
+                ("commit_550", "a.py"): "line 1\n",
+                ("7c140f3", "a.py"): "line 1\nline 2 from 543\n",
+            },
             use_git_for_content=False,
         )
         self.assertEqual(rc, 0)
@@ -11894,23 +11901,26 @@ class TestVerifyMergeCommand(unittest.TestCase):
             "@@ -1,1 +0,0 @@\n"
             "-deleted\n"
         )
-        with patch.object(
-            cli.github,
-            "commit_file_content",
-            side_effect=AssertionError("commit_file_content should not be called"),
-        ):
-            rc, out, _ = self._run(
-                others=[550],
-                files_by_pr={543: ["a.py"], 550: ["a.py"]},
-                commit_files=["a.py"],
-                diff_by_pr={550: diff550},
-                content_by_path={
-                    ("commit_550", "a.py"): cli.mergeverify.FILE_ABSENT,
-                    ("7c140f3", "a.py"): cli.mergeverify.FILE_ABSENT,
-                },
-                use_git_for_content=True,
-            )
+        gh_calls = []
+
+        def _forbid_gh(sha, path, **kw):
+            gh_calls.append((sha, path))
+            raise AssertionError("commit_file_content should not be called")
+
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},
+            commit_files=["a.py"],
+            diff_by_pr={550: diff550},
+            content_by_path={
+                ("commit_550", "a.py"): cli.mergeverify.FILE_ABSENT,
+                ("7c140f3", "a.py"): cli.mergeverify.FILE_ABSENT,
+            },
+            use_git_for_content=True,
+            gh_content=_forbid_gh,
+        )
         self.assertEqual(rc, 0)
+        self.assertEqual(gh_calls, [])
         self.assertIn("clean (1 shared file, 0 lost lines)", out)
 
     def test_a_bad_config_path_fails_cleanly(self):

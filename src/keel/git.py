@@ -473,7 +473,7 @@ def show_file(treeish: str, path: str, *, cwd: str | None = None, _run=None) -> 
     err = f"{result.stderr} {result.output}".lower()
     if "does not exist in" in err or "exists on disk, but not in" in err:
         return FILE_ABSENT
-    ls = run_argv(["git", "ls-tree", treeish, "--", path], cwd=cwd, **_kw(_run))
+    ls = run_argv(["git", "ls-tree", "--full-tree", treeish, "--", path], cwd=cwd, **_kw(_run))
     if ls.ok and not ls.stdout.strip():
         return FILE_ABSENT
     return None

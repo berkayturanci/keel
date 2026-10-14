@@ -98,18 +98,35 @@ class FileDiff:
     is_deleted: bool = False
 
 
-def _clean_diff_path(raw: str, *, is_new: bool) -> str:
+def _unquote_diff_path(raw: str) -> str:
     raw = raw.strip()
     if raw.startswith('"') and raw.endswith('"'):
         try:
             raw = ast.literal_eval(raw).encode("latin-1").decode("utf-8")
         except Exception:
             raw = raw[1:-1]
+    return raw
+
+
+def _clean_diff_path(raw: str, *, is_new: bool) -> str:
+    raw = _unquote_diff_path(raw)
     if is_new and raw.startswith("b/"):
         return raw[2:]
     if not is_new and raw.startswith("a/"):
         return raw[2:]
     return raw
+
+
+def _parse_git_header_path(line: str) -> str:
+    """Extract the target path from a ``diff --git`` header line."""
+    rest = line[len("diff --git ") :].strip()
+    if '" "' in rest:
+        raw_new = rest[rest.find('" "') + 2 :]
+    elif rest.startswith("a/") and " b/" in rest:
+        raw_new = "b/" + rest.split(" b/", 1)[1]
+    else:
+        raw_new = rest.split(None, 1)[-1]
+    return _clean_diff_path(raw_new, is_new=True)
 
 
 def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
@@ -123,8 +140,11 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
         return {}
 
     result: dict[str, FileDiff] = {}
+    in_file = False
+    header_file: str | None = None
     current_file: str | None = None
     old_file: str | None = None
+    rename_old: str | None = None
     is_deleted = False
     in_hunk = False
     rem_old = 0
@@ -132,17 +152,31 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
     current_added: list[str] = []
     current_deleted: list[str] = []
     saw_hunk_for_file = False
+    saw_minus_header = False
+    saw_plus_header = False
+    saw_metadata_only = False
 
     def _flush_current_file() -> bool:
         nonlocal \
+            in_file, \
+            header_file, \
             current_file, \
             old_file, \
+            rename_old, \
             is_deleted, \
             current_added, \
             current_deleted, \
-            saw_hunk_for_file
-        if current_file is not None:
-            if not saw_hunk_for_file:
+            saw_hunk_for_file, \
+            saw_minus_header, \
+            saw_plus_header, \
+            saw_metadata_only
+        if in_file or saw_minus_header or saw_plus_header:
+            if (
+                current_file is None
+                or saw_minus_header != saw_plus_header
+                or (saw_plus_header and not saw_hunk_for_file)
+                or (not saw_plus_header and not saw_metadata_only)
+            ):
                 return False
             result[current_file] = FileDiff(
                 path=current_file,
@@ -150,47 +184,75 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
                 deleted_lines=tuple(current_deleted),
                 is_deleted=is_deleted,
             )
+            if rename_old:
+                result[rename_old] = FileDiff(
+                    path=rename_old,
+                    added_lines=(),
+                    deleted_lines=(),
+                    is_deleted=True,
+                )
+        in_file = False
+        header_file = None
         current_file = None
         old_file = None
+        rename_old = None
         is_deleted = False
         current_added = []
         current_deleted = []
         saw_hunk_for_file = False
+        saw_minus_header = False
+        saw_plus_header = False
+        saw_metadata_only = False
         return True
 
     for line in _split_lines(diff_text):
         if line.startswith("diff --git "):
-            if in_hunk:
+            if in_hunk or not _flush_current_file():
                 return None
-            if not _flush_current_file():
-                return None
+            header_file = _parse_git_header_path(line)
+            in_file = True
             continue
 
-        if not in_hunk:
-            if line.startswith(("+", "-")) and not line.startswith(("--- ", "+++ ")):
-                return None
+        if line.startswith("\\") and (in_hunk or saw_hunk_for_file):
+            continue
+
+        if not in_hunk and not saw_hunk_for_file:
             if line.startswith("--- "):
+                saw_minus_header = True
                 target = line[4:].strip()
-                if target == "/dev/null":
-                    old_file = None
-                else:
-                    old_file = _clean_diff_path(target, is_new=False)
+                old_file = None if target == "/dev/null" else _clean_diff_path(target, is_new=False)
                 continue
             if line.startswith("+++ "):
+                saw_plus_header = True
                 target = line[4:].strip()
                 if target == "/dev/null":
-                    if old_file is None:
-                        return None
                     current_file = old_file
                     is_deleted = True
                 else:
                     current_file = _clean_diff_path(target, is_new=True)
                     is_deleted = False
                 continue
+            if line.startswith(("new mode ", "new file mode ")):
+                current_file = current_file or header_file
+                saw_metadata_only = True
+                continue
+            if line.startswith("deleted file mode "):
+                current_file = current_file or header_file
+                saw_metadata_only = True
+                is_deleted = True
+                continue
+            if line.startswith("rename from "):
+                rename_old = _unquote_diff_path(line[len("rename from ") :])
+                old_file = rename_old
+                continue
+            if line.startswith("rename to "):
+                current_file = _unquote_diff_path(line[len("rename to ") :])
+                saw_metadata_only = True
+                continue
 
         m = _HUNK_HEADER_RE.match(line)
         if m:
-            if current_file is None or in_hunk:
+            if current_file is None or in_hunk or not saw_plus_header:
                 return None
             saw_hunk_for_file = True
             rem_old = int(m.group(2)) if m.group(2) is not None else 1
@@ -200,31 +262,54 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
                 in_hunk = False
             continue
 
-        if in_hunk:
-            if line.startswith("\\"):
-                continue
-            if line.startswith("+"):
-                current_added.append(line[1:])
-                rem_new -= 1
-            elif line.startswith("-"):
-                current_deleted.append(line[1:])
-                rem_old -= 1
-            elif line.startswith(" "):
-                rem_old -= 1
-                rem_new -= 1
-            else:
+        if not in_hunk:
+            if saw_hunk_for_file or line.startswith(("@", "+", "-")):
                 return None
-            if rem_old < 0 or rem_new < 0:
-                return None
-            if rem_old == 0 and rem_new == 0:
-                in_hunk = False
+            continue
 
-    if in_hunk:
-        return None
-    if not _flush_current_file():
+        if line.startswith("+"):
+            current_added.append(line[1:])
+            rem_new -= 1
+        elif line.startswith("-"):
+            current_deleted.append(line[1:])
+            rem_old -= 1
+        elif line.startswith(" "):
+            rem_old -= 1
+            rem_new -= 1
+        else:
+            return None
+        if rem_old < 0 or rem_new < 0:
+            return None
+        if rem_old == 0 and rem_new == 0:
+            in_hunk = False
+
+    if in_hunk or not _flush_current_file():
         return None
 
     return result
+
+
+_UNVERIFIED_VIOLATIONS = frozenset(
+    {
+        "unreadable landed content",
+        "unreadable merge commit content",
+        "deleted file still present in overtaking commit",
+        "landed content absent",
+    }
+)
+_MERGE_COMMIT_VIOLATIONS = frozenset(
+    {
+        "unreadable merge commit content",
+        "file missing in merge commit",
+    }
+)
+_PR_PATH_VIOLATIONS = frozenset(
+    {
+        "unreadable landed content",
+        "deleted file still present in overtaking commit",
+        "landed content absent",
+    }
+)
 
 
 def check_multiset_survival(
@@ -237,23 +322,29 @@ def check_multiset_survival(
 ) -> tuple[int, list[str]]:
     """Check line survival via multiset counting (#1511).
 
-    Returns ``(lost_count, violations)``.
+    Returns ``(lost_count, violations)``, where ``lost_count`` is the total number of
+    lost or re-added line occurrences across all distinct violating lines.
     Ignore blank lines only.
     """
     if is_deleted:
-        if landed_content is None or merge_content is None:
-            return 1, ["unreadable file content"]
+        if landed_content is None:
+            return 1, ["unreadable landed content"]
         if landed_content is not FILE_ABSENT:
             return 1, ["deleted file still present in overtaking commit"]
         if merge_content is FILE_ABSENT:
             return 0, []
+        if merge_content is None:
+            return 1, ["unreadable merge commit content"]
         return 1, ["deleted file reappeared in merge commit"]
 
-    if landed_content is None or merge_content is None:
-        return 1, ["unreadable file content"]
-
-    if not isinstance(landed_content, str) or not isinstance(merge_content, str):
+    if merge_content is None:
+        return 1, ["unreadable merge commit content"]
+    if not isinstance(merge_content, str):
         return 1, ["file missing in merge commit"]
+    if landed_content is None:
+        return 1, ["unreadable landed content"]
+    if not isinstance(landed_content, str):
+        return 1, ["landed content absent"]
 
     landed_lines = [line for line in _split_lines(landed_content) if line.strip()]
     merge_lines = [line for line in _split_lines(merge_content) if line.strip()]
@@ -262,6 +353,7 @@ def check_multiset_survival(
     merge_counts = Counter(merge_lines)
 
     violations: list[str] = []
+    lost_count = 0
 
     for line in added_lines:
         if not line.strip():
@@ -269,6 +361,7 @@ def check_multiset_survival(
         if merge_counts[line] < landed_counts[line]:
             if line not in violations:
                 violations.append(line)
+                lost_count += landed_counts[line] - merge_counts[line]
 
     for line in deleted_lines:
         if not line.strip():
@@ -276,8 +369,9 @@ def check_multiset_survival(
         if merge_counts[line] > landed_counts[line]:
             if line not in violations:
                 violations.append(line)
+                lost_count += merge_counts[line] - landed_counts[line]
 
-    return len(violations), violations
+    return lost_count, violations
 
 
 def verify_merge(
@@ -338,9 +432,11 @@ def verify_merge(
     if collisions:
         drifted: dict[str, list[int]] = {}
         drift_details: dict[str, list[str]] = {}
+        saw_line_loss = False
 
         if diffs is None or file_contents is None:
             drifted = {p: list(prs) for p, prs in collisions.items()}
+            saw_line_loss = True
         else:
             parsed_diffs: dict[int, dict[str, FileDiff] | None] = {}
             for path, prs in sorted(collisions.items()):
@@ -375,62 +471,6 @@ def verify_merge(
                             pr_landed_content = pr_file_contents.get((pr, path))
 
                     fd = pr_parsed[path]
-                    if fd.is_deleted:
-                        if pr_landed_content is None:
-                            drifted.setdefault(path, []).append(pr)
-                            drift_details.setdefault(path, []).append(
-                                f"unreadable landed content for {path} (#{pr})"
-                            )
-                            continue
-                        if pr_landed_content is not FILE_ABSENT:
-                            drifted.setdefault(path, []).append(pr)
-                            drift_details.setdefault(path, []).append(
-                                "deleted file still present in overtaking commit "
-                                f"for {path} (#{pr})"
-                            )
-                            continue
-                        if merge_content is FILE_ABSENT:
-                            continue
-                        if merge_content is None:
-                            drifted.setdefault(path, []).append(pr)
-                            drift_details.setdefault(path, []).append(
-                                f"unreadable merge commit content for {path}"
-                            )
-                            continue
-                        drifted.setdefault(path, []).append(pr)
-                        drift_details.setdefault(path, []).append(
-                            f"deleted file reappeared in merge commit (#{pr})"
-                        )
-                        continue
-
-                    if merge_content is None:
-                        drifted.setdefault(path, []).append(pr)
-                        drift_details.setdefault(path, []).append(
-                            f"unreadable merge commit content for {path}"
-                        )
-                        continue
-
-                    if merge_content is FILE_ABSENT:
-                        drifted.setdefault(path, []).append(pr)
-                        drift_details.setdefault(path, []).append(
-                            f"file missing in merge commit for {path}"
-                        )
-                        continue
-
-                    if pr_landed_content is None:
-                        drifted.setdefault(path, []).append(pr)
-                        drift_details.setdefault(path, []).append(
-                            f"unreadable landed content for {path} (#{pr})"
-                        )
-                        continue
-
-                    if pr_landed_content is FILE_ABSENT:
-                        drifted.setdefault(path, []).append(pr)
-                        drift_details.setdefault(path, []).append(
-                            f"landed content absent for {path} (#{pr})"
-                        )
-                        continue
-
                     lost_count, violations = check_multiset_survival(
                         fd.added_lines,
                         fd.deleted_lines,
@@ -440,7 +480,18 @@ def verify_merge(
                     )
                     if lost_count > 0:
                         drifted.setdefault(path, []).append(pr)
-                        drift_details.setdefault(path, []).extend(violations)
+                        details = drift_details.setdefault(path, [])
+                        for v in violations:
+                            if v not in _UNVERIFIED_VIOLATIONS:
+                                saw_line_loss = True
+                            if v in _MERGE_COMMIT_VIOLATIONS:
+                                detail = f"{v} for {path}"
+                            elif v in _PR_PATH_VIOLATIONS:
+                                detail = f"{v} for {path} (#{pr})"
+                            else:
+                                detail = f"{v} (#{pr})"
+                            if detail not in details:
+                                details.append(detail)
 
         if drifted:
             listed_parts = []
@@ -448,10 +499,15 @@ def verify_merge(
                 prs_str = ", ".join(f"#{pr}" for pr in sorted(pr_list))
                 listed_parts.append(f"{p} ({prs_str})")
             listed = ", ".join(listed_parts)
+            summary = (
+                "the shape of a silent revert"
+                if saw_line_loss
+                else "could not verify line survival (fail-closed)"
+            )
             return _report(
                 "drift",
                 f"the merge wrote to {len(drifted)} file(s) that another pull request "
-                f"changed after this one branched — the shape of a silent revert: {listed}",
+                f"changed after this one branched — {summary}: {listed}",
                 overtaken=dict(sorted(drifted.items())),
                 landed_count=len(landed_set),
                 shared_files=sorted(collisions.keys()),

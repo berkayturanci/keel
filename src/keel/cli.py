@@ -4845,11 +4845,14 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             for pr_num in sorted(prs_to_fetch):
                 diffs[pr_num] = diff_reader(pr_num, cwd=args.root)
 
+            def _read_content(sha: str, p: str) -> str | mergeverify._FileAbsent | None:
+                val = git.show_file(sha, p, cwd=args.root)
+                if val is None:
+                    val = github.commit_file_content(sha, p, cwd=args.root)
+                return val
+
             for path in sorted(shared_paths):
-                content = git.show_file(merge_sha, path, cwd=args.root)
-                if content is None:
-                    content = github.commit_file_content(merge_sha, path, cwd=args.root)
-                file_contents[path] = content
+                file_contents[path] = _read_content(merge_sha, path)
 
             for pr_num in sorted(prs_to_fetch):
                 pr_window = window_reader(pr_num, cwd=args.root)
@@ -4857,15 +4860,9 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
                 pr_file_contents[pr_num] = {}
                 for path in sorted(shared_paths):
                     if pr_num in overtaken[path]:
-                        if pr_merge_sha:
-                            pr_content = git.show_file(pr_merge_sha, path, cwd=args.root)
-                            if pr_content is None:
-                                pr_content = github.commit_file_content(
-                                    pr_merge_sha, path, cwd=args.root
-                                )
-                            pr_file_contents[pr_num][path] = pr_content
-                        else:
-                            pr_file_contents[pr_num][path] = None
+                        pr_file_contents[pr_num][path] = (
+                            _read_content(pr_merge_sha, path) if pr_merge_sha else None
+                        )
         # Each input answers a specific question, so an unreadable one leaves that
         # question open rather than the whole report meaningless. Saying "no
         # conclusion about drift is possible" when only the PR's own file list was
