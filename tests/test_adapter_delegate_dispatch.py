@@ -238,6 +238,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             log_file = root / "calls.log"
             (root / "diff.patch").write_text("diff\n", encoding="utf-8")
             (root / "jury.toml").write_text("[jury]\n", encoding="utf-8")
+            (root / "jury-policy.toml").write_text("[policy]\n", encoding="utf-8")
             (root / ".jury" / "sub").mkdir(parents=True)
             (root / ".jury" / "tracked.toml").write_text("local = true\n", encoding="utf-8")
             (root / ".jury" / "untracked.toml").write_text("extra = true\n", encoding="utf-8")
@@ -248,6 +249,10 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 'if [ "$1" = "rev-parse" ]; then echo "abc1234"; exit 0; fi\n'
                 'echo "git $*" >> "$CALL_LOG"\n'
                 'if [ "$FAIL_WORKTREE_ADD" = "1" ]; then exit 128; fi\n'
+                'case "$*" in *review-r1-slot-0*)'
+                ' [ "$FAIL_REVIEW_WORKTREE_ADD" = "1" ] && exit 128 ;; esac\n'
+                'case "$*" in *review-r1-gate*)'
+                ' [ "$FAIL_GATE_WORKTREE_ADD" = "1" ] && exit 128 ;; esac\n'
                 'mkdir -p "$4/.jury"\n'
                 'printf "committed = true\\n" > "$4/.jury/tracked.toml"\n'
                 "exit 0\n",
@@ -255,21 +260,35 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             )
             (bin_dir / "keel").write_text(
                 '#!/bin/sh\necho "keel $*" >> "$CALL_LOG"\n'
-                'if [ "$1" = "worktree-remove" ]; then rm -rf "$2"; fi\n'
+                'if [ "$1" = "worktree-remove" ]; then rm -rf "$2"; exit 0; fi\n'
+                'case "$*" in *"--role review"*)'
+                ' [ "$FAIL_REVIEW_DELEGATE" = "1" ] && exit 2 ;; esac\n'
+                'case "$*" in *"--role gate"*)'
+                ' [ "$FAIL_GATE_DELEGATE" = "1" ] && exit 3 ;; esac\n'
                 "exit 0\n",
                 encoding="utf-8",
             )
             (bin_dir / "jury").write_text(
                 "#!/bin/sh\n"
+                'echo "jury $*" >> "$CALL_LOG"\n'
                 'cat .jury/tracked.toml > "$JURY_CHECK_TRACKED"\n'
                 'cat .jury/untracked.toml > "$JURY_CHECK_UNTRACKED"\n'
                 'cat .jury/sub/nested.toml > "$JURY_CHECK_NESTED"\n'
                 "exit 0\n",
                 encoding="utf-8",
             )
+            (bin_dir / "cp").write_text(
+                "#!/bin/sh\n"
+                'if [ -n "$FAIL_CP_MATCH" ]; then\n'
+                '  case "$*" in *"$FAIL_CP_MATCH"*) exit 1 ;; esac\n'
+                "fi\n"
+                'exec /bin/cp "$@"\n',
+                encoding="utf-8",
+            )
             os.chmod(bin_dir / "git", 0o755)
             os.chmod(bin_dir / "keel", 0o755)
             os.chmod(bin_dir / "jury", 0o755)
+            os.chmod(bin_dir / "cp", 0o755)
 
             env = {
                 **os.environ,
@@ -333,6 +352,70 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             self.assertTrue(any("--role gate" in c for c in gate_calls))
             self.assertTrue(any("review-r1-gate" in c for c in gate_calls))
 
+            # 3b. Combined synchronous reviewer+gate snippet fails closed when either checkout
+            # or delegate dispatch fails, even when the other dispatch succeeds
+            with self.subTest(case="combined_reviewer_worktree_add_fails"):
+                log_file.unlink(missing_ok=True)
+                res_combined_wt_fail = subprocess.run(
+                    ["bash", "-c", reviewer_block],
+                    cwd=root,
+                    env={**env, "FAIL_REVIEW_WORKTREE_ADD": "1"},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res_combined_wt_fail.returncode, 0)
+                combined_wt_calls = log_file.read_text(encoding="utf-8")
+                self.assertNotIn("--role review", combined_wt_calls)
+
+            with self.subTest(case="combined_reviewer_delegate_fails"):
+                log_file.unlink(missing_ok=True)
+                res_combined_rev_fail = subprocess.run(
+                    ["bash", "-c", reviewer_block],
+                    cwd=root,
+                    env={**env, "FAIL_REVIEW_DELEGATE": "1"},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res_combined_rev_fail.returncode, 0)
+                combined_rev_calls = log_file.read_text(encoding="utf-8").splitlines()
+                self.assertTrue(
+                    any(
+                        c.startswith("keel worktree-remove ") and "review-r1-slot-0" in c
+                        for c in combined_rev_calls
+                    )
+                )
+
+            with self.subTest(case="combined_gate_worktree_add_fails"):
+                log_file.unlink(missing_ok=True)
+                res_combined_gate_wt_fail = subprocess.run(
+                    ["bash", "-c", reviewer_block],
+                    cwd=root,
+                    env={**env, "FAIL_GATE_WORKTREE_ADD": "1"},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res_combined_gate_wt_fail.returncode, 0)
+                combined_gate_wt_calls = log_file.read_text(encoding="utf-8")
+                self.assertNotIn("--role gate", combined_gate_wt_calls)
+
+            with self.subTest(case="combined_gate_delegate_fails"):
+                log_file.unlink(missing_ok=True)
+                res_combined_gate_fail = subprocess.run(
+                    ["bash", "-c", reviewer_block],
+                    cwd=root,
+                    env={**env, "FAIL_GATE_DELEGATE": "1"},
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(res_combined_gate_fail.returncode, 0)
+                combined_gate_calls = log_file.read_text(encoding="utf-8").splitlines()
+                self.assertTrue(
+                    any(
+                        c.startswith("keel worktree-remove ") and "review-r1-gate" in c
+                        for c in combined_gate_calls
+                    )
+                )
+
             # 4. Jury block merges untracked .jury files while preserving tracked .jury files
             log_file.unlink(missing_ok=True)
             res_jury = subprocess.run(
@@ -355,6 +438,27 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 (root / "checked_nested.txt").read_text(encoding="utf-8"),
                 "n = 1\n",
             )
+
+            # 4b. Jury block fails closed, skips jury execution, and cleans up on copy failure
+            for fail_target in ("jury-policy.toml", "untracked.toml"):
+                with self.subTest(fail_target=fail_target):
+                    log_file.unlink(missing_ok=True)
+                    res_jury_cp_fail = subprocess.run(
+                        ["bash", "-c", jury_panel_script],
+                        cwd=root,
+                        env={**env, "FAIL_CP_MATCH": fail_target},
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertNotEqual(res_jury_cp_fail.returncode, 0)
+                    cp_fail_calls = log_file.read_text(encoding="utf-8").splitlines()
+                    self.assertFalse(any(c.startswith("jury ") for c in cp_fail_calls))
+                    self.assertTrue(
+                        any(
+                            c.startswith("keel worktree-remove ") and "review-r1-jury" in c
+                            for c in cp_fail_calls
+                        )
+                    )
 
             # 5. Detached launch and collect+cleanup run in separate fresh shells
             log_file.unlink(missing_ok=True)

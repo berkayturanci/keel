@@ -835,18 +835,30 @@ DIFF_ABS=$(cd "$(dirname "$DIFF")" && pwd)/$(basename "$DIFF")
 JURY_WT="$ROOT/.keel/worktrees/review-$RUN_ID-jury"
 mkdir -p "$ROOT/.keel/worktrees" "$ROOT/.keel/state/jury"
 if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
+  JURY_RC=0
   for cfg in jury.toml jury-policy.toml; do
-    test -f "$ROOT/$cfg" && test ! -e "$JURY_WT/$cfg" && cp "$ROOT/$cfg" "$JURY_WT/$cfg"
+    if test -f "$ROOT/$cfg" && test ! -e "$JURY_WT/$cfg"; then
+      cp "$ROOT/$cfg" "$JURY_WT/$cfg" || { JURY_RC=$?; break; }
+    fi
   done
-  if test -d "$ROOT/.jury"; then
-    (cd "$ROOT" && find .jury -type f) | while IFS= read -r cfg; do
-      mkdir -p "$(dirname "$JURY_WT/$cfg")"
-      test ! -e "$JURY_WT/$cfg" && cp "$ROOT/$cfg" "$JURY_WT/$cfg"
-    done
+  if test "$JURY_RC" -eq 0 && test -d "$ROOT/.jury"; then
+    (
+      set -o pipefail
+      cd "$ROOT" && find .jury -type f | while IFS= read -r cfg; do
+        mkdir -p "$(dirname "$JURY_WT/$cfg")" || exit 1
+        if test ! -e "$JURY_WT/$cfg"; then
+          cp "$ROOT/$cfg" "$JURY_WT/$cfg" || exit 1
+        fi
+      done
+    ) || JURY_RC=$?
   fi
-  (cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
-  JURY_RC=$?
-  keel worktree-remove "$JURY_WT" --root "$ROOT"
+  if test "$JURY_RC" -eq 0; then
+    (cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
+    JURY_RC=$?
+  else
+    echo "error: could not copy jury configuration into $JURY_WT" >&2
+  fi
+  keel worktree-remove "$JURY_WT" --root "$ROOT" || JURY_RC=1
   (exit "$JURY_RC")
 else
   echo "error: could not create isolated jury checkout $JURY_WT" >&2; false
@@ -959,30 +971,32 @@ own `provider` (plus `:model` / `--effort` when the seat carries them), read str
 ROOT=$(pwd)
 mkdir -p "$ROOT/.keel/worktrees"
 HEAD_SHA=$(git rev-parse HEAD)
+REVIEW_RC=0
 REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
 if test ! -e "$REVIEW_WT" && git worktree add -d "$REVIEW_WT" "$HEAD_SHA"; then
   keel delegate run --provider "$SLOT_PROVIDER" --role review \
     --prompt-file "$RUBRIC_AND_DIFF" --cwd "$REVIEW_WT" --timeout 900 --project .keel/project.yaml \
-    --activity-run-id "$RUN_ID"
-  REVIEW_RC=$?
-  keel worktree-remove "$REVIEW_WT" --root "$ROOT"
-  (exit "$REVIEW_RC")
+    --activity-run-id "$RUN_ID" || REVIEW_RC=$?
+  keel worktree-remove "$REVIEW_WT" --root "$ROOT" || REVIEW_RC=1
 else
-  echo "error: could not create isolated review checkout $REVIEW_WT" >&2; false
+  echo "error: could not create isolated review checkout $REVIEW_WT" >&2
+  REVIEW_RC=1
 fi
+(exit "$REVIEW_RC")
 
 # the gate review, when assignment.gate is present
+GATE_RC=0
 GATE_WT="$ROOT/.keel/worktrees/review-$RUN_ID-gate"
 if test ! -e "$GATE_WT" && git worktree add -d "$GATE_WT" "$HEAD_SHA"; then
   keel delegate run --provider "$GATE_PROVIDER" --role gate \
     --prompt-file "$RUBRIC_AND_DIFF" --cwd "$GATE_WT" --timeout 900 --project .keel/project.yaml \
-    --activity-run-id "$RUN_ID"
-  GATE_RC=$?
-  keel worktree-remove "$GATE_WT" --root "$ROOT"
-  (exit "$GATE_RC")
+    --activity-run-id "$RUN_ID" || GATE_RC=$?
+  keel worktree-remove "$GATE_WT" --root "$ROOT" || GATE_RC=1
 else
-  echo "error: could not create isolated gate checkout $GATE_WT" >&2; false
+  echo "error: could not create isolated gate checkout $GATE_WT" >&2
+  GATE_RC=1
 fi
+test "${REVIEW_RC:-0}" -eq 0 && test "$GATE_RC" -eq 0
 ```
 
 `--activity-run-id "$RUN_ID"` adds each reviewer's reported token counts to the run's record,
@@ -1745,4 +1759,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.32.0 source_sha256=496c83a7943918f403c6ee327fef9a2b00b9ba8ab3c0b47168a2527d18a8889b generated_sha256=496c83a7943918f403c6ee327fef9a2b00b9ba8ab3c0b47168a2527d18a8889b -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.32.0 source_sha256=d59654c99ca54caddc9f846ec8d2caff05fdd1f3385e397150044a2f270e325c generated_sha256=d59654c99ca54caddc9f846ec8d2caff05fdd1f3385e397150044a2f270e325c -->
