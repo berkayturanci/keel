@@ -95,7 +95,10 @@ _FENCE_RE = re.compile(
 )
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _DETAILS_TAG_RE = re.compile(r"<\s*(/)?\s*details(?=[\s>])[^>]*>", re.IGNORECASE)
-_INLINE_CODE_RE = re.compile(r"(?<!`)(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)")
+_INLINE_CODE_RE = re.compile(
+    r"(?<!`)(`+)(?!`)((?:(?!\n[ \t]*\n).)*?)(?<!`)\1(?!`)",
+    re.DOTALL,
+)
 #: ``[#12](https://...)`` reads as its link text; a link whose text carries no ``#N`` keeps
 #: its URL, so an issue URL behind prose stays visible to the "could not read" check.
 _LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
@@ -123,7 +126,7 @@ def _is_blocked_phrase(text: str, m: re.Match[str]) -> bool:
 def _unwrap_inline(match: re.Match[str]) -> str:
     """Keep backticked content (a tag is routinely written ``v1.2.0``) unless the span
     is itself a blocker phrase, which is documentation about the phrase, not a claim."""
-    inner = match.groups()[-1]
+    inner = match.groups()[-1].replace("\n", " ")
     if any(
         _is_blocked_phrase(inner, m) for m in BLOCKED_PHRASE_RE.finditer(inner)
     ) or _BEFORE_PHRASE_RE.search(inner):
@@ -218,6 +221,7 @@ def _prose(body: str, repo: str | None) -> str:
     text = _HTML_COMMENT_RE.sub(" ", text)
     text = _FENCE_RE.sub(" ", text)
     text = _strip_blockquotes(text)
+    text = _FENCE_RE.sub(" ", text)
     inlines: list[str] = []
 
     def _stash_inline(m: re.Match[str]) -> str:
@@ -547,6 +551,8 @@ def render(report: dict[str, Any]) -> str:
             kind = "blocker state could not be checked"
         elif states == {ABANDONED}:
             kind = "blocker abandoned, none cleared"
+        elif states == {PENDING, UNKNOWN}:
+            kind = "no blocker cleared, some unchecked"
         else:
             kind = "some blockers cleared, abandoned or unchecked"
         draft = " (draft)" if pr["draft"] else ""

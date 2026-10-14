@@ -3210,7 +3210,8 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
   ("blocker reference could not be read").
 - **Deliberately not read:** negated or historical phrases (`not`, `no longer`, `never`, `n't`,
   `nothing`, `previously`, `formerly`, `was`, or `were` — optionally followed by `currently`,
-  `really`, or `yet` — immediately preceding the phrase on the same line), phrases with no
+  `really`, or `yet` — immediately preceding the phrase on the same line; trailing qualifiers after
+  the target such as `Blocked by #5 — no longer applies` are not read as negations), phrases with no
   reference-like token at all ("behaviour depends on the config", `Dependency: bump`, "do not merge before release"),
   phrases or headings separated from their targets by a blank line (`Blocked by\n\n#5`, `Do not merge before\n\n#5`,
   `## Blocked by\n\n- #5` — the blank line ends the zone, so no blocker is read and `incomplete` is false),
@@ -3218,13 +3219,14 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
   forms like `Dependency: #123` are parsed, but `Dependency: bump, see #4` sees prose and flags the PR
   as incomplete. Also ignored as non-claims: the bare noun `dependency` / `needs dependency` without a
   colon ("Upgrade dependency lodash (#123)"), `Depends on: none`, fenced code (` ``` ` or `~~~` of three
-  or more characters, closed by a matching or longer fence), inline code spans (single- or multi-backtick) quoting a
+  or more characters, closed by a matching or longer fence, including inside GitHub alert blocks), inline code spans (single- or multi-backtick, including multiline spans within a paragraph) quoting a
   phrase, HTML comments, standard blockquotes (`> ...`, including nested `> >`), and text collapsed inside
   `<details>...</details>` blocks (case-insensitive, nested, or unterminated — an unterminated `<details>`
   drops through the end of the body without setting `incomplete`, so truncated bot release notes are not
   flagged and any blocker written after an unclosed `<details>` is missed).
   GitHub alert blocks (`> [!NOTE]`, `> [!WARNING]`, `> [!IMPORTANT]`, `> [!CAUTION]`, `> [!TIP]` and the
-  lines quoted under them) are the author's own text and are scanned rather than stripped.
+  lines quoted under them) are the author's own text and are scanned rather than stripped (fenced code
+  inside an alert is still stripped as non-claim code).
 - **Markdown:** `**#12**`, `_#12_`, `**Blocked by:** #12` and a link whose text is `#12` read as
   `#12` when the link is to this repository's own `#12` (a bare `/issues/12` or `/pull/12` path with no
   `owner/repo` prefix — even though GitHub resolves a leading `/` against the site root, a path without
@@ -3253,7 +3255,9 @@ positive integer, default 200) caps the open PRs read; `truncated` is true, and 
 only when more than that many are open. It reads through the `gh` CLI, not the selected GitHub
 transport. Exit 0: every blocker on the scanned PRs was read (including when `truncated: true` —
 check `truncated` or the trailing text warning for whether `--limit` capped the PR list); 1: the PR
-list itself cannot be read; 2: some blocker could not be read. `/keel:stale-prs` and `/keel:morning`
+list itself cannot be read; 2: some blocker could not be read (shared with `argparse` usage errors, so
+`--json` callers should check `ok` and `unknown_blockers` in the payload rather than the exit code
+alone). `/keel:stale-prs` and `/keel:morning`
 run it.
 
 ```json

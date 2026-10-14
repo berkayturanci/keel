@@ -89,17 +89,20 @@ Also run `keel stale-blockers --root . --json` (read-only). List under a separat
 "Ready to move" section (not "Shipped" — these PRs are still open) only the PRs it reports
 with `all_cleared: true`: blockers look cleared — check the PR. `all_cleared` is a best-effort
 hint, not a certificate; an operator must read the PR before acting. List the rest under
-"Blockers partly resolved": some blockers cleared or `abandoned` (closed unmerged or not planned
-— flag it as such), while others are `pending`, `unknown` or the list is `incomplete`; a PR
-whose blockers are all `abandoned` is "blocker abandoned — needs a decision", and one with
+"Blockers needing attention": some blockers cleared or `abandoned` (closed unmerged or not planned
+— flag it as such) while others are `pending`, `unknown` or the list is `incomplete`, or no
+blocker has cleared yet (`unknown` only, `pending` plus `unknown`, or `pending` with
+`incomplete: true`); a PR whose blockers are all `abandoned` is "blocker abandoned — needs a
+decision", one whose blockers are all `unknown` is "blocker state could not be checked", one with
+only `pending` and `unknown` blockers is "no blocker cleared, some unchecked", and one with
 `blockers: []` and `incomplete: true` is "blocker reference could not be read". A blocker with
 state `unknown` was unreadable (its `reason` says why) and is not cleared. Exit code 2 means
-`unknown_blockers` is above zero, and `truncated: true` means only the first `--limit` open PRs
-were read (even on exit 0): say how many blockers could not be checked and/or that the open-PR
-scan was truncated at `--limit` (pass a higher `--limit` to read more), and never present a short
-or empty list as "nothing is blocked". The command reads through the `gh` CLI rather than the
-selected transport, so say so when transport is degraded; on exit 1, note that blocker state was
-unavailable.
+`unknown_blockers` is above zero (or a bad CLI flag; inspect `ok` and `unknown_blockers` in the
+JSON payload), and `truncated: true` means only the first `--limit` open PRs were read (even on
+exit 0): say how many blockers could not be checked and/or that the open-PR scan was truncated at
+`--limit` (pass a higher `--limit` to read more), and never present a short or empty list as
+"nothing is blocked". The command reads through the `gh` CLI rather than the selected transport,
+so say so when transport is degraded; on exit 1, note that blocker state was unavailable.
 
 ## Step 3 — Project health/telemetry signals (project-specific)
 
@@ -151,4 +154,4 @@ On the **first run** (no prior brief at the reports path), offer to schedule the
 brief on a recurring cadence at the configured `timezone` — the exact scheduler
 mechanism is project-specific.
 
-<!-- keel-generated: surface=claude command=morning keel_version=1.32.0 source_sha256=2787a37363741dd5f9e0ec2214b9e27ad5e86ad92b1a8ed889b9ab09c1070e5b generated_sha256=2787a37363741dd5f9e0ec2214b9e27ad5e86ad92b1a8ed889b9ab09c1070e5b -->
+<!-- keel-generated: surface=claude command=morning keel_version=1.32.0 source_sha256=1ecf623fa0575e8027f9bb76b1ee5e574754526fb1b008536eb330bc2c5d6a8b generated_sha256=1ecf623fa0575e8027f9bb76b1ee5e574754526fb1b008536eb330bc2c5d6a8b -->

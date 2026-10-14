@@ -309,6 +309,37 @@ class ParseTests(unittest.TestCase):
             blockers.scan_blockers("Blocked by #1\nDo not merge before `v1-dependency`"),
         )
 
+    def test_multiline_inline_code_is_not_a_claim(self):
+        for body in (
+            "Example: ``\nBlocked by #12\n`` end",
+            "Example: `\nBlocked by #12\n` end",
+            "Example: ``Blocked\nby #12`` end",
+            "Example: `\ndo not merge before #12\n` end",
+            "Example: ```\nBlocked by #12\n``` end",
+        ):
+            self.assertEqual(((), False), blockers.scan_blockers(body), body)
+        self.assertEqual(
+            (("5",), False),
+            self.refs("Example: ``\nBlocked by #12\n`` end\nBlocked by #5"),
+        )
+        self.assertEqual(
+            (("5",), False),
+            self.refs("Stray ` backtick in para 1\n\nBlocked by `#5`"),
+        )
+        self.assertEqual((("7",), False), self.refs("Blocked by ``\n#7\n``"))
+
+    def test_github_alert_fenced_code_is_not_a_claim(self):
+        for body in (
+            "> [!NOTE]\n> ```text\n> Blocked by #12\n> ```",
+            "> [!WARNING]\n> ~~~\n> do not merge before #12\n> ~~~",
+            "> [!TIP]\n> ````markdown\n> ```\n> Blocked by #12\n> ```\n> ````",
+        ):
+            self.assertEqual(((), False), blockers.scan_blockers(body), body)
+        self.assertEqual(
+            (("5",), False),
+            self.refs("> [!NOTE]\n> ```text\n> Blocked by #12\n> ```\n> Blocked by #5"),
+        )
+
     def test_list_grammar(self):
         want = ["1", "2", "3"]
         for body in (
@@ -523,6 +554,10 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(["5"], issues("Nothing was done.\nBlocked by #5"))
         self.assertEqual([], issues("This was blocked by #5"))
         self.assertEqual([], issues("no longer blocked by #5"))
+        self.assertEqual([], issues("not blocked by #5 any more"))
+        # Only pre-phrase negation on the same line is checked; trailing qualifiers still count
+        # as a stated blocker so phrases like "Blocked by #5 (not ready yet)" are not dropped.
+        self.assertEqual(["5"], issues("Blocked by #5 — no longer applies"))
 
     def test_phrases_with_no_reference_like_target_are_not_flagged(self):
         for body in (
@@ -972,6 +1007,14 @@ class StaleBlockersTests(unittest.TestCase):
         )
         self.assertFalse(rep["prs"][0]["all_cleared"])
 
+    def test_multiline_inline_code_and_alert_fence_not_reported_in_stale_blockers(self):
+        prs = [
+            _pr(5, "Example: ``\nBlocked by #12\n`` end"),
+            _pr(6, "> [!NOTE]\n> ```text\n> Blocked by #12\n> ```"),
+        ]
+        rep = self.report(prs=prs, issue_states={"12": C})
+        self.assertEqual([], rep["prs"])
+
     def test_truncation_is_flagged(self):
         limits = []
         router = _router(prs=[_pr(1, "x"), _pr(2, "y"), _pr(3, "z")], limits=limits)
@@ -1190,6 +1233,31 @@ class RenderAndCliTests(unittest.TestCase):
         self.assertIn("  - #2: unknown (rate limit)", out)
         self.assertIn("#10 p — some blockers cleared, abandoned or unchecked", out)
         self.assertNotIn("#10 p — blocker abandoned, none cleared", out)
+
+    def test_render_pending_and_unknown_without_cleared(self):
+        out = blockers.render(
+            {
+                "ok": True,
+                "error": None,
+                "truncated": False,
+                "unknown_blockers": 1,
+                "prs": [
+                    {
+                        "number": 11,
+                        "title": "pu",
+                        "draft": False,
+                        "all_cleared": False,
+                        "incomplete": False,
+                        "blockers": [
+                            {"kind": ISSUE, "ref": "1", "state": PENDING},
+                            {"kind": ISSUE, "ref": "2", "state": UNKNOWN, "reason": "rate limit"},
+                        ],
+                    },
+                ],
+            }
+        )
+        self.assertIn("#11 pu — no blocker cleared, some unchecked", out)
+        self.assertNotIn("some blockers cleared", out)
 
     def run_cli(self, argv, router):
         buf = io.StringIO()
