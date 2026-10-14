@@ -13,7 +13,7 @@ import time
 import urllib.parse
 from collections.abc import Sequence
 
-from .mergeverify import FILE_ABSENT
+from .mergeverify import FILE_ABSENT, FileContent
 from .runner import CommandResult, run_argv
 
 _TRANSIENT_PATTERNS = (
@@ -334,7 +334,7 @@ def pr_diff(pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None) ->
 
 def commit_file_content(
     sha: str, path: str, *, cwd: str | None = None, _run=None, _sleep=None
-) -> str | object | None:
+) -> FileContent:
     """Raw content of ``path`` at commit ``sha`` from GitHub (#1511).
 
     Returns:

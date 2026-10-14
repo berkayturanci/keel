@@ -62,6 +62,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TypeAlias
 
 
 class _FileAbsent:
@@ -74,10 +75,24 @@ class _FileAbsent:
 #: Sentinel object representing a file confirmed absent (e.g. 404 or not in tree).
 FILE_ABSENT = _FileAbsent()
 
+#: Content of a file at a commit: ``str`` when present, :data:`FILE_ABSENT` when confirmed
+#: absent, or ``None`` when unreadable (#1511).
+FileContent: TypeAlias = str | _FileAbsent | None
+
 #: Report shape version, so a consumer can tell an old report from a new one (#1511).
 SCHEMA_VERSION = "keel.merge-verify.v2"
 
 _HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+_INDEX_RE = re.compile(r"^index ([0-9a-f]+)\.\.([0-9a-f]+)(?: \d+)?$")
+_SIMILARITY_RE = re.compile(r"^similarity index (\d+)%$")
+_EMPTY_BLOB_SHAS = (
+    "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+    "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813",
+)
+
+
+def _is_empty_blob_sha(sha: str) -> bool:
+    return len(sha) >= 7 and any(full.startswith(sha) for full in _EMPTY_BLOB_SHAS)
 
 
 def _split_lines(text: str) -> list[str]:
@@ -96,6 +111,7 @@ class FileDiff:
     added_lines: tuple[str, ...]
     deleted_lines: tuple[str, ...]
     is_deleted: bool = False
+    has_hunks: bool = True
 
 
 def _unquote_diff_path(raw: str) -> str:
@@ -154,7 +170,17 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
     saw_hunk_for_file = False
     saw_minus_header = False
     saw_plus_header = False
-    saw_metadata_only = False
+    saw_old_mode = False
+    saw_new_mode = False
+    saw_new_file = False
+    saw_deleted_file = False
+    saw_rename_from = False
+    saw_rename_to = False
+    saw_copy_from = False
+    saw_copy_to = False
+    saw_binary = False
+    similarity_index: int | None = None
+    index_shas: tuple[str, str] | None = None
 
     def _flush_current_file() -> bool:
         nonlocal \
@@ -169,20 +195,48 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
             saw_hunk_for_file, \
             saw_minus_header, \
             saw_plus_header, \
-            saw_metadata_only
+            saw_old_mode, \
+            saw_new_mode, \
+            saw_new_file, \
+            saw_deleted_file, \
+            saw_rename_from, \
+            saw_rename_to, \
+            saw_copy_from, \
+            saw_copy_to, \
+            saw_binary, \
+            similarity_index, \
+            index_shas
         if in_file or saw_minus_header or saw_plus_header:
             if (
                 current_file is None
                 or saw_minus_header != saw_plus_header
+                or saw_old_mode != saw_new_mode
+                or saw_rename_from != saw_rename_to
+                or saw_copy_from != saw_copy_to
                 or (saw_plus_header and not saw_hunk_for_file)
-                or (not saw_plus_header and not saw_metadata_only)
             ):
                 return False
+            if not saw_plus_header and not saw_binary:
+                if saw_new_file or saw_deleted_file:
+                    if index_shas is None:
+                        return False
+                    expected_empty = index_shas[1] if saw_new_file else index_shas[0]
+                    expected_zero = index_shas[0] if saw_new_file else index_shas[1]
+                    if set(expected_zero) != {"0"} or not _is_empty_blob_sha(expected_empty):
+                        return False
+                elif saw_rename_to or saw_copy_to:
+                    if similarity_index != 100 or (
+                        index_shas is not None and index_shas[0] != index_shas[1]
+                    ):
+                        return False
+                elif index_shas is not None and index_shas[0] != index_shas[1]:
+                    return False
             result[current_file] = FileDiff(
                 path=current_file,
                 added_lines=tuple(current_added),
                 deleted_lines=tuple(current_deleted),
                 is_deleted=is_deleted,
+                has_hunks=saw_hunk_for_file,
             )
             if rename_old:
                 result[rename_old] = FileDiff(
@@ -190,6 +244,7 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
                     added_lines=(),
                     deleted_lines=(),
                     is_deleted=True,
+                    has_hunks=False,
                 )
         in_file = False
         header_file = None
@@ -202,7 +257,17 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
         saw_hunk_for_file = False
         saw_minus_header = False
         saw_plus_header = False
-        saw_metadata_only = False
+        saw_old_mode = False
+        saw_new_mode = False
+        saw_new_file = False
+        saw_deleted_file = False
+        saw_rename_from = False
+        saw_rename_to = False
+        saw_copy_from = False
+        saw_copy_to = False
+        saw_binary = False
+        similarity_index = None
+        index_shas = None
         return True
 
     for line in _split_lines(diff_text):
@@ -232,22 +297,58 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
                     current_file = _clean_diff_path(target, is_new=True)
                     is_deleted = False
                 continue
-            if line.startswith(("new mode ", "new file mode ")):
+            if line.startswith("old mode "):
+                saw_old_mode = True
+                continue
+            if line.startswith("new mode "):
                 current_file = current_file or header_file
-                saw_metadata_only = True
+                saw_new_mode = True
+                continue
+            if line.startswith("new file mode "):
+                current_file = current_file or header_file
+                saw_new_file = True
                 continue
             if line.startswith("deleted file mode "):
                 current_file = current_file or header_file
-                saw_metadata_only = True
+                saw_deleted_file = True
                 is_deleted = True
                 continue
-            if line.startswith("rename from "):
-                rename_old = _unquote_diff_path(line[len("rename from ") :])
-                old_file = rename_old
+            if line.startswith("similarity index "):
+                m_sim = _SIMILARITY_RE.match(line)
+                if not m_sim:
+                    return None
+                similarity_index = int(m_sim.group(1))
                 continue
-            if line.startswith("rename to "):
-                current_file = _unquote_diff_path(line[len("rename to ") :])
-                saw_metadata_only = True
+            if line.startswith(("rename from ", "copy from ")):
+                is_rename = line.startswith("rename from ")
+                prefix = "rename from " if is_rename else "copy from "
+                old_file = _unquote_diff_path(line[len(prefix) :])
+                if is_rename:
+                    rename_old = old_file
+                    saw_rename_from = True
+                else:
+                    saw_copy_from = True
+                continue
+            if line.startswith(("rename to ", "copy to ")):
+                is_rename = line.startswith("rename to ")
+                prefix = "rename to " if is_rename else "copy to "
+                current_file = _unquote_diff_path(line[len(prefix) :])
+                if is_rename:
+                    saw_rename_to = True
+                else:
+                    saw_copy_to = True
+                continue
+            if line.startswith("index "):
+                m_idx = _INDEX_RE.match(line)
+                if not m_idx:
+                    return None
+                index_shas = (m_idx.group(1), m_idx.group(2))
+                continue
+            if line.startswith("Binary files ") and line.endswith(" differ"):
+                current_file = current_file or header_file
+                saw_binary = True
+                if line.endswith(" and /dev/null differ"):
+                    is_deleted = True
                 continue
 
         m = _HUNK_HEADER_RE.match(line)
@@ -263,9 +364,7 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
             continue
 
         if not in_hunk:
-            if saw_hunk_for_file or line.startswith(("@", "+", "-")):
-                return None
-            continue
+            return None
 
         if line.startswith("+"):
             current_added.append(line[1:])
@@ -315,10 +414,11 @@ _PR_PATH_VIOLATIONS = frozenset(
 def check_multiset_survival(
     added_lines: Sequence[str],
     deleted_lines: Sequence[str],
-    landed_content: str | _FileAbsent | None,
-    merge_content: str | _FileAbsent | None,
+    landed_content: FileContent,
+    merge_content: FileContent,
     *,
     is_deleted: bool = False,
+    check_all_landed: bool = False,
 ) -> tuple[int, list[str]]:
     """Check line survival via multiset counting (#1511).
 
@@ -353,13 +453,16 @@ def check_multiset_survival(
     merge_counts = Counter(merge_lines)
 
     violations: list[str] = []
+    seen_violations: set[str] = set()
     lost_count = 0
 
-    for line in added_lines:
+    lines_to_check = landed_lines if check_all_landed else added_lines
+    for line in lines_to_check:
         if not line.strip():
             continue
         if merge_counts[line] < landed_counts[line]:
-            if line not in violations:
+            if line not in seen_violations:
+                seen_violations.add(line)
                 violations.append(line)
                 lost_count += landed_counts[line] - merge_counts[line]
 
@@ -367,7 +470,8 @@ def check_multiset_survival(
         if not line.strip():
             continue
         if merge_counts[line] > landed_counts[line]:
-            if line not in violations:
+            if line not in seen_violations:
+                seen_violations.add(line)
                 violations.append(line)
                 lost_count += merge_counts[line] - landed_counts[line]
 
@@ -380,9 +484,9 @@ def verify_merge(
     intended: Sequence[str] | None = None,
     *,
     diffs: Mapping[int, str | None] | None = None,
-    file_contents: Mapping[str, str | _FileAbsent | None] | None = None,
-    pr_file_contents: Mapping[int, Mapping[str, str | _FileAbsent | None]]
-    | Mapping[tuple[int, str], str | _FileAbsent | None]
+    file_contents: Mapping[str, FileContent] | None = None,
+    pr_file_contents: Mapping[int, Mapping[str, FileContent]]
+    | Mapping[tuple[int, str], FileContent]
     | None = None,
 ) -> dict:
     """Judge whether a merge may have silently reverted other merged work.
@@ -436,7 +540,6 @@ def verify_merge(
 
         if diffs is None or file_contents is None:
             drifted = {p: list(prs) for p, prs in collisions.items()}
-            saw_line_loss = True
         else:
             parsed_diffs: dict[int, dict[str, FileDiff] | None] = {}
             for path, prs in sorted(collisions.items()):
@@ -477,6 +580,7 @@ def verify_merge(
                         pr_landed_content,
                         merge_content,
                         is_deleted=fd.is_deleted,
+                        check_all_landed=not fd.has_hunks,
                     )
                     if lost_count > 0:
                         drifted.setdefault(path, []).append(pr)

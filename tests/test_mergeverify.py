@@ -1281,3 +1281,171 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertEqual(report["overtaken"], {"a.py": [550]})
         self.assertEqual(report["drift_details"], {"a.py": ["    return None (#550)"]})
         self.assertIn("the shape of a silent revert", report["reason"])
+
+    def test_truncated_new_file_metadata_without_patch_is_rejected(self):
+        for diff in (
+            "diff --git a/a.py b/a.py\nnew file mode 100644\nindex 0000000..1234567\n",
+            "diff --git a/a.py b/a.py\nnew file mode 100644\n",
+            "diff --git a/a.py b/a.py\ndeleted file mode 100644\nindex 1234567..0000000\n",
+        ):
+            with self.subTest(diff=diff):
+                self.assertIsNone(mv.parse_diff_by_file(diff))
+                report = mv.verify_merge(
+                    landed=["a.py"],
+                    overtaken={"a.py": [550]},
+                    diffs={550: diff},
+                    file_contents={"a.py": ""},
+                    pr_file_contents={550: {"a.py": "feature\n"}},
+                )
+                self.assertEqual(report["status"], "drift")
+                self.assertEqual(report["overtaken"], {"a.py": [550]})
+                self.assertIn("could not verify line survival (fail-closed)", report["reason"])
+
+    def test_empty_new_and_deleted_file_with_empty_blob_sha_are_parsed(self):
+        diff = (
+            "diff --git a/empty_new.py b/empty_new.py\n"
+            "new file mode 100644\n"
+            "index 0000000..e69de29\n"
+            "diff --git a/empty_del.py b/empty_del.py\n"
+            "deleted file mode 100644\n"
+            "index e69de29..0000000\n"
+        )
+        parsed = mv.parse_diff_by_file(diff)
+        self.assertIsNotNone(parsed)
+        self.assertFalse(parsed["empty_new.py"].is_deleted)
+        self.assertFalse(parsed["empty_new.py"].has_hunks)
+        self.assertTrue(parsed["empty_del.py"].is_deleted)
+
+    def test_truncated_mode_change_with_content_change_is_drift(self):
+        diff_with_index = (
+            "diff --git a/script.sh b/script.sh\n"
+            "old mode 100644\n"
+            "new mode 100755\n"
+            "index 1111111..2222222\n"
+        )
+        self.assertIsNone(mv.parse_diff_by_file(diff_with_index))
+        report_idx = mv.verify_merge(
+            landed=["script.sh"],
+            overtaken={"script.sh": [550]},
+            diffs={550: diff_with_index},
+            file_contents={"script.sh": "#!/bin/sh\n"},
+            pr_file_contents={550: {"script.sh": "#!/bin/sh\nfeature\n"}},
+        )
+        self.assertEqual(report_idx["status"], "drift")
+        self.assertIn("could not verify line survival (fail-closed)", report_idx["reason"])
+
+        # Even if truncated before `index` (indistinguishable from pure mode change in diff syntax),
+        # checking landed content lines on a hunkless diff catches lost content at verification.
+        diff_before_index = "diff --git a/script.sh b/script.sh\nold mode 100644\nnew mode 100755\n"
+        report_lost = mv.verify_merge(
+            landed=["script.sh"],
+            overtaken={"script.sh": [550]},
+            diffs={550: diff_before_index},
+            file_contents={"script.sh": "#!/bin/sh\n"},
+            pr_file_contents={550: {"script.sh": "#!/bin/sh\nfeature\n"}},
+        )
+        self.assertEqual(report_lost["status"], "drift")
+        self.assertEqual(report_lost["overtaken"], {"script.sh": [550]})
+        self.assertEqual(report_lost["drift_details"], {"script.sh": ["feature (#550)"]})
+        self.assertIn("the shape of a silent revert", report_lost["reason"])
+
+    def test_modified_binary_file_in_diff_is_parsed_and_does_not_fail_closed(self):
+        diff = (
+            "diff --git a/x.png b/x.png\n"
+            "index a1b2c3d..e4f5a6b 100644\n"
+            "Binary files a/x.png and b/x.png differ\n"
+            "diff --git a/old.png b/old.png\n"
+            "deleted file mode 100644\n"
+            "index a1b2c3d..0000000\n"
+            "Binary files a/old.png and /dev/null differ\n"
+            "diff --git a/a.py b/a.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " base\n"
+            "+survived\n"
+        )
+        parsed = mv.parse_diff_by_file(diff)
+        self.assertIsNotNone(parsed)
+        self.assertIn("x.png", parsed)
+        self.assertFalse(parsed["x.png"].is_deleted)
+        self.assertTrue(parsed["old.png"].is_deleted)
+        self.assertEqual(parsed["a.py"].added_lines, ("survived",))
+
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550]},
+            diffs={550: diff},
+            file_contents={"a.py": "base\nsurvived\n"},
+            pr_file_contents={550: {"a.py": "base\nsurvived\n"}},
+        )
+        self.assertEqual(report["status"], "clean")
+
+    def test_rename_with_content_changes_and_copy_from_to(self):
+        diff = (
+            "diff --git a/old.py b/new.py\n"
+            "similarity index 85%\n"
+            "rename from old.py\n"
+            "rename to new.py\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/old.py\n"
+            "+++ b/new.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " keep\n"
+            "+added_in_rename\n"
+            "diff --git a/src.py b/copied.py\n"
+            "similarity index 100%\n"
+            "copy from src.py\n"
+            "copy to copied.py\n"
+        )
+        parsed = mv.parse_diff_by_file(diff)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["new.py"].added_lines, ("added_in_rename",))
+        self.assertTrue(parsed["old.py"].is_deleted)
+        self.assertIn("copied.py", parsed)
+        self.assertFalse(parsed["copied.py"].is_deleted)
+
+        report_clean = mv.verify_merge(
+            landed=["new.py", "copied.py"],
+            overtaken={"new.py": [550], "copied.py": [550]},
+            diffs={550: diff},
+            file_contents={"new.py": "keep\nadded_in_rename\n", "copied.py": "keep\n"},
+            pr_file_contents={550: {"new.py": "keep\nadded_in_rename\n", "copied.py": "keep\n"}},
+        )
+        self.assertEqual(report_clean["status"], "clean")
+
+        report_drift = mv.verify_merge(
+            landed=["new.py"],
+            overtaken={"new.py": [550]},
+            diffs={550: diff},
+            file_contents={"new.py": "keep\n"},
+            pr_file_contents={550: {"new.py": "keep\nadded_in_rename\n"}},
+        )
+        self.assertEqual(report_drift["status"], "drift")
+        self.assertEqual(report_drift["drift_details"], {"new.py": ["added_in_rename (#550)"]})
+
+        # Truncated rename/copy with <100% similarity or malformed headers is rejected
+        for bad_diff in (
+            (
+                "diff --git a/old.py b/new.py\n"
+                "similarity index 85%\nrename from old.py\nrename to new.py\n"
+            ),
+            (
+                "diff --git a/src.py b/dst.py\n"
+                "similarity index 80%\ncopy from src.py\ncopy to dst.py\n"
+            ),
+            "diff --git a/a.py b/a.py\nsimilarity index bad\n",
+            "diff --git a/a.py b/a.py\nindex bad_index_line\n",
+            "diff --git a/a.py b/a.py\nindex 1111111..2222222\n",
+            "diff --git a/a.py b/a.py\nold mode 100644\n",
+            "diff --git a/a.py b/b.py\nrename from a.py\n",
+        ):
+            with self.subTest(bad_diff=bad_diff):
+                self.assertIsNone(mv.parse_diff_by_file(bad_diff))
+
+    def test_verify_merge_without_diffs_or_file_contents_uses_could_not_verify_reason(self):
+        report = mv.verify_merge(landed=["a.py"], overtaken={"a.py": [550]})
+        self.assertEqual(report["status"], "drift")
+        self.assertIn("could not verify line survival (fail-closed)", report["reason"])
+        self.assertNotIn("the shape of a silent revert", report["reason"])

@@ -12,7 +12,7 @@ import os
 import re
 
 from . import tdd
-from .mergeverify import FILE_ABSENT
+from .mergeverify import FILE_ABSENT, FileContent
 from .runner import CommandResult, run_argv
 
 
@@ -457,18 +457,20 @@ def ls_tree(treeish: str, *, cwd: str | None = None, _run=None) -> str | None:
     return result.stdout if result.ok else None
 
 
-def show_file(treeish: str, path: str, *, cwd: str | None = None, _run=None) -> str | object | None:
+def show_file(treeish: str, path: str, *, cwd: str | None = None, _run=None) -> FileContent:
     """Read the content of ``path`` at ``treeish`` via ``git show <treeish>:<path>`` (#1511).
 
     Returns:
     - the ``str`` file content if present and read,
-    - ``FILE_ABSENT`` if the path is confirmed absent from ``treeish``,
+    - ``FILE_ABSENT`` if the path is confirmed absent from ``treeish`` (or is a directory tree),
     - ``None`` if reading failed (invalid treeish, git failure, etc.).
     """
     if not treeish or not path:
         return None
     result = run_argv(["git", "show", f"{treeish}:{path}"], cwd=cwd, **_kw(_run))
     if result.ok:
+        if result.stdout.startswith(f"tree {treeish}:{path}\n"):
+            return FILE_ABSENT
         return result.stdout
     err = f"{result.stderr} {result.output}".lower()
     if "does not exist in" in err or "exists on disk, but not in" in err:

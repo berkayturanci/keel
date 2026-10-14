@@ -9482,15 +9482,24 @@ class TestCoreMerge(unittest.TestCase):
         3 says it landed *and* may have written over someone else's work — the
         operator has to act, and cannot act on a merge they think did not happen.
         """
-        report = {
-            "status": "drift",
-            "reason": "merge wrote to files #810 changed after this PR branched",
-            "unexpected": {"src/keel/cli.py": 810},
+        window = {
+            "branched_at": "2026-08-08T10:00:00Z",
+            "merged_at": "2026-08-08T15:19:00Z",
+            "base": "main",
+            "merge_commit": "7c140f3",
         }
         with contextlib.ExitStack() as stack:
             for p in self._merge_success_patches():
                 stack.enter_context(p)
-            stack.enter_context(patch("keel.cli._merge_drift_report", return_value=report))
+            stack.enter_context(patch("keel.cli.github.pr_merge_window", return_value=window))
+            stack.enter_context(
+                patch("keel.cli.github.prs_merged_between", return_value=[810, 811])
+            )
+            stack.enter_context(
+                patch("keel.cli.github.commit_files", return_value=["src/keel/cli.py"])
+            )
+            stack.enter_context(patch("keel.cli.github.pr_files", return_value=["src/keel/cli.py"]))
+            stack.enter_context(patch("keel.cli.github.pr_diff", return_value=None))
             rc, out, _ = run(_merge_args(json_out=True))
             rc_human, out_human, _ = run(_merge_args())
 
@@ -9500,9 +9509,31 @@ class TestCoreMerge(unittest.TestCase):
         self.assertTrue(payload["merged"])
         self.assertEqual(payload["reason"], "merged, but drift detected")
         self.assertEqual(payload["merge_verification"]["status"], "drift")
-        # Human output must name the overtaking PR, not just say "drift".
+        self.assertEqual(
+            payload["merge_verification"]["overtaken"], {"src/keel/cli.py": [810, 811]}
+        )
+        # Human output must name the overtaking PRs and render the v2 overtaken list.
         self.assertEqual(rc_human, 3)
-        self.assertIn("810", out_human)
+        self.assertIn("drift  : drift", out_human)
+        self.assertIn(
+            "src/keel/cli.py  — also changed by #810, #811 after this PR branched", out_human
+        )
+        self.assertIn("could not verify line survival (fail-closed)", out_human)
+
+        # When the initial window/file-list lookup fails with no observed collision,
+        # status is `unknown` and `keel merge` still exits 0 for the landed merge.
+        with contextlib.ExitStack() as stack:
+            for p in self._merge_success_patches():
+                stack.enter_context(p)
+            stack.enter_context(patch("keel.cli.github.pr_merge_window", return_value=window))
+            stack.enter_context(patch("keel.cli.github.prs_merged_between", return_value=None))
+            stack.enter_context(
+                patch("keel.cli.github.commit_files", return_value=["src/keel/cli.py"])
+            )
+            stack.enter_context(patch("keel.cli.github.pr_files", return_value=["src/keel/cli.py"]))
+            rc_unk, out_unk, _ = run(_merge_args())
+        self.assertEqual(rc_unk, 0)
+        self.assertIn("drift  : unknown", out_unk)
 
     def _gates_record(self, *, pr, head_sha, ok=True, blocked=False, error=None):
         return {
@@ -11610,15 +11641,31 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertIn("1 shared file, 0 lost lines", out)
 
     def test_diff_fetch_fails_reports_drift(self):
+        window_calls = []
+        content_calls = []
+
+        def _window(pr, **kw):
+            window_calls.append(pr)
+            return dict(self.WINDOW)
+
+        def _forbid_content(sha, path, **kw):
+            content_calls.append((sha, path))
+            return "line 1\n"
+
         rc, out, _ = self._run(
+            window=_window,
             others=[550],
             files_by_pr={543: ["a.py"], 550: ["a.py"]},
             commit_files=["a.py"],
             diff_by_pr={550: None},
-            content_by_path={"a.py": "line 1\n"},
+            content_by_path=_forbid_content,
         )
         self.assertEqual(rc, 1)
         self.assertIn("drift", out)
+        self.assertIn("could not verify line survival (fail-closed)", out)
+        self.assertIn("unreadable or malformed diff for #550", out)
+        self.assertEqual(window_calls, [543])
+        self.assertEqual(content_calls, [])
 
     def test_content_fetch_fails_reports_drift(self):
         diff550 = (
@@ -11638,6 +11685,8 @@ class TestVerifyMergeCommand(unittest.TestCase):
         )
         self.assertEqual(rc, 1)
         self.assertIn("drift", out)
+        self.assertIn("could not verify line survival (fail-closed)", out)
+        self.assertIn("unreadable merge commit content for a.py", out)
 
     def test_multiple_shared_paths_disjoint_overtaking_prs(self):
         diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line a\n"
@@ -11826,31 +11875,39 @@ class TestVerifyMergeCommand(unittest.TestCase):
     def test_overtaking_pr_missing_merge_commit_sha_reports_drift(self):
         diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line 1\n"
 
-        def _window(pr, **kw):
-            if str(pr) == "543":
-                return {
-                    "branched_at": "2026-08-08T10:00:00Z",
-                    "merged_at": "2026-08-08T15:19:00Z",
-                    "base": "main",
-                    "merge_commit": "7c140f3",
-                }
-            return {
+        for overtaking_window in (
+            {
                 "branched_at": "2026-08-08T10:00:00Z",
                 "merged_at": "2026-08-08T13:02:00Z",
                 "base": "main",
                 "merge_commit": "",
-            }
+            },
+            None,
+        ):
+            with self.subTest(overtaking_window=overtaking_window):
 
-        rc, out, _ = self._run(
-            window=_window,
-            others=[550],
-            files_by_pr={543: ["a.py"], 550: ["a.py"]},
-            commit_files=["a.py"],
-            diff_by_pr={550: diff550},
-            content_by_path={"a.py": "line 1\n"},
-        )
-        self.assertEqual(rc, 1)
-        self.assertIn("drift", out)
+                def _window(pr, _ow=overtaking_window, **kw):
+                    if str(pr) == "543":
+                        return {
+                            "branched_at": "2026-08-08T10:00:00Z",
+                            "merged_at": "2026-08-08T15:19:00Z",
+                            "base": "main",
+                            "merge_commit": "7c140f3",
+                        }
+                    return _ow
+
+                rc, out, _ = self._run(
+                    window=_window,
+                    others=[550],
+                    files_by_pr={543: ["a.py"], 550: ["a.py"]},
+                    commit_files=["a.py"],
+                    diff_by_pr={550: diff550},
+                    content_by_path={"a.py": "line 1\n"},
+                )
+                self.assertEqual(rc, 1)
+                self.assertIn("drift", out)
+                self.assertIn("could not verify line survival (fail-closed)", out)
+                self.assertIn("unreadable landed content for a.py (#550)", out)
 
     def test_shared_files_rest_transport_with_drift_calls_rest_readers(self):
         diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line 1\n"

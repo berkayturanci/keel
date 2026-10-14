@@ -1685,7 +1685,7 @@ keel verify-merge .keel/project.yaml --root . --pr 543 --json
 
 | status | meaning | exit |
 | --- | --- | --- |
-| `drift` | wrote to files another PR changed after this one branched and lost added lines, re-added deletions, or had unreadable inputs | 1, or 2 when `incomplete` |
+| `drift` | wrote to files another PR changed after this one branched and lost added lines, re-added deletions, or had unreadable inputs | 1 |
 | `out-of-scope` | changed files the PR's own diff did not list | 0, or 2 when `incomplete` |
 | `clean` | neither (including when all shared changes survived: `clean (N shared files, 0 lost lines)`) | 0 |
 | `unknown` | not merged yet, or merge/window inputs unreadable — **not** a pass | 2 |
@@ -1697,14 +1697,14 @@ merge commit against this merge commit (ignoring blank lines):
 
 * **Added lines:** each line the overtaking PR added must appear at least as many times in the merge commit as in the overtaking PR's landed version.
 * **Deleted lines:** each line the overtaking PR deleted must appear no more times in the merge commit than in the overtaking PR's landed version (catching re-added deletions).
-* **Whole-file deletions (`+++ /dev/null`) and renames:** a deleted file (or the old path of a rename) must be confirmed absent (`FILE_ABSENT`) at both the overtaking PR's merge commit and this merge commit; reappearing in the merge commit is drift. Metadata-only diffs (such as executable-bit mode changes or unchanged-content renames) are parsed and verified without false "not found in parsed diff" drift.
-* **Unreadable inputs fail closed:** truncated or malformed diffs (including truncated hunk headers after a completed hunk) or unreadable file contents at either commit are reported as drift with reason `could not verify line survival (fail-closed)` (distinct from `the shape of a silent revert` when lines are lost or re-added), never as a stayed deletion.
+* **Whole-file deletions (`+++ /dev/null`) and hunkless diffs:** a deleted file (or a `rename from` path when present in `overtaken`) must be confirmed absent (`FILE_ABSENT`) at both the overtaking PR's merge commit and this merge commit; reappearing in the merge commit is drift. Metadata-only and binary diffs (such as executable-bit mode changes, unchanged-content renames or copies, and binary file changes) are parsed and verified without false "not found in parsed diff" drift.
+* **Unreadable inputs fail closed:** truncated or malformed diffs (including truncated hunk headers or metadata-only headers whose `index` or similarity indicates omitted content) or unreadable file contents at either commit are reported as drift with reason `could not verify line survival (fail-closed)` (distinct from `the shape of a silent revert` when lines are lost or re-added), never as a stayed deletion.
 * **Conservative by design:** if a later overtaking PR modifies a line an earlier overtaking PR added, or if an overtaking PR deleted a generic line (such as `return None` or `}`) that this PR legitimately adds, it is flagged as drift so a human can judge.
 
 The JSON report uses schema `keel.merge-verify.v2`:
 * `overtaken` maps `{path: [int, ...]}` to the overtaking PRs whose changes drifted or could not be verified on that path (`{}` when `clean`; in v1 it was `{path: int}` recording only the first collider);
 * `shared_files` lists all paths shared between the merge commit and overtaking PRs in the window (`list[str]`);
-* `drift_details` maps `{path: [str, ...]}` detailing specific lost lines, re-added deletions, or unreadable inputs with `(#pr)` attribution (`dict[str, list[str]]`).
+* `drift_details` maps `{path: [str, ...]}` detailing specific lost lines, re-added deletions, or unreadable inputs with `(#pr)` attribution for per-PR violations, while merge-commit-level violations (`unreadable merge commit content for <path>`, `file missing in merge commit for <path>`) name `<path>` once without `(#pr)` (`dict[str, list[str]]`).
 
 `unknown` exits **2**, not 0. The status line has always said "not a pass", but the
 exit code said otherwise, and the exit code is what a caller wiring this in after

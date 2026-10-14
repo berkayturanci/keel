@@ -4830,8 +4830,8 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
         landed_set = {p.strip() for p in landed if p.strip()} if landed else set()
         shared_paths = [p for p in (overtaken or {}) if p in landed_set]
         diffs: dict[int, str | None] | None = None
-        file_contents: dict[str, str | mergeverify._FileAbsent | None] | None = None
-        pr_file_contents: dict[int, dict[str, str | mergeverify._FileAbsent | None]] | None = None
+        file_contents: dict[str, mergeverify.FileContent] | None = None
+        pr_file_contents: dict[int, dict[str, mergeverify.FileContent]] | None = None
         if shared_paths:
             diffs = {}
             file_contents = {}
@@ -4842,24 +4842,36 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             for p in shared_paths:
                 prs_to_fetch.update(overtaken[p])
 
+            parsed_by_pr: dict[int, dict[str, mergeverify.FileDiff] | None] = {}
             for pr_num in sorted(prs_to_fetch):
-                diffs[pr_num] = diff_reader(pr_num, cwd=args.root)
+                raw_diff = diff_reader(pr_num, cwd=args.root)
+                diffs[pr_num] = raw_diff
+                parsed_by_pr[pr_num] = (
+                    mergeverify.parse_diff_by_file(raw_diff) if raw_diff is not None else None
+                )
 
-            def _read_content(sha: str, p: str) -> str | mergeverify._FileAbsent | None:
+            def _read_content(sha: str, p: str) -> mergeverify.FileContent:
                 val = git.show_file(sha, p, cwd=args.root)
                 if val is None:
                     val = github.commit_file_content(sha, p, cwd=args.root)
                 return val
 
             for path in sorted(shared_paths):
-                file_contents[path] = _read_content(merge_sha, path)
+                if any(
+                    parsed_by_pr.get(pr_num) is not None and path in parsed_by_pr[pr_num]
+                    for pr_num in overtaken[path]
+                ):
+                    file_contents[path] = _read_content(merge_sha, path)
 
             for pr_num in sorted(prs_to_fetch):
+                parsed = parsed_by_pr.get(pr_num)
+                if parsed is None:
+                    continue
                 pr_window = window_reader(pr_num, cwd=args.root)
                 pr_merge_sha = (pr_window or {}).get("merge_commit")
                 pr_file_contents[pr_num] = {}
                 for path in sorted(shared_paths):
-                    if pr_num in overtaken[path]:
+                    if pr_num in overtaken[path] and path in parsed:
                         pr_file_contents[pr_num][path] = (
                             _read_content(pr_merge_sha, path) if pr_merge_sha else None
                         )

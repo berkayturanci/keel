@@ -81,6 +81,12 @@ class TestGitLandingPlumbing(unittest.TestCase):
     def test_show_file_absent_path_in_tree(self):
         rec = _Recorder(code=128, err="fatal: path 'a.py' does not exist in 'HEAD'\n")
         self.assertIs(git.show_file(SHA_B, "a.py", _run=rec), git.FILE_ABSENT)
+        rec_disk = _Recorder(code=128, err="fatal: path 'a.py' exists on disk, but not in 'HEAD'\n")
+        self.assertIs(git.show_file(SHA_B, "a.py", _run=rec_disk), git.FILE_ABSENT)
+
+    def test_show_file_directory_tree_listing_returns_file_absent(self):
+        rec = _Recorder(code=0, out=f"tree {SHA_B}:sub/dir\n\nchild.py\n")
+        self.assertIs(git.show_file(SHA_B, "sub/dir", _run=rec), git.FILE_ABSENT)
 
     def test_show_file_absent_path_via_ls_tree(self):
         calls = []
