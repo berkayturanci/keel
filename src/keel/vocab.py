@@ -70,3 +70,18 @@ EFFORT_VENDORS = ("agy", "codex", "anthropic-api", "openai-api", "google-api", O
 def supports_effort(vendor: str) -> bool:
     """True when ``vendor`` can express a reasoning-effort request in its own spelling."""
     return vendor in EFFORT_VENDORS
+
+
+class _FileAbsent:
+    """Sentinel indicating a file is confirmed absent in a commit/tree (#1511)."""
+
+    def __repr__(self) -> str:
+        return "<FILE_ABSENT>"
+
+
+#: Sentinel object representing a file confirmed absent (e.g. 404 or not in tree).
+FILE_ABSENT = _FileAbsent()
+
+#: Content of a file at a commit: ``str`` when present, :data:`FILE_ABSENT` when confirmed
+#: absent, or ``None`` when unreadable (#1511).
+FileContent = str | _FileAbsent | None

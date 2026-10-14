@@ -11980,6 +11980,77 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertEqual(gh_calls, [])
         self.assertIn("clean (1 shared file, 0 lost lines)", out)
 
+    def test_shared_binary_files_and_huge_diff_in_cli(self):
+        bin_diff = (
+            "diff --git a/x.png b/x.png\n"
+            "index a1b2c3d..e4f5a6b 100644\n"
+            "Binary files a/x.png and b/x.png differ\n"
+            "diff --git a/old.png b/old.png\n"
+            "deleted file mode 100644\n"
+            "index a1b2c3d..0000000\n"
+            "Binary files a/old.png and /dev/null differ\n"
+        )
+        # Modified binary file x.png overlapping fails closed through CLI
+        for x_merge in ("\x89PNG_v2", "\x89PNG_v1", None):
+            with self.subTest(x_merge=x_merge):
+                rc, out, _ = self._run(
+                    others=[550],
+                    files_by_pr={543: ["x.png"], 550: ["x.png"]},
+                    commit_files=["x.png"],
+                    diff_by_pr={550: bin_diff},
+                    content_by_path={
+                        ("commit_550", "x.png"): "\x89PNG_v2",
+                        ("7c140f3", "x.png"): x_merge,
+                    },
+                )
+                self.assertEqual(rc, 1)
+                self.assertIn("could not verify line survival (fail-closed)", out)
+                self.assertIn(
+                    "binary diff cannot be verified by line survival for x.png (#550)", out
+                )
+
+        # Deleted binary file old.png: clean when absent at both, revert when reappeared
+        rc_clean, out_clean, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["old.png"], 550: ["old.png"]},
+            commit_files=["old.png"],
+            diff_by_pr={550: bin_diff},
+            content_by_path={
+                ("commit_550", "old.png"): cli.mergeverify.FILE_ABSENT,
+                ("7c140f3", "old.png"): cli.mergeverify.FILE_ABSENT,
+            },
+        )
+        self.assertEqual(rc_clean, 0)
+        self.assertIn("clean (1 shared file, 0 lost lines)", out_clean)
+
+        rc_revert, out_revert, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["old.png"], 550: ["old.png"]},
+            commit_files=["old.png"],
+            diff_by_pr={550: bin_diff},
+            content_by_path={
+                ("commit_550", "old.png"): cli.mergeverify.FILE_ABSENT,
+                ("7c140f3", "old.png"): "\x89PNG_reappeared",
+            },
+        )
+        self.assertEqual(rc_revert, 1)
+        self.assertIn("the shape of a silent revert", out_revert)
+        self.assertIn("deleted file reappeared in merge commit (#550)", out_revert)
+
+        rc_unread, out_unread, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["old.png"], 550: ["old.png"]},
+            commit_files=["old.png"],
+            diff_by_pr={550: bin_diff},
+            content_by_path={
+                ("commit_550", "old.png"): cli.mergeverify.FILE_ABSENT,
+                ("7c140f3", "old.png"): None,
+            },
+        )
+        self.assertEqual(rc_unread, 1)
+        self.assertIn("could not verify line survival (fail-closed)", out_unread)
+        self.assertIn("unreadable merge commit content for old.png", out_unread)
+
     def test_a_bad_config_path_fails_cleanly(self):
         rc, _, err = run(["verify-merge", "/nope/x.yaml", "--pr", "1"])
         self.assertEqual(rc, 1)

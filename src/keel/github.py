@@ -13,8 +13,8 @@ import time
 import urllib.parse
 from collections.abc import Sequence
 
-from .mergeverify import FILE_ABSENT, FileContent
 from .runner import CommandResult, run_argv
+from .vocab import FILE_ABSENT, FileContent
 
 _TRANSIENT_PATTERNS = (
     "rate limit",
@@ -320,7 +320,11 @@ def commit_files(sha: str, *, cwd: str | None = None, _run=None, _sleep=None) ->
 
 
 def pr_diff(pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None) -> str | None:
-    """The unified diff of a pull request from GitHub (#1511)."""
+    """The unified diff of a pull request from GitHub (#1511).
+
+    Returns ``None`` on error (including HTTP 406 when the diff exceeds GitHub's
+    20,000-line / 300-file diff limit, so callers fail closed).
+    """
     result = run_argv_retry(
         ["gh", "pr", "diff", str(pr), "--color", "never"],
         cwd=cwd,
@@ -337,10 +341,12 @@ def commit_file_content(
 ) -> FileContent:
     """Raw content of ``path`` at commit ``sha`` from GitHub (#1511).
 
+    ``cwd`` must be a repository checkout so ``gh api`` expands ``{owner}/{repo}``.
     Returns:
     - the ``str`` file content if present and read,
     - ``FILE_ABSENT`` if the path is confirmed absent at a readable commit ``sha``,
-    - ``None`` if reading failed (network error, rate limit, 5xx, missing commit/repo, etc.).
+    - ``None`` if reading failed (network error, rate limit, 5xx, >1 MB HTTP 403 on the
+      contents API, or missing commit/repo).
     """
     if not sha or not path:
         return None

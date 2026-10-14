@@ -4863,6 +4863,12 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
                 ):
                     file_contents[path] = _read_content(merge_sha, path)
 
+            # Each overtaking PR is compared independently against its own landed
+            # `merge_commit` tree on the base branch, so iteration order across
+            # `prs_to_fetch` does not affect the result. Unreadable diffs or file
+            # contents on shared paths are surfaced directly as fail-closed `drift`
+            # (with per-PR/per-path `drift_details`), while `unreadable` below tracks
+            # whether the top-level file-list/window queries themselves were partial.
             for pr_num in sorted(prs_to_fetch):
                 parsed = parsed_by_pr.get(pr_num)
                 if parsed is None:

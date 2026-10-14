@@ -12,8 +12,8 @@ import os
 import re
 
 from . import tdd
-from .mergeverify import FILE_ABSENT, FileContent
 from .runner import CommandResult, run_argv
+from .vocab import FILE_ABSENT, FileContent
 
 
 def remote_tracking_ref(remote: str, branch: str) -> str:
@@ -470,7 +470,14 @@ def show_file(treeish: str, path: str, *, cwd: str | None = None, _run=None) -> 
     result = run_argv(["git", "show", f"{treeish}:{path}"], cwd=cwd, **_kw(_run))
     if result.ok:
         if result.stdout.startswith(f"tree {treeish}:{path}\n"):
-            return FILE_ABSENT
+            ls_tree_check = run_argv(
+                ["git", "ls-tree", "--full-tree", treeish, "--", path], cwd=cwd, **_kw(_run)
+            )
+            if not ls_tree_check.ok:
+                return None
+            parts = ls_tree_check.stdout.strip().split()
+            if len(parts) < 2 or parts[1] != "blob":
+                return FILE_ABSENT
         return result.stdout
     err = f"{result.stderr} {result.output}".lower()
     if "does not exist in" in err or "exists on disk, but not in" in err:

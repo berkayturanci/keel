@@ -21,9 +21,11 @@ class _Recorder:
         self.out = out
         self.err = err
         self.calls = []
+        self.cwds = []
 
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
+        self.cwds.append(kwargs.get("cwd"))
         return _Proc(self.code, self.out, self.err)
 
 
@@ -85,20 +87,48 @@ class TestGitLandingPlumbing(unittest.TestCase):
         self.assertIs(git.show_file(SHA_B, "a.py", _run=rec_disk), git.FILE_ABSENT)
 
     def test_show_file_directory_tree_listing_returns_file_absent(self):
-        rec = _Recorder(code=0, out=f"tree {SHA_B}:sub/dir\n\nchild.py\n")
-        self.assertIs(git.show_file(SHA_B, "sub/dir", _run=rec), git.FILE_ABSENT)
+        def _run_tree(argv, **kw):
+            if argv[1] == "show":
+                return _Proc(0, f"tree {SHA_B}:sub/dir\n\nchild.py\n", "")
+            return _Proc(0, f"040000 tree {SHA_A}\tsub/dir\n", "")
+
+        self.assertIs(git.show_file(SHA_B, "sub/dir", _run=_run_tree), git.FILE_ABSENT)
+
+        def _run_blob_with_tree_header(argv, **kw):
+            if argv[1] == "show":
+                return _Proc(0, f"tree {SHA_B}:a.txt\nbody line\n", "")
+            return _Proc(0, f"100644 blob {SHA_A}\ta.txt\n", "")
+
+        self.assertEqual(
+            git.show_file(SHA_B, "a.txt", _run=_run_blob_with_tree_header),
+            f"tree {SHA_B}:a.txt\nbody line\n",
+        )
+
+        def _run_ls_fail(argv, **kw):
+            if argv[1] == "show":
+                return _Proc(0, f"tree {SHA_B}:sub/dir\n\nchild.py\n", "")
+            return _Proc(128, "", "fatal: ls-tree failed")
+
+        self.assertIsNone(git.show_file(SHA_B, "sub/dir", _run=_run_ls_fail))
 
     def test_show_file_absent_path_via_ls_tree(self):
         calls = []
+        cwds = []
 
         def _run(argv, **kw):
             calls.append(argv)
+            cwds.append(kw.get("cwd"))
             if argv[1] == "show":
-                return _Proc(128, "", "fatal: git failure")
+                return _Proc(
+                    128,
+                    "",
+                    "fatal: Pfad 'a.py' existiert auf der Festplatte, aber nicht in 'HEAD'",
+                )
             return _Proc(0, "", "")
 
-        self.assertIs(git.show_file(SHA_B, "a.py", _run=_run), git.FILE_ABSENT)
+        self.assertIs(git.show_file(SHA_B, "a.py", cwd="/repo", _run=_run), git.FILE_ABSENT)
         self.assertEqual(calls[1], ["git", "ls-tree", "--full-tree", SHA_B, "--", "a.py"])
+        self.assertEqual(cwds, ["/repo", "/repo"])
 
     def test_show_file_ls_tree_nonempty_returns_none(self):
         def _run(argv, **kw):
@@ -719,11 +749,38 @@ class TestGitHub(unittest.TestCase):
 
     def test_rest_pr_diff_parsed(self):
         rec = _Recorder(out="diff --git a/x.py b/x.py\n")
-        self.assertEqual(github.rest_pr_diff(42, _run=rec), "diff --git a/x.py b/x.py\n")
+        self.assertEqual(
+            github.rest_pr_diff(42, cwd="/repo", _run=rec), "diff --git a/x.py b/x.py\n"
+        )
         self.assertIn("pulls/42", " ".join(rec.calls[0]))
+        self.assertEqual(rec.cwds[0], "/repo")
 
     def test_rest_pr_diff_failsoft(self):
-        self.assertIsNone(github.rest_pr_diff(42, _run=_Recorder(code=1)))
+        self.assertIsNone(
+            github.rest_pr_diff(
+                42,
+                _run=_Recorder(code=1, err="gh: PullRequest.diff too_large (HTTP 406)\n"),
+            )
+        )
+
+    def test_commit_file_content_forwards_cwd_and_fails_closed_on_403_too_large(self):
+        cwds = []
+
+        def _run_404(argv, **kw):
+            cwds.append(kw.get("cwd"))
+            if "contents/" in " ".join(argv):
+                return _Proc(1, "", "gh: Not Found (HTTP 404)\n")
+            return _Proc(0, "abc\n", "")
+
+        self.assertIs(
+            github.commit_file_content("abc", "src/x.py", cwd="/repo", _run=_run_404),
+            github.FILE_ABSENT,
+        )
+        self.assertEqual(cwds, ["/repo", "/repo"])
+
+        rec_403 = _Recorder(code=1, err="gh: This API returns blobs up to 1 MB (HTTP 403)\n")
+        self.assertIsNone(github.commit_file_content("abc", "big.bin", cwd="/repo", _run=rec_403))
+        self.assertEqual(rec_403.cwds[0], "/repo")
 
     def test_pr_merge_window_parsed(self):
         rec = _Recorder(out="2026-07-08T23:02:16Z\t2026-07-10T15:19:57Z\tmain\t7c140f3\n")

@@ -237,17 +237,47 @@ class TestDiffParser(unittest.TestCase):
         )
 
     def test_noprefix_diff_with_top_level_a_directory(self):
-        # When diff is noprefix, a top-level `a/` path like `a/foo.py` must not be mangled
+        # When diff is noprefix, top-level `a/` or `b/` paths must not be stripped on
+        # either `---` (e.g. whole-file deletion) or `+++`, and unquoted paths containing
+        # `' b/'` in `diff --git` headers must not split inside the first path.
         diff = (
             "diff --git a/foo.py a/foo.py\n"
             "--- a/foo.py\n"
             "+++ a/foo.py\n"
             "@@ -0,0 +1,1 @@\n"
             "+top level a line\n"
+            "diff --git a/gone.py a/gone.py\n"
+            "deleted file mode 100644\n"
+            "--- a/gone.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,1 +0,0 @@\n"
+            "-deleted a line\n"
+            "diff --git b/bar.py b/bar.py\n"
+            "--- b/bar.py\n"
+            "+++ b/bar.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+top level b line\n"
+            "diff --git a/dir b/file.py b/dir b/file.py\n"
+            "new file mode 100644\n"
+            "index 0000000..e69de29\n"
+            "diff --git a/old1.py b/new1.py\n"
+            "similarity index 100%\n"
+            "rename from old1.py\n"
+            "rename to new1.py\n"
+            "diff --git old.py new_longer.py\n"
+            "similarity index 100%\n"
+            "rename from old.py\n"
+            "rename to new_longer.py\n"
         )
         parsed = mv.parse_diff_by_file(diff)
         self.assertIsNotNone(parsed)
         self.assertIn("a/foo.py", parsed)
+        self.assertIn("a/gone.py", parsed)
+        self.assertTrue(parsed["a/gone.py"].is_deleted)
+        self.assertIn("b/bar.py", parsed)
+        self.assertIn("dir b/file.py", parsed)
+        self.assertIn("new1.py", parsed)
+        self.assertIn("new_longer.py", parsed)
 
     def test_quoted_path_with_c_octal_escapes(self):
         # Git escapes tabs as \t and octal escapes like \303\251 for non-ASCII ('é')
@@ -1177,7 +1207,9 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertEqual(report["overtaken"], {"a.py": [550]})
         self.assertIn("could not verify line survival (fail-closed)", report["reason"])
 
-    def test_metadata_only_mode_change_and_unchanged_rename_are_parsed_and_clean(self):
+    def test_metadata_only_mode_change_and_unchanged_rename_parse_and_fail_closed_when_shared(
+        self,
+    ):
         diff = (
             "diff --git a/script.sh b/script.sh\n"
             "old mode 100644\n"
@@ -1186,37 +1218,128 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
             "similarity index 100%\n"
             "rename from old_name.py\n"
             "rename to new_name.py\n"
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " base\n"
+            "+survived\n"
         )
         parsed = mv.parse_diff_by_file(diff)
         self.assertIsNotNone(parsed)
         self.assertIn("script.sh", parsed)
-        self.assertEqual(parsed["script.sh"].added_lines, ())
-        self.assertEqual(parsed["script.sh"].deleted_lines, ())
+        self.assertTrue(parsed["script.sh"].has_mode_change)
+        self.assertFalse(parsed["script.sh"].has_hunks)
         self.assertFalse(parsed["script.sh"].is_deleted)
         self.assertIn("new_name.py", parsed)
         self.assertFalse(parsed["new_name.py"].is_deleted)
+        self.assertFalse(parsed["new_name.py"].has_hunks)
         self.assertIn("old_name.py", parsed)
         self.assertTrue(parsed["old_name.py"].is_deleted)
 
-        report = mv.verify_merge(
-            landed=["script.sh", "new_name.py", "old_name.py"],
-            overtaken={"script.sh": [550], "new_name.py": [550], "old_name.py": [550]},
+        # When only a.py and old_name.py (deleted source of rename) overlap, verification is clean
+        report_other = mv.verify_merge(
+            landed=["a.py", "old_name.py"],
+            overtaken={"a.py": [550], "old_name.py": [550]},
             diffs={550: diff},
             file_contents={
-                "script.sh": "#!/bin/sh\necho hi\n",
-                "new_name.py": "def fn(): pass\n",
+                "a.py": "base\nsurvived\n",
                 "old_name.py": mv.FILE_ABSENT,
             },
             pr_file_contents={
                 550: {
-                    "script.sh": "#!/bin/sh\necho hi\n",
-                    "new_name.py": "def fn(): pass\n",
+                    "a.py": "base\nsurvived\n",
                     "old_name.py": mv.FILE_ABSENT,
                 }
             },
         )
-        self.assertEqual(report["status"], "clean")
-        self.assertEqual(report["overtaken"], {})
+        self.assertEqual(report_other["status"], "clean")
+        self.assertEqual(report_other["overtaken"], {})
+
+        # Case 1: script.sh itself overlaps and merge reverts mode 100755 -> 100644 while
+        # preserving contents — must fail closed, never return false clean.
+        report_mode_reverted = mv.verify_merge(
+            landed=["script.sh"],
+            overtaken={"script.sh": [550]},
+            diffs={550: diff},
+            file_contents={"script.sh": "#!/bin/sh\necho hi\n"},
+            pr_file_contents={550: {"script.sh": "#!/bin/sh\necho hi\n"}},
+        )
+        self.assertEqual(report_mode_reverted["status"], "drift")
+        self.assertEqual(report_mode_reverted["overtaken"], {"script.sh": [550]})
+        self.assertIn(
+            "could not verify line survival (fail-closed)", report_mode_reverted["reason"]
+        )
+        self.assertEqual(
+            report_mode_reverted["drift_details"],
+            {
+                "script.sh": [
+                    "file mode change cannot be verified by line survival for script.sh (#550)"
+                ]
+            },
+        )
+
+        # Case 2: script.sh itself overlaps and merge legitimately edits/removes an unchanged
+        # content line after chmod — fails closed as unverified mode change, not line loss.
+        report_mode_edited = mv.verify_merge(
+            landed=["script.sh"],
+            overtaken={"script.sh": [550]},
+            diffs={550: diff},
+            file_contents={"script.sh": "#!/bin/sh\n"},
+            pr_file_contents={550: {"script.sh": "#!/bin/sh\necho hi\n"}},
+        )
+        self.assertEqual(report_mode_edited["status"], "drift")
+        self.assertIn("could not verify line survival (fail-closed)", report_mode_edited["reason"])
+        self.assertNotIn("the shape of a silent revert", report_mode_edited["reason"])
+        self.assertEqual(
+            report_mode_edited["drift_details"],
+            {
+                "script.sh": [
+                    "file mode change cannot be verified by line survival for script.sh (#550)"
+                ]
+            },
+        )
+
+        # Mode change combined with content hunks also fails closed when shared
+        diff_mode_and_hunk = (
+            "diff --git a/script.sh b/script.sh\n"
+            "old mode 100644\n"
+            "new mode 100755\n"
+            "index 1111111..2222222\n"
+            "--- a/script.sh\n"
+            "+++ b/script.sh\n"
+            "@@ -1,1 +1,2 @@\n"
+            " #!/bin/sh\n"
+            "+echo added\n"
+        )
+        report_mode_hunk = mv.verify_merge(
+            landed=["script.sh"],
+            overtaken={"script.sh": [550]},
+            diffs={550: diff_mode_and_hunk},
+            file_contents={"script.sh": "#!/bin/sh\necho added\n"},
+            pr_file_contents={550: {"script.sh": "#!/bin/sh\necho added\n"}},
+        )
+        self.assertEqual(report_mode_hunk["status"], "drift")
+        self.assertIn("could not verify line survival (fail-closed)", report_mode_hunk["reason"])
+
+        # Hunkless rename destination overlapping in collisions also fails closed
+        report_rename_dest = mv.verify_merge(
+            landed=["new_name.py"],
+            overtaken={"new_name.py": [550]},
+            diffs={550: diff},
+            file_contents={"new_name.py": "def fn(): pass\n"},
+            pr_file_contents={550: {"new_name.py": "def fn(): pass\n"}},
+        )
+        self.assertEqual(report_rename_dest["status"], "drift")
+        self.assertIn("could not verify line survival (fail-closed)", report_rename_dest["reason"])
+        self.assertEqual(
+            report_rename_dest["drift_details"],
+            {
+                "new_name.py": [
+                    "hunkless diff cannot be verified by line survival for new_name.py (#550)"
+                ]
+            },
+        )
 
     def test_drift_details_attribute_lost_lines_to_each_pr_and_deduplicate(self):
         diff550 = (
@@ -1302,6 +1425,8 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
                 self.assertIn("could not verify line survival (fail-closed)", report["reason"])
 
     def test_empty_new_and_deleted_file_with_empty_blob_sha_are_parsed(self):
+        sha256_empty = "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813"
+        self.assertEqual(len(sha256_empty), 64)
         diff = (
             "diff --git a/empty_new.py b/empty_new.py\n"
             "new file mode 100644\n"
@@ -1309,12 +1434,21 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
             "diff --git a/empty_del.py b/empty_del.py\n"
             "deleted file mode 100644\n"
             "index e69de29..0000000\n"
+            "diff --git a/empty_sha256_new.py b/empty_sha256_new.py\n"
+            "new file mode 100644\n"
+            f"index {'0' * 64}..{sha256_empty}\n"
+            "diff --git a/empty_sha256_del.py b/empty_sha256_del.py\n"
+            "deleted file mode 100644\n"
+            "index 473a0f4..0000000\n"
         )
         parsed = mv.parse_diff_by_file(diff)
         self.assertIsNotNone(parsed)
         self.assertFalse(parsed["empty_new.py"].is_deleted)
         self.assertFalse(parsed["empty_new.py"].has_hunks)
         self.assertTrue(parsed["empty_del.py"].is_deleted)
+        self.assertFalse(parsed["empty_sha256_new.py"].is_deleted)
+        self.assertFalse(parsed["empty_sha256_new.py"].has_hunks)
+        self.assertTrue(parsed["empty_sha256_del.py"].is_deleted)
 
     def test_truncated_mode_change_with_content_change_is_drift(self):
         diff_with_index = (
@@ -1334,8 +1468,6 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertEqual(report_idx["status"], "drift")
         self.assertIn("could not verify line survival (fail-closed)", report_idx["reason"])
 
-        # Even if truncated before `index` (indistinguishable from pure mode change in diff syntax),
-        # checking landed content lines on a hunkless diff catches lost content at verification.
         diff_before_index = "diff --git a/script.sh b/script.sh\nold mode 100644\nnew mode 100755\n"
         report_lost = mv.verify_merge(
             landed=["script.sh"],
@@ -1346,10 +1478,9 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         )
         self.assertEqual(report_lost["status"], "drift")
         self.assertEqual(report_lost["overtaken"], {"script.sh": [550]})
-        self.assertEqual(report_lost["drift_details"], {"script.sh": ["feature (#550)"]})
-        self.assertIn("the shape of a silent revert", report_lost["reason"])
+        self.assertIn("could not verify line survival (fail-closed)", report_lost["reason"])
 
-    def test_modified_binary_file_in_diff_is_parsed_and_does_not_fail_closed(self):
+    def test_binary_file_in_diff_parses_other_files_and_fails_closed_when_shared(self):
         diff = (
             "diff --git a/x.png b/x.png\n"
             "index a1b2c3d..e4f5a6b 100644\n"
@@ -1369,18 +1500,53 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         parsed = mv.parse_diff_by_file(diff)
         self.assertIsNotNone(parsed)
         self.assertIn("x.png", parsed)
+        self.assertTrue(parsed["x.png"].is_binary)
         self.assertFalse(parsed["x.png"].is_deleted)
+        self.assertTrue(parsed["old.png"].is_binary)
         self.assertTrue(parsed["old.png"].is_deleted)
         self.assertEqual(parsed["a.py"].added_lines, ("survived",))
 
-        report = mv.verify_merge(
-            landed=["a.py"],
-            overtaken={"a.py": [550]},
+        # Non-overlapping x.png does not prevent a.py and deleted old.png from verifying clean
+        report_other = mv.verify_merge(
+            landed=["a.py", "old.png"],
+            overtaken={"a.py": [550], "old.png": [550]},
             diffs={550: diff},
-            file_contents={"a.py": "base\nsurvived\n"},
-            pr_file_contents={550: {"a.py": "base\nsurvived\n"}},
+            file_contents={"a.py": "base\nsurvived\n", "old.png": mv.FILE_ABSENT},
+            pr_file_contents={550: {"a.py": "base\nsurvived\n", "old.png": mv.FILE_ABSENT}},
         )
-        self.assertEqual(report["status"], "clean")
+        self.assertEqual(report_other["status"], "clean")
+
+        # Deleted binary file reappearing in merge commit is flagged as silent revert
+        report_reappeared = mv.verify_merge(
+            landed=["old.png"],
+            overtaken={"old.png": [550]},
+            diffs={550: diff},
+            file_contents={"old.png": "\x89PNG\r\n"},
+            pr_file_contents={550: {"old.png": mv.FILE_ABSENT}},
+        )
+        self.assertEqual(report_reappeared["status"], "drift")
+        self.assertIn("the shape of a silent revert", report_reappeared["reason"])
+        self.assertEqual(
+            report_reappeared["drift_details"],
+            {"old.png": ["deleted file reappeared in merge commit (#550)"]},
+        )
+
+        # Shared non-deleted binary file x.png fails closed regardless of content strings
+        for merge_bytes in ("\x89PNG_v2", "\x89PNG_v1", None):
+            with self.subTest(merge_bytes=merge_bytes):
+                report_bin = mv.verify_merge(
+                    landed=["x.png"],
+                    overtaken={"x.png": [550]},
+                    diffs={550: diff},
+                    file_contents={"x.png": merge_bytes},
+                    pr_file_contents={550: {"x.png": "\x89PNG_v2"}},
+                )
+                self.assertEqual(report_bin["status"], "drift")
+                self.assertIn("could not verify line survival (fail-closed)", report_bin["reason"])
+                self.assertEqual(
+                    report_bin["drift_details"],
+                    {"x.png": ["binary diff cannot be verified by line survival for x.png (#550)"]},
+                )
 
     def test_rename_with_content_changes_and_copy_from_to(self):
         diff = (
@@ -1405,13 +1571,14 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertTrue(parsed["old.py"].is_deleted)
         self.assertIn("copied.py", parsed)
         self.assertFalse(parsed["copied.py"].is_deleted)
+        self.assertFalse(parsed["copied.py"].has_hunks)
 
         report_clean = mv.verify_merge(
-            landed=["new.py", "copied.py"],
-            overtaken={"new.py": [550], "copied.py": [550]},
+            landed=["new.py", "old.py"],
+            overtaken={"new.py": [550], "old.py": [550]},
             diffs={550: diff},
-            file_contents={"new.py": "keep\nadded_in_rename\n", "copied.py": "keep\n"},
-            pr_file_contents={550: {"new.py": "keep\nadded_in_rename\n", "copied.py": "keep\n"}},
+            file_contents={"new.py": "keep\nadded_in_rename\n", "old.py": mv.FILE_ABSENT},
+            pr_file_contents={550: {"new.py": "keep\nadded_in_rename\n", "old.py": mv.FILE_ABSENT}},
         )
         self.assertEqual(report_clean["status"], "clean")
 
@@ -1443,6 +1610,75 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         ):
             with self.subTest(bad_diff=bad_diff):
                 self.assertIsNone(mv.parse_diff_by_file(bad_diff))
+
+    def test_rename_onto_path_deleted_by_earlier_overtaking_pr_flags_drift(self):
+        diff550 = (
+            "diff --git a/target.py b/target.py\n"
+            "deleted file mode 100644\n"
+            "--- a/target.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,1 +0,0 @@\n"
+            "-old_target\n"
+        )
+        diff551 = (
+            "diff --git a/source.py b/target.py\n"
+            "similarity index 80%\n"
+            "rename from source.py\n"
+            "rename to target.py\n"
+            "--- a/source.py\n"
+            "+++ b/target.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " kept\n"
+            "+renamed_line\n"
+        )
+        report = mv.verify_merge(
+            landed=["target.py"],
+            overtaken={"target.py": [550, 551]},
+            diffs={550: diff550, 551: diff551},
+            file_contents={"target.py": "kept\nrenamed_line\n"},
+            pr_file_contents={
+                550: {"target.py": mv.FILE_ABSENT},
+                551: {"target.py": "kept\nrenamed_line\n"},
+            },
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"target.py": [550]})
+        self.assertEqual(
+            report["drift_details"],
+            {"target.py": ["deleted file reappeared in merge commit (#550)"]},
+        )
+
+    def test_crlf_diff_and_lf_content_normalise_consistently(self):
+        crlf_diff = (
+            "diff --git a/a.py b/a.py\r\n"
+            "--- a/a.py\r\n"
+            "+++ b/a.py\r\n"
+            "@@ -1,1 +1,2 @@\r\n"
+            " base\r\n"
+            "+added_line\r\n"
+        )
+        lf_diff = crlf_diff.replace("\r\n", "\n")
+        for d, landed_c, merge_c in (
+            (crlf_diff, "base\nadded_line\n", "base\nadded_line\n"),
+            (lf_diff, "base\r\nadded_line\r\n", "base\nadded_line\n"),
+            (crlf_diff, "base\nadded_line\n", "base\r\nadded_line\r\n"),
+        ):
+            with self.subTest(d=d[:20], landed_c=landed_c, merge_c=merge_c):
+                report = mv.verify_merge(
+                    landed=["a.py"],
+                    overtaken={"a.py": [550]},
+                    diffs={550: d},
+                    file_contents={"a.py": merge_c},
+                    pr_file_contents={550: {"a.py": landed_c}},
+                )
+                self.assertEqual(report["status"], "clean")
+
+    def test_file_absent_sentinel_lives_in_vocab_not_imported_from_mergeverify_by_io(self):
+        from keel import git, github, vocab
+
+        self.assertIs(mv.FILE_ABSENT, vocab.FILE_ABSENT)
+        self.assertIs(git.FILE_ABSENT, vocab.FILE_ABSENT)
+        self.assertIs(github.FILE_ABSENT, vocab.FILE_ABSENT)
 
     def test_verify_merge_without_diffs_or_file_contents_uses_could_not_verify_reason(self):
         report = mv.verify_merge(landed=["a.py"], overtaken={"a.py": [550]})

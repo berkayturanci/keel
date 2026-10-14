@@ -49,6 +49,13 @@ For every file shared between this merge and pull requests that merged in the wi
   file reappearing in the merge commit is drift.
 - Unreadable content at either commit is distinguished from confirmed absent files
   via :data:`FILE_ABSENT`, ensuring failed reads are reported as drift, not stayed deletions.
+- Baseline mismatches at the overtaking PR's own merge commit (``deleted file still present
+  in overtaking commit``, ``landed content absent``) and shared files whose diff record
+  cannot be verified by text-line survival (file mode changes, non-deleted binary diffs,
+  or hunkless non-deletion records) are classified as ``could not verify line survival
+  (fail-closed)``, whereas a valid baseline at the overtaking PR's commit that disappears
+  (``file missing in merge commit``) or reappears (``deleted file reappeared in merge
+  commit``) at this merge commit is classified as ``the shape of a silent revert``.
 - Any unreadable input (missing diff, malformed diff, unreadable file content) stays
   conservative drift.
 
@@ -61,23 +68,22 @@ import ast
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import TypeAlias
+from dataclasses import dataclass, field
 
+from .vocab import FILE_ABSENT as FILE_ABSENT
+from .vocab import FileContent as FileContent
 
-class _FileAbsent:
-    """Sentinel indicating a file is confirmed absent in a commit/tree (#1511)."""
-
-    def __repr__(self) -> str:
-        return "<FILE_ABSENT>"
-
-
-#: Sentinel object representing a file confirmed absent (e.g. 404 or not in tree).
-FILE_ABSENT = _FileAbsent()
-
-#: Content of a file at a commit: ``str`` when present, :data:`FILE_ABSENT` when confirmed
-#: absent, or ``None`` when unreadable (#1511).
-FileContent: TypeAlias = str | _FileAbsent | None
+__all__ = [
+    "FILE_ABSENT",
+    "FileContent",
+    "FileDiff",
+    "SCHEMA_VERSION",
+    "check_multiset_survival",
+    "is_drift",
+    "parse_diff_by_file",
+    "render",
+    "verify_merge",
+]
 
 #: Report shape version, so a consumer can tell an old report from a new one (#1511).
 SCHEMA_VERSION = "keel.merge-verify.v2"
@@ -112,6 +118,37 @@ class FileDiff:
     deleted_lines: tuple[str, ...]
     is_deleted: bool = False
     has_hunks: bool = True
+    has_mode_change: bool = False
+    is_binary: bool = False
+
+
+@dataclass
+class _FileParseState:
+    """Mutable per-file accumulator used while parsing a unified diff."""
+
+    in_file: bool = False
+    has_ab_prefix: bool = True
+    header_file: str | None = None
+    current_file: str | None = None
+    old_file: str | None = None
+    rename_old: str | None = None
+    is_deleted: bool = False
+    current_added: list[str] = field(default_factory=list)
+    current_deleted: list[str] = field(default_factory=list)
+    saw_hunk_for_file: bool = False
+    saw_minus_header: bool = False
+    saw_plus_header: bool = False
+    saw_old_mode: bool = False
+    saw_new_mode: bool = False
+    saw_new_file: bool = False
+    saw_deleted_file: bool = False
+    saw_rename_from: bool = False
+    saw_rename_to: bool = False
+    saw_copy_from: bool = False
+    saw_copy_to: bool = False
+    saw_binary: bool = False
+    similarity_index: int | None = None
+    index_shas: tuple[str, str] | None = None
 
 
 def _unquote_diff_path(raw: str) -> str:
@@ -124,25 +161,40 @@ def _unquote_diff_path(raw: str) -> str:
     return raw
 
 
-def _clean_diff_path(raw: str, *, is_new: bool) -> str:
+def _clean_diff_path(raw: str, *, is_new: bool, strip_prefix: bool = True) -> str:
     raw = _unquote_diff_path(raw)
-    if is_new and raw.startswith("b/"):
-        return raw[2:]
-    if not is_new and raw.startswith("a/"):
-        return raw[2:]
+    if strip_prefix:
+        if is_new and raw.startswith("b/"):
+            return raw[2:]
+        if not is_new and raw.startswith("a/"):
+            return raw[2:]
     return raw
 
 
-def _parse_git_header_path(line: str) -> str:
-    """Extract the target path from a ``diff --git`` header line."""
+def _parse_git_header(line: str) -> tuple[str, bool]:
+    """Extract ``(target_path, has_ab_prefix)`` from a ``diff --git`` header line."""
     rest = line[len("diff --git ") :].strip()
+    mid = len(rest) // 2
     if '" "' in rest:
-        raw_new = rest[rest.find('" "') + 2 :]
+        idx = rest.find('" "')
+        left = _unquote_diff_path(rest[: idx + 1])
+        right = _unquote_diff_path(rest[idx + 2 :])
+    elif (
+        len(rest) % 2 == 1
+        and rest[mid] == " "
+        and (rest[:mid] == rest[mid + 1 :] or rest[2:mid] == rest[mid + 3 :])
+    ):
+        left, right = rest[:mid], rest[mid + 1 :]
     elif rest.startswith("a/") and " b/" in rest:
-        raw_new = "b/" + rest.split(" b/", 1)[1]
+        left_raw, right_raw = rest.split(" b/", 1)
+        left, right = left_raw, "b/" + right_raw
     else:
-        raw_new = rest.split(None, 1)[-1]
-    return _clean_diff_path(raw_new, is_new=True)
+        parts = rest.split(None, 1)
+        left, right = parts[0], parts[-1]
+    if left == right:
+        return right, False
+    has_ab = left.startswith("a/") and right.startswith("b/")
+    return (right[2:] if has_ab else right), has_ab
 
 
 def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
@@ -156,206 +208,150 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
         return {}
 
     result: dict[str, FileDiff] = {}
-    in_file = False
-    header_file: str | None = None
-    current_file: str | None = None
-    old_file: str | None = None
-    rename_old: str | None = None
-    is_deleted = False
+    st = _FileParseState()
     in_hunk = False
     rem_old = 0
     rem_new = 0
-    current_added: list[str] = []
-    current_deleted: list[str] = []
-    saw_hunk_for_file = False
-    saw_minus_header = False
-    saw_plus_header = False
-    saw_old_mode = False
-    saw_new_mode = False
-    saw_new_file = False
-    saw_deleted_file = False
-    saw_rename_from = False
-    saw_rename_to = False
-    saw_copy_from = False
-    saw_copy_to = False
-    saw_binary = False
-    similarity_index: int | None = None
-    index_shas: tuple[str, str] | None = None
 
     def _flush_current_file() -> bool:
-        nonlocal \
-            in_file, \
-            header_file, \
-            current_file, \
-            old_file, \
-            rename_old, \
-            is_deleted, \
-            current_added, \
-            current_deleted, \
-            saw_hunk_for_file, \
-            saw_minus_header, \
-            saw_plus_header, \
-            saw_old_mode, \
-            saw_new_mode, \
-            saw_new_file, \
-            saw_deleted_file, \
-            saw_rename_from, \
-            saw_rename_to, \
-            saw_copy_from, \
-            saw_copy_to, \
-            saw_binary, \
-            similarity_index, \
-            index_shas
-        if in_file or saw_minus_header or saw_plus_header:
+        nonlocal st
+        if st.in_file or st.saw_minus_header or st.saw_plus_header:
             if (
-                current_file is None
-                or saw_minus_header != saw_plus_header
-                or saw_old_mode != saw_new_mode
-                or saw_rename_from != saw_rename_to
-                or saw_copy_from != saw_copy_to
-                or (saw_plus_header and not saw_hunk_for_file)
+                st.current_file is None
+                or st.saw_minus_header != st.saw_plus_header
+                or st.saw_old_mode != st.saw_new_mode
+                or st.saw_rename_from != st.saw_rename_to
+                or st.saw_copy_from != st.saw_copy_to
+                or (st.saw_plus_header and not st.saw_hunk_for_file)
             ):
                 return False
-            if not saw_plus_header and not saw_binary:
-                if saw_new_file or saw_deleted_file:
-                    if index_shas is None:
+            if not st.saw_plus_header and not st.saw_binary:
+                if st.saw_new_file or st.saw_deleted_file:
+                    if st.index_shas is None:
                         return False
-                    expected_empty = index_shas[1] if saw_new_file else index_shas[0]
-                    expected_zero = index_shas[0] if saw_new_file else index_shas[1]
+                    expected_empty = st.index_shas[1] if st.saw_new_file else st.index_shas[0]
+                    expected_zero = st.index_shas[0] if st.saw_new_file else st.index_shas[1]
                     if set(expected_zero) != {"0"} or not _is_empty_blob_sha(expected_empty):
                         return False
-                elif saw_rename_to or saw_copy_to:
-                    if similarity_index != 100 or (
-                        index_shas is not None and index_shas[0] != index_shas[1]
+                elif st.saw_rename_to or st.saw_copy_to:
+                    if st.similarity_index != 100 or (
+                        st.index_shas is not None and st.index_shas[0] != st.index_shas[1]
                     ):
                         return False
-                elif index_shas is not None and index_shas[0] != index_shas[1]:
+                elif st.index_shas is not None and st.index_shas[0] != st.index_shas[1]:
                     return False
-            result[current_file] = FileDiff(
-                path=current_file,
-                added_lines=tuple(current_added),
-                deleted_lines=tuple(current_deleted),
-                is_deleted=is_deleted,
-                has_hunks=saw_hunk_for_file,
+            result[st.current_file] = FileDiff(
+                path=st.current_file,
+                added_lines=tuple(st.current_added),
+                deleted_lines=tuple(st.current_deleted),
+                is_deleted=st.is_deleted,
+                has_hunks=st.saw_hunk_for_file,
+                has_mode_change=st.saw_old_mode,
+                is_binary=st.saw_binary,
             )
-            if rename_old:
-                result[rename_old] = FileDiff(
-                    path=rename_old,
+            if st.rename_old:
+                result[st.rename_old] = FileDiff(
+                    path=st.rename_old,
                     added_lines=(),
                     deleted_lines=(),
                     is_deleted=True,
                     has_hunks=False,
                 )
-        in_file = False
-        header_file = None
-        current_file = None
-        old_file = None
-        rename_old = None
-        is_deleted = False
-        current_added = []
-        current_deleted = []
-        saw_hunk_for_file = False
-        saw_minus_header = False
-        saw_plus_header = False
-        saw_old_mode = False
-        saw_new_mode = False
-        saw_new_file = False
-        saw_deleted_file = False
-        saw_rename_from = False
-        saw_rename_to = False
-        saw_copy_from = False
-        saw_copy_to = False
-        saw_binary = False
-        similarity_index = None
-        index_shas = None
+        st = _FileParseState()
         return True
 
     for line in _split_lines(diff_text):
         if line.startswith("diff --git "):
             if in_hunk or not _flush_current_file():
                 return None
-            header_file = _parse_git_header_path(line)
-            in_file = True
+            st.header_file, st.has_ab_prefix = _parse_git_header(line)
+            st.in_file = True
             continue
 
-        if line.startswith("\\") and (in_hunk or saw_hunk_for_file):
+        if line.startswith("\\") and (in_hunk or st.saw_hunk_for_file):
             continue
 
-        if not in_hunk and not saw_hunk_for_file:
+        if not in_hunk and not st.saw_hunk_for_file:
             if line.startswith("--- "):
-                saw_minus_header = True
+                st.saw_minus_header = True
                 target = line[4:].strip()
-                old_file = None if target == "/dev/null" else _clean_diff_path(target, is_new=False)
+                st.old_file = (
+                    None
+                    if target == "/dev/null"
+                    else _clean_diff_path(target, is_new=False, strip_prefix=st.has_ab_prefix)
+                )
                 continue
             if line.startswith("+++ "):
-                saw_plus_header = True
+                st.saw_plus_header = True
                 target = line[4:].strip()
                 if target == "/dev/null":
-                    current_file = old_file
-                    is_deleted = True
+                    st.current_file = st.old_file
+                    st.is_deleted = True
                 else:
-                    current_file = _clean_diff_path(target, is_new=True)
-                    is_deleted = False
+                    st.current_file = _clean_diff_path(
+                        target, is_new=True, strip_prefix=st.has_ab_prefix
+                    )
+                    st.is_deleted = False
                 continue
             if line.startswith("old mode "):
-                saw_old_mode = True
+                st.saw_old_mode = True
                 continue
             if line.startswith("new mode "):
-                current_file = current_file or header_file
-                saw_new_mode = True
+                st.current_file = st.current_file or st.header_file
+                st.saw_new_mode = True
                 continue
             if line.startswith("new file mode "):
-                current_file = current_file or header_file
-                saw_new_file = True
+                st.current_file = st.current_file or st.header_file
+                st.saw_new_file = True
                 continue
             if line.startswith("deleted file mode "):
-                current_file = current_file or header_file
-                saw_deleted_file = True
-                is_deleted = True
+                st.current_file = st.current_file or st.header_file
+                st.saw_deleted_file = True
+                st.is_deleted = True
                 continue
             if line.startswith("similarity index "):
                 m_sim = _SIMILARITY_RE.match(line)
                 if not m_sim:
                     return None
-                similarity_index = int(m_sim.group(1))
+                st.similarity_index = int(m_sim.group(1))
                 continue
             if line.startswith(("rename from ", "copy from ")):
                 is_rename = line.startswith("rename from ")
                 prefix = "rename from " if is_rename else "copy from "
-                old_file = _unquote_diff_path(line[len(prefix) :])
+                st.old_file = _unquote_diff_path(line[len(prefix) :])
                 if is_rename:
-                    rename_old = old_file
-                    saw_rename_from = True
+                    st.rename_old = st.old_file
+                    st.saw_rename_from = True
                 else:
-                    saw_copy_from = True
+                    st.saw_copy_from = True
                 continue
             if line.startswith(("rename to ", "copy to ")):
                 is_rename = line.startswith("rename to ")
                 prefix = "rename to " if is_rename else "copy to "
-                current_file = _unquote_diff_path(line[len(prefix) :])
+                st.current_file = _unquote_diff_path(line[len(prefix) :])
                 if is_rename:
-                    saw_rename_to = True
+                    st.saw_rename_to = True
                 else:
-                    saw_copy_to = True
+                    st.saw_copy_to = True
                 continue
             if line.startswith("index "):
                 m_idx = _INDEX_RE.match(line)
                 if not m_idx:
                     return None
-                index_shas = (m_idx.group(1), m_idx.group(2))
+                st.index_shas = (m_idx.group(1), m_idx.group(2))
                 continue
             if line.startswith("Binary files ") and line.endswith(" differ"):
-                current_file = current_file or header_file
-                saw_binary = True
+                st.current_file = st.current_file or st.header_file
+                st.saw_binary = True
                 if line.endswith(" and /dev/null differ"):
-                    is_deleted = True
+                    st.is_deleted = True
                 continue
 
         m = _HUNK_HEADER_RE.match(line)
         if m:
-            if current_file is None or in_hunk or not saw_plus_header:
+            if st.current_file is None or in_hunk or not st.saw_plus_header:
                 return None
-            saw_hunk_for_file = True
+            st.saw_hunk_for_file = True
             rem_old = int(m.group(2)) if m.group(2) is not None else 1
             rem_new = int(m.group(4)) if m.group(4) is not None else 1
             in_hunk = True
@@ -367,10 +363,10 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
             return None
 
         if line.startswith("+"):
-            current_added.append(line[1:])
+            st.current_added.append(line[1:])
             rem_new -= 1
         elif line.startswith("-"):
-            current_deleted.append(line[1:])
+            st.current_deleted.append(line[1:])
             rem_old -= 1
         elif line.startswith(" "):
             rem_old -= 1
@@ -411,6 +407,18 @@ _PR_PATH_VIOLATIONS = frozenset(
 )
 
 
+def _unverifiable_reason(fd: FileDiff) -> str | None:
+    """Return a fail-closed violation string if ``fd`` cannot be verified by line survival."""
+    if fd.has_mode_change:
+        return "file mode change cannot be verified by line survival"
+    if not fd.is_deleted:
+        if fd.is_binary:
+            return "binary diff cannot be verified by line survival"
+        if not fd.has_hunks:
+            return "hunkless diff cannot be verified by line survival"
+    return None
+
+
 def check_multiset_survival(
     added_lines: Sequence[str],
     deleted_lines: Sequence[str],
@@ -418,7 +426,6 @@ def check_multiset_survival(
     merge_content: FileContent,
     *,
     is_deleted: bool = False,
-    check_all_landed: bool = False,
 ) -> tuple[int, list[str]]:
     """Check line survival via multiset counting (#1511).
 
@@ -456,8 +463,7 @@ def check_multiset_survival(
     seen_violations: set[str] = set()
     lost_count = 0
 
-    lines_to_check = landed_lines if check_all_landed else added_lines
-    for line in lines_to_check:
+    for line in added_lines:
         if not line.strip():
             continue
         if merge_counts[line] < landed_counts[line]:
@@ -566,6 +572,15 @@ def verify_merge(
                         )
                         continue
 
+                    fd = pr_parsed[path]
+                    unverifiable = _unverifiable_reason(fd)
+                    if unverifiable is not None:
+                        drifted.setdefault(path, []).append(pr)
+                        drift_details.setdefault(path, []).append(
+                            f"{unverifiable} for {path} (#{pr})"
+                        )
+                        continue
+
                     pr_landed_content = None
                     if pr_file_contents is not None:
                         if isinstance(pr_file_contents.get(pr), Mapping):
@@ -573,14 +588,12 @@ def verify_merge(
                         elif (pr, path) in pr_file_contents:
                             pr_landed_content = pr_file_contents.get((pr, path))
 
-                    fd = pr_parsed[path]
                     lost_count, violations = check_multiset_survival(
                         fd.added_lines,
                         fd.deleted_lines,
                         pr_landed_content,
                         merge_content,
                         is_deleted=fd.is_deleted,
-                        check_all_landed=not fd.has_hunks,
                     )
                     if lost_count > 0:
                         drifted.setdefault(path, []).append(pr)
