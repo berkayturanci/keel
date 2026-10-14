@@ -653,6 +653,116 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertEqual(result["status"], "missing")
         self.assertFalse(result["covered"])
 
+    def test_refused_when_checkpoint_run_id_is_none_and_accepted_run_ids_restricted(self):
+        record = _record(run_id="", pull_request=170, head_sha="abc123", current_step="s10")
+        record["run_id"] = None
+        result = checkpoint.covering_checkpoint(
+            record,
+            "RUN-MERGE",
+            "s10",
+            pr_number=170,
+            head_sha="abc123",
+            accepted_run_ids=["RUN-GATES"],
+        )
+        self.assertEqual(result["status"], "missing")
+        self.assertFalse(result["covered"])
+        self.assertIn("checkpoint is for run None", result["reason"])
+
+    def test_in_flight_names_recovery_command(self):
+        same_pending = _record(
+            run_id="RUN-1",
+            pull_request=170,
+            head_sha="abc123",
+            current_step="s10",
+            merge_state="pending",
+        )
+        res_same = checkpoint.covering_checkpoint(
+            same_pending, "RUN-1", "s10", config_path="p.yaml", pr_number=170, head_sha="abc123"
+        )
+        self.assertEqual(res_same["status"], "in-flight")
+        self.assertIn(
+            "if no merge is running and the PR is still open, clear it with: "
+            "keel checkpoint p.yaml --write --run-id RUN-1 --step s10 "
+            "--head-sha abc123 --pull-request 170 --merge-state failed",
+            res_same["reason"],
+        )
+        cross_pending = _record(
+            run_id="RUN-1",
+            pull_request=170,
+            head_sha="abc123",
+            current_step="s10",
+            merge_state="pending",
+        )
+        res_cross = checkpoint.covering_checkpoint(
+            cross_pending, "RUN-2", "s10", config_path="p.yaml", pr_number=170, head_sha="abc123"
+        )
+        self.assertEqual(res_cross["status"], "in-flight")
+        self.assertIn(
+            "if no merge is running and the PR is still open, clear it with: "
+            "keel checkpoint p.yaml --write --run-id RUN-1 --step s10 "
+            "--head-sha abc123 --pull-request 170 --merge-state failed",
+            res_cross["reason"],
+        )
+
+    def test_already_merged_names_resume_command(self):
+        same_merged = _record(
+            run_id="RUN-1", current_step="s11", completed_steps=["s10"], merge_state="merged"
+        )
+        res_same = checkpoint.covering_checkpoint(same_merged, "RUN-1", "s10", config_path="p.yaml")
+        self.assertEqual(res_same["status"], "already-merged")
+        self.assertIn("continue post-merge steps with: keel resume p.yaml", res_same["reason"])
+
+        cross_merged = _record(
+            run_id="RUN-1",
+            pull_request=170,
+            head_sha="abc123",
+            current_step="s11",
+            completed_steps=["s10"],
+            merge_state="merged",
+        )
+        res_cross = checkpoint.covering_checkpoint(
+            cross_merged,
+            "RUN-2",
+            "s10",
+            config_path="p.yaml",
+            root="/custom",
+            pr_number=170,
+            head_sha="abc123",
+        )
+        self.assertEqual(res_cross["status"], "already-merged")
+        self.assertIn(
+            "continue post-merge steps with: keel resume p.yaml --root /custom",
+            res_cross["reason"],
+        )
+
+    def test_missing_and_stale_step_reasons_include_genuine_s10_caveat(self):
+        res_missing = checkpoint.covering_checkpoint(
+            None, "RUN-149", "s10", config_path="p.yaml", pr_number=170, head_sha="abc123"
+        )
+        self.assertIn(
+            "valid only if the run genuinely reached s10",
+            res_missing["reason"],
+        )
+        res_stale = checkpoint.covering_checkpoint(
+            _record(current_step="s6"), "RUN-149", "s10", config_path="p.yaml"
+        )
+        self.assertIn(
+            "valid only if the run genuinely reached s10",
+            res_stale["reason"],
+        )
+        res_cross_stale = checkpoint.covering_checkpoint(
+            _record(run_id="RUN-1", pull_request=170, head_sha="abc123", current_step="s6"),
+            "RUN-2",
+            "s10",
+            pr_number=170,
+            head_sha="abc123",
+            config_path="p.yaml",
+        )
+        self.assertIn(
+            "valid only if the run genuinely reached s10",
+            res_cross_stale["reason"],
+        )
+
     def test_invalid_expected_step_is_rejected(self):
         with self.assertRaisesRegex(checkpoint.CheckpointError, "backbone step id"):
             checkpoint.covering_checkpoint(_record(), "RUN-149", "s99")
@@ -899,6 +1009,24 @@ class TestMarkMerged(unittest.TestCase):
         self.assertEqual(after["current"]["merge_state"], "merged")
         self.assertEqual(after["current"]["wait_reason"], "capture")
         self.assertEqual(after["status"], "waiting")
+
+    def test_build_and_validate_checkpoint_carried_from_run_id(self):
+        rec = checkpoint.build_checkpoint_record(
+            run_id="RUN-2",
+            command="ship",
+            current_step="s11",
+            base_branch="main",
+            carried_from_run_id="RUN-1",
+        )
+        self.assertEqual(rec.get("carried_from_run_id"), "RUN-1")
+        checkpoint.validate_checkpoint(rec)
+
+        bad = dict(rec, carried_from_run_id=123)
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "carried_from_run_id"):
+            checkpoint.validate_checkpoint(bad)
+        bad_empty = dict(rec, carried_from_run_id="")
+        with self.assertRaisesRegex(checkpoint.CheckpointError, "carried_from_run_id"):
+            checkpoint.validate_checkpoint(bad_empty)
 
 
 class TestFindOrphans(unittest.TestCase):

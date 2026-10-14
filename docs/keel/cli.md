@@ -340,27 +340,30 @@ the checkpoint file. The result is reported in the `checkpoint_gate` block of th
   or past `s10`, or `s10` is in `completed_steps`) and its `state.merge` is neither `merged` nor `pending`.
   When retrying a merge on a PR on the same head whose previous run reached `s10`, `keel merge` accepts
   the PR's latest checkpoint at `s10` (keyed on matching `identifiers.pull_request` and equal
-  `identifiers.head_sha`, and restricted to the gates-pass `run_id` when `--run-id` overrides it) across
-  run IDs and carries it forward to the new run upon landing (#1507). When carried forward across runs,
-  `checkpoint_gate.carried_from_run_id` records the source run ID (or `null` when the adopted checkpoint
-  had no `run_id`) and `checkpoint_gate.adopt` is `true`. The head check fails closed: records lacking a
-  recorded head SHA or callers without a head are not accepted across runs. The merge proceeds.
+  `identifiers.head_sha`, and restricted to the explicit `--run-id` or the gates-pass `run_id` when
+  `--run-id` overrides it) across run IDs and carries it forward to the new run upon landing (#1507).
+  When carried forward across runs, `checkpoint_gate.carried_from_run_id` records the source run ID (or
+  `null` when the adopted checkpoint had no `run_id`) and `checkpoint_gate.adopt` is `true`. The head check
+  fails closed: records lacking a recorded head SHA or callers without a head are not accepted across runs.
+  The merge proceeds.
 - **`missing`** — no checkpoint, or the checkpoint is for a different run or PR. Refused with
   `no current checkpoint for run <id> at step s10`. When no checkpoint file exists, a suggested
-  `keel checkpoint ... --write` command is named (placeholders like `'<project.yaml>'` must be filled in;
-  valid only after the run has genuinely reached `s10`, e.g. recovering from a lost checkpoint; otherwise
-  drive the run through `s10`). When a checkpoint file exists for a different run or PR
-  (`checkpoint is for run <other>`), no `--write` command is suggested so an operator does not overwrite
-  another run's checkpoint; finish or reconcile that run first, or pass the matching `--run-id`.
-- **`stale-step`** — a checkpoint that has not reached `s10`. Refused naming the advancing command
-  (placeholders must be filled in).
+  `keel checkpoint ... --write` command is named with the caveat `valid only if the run genuinely reached s10`
+  (placeholders like `'<project.yaml>'` must be filled in; use only when recovering from a lost checkpoint
+  after `s10` completed; otherwise drive the run through `s10`). When a checkpoint file exists for a different
+  run or PR (`checkpoint is for run <other>`), no `--write` command is suggested so an operator does not
+  overwrite another run's checkpoint; finish or reconcile that run first, or pass the matching `--run-id`.
+- **`stale-step`** — a checkpoint that has not reached `s10`. Refused naming the advancing command with the
+  caveat `valid only if the run genuinely reached s10` (placeholders must be filled in).
 - **`stale-head`** — a checkpoint for the PR (or accepted run ID) covering an earlier head commit or lacking
   verifiable head provenance (head mismatch). Refused without an advancing command; re-run gates on the
   current head (e.g. via `/keel:ship` or `keel ship ... --live --append-ledger`) and write an `s10`
   checkpoint for the new head with `keel checkpoint ... --write --step s10 --head-sha <head> --pull-request <N>`.
 - **`already-merged`** — the checkpoint already records `state.merge: merged`. Refused to prevent
-  re-merging or duplicating post-merge actions.
-- **`in-flight`** — the checkpoint records `state.merge: pending`. Refused while another merge is in flight.
+  re-merging or duplicating post-merge actions, naming `keel resume ...` to continue post-merge steps.
+- **`in-flight`** — the checkpoint records `state.merge: pending`. Refused while another merge is in flight;
+  names `keel checkpoint ... --write ... --merge-state failed` to clear a stuck `pending` record if no merge
+  is running and the PR is still open.
 
 The run-id is the gates-SHA `run_id` by default; override it with `--run-id`. Cross-run acceptance
 requires both the PR number and matching current head SHA.
@@ -383,7 +386,7 @@ before any same-run shortcut unless the reread checkpoint still records the expe
 #1507), writes it back through the pure `keel.checkpoint.mark_merged`:
 
 - `run_id` is updated to the current merge run ID
-- `carried_from_run_id` is recorded in the checkpoint file to preserve provenance when carried (#1507), and persists in the file across later same-run updates
+- `carried_from_run_id` is recorded in the checkpoint file to preserve provenance when carried (#1507), and persists in the file across later same-run updates (`mark_merged` and `keel checkpoint --write`)
 - `state.merge` becomes `merged`
 - `s10` is added to `completed_steps`
 - `current_step` moves to `s11` (a run already past `s10` keeps its step)
@@ -401,7 +404,8 @@ The outcome is reported in the payload:
 - `checkpoint_update: {updated: true, run_id, current_step[, carried_from]}` — the checkpoint
   was rewritten (and adopted if carried forward).
 - `checkpoint_update: {updated: false, reason}` — nothing was written. The reason is
-  `no run-id`, `no checkpoint for run <id>`, or `checkpoint not updated: <error>`.
+  `no run-id`, `no checkpoint for run <id>`, `checkpoint changed since the gate; adoption refused`,
+  or `checkpoint not updated: <error>`.
 
 A dry run, a refused merge or a failed `gh` merge never reaches this step, so it carries no
 `checkpoint_update`.

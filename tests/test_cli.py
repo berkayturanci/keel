@@ -11928,6 +11928,13 @@ class TestMergeCheckpointGate(unittest.TestCase):
                     self.assertEqual(rc, 1)
                     self.assertFalse(data["merged"])
                     self.assertEqual(data["checkpoint_gate"]["status"], expected_status)
+                    if expected_status == "already-merged":
+                        parsed_resume = self._assert_command_runnable(data["reason"], "resume")
+                        self.assertEqual(parsed_resume.path, config)
+                    else:
+                        parsed_cp = self._assert_command_runnable(data["reason"], "checkpoint")
+                        self.assertEqual(parsed_cp.merge_state, "failed")
+                        self.assertTrue(parsed_cp.write)
 
     def test_retry_merge_accepts_and_updates_checkpoint_with_missing_run_id(self):
         config = _write_config_with_checkpoint("'true'")
@@ -12182,8 +12189,11 @@ class TestMergeCheckpointGate(unittest.TestCase):
                     tampered["run_id"] = None
                 else:
                     tampered["identifiers"][drop_field] = None
-                reads = [original, tampered]
-                with patch("keel.cli.checkpoint.read_checkpoint", side_effect=reads):
+                seq = iter([original, tampered])
+                with patch(
+                    "keel.cli.checkpoint.read_checkpoint",
+                    side_effect=lambda _path, s=seq, last=tampered: next(s, last),
+                ):
                     rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
                 data = json.loads(out)
                 self.assertEqual(rc, 0)
@@ -12192,7 +12202,10 @@ class TestMergeCheckpointGate(unittest.TestCase):
                 self.assertTrue(data["checkpoint_gate"]["adopt"])
                 self.assertEqual(
                     data["checkpoint_update"],
-                    {"updated": False, "reason": "no checkpoint for run RUN-RETRY"},
+                    {
+                        "updated": False,
+                        "reason": "checkpoint changed since the gate; adoption refused",
+                    },
                 )
 
     def test_retry_merge_refuses_post_merge_adoption_when_reread_run_id_replaced(self):
@@ -12210,7 +12223,12 @@ class TestMergeCheckpointGate(unittest.TestCase):
             replaced["run_id"] = "RUN-RETRY"
             replaced["identifiers"]["pull_request"] = 999
             replaced["identifiers"]["head_sha"] = "other"
-            with patch("keel.cli.checkpoint.read_checkpoint", side_effect=[original, replaced]):
+
+            seq = iter([original, replaced])
+            with patch(
+                "keel.cli.checkpoint.read_checkpoint",
+                side_effect=lambda _path, s=seq, last=replaced: next(s, last),
+            ):
                 rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
             data = json.loads(out)
             self.assertEqual(rc, 0)
@@ -12219,7 +12237,10 @@ class TestMergeCheckpointGate(unittest.TestCase):
             self.assertTrue(data["checkpoint_gate"]["adopt"])
             self.assertEqual(
                 data["checkpoint_update"],
-                {"updated": False, "reason": "no checkpoint for run RUN-RETRY"},
+                {
+                    "updated": False,
+                    "reason": "checkpoint changed since the gate; adoption refused",
+                },
             )
 
     def test_resolution_ship_command_fails_fast_unedited_and_preserves_capture_clash(self):
@@ -12283,6 +12304,118 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(data["checkpoint_gate"]["run_id"], "RUN-XYZ")
         self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+
+    def test_retry_merge_refuses_anonymous_checkpoint_when_run_id_overridden(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(
+                d, config, run_id="", step="s10", pull_request=123, head_sha="abc"
+            )
+            cfg_obj = cli.cfg.load_config(config)
+            path = cli.checkpoint.resolve_path(d, cfg_obj)
+            rec = cli.checkpoint.read_checkpoint(path)
+            rec["run_id"] = None
+            cli.checkpoint.write_checkpoint(path, rec)
+
+            rc, out, _ = self._run_merge(
+                config=config, root=d, run_id="RUN-GATES", extra=["--run-id", "RUN-MERGE"]
+            )
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+        self.assertIn("checkpoint is for run None", data["reason"])
+        self.assertIsNone(record["run_id"])
+
+    def test_retry_merge_refuses_foreign_checkpoint_when_gates_run_id_none_and_run_id_set(
+        self,
+    ):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(
+                d, config, run_id="RUN-OTHER", step="s10", pull_request=123, head_sha="abc"
+            )
+            rc, out, _ = self._run_merge(
+                config=config, root=d, run_id=None, extra=["--run-id", "RUN-MERGE"]
+            )
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+        self.assertIn("checkpoint is for run RUN-OTHER", data["reason"])
+        self.assertEqual(record["run_id"], "RUN-OTHER")
+
+    def test_carried_from_run_id_persists_across_later_same_run_updates(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-PREV", step="s10", head_sha="abc")
+            rc, _, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+            self.assertEqual(rc, 0)
+            after_merge = self._read_checkpoint(d, config)
+            self.assertEqual(after_merge["carried_from_run_id"], "RUN-PREV")
+            # A second mark_merged on the same run preserves carried_from_run_id.
+            second_merged = cli.checkpoint.mark_merged(after_merge, "RUN-RETRY")
+            self.assertEqual(second_merged["carried_from_run_id"], "RUN-PREV")
+            # A later same-run `keel checkpoint --write` also preserves carried_from_run_id.
+            rc_cp, _, _ = run(
+                [
+                    "checkpoint",
+                    config,
+                    "--root",
+                    d,
+                    "--write",
+                    "--run-id",
+                    "RUN-RETRY",
+                    "--step",
+                    "s12",
+                ]
+            )
+            self.assertEqual(rc_cp, 0)
+            after_write = self._read_checkpoint(d, config)
+            self.assertEqual(after_write["run_id"], "RUN-RETRY")
+            self.assertEqual(after_write["position"]["current_step"], "s12")
+            self.assertEqual(after_write.get("carried_from_run_id"), "RUN-PREV")
+            # Writing a checkpoint for a DIFFERENT run does NOT carry over carried_from_run_id.
+            rc_cp2, _, _ = run(
+                [
+                    "checkpoint",
+                    config,
+                    "--root",
+                    d,
+                    "--write",
+                    "--run-id",
+                    "RUN-NEXT",
+                    "--step",
+                    "s4",
+                ]
+            )
+            self.assertEqual(rc_cp2, 0)
+            after_next = self._read_checkpoint(d, config)
+            self.assertEqual(after_next["run_id"], "RUN-NEXT")
+            self.assertNotIn("carried_from_run_id", after_next)
+            # And if the existing checkpoint is corrupt, `--write` still succeeds without carrying.
+            cfg_obj = cli.cfg.load_config(config)
+            path = cli.checkpoint.resolve_path(d, cfg_obj)
+            path.write_text("{corrupt", encoding="utf-8")
+            rc_cp3, _, _ = run(
+                [
+                    "checkpoint",
+                    config,
+                    "--root",
+                    d,
+                    "--write",
+                    "--run-id",
+                    "RUN-RECOVER",
+                    "--step",
+                    "s10",
+                ]
+            )
+            self.assertEqual(rc_cp3, 0)
+            after_recover = self._read_checkpoint(d, config)
+            self.assertEqual(after_recover["run_id"], "RUN-RECOVER")
+            self.assertNotIn("carried_from_run_id", after_recover)
 
     def test_no_checkpoint_gate_bypass_records_operator(self):
         config = _write_config_with_checkpoint("'true'")

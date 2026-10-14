@@ -1194,13 +1194,17 @@ def _checkpoint_gate(
             {"enforced": True, "status": "invalid", "bypassed": False, "reason": str(exc)},
             f"invalid checkpoint: {exc}",
         )
+    overridden = bool(getattr(args, "run_id", None) and args.run_id != gates_run_id)
+    accepted_ids: Collection[str] = (
+        tuple(rid for rid in (run_id, gates_run_id) if rid) if overridden else ()
+    )
     coverage = checkpoint.covering_checkpoint(
         record,
         run_id,
         CHECKPOINT_MERGE_STEP,
         pr_number=getattr(args, "pr", None),
         head_sha=head_sha,
-        accepted_run_ids=(gates_run_id,) if gates_run_id and gates_run_id != run_id else (),
+        accepted_run_ids=accepted_ids,
         config_path=args.path,
         root=args.root,
     )
@@ -1251,6 +1255,11 @@ def _record_merge_in_checkpoint(
             head_sha=head_sha,
         )
         if merged is None:
+            if adopt or (carried_from_run_id is not None and carried_from_run_id != run_id):
+                return {
+                    "updated": False,
+                    "reason": "checkpoint changed since the gate; adoption refused",
+                }
             return {"updated": False, "reason": f"no checkpoint for run {run_id}"}
         checkpoint.write_checkpoint(path, merged)
         res: dict[str, object] = {
@@ -5315,6 +5324,15 @@ def _cmd_checkpoint(args: argparse.Namespace) -> int:
     path = checkpoint.resolve_path(args.root, config)
     if args.write:
         try:
+            existing = checkpoint.read_checkpoint(path)
+        except (OSError, ValueError):
+            existing = None
+        preserved_carried = (
+            existing.get("carried_from_run_id")
+            if isinstance(existing, dict) and existing.get("run_id") == args.run_id
+            else None
+        )
+        try:
             record = checkpoint.build_checkpoint_record(
                 run_id=args.run_id,
                 command=args.checkpoint_command_name,
@@ -5336,6 +5354,7 @@ def _cmd_checkpoint(args: argparse.Namespace) -> int:
                 capture_state=args.capture_state,
                 close_state=args.close_state,
                 stop_reason=args.stop_reason,
+                carried_from_run_id=preserved_carried,
             )
             checkpoint.write_checkpoint(path, record)
         except checkpoint.CheckpointError as exc:

@@ -117,9 +117,10 @@ def build_checkpoint_record(
     capture_state: str = "not-started",
     close_state: str = "not-started",
     stop_reason: str | None = None,
+    carried_from_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic checkpoint record."""
-    record = {
+    record: dict[str, Any] = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "record_type": RECORD_TYPE_RUN_CHECKPOINT,
         "run_id": run_id,
@@ -161,6 +162,8 @@ def build_checkpoint_record(
             },
         },
     }
+    if carried_from_run_id is not None:
+        record["carried_from_run_id"] = carried_from_run_id
     validate_checkpoint(record)
     return record
 
@@ -354,6 +357,7 @@ def _resolution_checkpoint_command(
     root: str | None = None,
     head_sha: str | None = None,
     pr_number: int | None = None,
+    merge_state: str | None = None,
 ) -> str:
     parts = ["keel checkpoint", shlex.quote(config_path) if config_path else "'<project.yaml>'"]
     if root and root != ".":
@@ -363,6 +367,19 @@ def _resolution_checkpoint_command(
         parts.extend(["--head-sha", shlex.quote(head_sha)])
     if pr_number is not None:
         parts.extend(["--pull-request", str(pr_number)])
+    if merge_state:
+        parts.extend(["--merge-state", shlex.quote(merge_state)])
+    return " ".join(parts)
+
+
+def _resolution_resume_command(
+    *,
+    config_path: str | None = None,
+    root: str | None = None,
+) -> str:
+    parts = ["keel resume", shlex.quote(config_path) if config_path else "'<project.yaml>'"]
+    if root and root != ".":
+        parts.extend(["--root", shlex.quote(str(root))])
     return " ".join(parts)
 
 
@@ -422,7 +439,8 @@ def covering_checkpoint(
             "checkpoint_step": None,
             "reason": (
                 f"no current checkpoint for run {run_id} at step {expected_step} "
-                f"(if {expected_step} completed, record one with: {res_cmd})"
+                f"(valid only if the run genuinely reached {expected_step}; "
+                f"if {expected_step} completed, record one with: {res_cmd})"
             ),
         }
     validate_checkpoint(record)
@@ -458,28 +476,41 @@ def covering_checkpoint(
                 "covered": False,
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
-                    f"(run is at {current_step}; if {expected_step} completed, "
+                    f"(run is at {current_step}; valid only if the run genuinely reached "
+                    f"{expected_step}; if {expected_step} completed, "
                     f"advance it with: {advance_cmd})"
                 ),
             }
         if merge_state == "merged":
+            resume_cmd = _resolution_resume_command(config_path=config_path, root=root)
             return {
                 **base,
                 "status": "already-merged",
                 "covered": False,
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
-                    f"(checkpoint for run {run_id} already records merge: merged)"
+                    f"(checkpoint for run {run_id} already records merge: merged; "
+                    f"continue post-merge steps with: {resume_cmd})"
                 ),
             }
         if merge_state == "pending":
+            clear_cmd = _resolution_checkpoint_command(
+                step=current_step,
+                run_id=run_id,
+                config_path=config_path,
+                root=root,
+                head_sha=checkpoint_head or head_sha,
+                pr_number=checkpoint_pr or pr_number,
+                merge_state="failed",
+            )
             return {
                 **base,
                 "status": "in-flight",
                 "covered": False,
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
-                    f"(checkpoint for run {run_id} records an in-flight merge: pending)"
+                    f"(checkpoint for run {run_id} records an in-flight merge: pending; "
+                    f"if no merge is running and the PR is still open, clear it with: {clear_cmd})"
                 ),
             }
         return {
@@ -494,8 +525,7 @@ def covering_checkpoint(
         and checkpoint_pr == pr_number
         and (
             not accepted_run_ids
-            or checkpoint_run_id is None
-            or checkpoint_run_id in accepted_run_ids
+            or (checkpoint_run_id is not None and checkpoint_run_id in accepted_run_ids)
         )
     )
     id_matches = bool(
@@ -536,8 +566,8 @@ def covering_checkpoint(
                 ),
             }
 
+        advance_run_id = checkpoint_run_id or run_id
         if not reached:
-            advance_run_id = checkpoint_run_id or run_id
             advance_cmd = _resolution_checkpoint_command(
                 step=expected_step,
                 run_id=advance_run_id,
@@ -557,7 +587,8 @@ def covering_checkpoint(
                 "covered": False,
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
-                    f"({detail}; if {expected_step} completed, advance it with: {advance_cmd})"
+                    f"({detail}; valid only if the run genuinely reached {expected_step}; "
+                    f"if {expected_step} completed, advance it with: {advance_cmd})"
                 ),
             }
         target_desc = (
@@ -570,23 +601,35 @@ def covering_checkpoint(
             )
         )
         if merge_state == "merged":
+            resume_cmd = _resolution_resume_command(config_path=config_path, root=root)
             return {
                 **base,
                 "status": "already-merged",
                 "covered": False,
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
-                    f"({target_desc} already records merge: merged)"
+                    f"({target_desc} already records merge: merged; "
+                    f"continue post-merge steps with: {resume_cmd})"
                 ),
             }
         if merge_state == "pending":
+            clear_cmd = _resolution_checkpoint_command(
+                step=current_step,
+                run_id=advance_run_id,
+                config_path=config_path,
+                root=root,
+                head_sha=checkpoint_head,
+                pr_number=checkpoint_pr or pr_number,
+                merge_state="failed",
+            )
             return {
                 **base,
                 "status": "in-flight",
                 "covered": False,
                 "reason": (
                     f"no current checkpoint for run {run_id} at step {expected_step} "
-                    f"({target_desc} records an in-flight merge: pending)"
+                    f"({target_desc} records an in-flight merge: pending; "
+                    f"if no merge is running and the PR is still open, clear it with: {clear_cmd})"
                 ),
             }
         return {
@@ -754,6 +797,9 @@ def validate_checkpoint(record: Any) -> None:
         raise CheckpointError("unsupported record_type")
     if record.get("command") not in COMMANDS:
         raise CheckpointError("unsupported command")
+    carried = record.get("carried_from_run_id")
+    if carried is not None and (not isinstance(carried, str) or not carried.strip()):
+        raise CheckpointError("carried_from_run_id must be a non-empty string when present")
     queue = record.get("queue")
     if not isinstance(queue, dict) or not isinstance(queue.get("issues"), list):
         raise CheckpointError("queue must be an object with issues")
