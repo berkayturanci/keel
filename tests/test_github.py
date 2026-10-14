@@ -474,6 +474,102 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
             github.MERGE_COMMIT_POLL_ATTEMPTS,
         )
 
+    def test_pr_added_lines_extracts_added_lines_and_marks_unverifiable(self):
+        from keel import mergeverify as mv
+
+        payload = json.dumps(
+            [
+                {
+                    "filename": "a.js",
+                    "status": "modified",
+                    "patch": (
+                        "@@ -1,2 +1,5 @@\n context\n-removed\n"
+                        "+added 1\n+\n+   \n+added 2\n+++counter;\n"
+                    ),
+                },
+                {"filename": "empty.py", "status": "added", "changes": 0},
+                {"filename": "mode.py", "status": "modified", "changes": 0},
+                {"filename": "renamed.py", "status": "renamed", "patch": "@@ -0,0 +1 @@\n+x\n"},
+                {"filename": "deleted.py", "status": "removed", "patch": "@@ -1 +0,0 @@\n-x\n"},
+                {"filename": "binary.bin", "status": "modified"},
+                {"filename": "", "status": "modified", "patch": "+x"},
+            ]
+        )
+        mock_run = MagicMock(return_value=_proc(payload))
+        res = github.pr_added_lines(550, _run=mock_run, _sleep=lambda _s: None)
+        self.assertEqual(
+            res,
+            {
+                "a.js": ["added 1", "", "   ", "added 2", "++counter;"],
+                "empty.py": [],
+                "mode.py": [],
+                "renamed.py": None,
+                "deleted.py": None,
+                "binary.bin": None,
+            },
+        )
+        report = mv.verify_merge(
+            landed=["a.js"],
+            overtaken={"a.js": 550},
+            added_by_pr={550: res},
+            parent_contents={"a.js": "context\nadded 1\nadded 2\n++counter;\n"},
+            merged_contents={"a.js": "context\nadded 1\nadded 2\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(
+            report["lost_lines"],
+            {"a.js": {"pr": 550, "count": 1, "samples": ["++counter;"]}},
+        )
+        self.assertIsNone(
+            github.pr_added_lines(
+                550, _run=MagicMock(return_value=_proc("{}", 0)), _sleep=lambda _s: None
+            )
+        )
+
+    def test_commit_file_content_decodes_base64_and_fails_soft(self):
+        import base64
+
+        encoded = base64.b64encode(b"line 1\nline 2\n").decode("ascii")
+        payload = json.dumps({"type": "file", "encoding": "base64", "content": encoded})
+        runner = MagicMock(return_value=_proc(payload))
+        self.assertEqual(
+            github.commit_file_content(
+                "deadbeef",
+                "a/b#1?2.py",
+                _run=runner,
+                _sleep=lambda _s: None,
+            ),
+            "line 1\nline 2\n",
+        )
+        self.assertEqual(
+            runner.call_args[0][0],
+            ["gh", "api", "repos/{owner}/{repo}/contents/a/b%231%3F2.py?ref=deadbeef"],
+        )
+        for bad in (
+            _proc("404", 1),
+            _proc("[]"),
+            _proc(json.dumps({"type": "dir", "encoding": "base64", "content": encoded})),
+            _proc(json.dumps({"type": "file", "encoding": "base64", "content": "!!!not_b64!!!"})),
+            _proc(
+                json.dumps(
+                    {
+                        "type": "file",
+                        "encoding": "base64",
+                        "content": base64.b64encode(b"\xff\xfe").decode("ascii"),
+                    }
+                )
+            ),
+        ):
+            with self.subTest(bad=bad):
+                self.assertIsNone(
+                    github.commit_file_content(
+                        "deadbeef",
+                        "a.py",
+                        _run=MagicMock(return_value=bad),
+                        _sleep=lambda _s: None,
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

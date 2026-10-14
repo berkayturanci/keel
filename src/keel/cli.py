@@ -4844,7 +4844,7 @@ def _overtaking_prs(
     others = reader(timing["base"], timing["branched_at"], timing["merged_at"], cwd=args.root)
     if others is None:
         return {}, False
-    overtaken: dict = {}
+    overtaken: dict[str, list[int]] = {}
     complete = True
     for number in others:
         if number == args.pr:
@@ -4857,8 +4857,8 @@ def _overtaking_prs(
         if files is None:
             complete = False
             continue
-        for path in files:
-            overtaken.setdefault(path, number)
+        for path in dict.fromkeys(files):
+            overtaken.setdefault(path, []).append(number)
     return overtaken, complete
 
 
@@ -4921,7 +4921,26 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             )
             if not ok
         ]
-        report = mergeverify.verify_merge(landed, overtaken=overtaken, intended=intended)
+        landed_set = {p.strip() for p in (landed or []) if p.strip()}
+        shared = {p.strip(): prs for p, prs in overtaken.items() if p.strip() in landed_set}
+        shared_prs = sorted({pr for prs in shared.values() for pr in prs})
+        added_by_pr = {pr: github.pr_added_lines(pr, cwd=args.root) for pr in shared_prs}
+        parent_contents = {
+            path: github.commit_file_content(f"{merge_sha}~1", path, cwd=args.root)
+            for path in sorted(shared)
+        }
+        merged_contents = {
+            path: github.commit_file_content(merge_sha, path, cwd=args.root)
+            for path in sorted(shared)
+        }
+        report = mergeverify.verify_merge(
+            landed,
+            overtaken=overtaken,
+            intended=intended,
+            added_by_pr=added_by_pr,
+            parent_contents=parent_contents,
+            merged_contents=merged_contents,
+        )
         if unreadable:
             note = "could not read " + ", ".join(name for name, _ in unreadable)
             if report["status"] in ("drift", "out-of-scope"):
