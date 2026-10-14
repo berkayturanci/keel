@@ -11343,13 +11343,13 @@ class TestVerifyMergeCommand(unittest.TestCase):
         files_by_pr=None,
         commit_files=None,
         added_by_pr=None,
-        removed_by_pr=None,
+        parent_contents=None,
         file_contents=None,
         argv_extra=(),
     ):
         files_by_pr = files_by_pr or {}
         added_by_pr = added_by_pr or {}
-        removed_by_pr = removed_by_pr or {}
+        parent_contents = parent_contents or {}
         file_contents = file_contents or {}
         with (
             patch("keel.cli.github.pr_merge_window", return_value=window),
@@ -11361,12 +11361,10 @@ class TestVerifyMergeCommand(unittest.TestCase):
                 side_effect=lambda pr, **kw: added_by_pr.get(pr),
             ),
             patch(
-                "keel.cli.github.pr_removed_lines",
-                side_effect=lambda pr, **kw: removed_by_pr.get(pr),
-            ),
-            patch(
                 "keel.cli.github.commit_file_content",
-                side_effect=lambda _sha, path, **kw: file_contents.get(path),
+                side_effect=lambda sha, path, **kw: (
+                    parent_contents.get(path) if sha.endswith("~1") else file_contents.get(path)
+                ),
             ),
         ):
             return run(
@@ -11613,6 +11611,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
             files_by_pr={543: ["CHANGELOG.md"], 550: ["CHANGELOG.md"]},
             commit_files=["CHANGELOG.md"],
             added_by_pr={550: {"CHANGELOG.md": ["- entry 550"]}},
+            parent_contents={"CHANGELOG.md": "# Changelog\n- entry 550\n"},
             file_contents={"CHANGELOG.md": "# Changelog\n- entry 550\n- entry 543\n"},
             argv_extra=("--json",),
         )
@@ -11629,6 +11628,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
             files_by_pr={543: ["a.py"], 550: ["a.py"]},
             commit_files=["a.py"],
             added_by_pr={550: {"a.py": ["missing_line = 1"]}},
+            parent_contents={"a.py": "missing_line = 1\nother_line = 2\n"},
             file_contents={"a.py": "other_line = 2\n"},
             argv_extra=("--json",),
         )
@@ -11653,6 +11653,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
                 550: {"CHANGELOG.md": ["- entry 550"]},
                 551: {"CHANGELOG.md": ["- entry 551"]},
             },
+            parent_contents={"CHANGELOG.md": "# Changelog\n- entry 550\n- entry 551\n"},
             file_contents={"CHANGELOG.md": "# Changelog\n- entry 550\n- entry 543\n"},
             argv_extra=("--json",),
         )
@@ -11665,9 +11666,9 @@ class TestVerifyMergeCommand(unittest.TestCase):
             {"CHANGELOG.md": {"pr": 551, "count": 1, "samples": ["- entry 551"]}},
         )
 
-    def test_shared_file_with_sequential_replacement_is_clean(self):
+    def test_shared_file_with_later_pr_removal_is_clean(self):
         rc, out, _ = self._run(
-            others=[550, 551],
+            others=[551, 550],
             files_by_pr={
                 543: ["a.py"],
                 550: ["a.py"],
@@ -11678,10 +11679,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
                 550: {"a.py": ["x = 1"]},
                 551: {"a.py": ["x = 2"]},
             },
-            removed_by_pr={
-                550: {"a.py": []},
-                551: {"a.py": ["x = 1"]},
-            },
+            parent_contents={"a.py": "x = 2\ny = 3\n"},
             file_contents={"a.py": "x = 2\ny = 3\n"},
             argv_extra=("--json",),
         )

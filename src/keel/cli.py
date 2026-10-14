@@ -4850,7 +4850,10 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
         shared = {p.strip(): prs for p, prs in overtaken.items() if p.strip() in landed_set}
         shared_prs = sorted({pr for prs in shared.values() for pr in prs})
         added_by_pr = {pr: github.pr_added_lines(pr, cwd=args.root) for pr in shared_prs}
-        removed_by_pr = {pr: github.pr_removed_lines(pr, cwd=args.root) for pr in shared_prs}
+        parent_contents = {
+            path: github.commit_file_content(f"{merge_sha}~1", path, cwd=args.root)
+            for path in sorted(shared)
+        }
         merged_contents = {
             path: github.commit_file_content(merge_sha, path, cwd=args.root)
             for path in sorted(shared)
@@ -4860,7 +4863,7 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             overtaken=overtaken,
             intended=intended,
             added_by_pr=added_by_pr,
-            removed_by_pr=removed_by_pr,
+            parent_contents=parent_contents,
             merged_contents=merged_contents,
         )
         if unreadable:

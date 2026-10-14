@@ -320,9 +320,10 @@ def commit_files(sha: str, *, cwd: str | None = None, _run=None, _sleep=None) ->
     )
 
 
-def _pr_patch_lines(
-    pr: int | str, prefix: str, *, cwd: str | None = None, _run=None, _sleep=None
+def pr_added_lines(
+    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
 ) -> dict[str, list[str] | None] | None:
+    """Added lines per file in ``pr`` (#1511). ``None`` value marks an unverifiable file."""
     rows = _json_rows(
         ["gh", "api", f"repos/{{owner}}/{{repo}}/pulls/{pr}/files?per_page=100"],
         cwd=cwd,
@@ -340,26 +341,12 @@ def _pr_patch_lines(
         if row.get("status") not in ("added", "modified"):
             out[path] = None
         elif isinstance(patch, str):
-            out[path] = [line[1:] for line in patch.splitlines() if line.startswith(prefix)]
+            out[path] = [line[1:] for line in patch.splitlines() if line.startswith("+")]
         elif row.get("changes") == 0:
             out[path] = []
         else:
             out[path] = None
     return out
-
-
-def pr_added_lines(
-    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
-) -> dict[str, list[str] | None] | None:
-    """Added lines per file in ``pr`` (#1511). ``None`` value marks an unverifiable file."""
-    return _pr_patch_lines(pr, "+", cwd=cwd, _run=_run, _sleep=_sleep)
-
-
-def pr_removed_lines(
-    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
-) -> dict[str, list[str] | None] | None:
-    """Removed lines per file in ``pr`` (#1511). ``None`` value marks an unverifiable file."""
-    return _pr_patch_lines(pr, "-", cwd=cwd, _run=_run, _sleep=_sleep)
 
 
 def commit_file_content(

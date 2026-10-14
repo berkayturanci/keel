@@ -45,7 +45,7 @@ def verify_merge(
     intended: Sequence[str] | None = None,
     *,
     added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None = None,
-    removed_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None = None,
+    parent_contents: Mapping[str, str | None] | None = None,
     merged_contents: Mapping[str, str | None] | None = None,
 ) -> dict:
     """Judge whether a merge may have silently reverted other merged work.
@@ -61,7 +61,8 @@ def verify_merge(
     ``status``:
 
     * ``drift``      — the merge wrote to files another PR changed after this one
-      branched and lost added lines (or was unverifiable).
+      branched and lost added lines present in the merge commit's first parent (or
+      was unverifiable).
     * ``out-of-scope`` — no drift, but the merge changed files the PR's own
       diff did not list. A different (rarer) way for a merge to do more than it said.
     * ``clean``      — neither (or all shared files retained their added lines).
@@ -78,20 +79,17 @@ def verify_merge(
     collisions: dict[str, int] = {}
     if raw_collisions:
         collisions, lost_lines, unverifiable, unverifiable_by_path = _check_survival(
-            raw_collisions, added_by_pr, removed_by_pr, merged_contents
+            raw_collisions, added_by_pr, parent_contents, merged_contents
         )
         if lost_lines or unverifiable:
             parts: list[str] = []
             for p, info in lost_lines.items():
                 by_pr = info.get("by_pr") or {info["pr"]: {"count": info["count"]}}
                 sub = [f"#{pr_num}: {pr_info['count']} lost" for pr_num, pr_info in by_pr.items()]
-                if p in unverifiable_by_path:
-                    sub.extend(f"#{pr_num}: unverifiable" for pr_num in unverifiable_by_path[p])
                 parts.append(f"{p} ({', '.join(sub)})")
             for p in unverifiable:
-                if p not in lost_lines:
-                    sub = [f"#{pr_num}: unverifiable" for pr_num in unverifiable_by_path[p]]
-                    parts.append(f"{p} ({', '.join(sub)})")
+                sub = [f"#{pr_num}: unverifiable" for pr_num in unverifiable_by_path[p]]
+                parts.append(f"{p} ({', '.join(sub)})")
             return _report(
                 "drift",
                 f"the merge wrote to {len(parts)} file(s) that another pull request "
@@ -131,7 +129,7 @@ def verify_merge(
 def _check_survival(
     collisions: Mapping[str, Sequence[int]],
     added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None,
-    removed_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None,
+    parent_contents: Mapping[str, str | None] | None,
     merged_contents: Mapping[str, str | None] | None,
 ) -> tuple[dict[str, int], dict[str, dict], list[str], dict[str, list[int]]]:
     overtaken: dict[str, int] = {}
@@ -139,29 +137,24 @@ def _check_survival(
     unverifiable: list[str] = []
     unverifiable_by_path: dict[str, list[int]] = {}
     for path, prs in collisions.items():
-        content = (merged_contents or {}).get(path)
-        present = (
-            {line for line in content.splitlines() if line.strip()}
-            if content is not None
-            else set()
-        )
-        active_by_pr: dict[int, list[str]] = {}
-        unverifiable_prs: list[int] = []
-        for pr in prs:
-            added = ((added_by_pr or {}).get(pr) or {}).get(path)
-            if content is None or added is None:
-                unverifiable_prs.append(pr)
-                continue
-            removed = set(((removed_by_pr or {}).get(pr) or {}).get(path) or ())
-            for prev_pr in active_by_pr:
-                active_by_pr[prev_pr] = [
-                    line for line in active_by_pr[prev_pr] if line not in removed
-                ]
-            active_by_pr[pr] = [line for line in added if line.strip()]
+        parent = (parent_contents or {}).get(path)
+        merged = (merged_contents or {}).get(path)
+        pr_added = {pr: ((added_by_pr or {}).get(pr) or {}).get(path) for pr in prs}
+        if parent is None or merged is None or any(lines is None for lines in pr_added.values()):
+            overtaken[path] = prs[0]
+            unverifiable.append(path)
+            unverifiable_by_path[path] = list(prs)
+            continue
+        in_parent = {line for line in parent.splitlines() if line.strip()}
+        in_merged = {line for line in merged.splitlines() if line.strip()}
         missing_all: list[str] = []
         by_pr: dict[int, dict] = {}
-        for pr, active in active_by_pr.items():
-            missing = [line for line in active if line not in present]
+        for pr, lines in pr_added.items():
+            missing = [
+                line
+                for line in (lines or ())
+                if line.strip() and line in in_parent and line not in in_merged
+            ]
             if missing:
                 by_pr[pr] = {"count": len(missing), "samples": missing[:3]}
                 missing_all.extend(missing)
@@ -173,16 +166,10 @@ def _check_survival(
                 "count": len(missing_all),
                 "samples": missing_all[:3],
             }
-            if len(by_pr) > 1 or unverifiable_prs:
+            if len(by_pr) > 1:
                 entry["by_pr"] = by_pr
-            if unverifiable_prs:
-                entry["unverifiable_prs"] = unverifiable_prs
             lost_lines[path] = entry
-        if unverifiable_prs:
-            overtaken.setdefault(path, unverifiable_prs[0])
-            unverifiable.append(path)
-            unverifiable_by_path[path] = unverifiable_prs
-        if path not in overtaken:
+        else:
             overtaken[path] = prs[0]
     return overtaken, lost_lines, unverifiable, unverifiable_by_path
 
@@ -235,8 +222,6 @@ def render(report: dict) -> str:
                 )
                 for sample in pr_info.get("samples") or []:
                     lines.append(f"      - {sample}")
-            for pr_num in info.get("unverifiable_prs") or []:
-                lines.append(f"    {path}  — also changed by #{pr_num} (unverifiable)")
         elif path in unverifiable:
             for pr_num in report.get("unverifiable_prs", {}).get(path, [pr]):
                 lines.append(f"    {path}  — also changed by #{pr_num} (unverifiable)")
