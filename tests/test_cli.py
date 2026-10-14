@@ -1682,7 +1682,7 @@ class TestShip(unittest.TestCase):
     ):
         with tempfile.TemporaryDirectory() as d:
             with (
-                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.changed_files", return_value=[]),
                 patch("keel.git.diff", return_value=""),
                 patch(
                     "keel.git.staged_modified_or_deleted_files",
@@ -1717,6 +1717,87 @@ class TestShip(unittest.TestCase):
                 self.assertEqual(
                     payload["result"]["staged_contamination"]["comparison_source"], "none"
                 )
+
+    def test_ship_default_baseline_uses_branch_diff_or_ledger_declared_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            # 1. With no baseline flags and no ledger record, defaults to branch diff
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/keel/cli.py", "deleted_by_reviewer.py"],
+                ),
+            ):
+                rc, out, err = run(["ship", _write_config("'true'"), "--root", d, "--json"])
+                self.assertEqual(rc, 0)
+                payload = json.loads(out)
+                self.assertTrue(payload["result"]["staged_contamination"]["has_contamination"])
+                self.assertEqual(
+                    payload["result"]["staged_contamination"]["comparison_source"],
+                    "files-since-start",
+                )
+                self.assertEqual(
+                    payload["result"]["staged_contamination"]["suspect_paths"],
+                    ["deleted_by_reviewer.py"],
+                )
+                self.assertIn("deleted_by_reviewer.py", err)
+
+            # 2. When --pull-request matches a prior ship_run record with declared.files, uses that
+            cfg_ledger = _write_config_with_ledger("'true'")
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py", "extra.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch("keel.git.staged_modified_or_deleted_files", return_value=None),
+            ):
+                rc_seed, out_seed, err_seed = run(
+                    [
+                        "ship",
+                        cfg_ledger,
+                        "--root",
+                        d,
+                        "--pull-request",
+                        "77",
+                        "--declared-file",
+                        "src/keel/cli.py",
+                        "--live",
+                        "--append-ledger",
+                        "--capture-status",
+                        "skipped",
+                        "--capture-reason",
+                        "no-lesson",
+                        "--approve-scope",
+                        "filesystem,git,github",
+                        "--operator",
+                        "tester",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc_seed, 0, out_seed + err_seed)
+
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py", "extra.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/keel/cli.py", "extra.py"],
+                ),
+            ):
+                rc_pr, out_pr, err_pr = run(
+                    ["ship", cfg_ledger, "--root", d, "--pull-request", "77", "--json"]
+                )
+                self.assertEqual(rc_pr, 0)
+                payload_pr = json.loads(out_pr)
+                self.assertTrue(payload_pr["result"]["staged_contamination"]["has_contamination"])
+                self.assertEqual(
+                    payload_pr["result"]["staged_contamination"]["comparison_source"],
+                    "implementer-files",
+                )
+                self.assertEqual(
+                    payload_pr["result"]["staged_contamination"]["suspect_paths"],
+                    ["extra.py"],
+                )
+                self.assertIn("extra.py", err_pr)
 
     def test_ship_unreadable_staged_index_with_implementer_file_warns(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1941,6 +2022,49 @@ class TestShip(unittest.TestCase):
             self.assertFalse(jury_outcome["ok"])
             self.assertFalse(jury_outcome["skipped"])
             self.assertEqual(jury_outcome["findings"][0]["source"], "jury:review-checkout")
+
+            # When rev_parse("HEAD") returns None and --head-sha is omitted, jury still
+            # attempts an isolated checkout at "HEAD" rather than silently running in root.
+            with (
+                patch("keel.git.rev_parse", return_value=None),
+                patch.object(jury_mod, "available", return_value=True),
+                patch.object(
+                    swarm_runtime,
+                    "default_runner",
+                    return_value=CommandResult(False, 128, "fatal: HEAD not resolved"),
+                ),
+            ):
+                rc_no_head, out_no_head, _ = run(["ship", config, "--root", d, "--jury", "--json"])
+            self.assertEqual(rc_no_head, 1)
+            payload_no_head = json.loads(out_no_head)
+            jury_outcome_no_head = next(
+                o for o in payload_no_head["result"]["gate_outcomes"] if o["gate"] == "jury"
+            )
+            self.assertFalse(jury_outcome_no_head["ok"])
+            self.assertEqual(jury_outcome_no_head["findings"][0]["source"], "jury:review-checkout")
+
+            # Without a jury gate, --head-sha (e.g. unfetched remote SHA) does not replace
+            # the diff base used by ship.
+            diff_heads: list[str] = []
+
+            def spy_diff(base, head="HEAD", *, cwd=None):
+                diff_heads.append(head)
+                return ""
+
+            with patch("keel.git.diff", side_effect=spy_diff):
+                rc_no_jury, _, _ = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--head-sha",
+                        "deadbeef99999999",
+                        "--json",
+                    ]
+                )
+            self.assertEqual(rc_no_jury, 0)
+            self.assertEqual(diff_heads, ["HEAD", "HEAD"])
 
     def test_worktree_remove_resolves_relative_path_against_root_when_cwd_differs(self):
         with tempfile.TemporaryDirectory() as d:

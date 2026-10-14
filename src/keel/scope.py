@@ -15,6 +15,7 @@ classification so docs-only extras are exempt rather than flagged.
 from __future__ import annotations
 
 import fnmatch
+import os
 import posixpath
 from typing import Any
 
@@ -91,11 +92,16 @@ def verify(
 def _normalize_repo_path(path: str, root: str | None = None) -> str:
     norm = posixpath.normpath(path.replace("\\", "/"))
     if root:
-        root_norm = posixpath.normpath(root.replace("\\", "/")).rstrip("/")
-        if norm == root_norm:
-            return "."
-        elif norm.startswith(root_norm + "/"):
-            norm = norm[len(root_norm) + 1 :]
+        candidates: list[str] = []
+        for raw in (root, os.path.abspath(root), os.path.realpath(root)):
+            cand = posixpath.normpath(raw.replace("\\", "/")).rstrip("/")
+            if cand != "." and cand not in candidates:
+                candidates.append(cand)
+        for root_norm in candidates:
+            if norm == root_norm:
+                return "."
+            if norm.startswith(root_norm + "/"):
+                return norm[len(root_norm) + 1 :]
     return norm
 
 

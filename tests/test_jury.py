@@ -1501,6 +1501,43 @@ class TestRunGateWithHeadSha(unittest.TestCase):
                 self.assertIn("could not prepare review checkout", findings[0].message)
                 self.assertFalse(jury.could_not_run(findings))
 
+    def test_run_gate_config_copy_failure_returns_finding_in_both_modes(self):
+        import os
+        from pathlib import Path
+
+        os.symlink(
+            Path(self.root) / "missing-jury-target.toml",
+            Path(self.root) / "jury.toml",
+        )
+
+        def _fake_runner(argv, cwd=None, **kw):
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            if "worktree" in argv and "add" in argv:
+                Path(argv[4]).mkdir(parents=True, exist_ok=True)
+                return _Proc(0, "")
+            return _Proc(0, "")
+
+        for mode, expected_ok, expected_sev in (
+            ("gating", False, "major"),
+            ("advisory", True, "minor"),
+        ):
+            with self.subTest(mode=mode):
+                ok, findings, timed_out = jury.run_gate(
+                    "diff content",
+                    cwd=self.root,
+                    mode=mode,
+                    head_sha="head123",
+                    _run=_fake_runner,
+                )
+                self.assertEqual(ok, expected_ok)
+                self.assertFalse(timed_out)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0].severity, expected_sev)
+                self.assertEqual(findings[0].source, "jury:review-checkout")
+                self.assertIn("could not copy review configuration", findings[0].message)
+                self.assertFalse(jury.could_not_run(findings))
+
 
 if __name__ == "__main__":
     unittest.main()

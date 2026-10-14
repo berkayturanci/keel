@@ -245,6 +245,33 @@ class TestStandaloneHelpers(unittest.TestCase):
                 self.assertIn("warning: could not read staged files", err.getvalue())
                 self.assertIn("staged files  : warning:", out.getvalue())
 
+            # Default baseline (no --implementer-file or --since) uses branch commit diff
+            args.json = True
+            args.implementer_file = None
+            args.since = None
+            with (
+                patch("keel.git.changed_files", return_value=["src/app.py"]),
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/app.py", "deleted_by_reviewer.py"],
+                ),
+            ):
+                err = io.StringIO()
+                out = io.StringIO()
+                with patch("sys.stderr", err), patch("sys.stdout", out):
+                    code = standalone.cmd_standalone(args)
+                self.assertEqual(code, 0)
+                data = json.loads(out.getvalue())
+                self.assertTrue(data["result"]["staged_contamination"]["has_contamination"])
+                self.assertEqual(
+                    data["result"]["staged_contamination"]["suspect_paths"],
+                    ["deleted_by_reviewer.py"],
+                )
+                self.assertEqual(
+                    data["result"]["staged_contamination"]["comparison_source"],
+                    "files-since-start",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

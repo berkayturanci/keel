@@ -754,13 +754,15 @@ implementation commit, so a looped test-first branch passes it as a single-pass 
 `keel ship .keel/project.yaml --root .` prints, deterministically: the **risk tier** (from
 `tier3_globs` against the diff) → reviewer count, the window state, the gate results, and
 the merge decision. When changes are staged in the git index (for example before a
-fix-round commit at s9, or at s10/s11 after s7/s8 reviewers finish) and you pass
-`--implementer-file <path>` (repeatable; `--declared-file` also supplies this baseline) or
-`--since <ref>` (a committed-history baseline when prior implementation commits exist;
-uncommitted work requires `--implementer-file`), `keel ship` checks `git diff --cached`
-and warns (stderr + JSON field) if staged modified or deleted files fall outside that
-baseline (warns, never refuses; when the index is empty or neither baseline flag is passed,
-`comparison_source` is `none`).
+fix-round commit at s9, or at s10/s11 after s7/s8 reviewers finish), `keel ship` checks
+`git diff --cached --diff-filter=MD` against the baseline — `--implementer-file <path>`
+(repeatable) or `--declared-file <path>`, falling back to the PR's recorded `declared.files`
+in the ledger, `--since <ref>` (a committed-history baseline when prior implementation
+commits exist; uncommitted work requires `--implementer-file`), or by default the branch's
+committed diff against `base_branch` — and warns (stderr + JSON field) if staged modified
+(`M`) or deleted (`D`) files fall outside that baseline (newly added `A` files are not
+flagged; warns, never refuses; `comparison_source` is `none` only when no baseline is
+available).
 Tiers: **tier-3** (any `tier3_globs` match → most reviewers + jury
 auto-on), **tier-1** (all paths in `docs_gate_paths` → fewest reviewers), **tier-2**
 (everything else). `--reviewers N` overrides the count but does **not** suppress the
@@ -836,7 +838,12 @@ if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
   for cfg in jury.toml jury-policy.toml; do
     test -f "$ROOT/$cfg" && test ! -e "$JURY_WT/$cfg" && cp "$ROOT/$cfg" "$JURY_WT/$cfg"
   done
-  test -d "$ROOT/.jury" && test ! -e "$JURY_WT/.jury" && cp -R "$ROOT/.jury" "$JURY_WT/.jury"
+  if test -d "$ROOT/.jury"; then
+    (cd "$ROOT" && find .jury -type f) | while IFS= read -r cfg; do
+      mkdir -p "$(dirname "$JURY_WT/$cfg")"
+      test ! -e "$JURY_WT/$cfg" && cp "$ROOT/$cfg" "$JURY_WT/$cfg"
+    done
+  fi
   (cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
   JURY_RC=$?
   keel worktree-remove "$JURY_WT" --root "$ROOT"
@@ -999,6 +1006,9 @@ reading it); never a sleep loop:
 
 ```bash
 # detached panel launch (do NOT call worktree-remove here):
+ROOT=$(pwd)
+mkdir -p "$ROOT/.keel/worktrees"
+HEAD_SHA=$(git rev-parse HEAD)
 REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
 if test ! -e "$REVIEW_WT" && git worktree add -d "$REVIEW_WT" "$HEAD_SHA"; then
   keel delegate run --provider "$SLOT_PROVIDER" --role review \
@@ -1009,6 +1019,7 @@ else
 fi
 
 # collect + cleanup (in the same or a later shell using the same $RUN_ID and $SLOT_INDEX):
+ROOT=$(pwd)
 REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
 keel delegate wait "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --timeout 900
 WAIT_RC=$?
@@ -1734,4 +1745,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=claude command=ship keel_version=1.32.0 source_sha256=4944d706de40510caee3ee2aba42fbf07142201cb397224494c80af75a0f3d5e generated_sha256=4944d706de40510caee3ee2aba42fbf07142201cb397224494c80af75a0f3d5e -->
+<!-- keel-generated: surface=claude command=ship keel_version=1.32.0 source_sha256=496c83a7943918f403c6ee327fef9a2b00b9ba8ab3c0b47168a2527d18a8889b generated_sha256=496c83a7943918f403c6ee327fef9a2b00b9ba8ab3c0b47168a2527d18a8889b -->

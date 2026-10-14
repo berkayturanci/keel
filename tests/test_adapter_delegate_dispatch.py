@@ -160,34 +160,116 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
         self.assertNotIn("-$$", ship_md)
         self.assertNotIn("-$$", review_cycle_md)
         self.assertNotIn("rather than running the test suite", ship_md)
+        self.assertNotIn("when the index is empty or neither baseline flag is passed", ship_md)
 
-        # Extract the s7 reviewer dispatch bash block from ship.md and verify its behaviour:
+        from keel import cli
+
+        parser = cli.build_parser()
+        # Verify real CLI parser accepts the exact flags used in ship.md snippets:
+        parsed_sync = parser.parse_args(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "claude",
+                "--role",
+                "review",
+                "--prompt-file",
+                "/tmp/p.md",
+                "--cwd",
+                "/tmp/wt",
+                "--timeout",
+                "900",
+                "--project",
+                ".keel/project.yaml",
+                "--activity-run-id",
+                "r1",
+            ]
+        )
+        self.assertEqual(parsed_sync.role, "review")
+        parsed_detach = parser.parse_args(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "claude",
+                "--role",
+                "review",
+                "--prompt-file",
+                "/tmp/p.md",
+                "--cwd",
+                "/tmp/wt",
+                "--timeout",
+                "900",
+                "--project",
+                ".keel/project.yaml",
+                "--detach",
+                "--run-id",
+                "r1-slot-0",
+                "--root",
+                "/tmp/root",
+                "--activity-run-id",
+                "r1",
+            ]
+        )
+        self.assertTrue(parsed_detach.detach)
+        parsed_wait = parser.parse_args(
+            ["delegate", "wait", "r1-slot-0", "--root", "/tmp/root", "--timeout", "900"]
+        )
+        self.assertEqual(parsed_wait.run_id, "r1-slot-0")
+        parsed_rm = parser.parse_args(["worktree-remove", "/tmp/wt", "--root", "/tmp/root"])
+        self.assertEqual(parsed_rm.worktree, "/tmp/wt")
+
+        # Extract the s7 bash blocks from ship.md and verify their behaviour:
         blocks = re.findall(r"```bash\n(.*?)```", ship_md, re.DOTALL)
+        jury_block = next(b for b in blocks if "JURY_WT=" in b)
+        jury_panel_script = jury_block.split("# 2. its ballots", 1)[0]
         reviewer_block = next(b for b in blocks if "--role review" in b and "REVIEW_WT=" in b)
-        # Drop the gate review half so we can test the reviewer slot dispatch in isolation
-        slot_script = reviewer_block.split("# the gate review", 1)[0]
+        slot_script, gate_script = reviewer_block.split("# the gate review", 1)
+        gate_script = "ROOT=$(pwd)\nHEAD_SHA=$(git rev-parse HEAD)\n" + gate_script
+        detach_block = next(b for b in blocks if "--detach" in b and "REVIEW_WT=" in b)
+        detach_launch_script, detach_collect_script = detach_block.split("# collect + cleanup", 1)
+        detach_collect_script = "# collect + cleanup" + detach_collect_script
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             bin_dir = root / "bin"
             bin_dir.mkdir()
             log_file = root / "calls.log"
+            (root / "diff.patch").write_text("diff\n", encoding="utf-8")
+            (root / "jury.toml").write_text("[jury]\n", encoding="utf-8")
+            (root / ".jury" / "sub").mkdir(parents=True)
+            (root / ".jury" / "tracked.toml").write_text("local = true\n", encoding="utf-8")
+            (root / ".jury" / "untracked.toml").write_text("extra = true\n", encoding="utf-8")
+            (root / ".jury" / "sub" / "nested.toml").write_text("n = 1\n", encoding="utf-8")
 
             (bin_dir / "git").write_text(
                 "#!/bin/sh\n"
                 'if [ "$1" = "rev-parse" ]; then echo "abc1234"; exit 0; fi\n'
                 'echo "git $*" >> "$CALL_LOG"\n'
                 'if [ "$FAIL_WORKTREE_ADD" = "1" ]; then exit 128; fi\n'
-                'mkdir -p "$4"\n'
+                'mkdir -p "$4/.jury"\n'
+                'printf "committed = true\\n" > "$4/.jury/tracked.toml"\n'
                 "exit 0\n",
                 encoding="utf-8",
             )
             (bin_dir / "keel").write_text(
-                '#!/bin/sh\necho "keel $*" >> "$CALL_LOG"\nexit 0\n',
+                '#!/bin/sh\necho "keel $*" >> "$CALL_LOG"\n'
+                'if [ "$1" = "worktree-remove" ]; then rm -rf "$2"; fi\n'
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            (bin_dir / "jury").write_text(
+                "#!/bin/sh\n"
+                'cat .jury/tracked.toml > "$JURY_CHECK_TRACKED"\n'
+                'cat .jury/untracked.toml > "$JURY_CHECK_UNTRACKED"\n'
+                'cat .jury/sub/nested.toml > "$JURY_CHECK_NESTED"\n'
+                "exit 0\n",
                 encoding="utf-8",
             )
             os.chmod(bin_dir / "git", 0o755)
             os.chmod(bin_dir / "keel", 0o755)
+            os.chmod(bin_dir / "jury", 0o755)
 
             env = {
                 **os.environ,
@@ -196,7 +278,12 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 "RUN_ID": "r1",
                 "SLOT_INDEX": "0",
                 "SLOT_PROVIDER": "claude",
+                "GATE_PROVIDER": "codex",
                 "RUBRIC_AND_DIFF": "/tmp/prompt.md",
+                "DIFF": str(root / "diff.patch"),
+                "JURY_CHECK_TRACKED": str(root / "checked_tracked.txt"),
+                "JURY_CHECK_UNTRACKED": str(root / "checked_untracked.txt"),
+                "JURY_CHECK_NESTED": str(root / "checked_nested.txt"),
             }
 
             # 1. When git worktree add fails, keel delegate run must NOT be dispatched
@@ -230,6 +317,80 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                     c.startswith("keel worktree-remove ") and f"--root {root.resolve()}" in c
                     for c in calls_on_ok
                 )
+            )
+
+            # 3. Gate block executes in isolated checkout and cleans up
+            log_file.unlink(missing_ok=True)
+            res_gate = subprocess.run(
+                ["bash", "-c", gate_script],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_gate.returncode, 0, res_gate.stderr)
+            gate_calls = log_file.read_text(encoding="utf-8").splitlines()
+            self.assertTrue(any("--role gate" in c for c in gate_calls))
+            self.assertTrue(any("review-r1-gate" in c for c in gate_calls))
+
+            # 4. Jury block merges untracked .jury files while preserving tracked .jury files
+            log_file.unlink(missing_ok=True)
+            res_jury = subprocess.run(
+                ["bash", "-c", jury_panel_script],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_jury.returncode, 0, res_jury.stderr)
+            self.assertEqual(
+                (root / "checked_tracked.txt").read_text(encoding="utf-8"),
+                "committed = true\n",
+            )
+            self.assertEqual(
+                (root / "checked_untracked.txt").read_text(encoding="utf-8"),
+                "extra = true\n",
+            )
+            self.assertEqual(
+                (root / "checked_nested.txt").read_text(encoding="utf-8"),
+                "n = 1\n",
+            )
+
+            # 5. Detached launch and collect+cleanup run in separate fresh shells
+            log_file.unlink(missing_ok=True)
+            res_launch = subprocess.run(
+                ["bash", "-c", detach_launch_script],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_launch.returncode, 0, res_launch.stderr)
+            res_collect = subprocess.run(
+                ["bash", "-c", detach_collect_script],
+                cwd=root,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(res_collect.returncode, 0, res_collect.stderr)
+            detach_calls = log_file.read_text(encoding="utf-8").splitlines()
+            self.assertTrue(
+                any(
+                    c.startswith("keel delegate wait r1-slot-0 ")
+                    and f"--root {root.resolve()}" in c
+                    for c in detach_calls
+                ),
+                detach_calls,
+            )
+            self.assertTrue(
+                any(
+                    c.startswith("keel worktree-remove ")
+                    and f"{root.resolve()}/.keel/worktrees/review-r1-slot-0" in c
+                    and f"--root {root.resolve()}" in c
+                    for c in detach_calls
+                ),
+                detach_calls,
             )
 
     def test_the_detach_primitive_replaces_sleep_polling_advice(self):

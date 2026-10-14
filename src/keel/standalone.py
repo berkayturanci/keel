@@ -224,7 +224,11 @@ def cmd_standalone(args: argparse.Namespace) -> int:
         files_since = (
             git.changed_files_since(since_arg, head="HEAD", cwd=args.root)
             if since_arg and impl_files is None
-            else None
+            else (
+                git.changed_files(config.base_branch, "HEAD", cwd=args.root) or None
+                if impl_files is None
+                else None
+            )
         )
         since_unreadable = bool(since_arg and impl_files is None and files_since is None)
         staged_md = (

@@ -1934,11 +1934,13 @@ and the shared deferral queue. Project-specific changed-file gates and recap des
 stay in policy packs and extensions. Wrap also receives the run-ledger contract so session
 recaps can include structured ship outcomes offline.
 
-When changes are staged in the git index (`git diff --cached`) and a baseline is supplied via
-`--implementer-file` or `--since`, `keel wrap` checks the staged change set and warns (stderr
-+ JSON `staged_contamination` / `warnings` fields) if deleted or modified paths outside the
-implementer run are staged, or if `--since` cannot be resolved from git history or has no
-committed files (uncommitted work requires `--implementer-file`). Warns, never refuses.
+When changes are staged in the git index (`git diff --cached --diff-filter=MD`), `keel wrap`
+compares staged modified (`M`) and deleted (`D`) paths (newly added `A` files are excluded)
+against `--implementer-file`, `--since`, or by default the branch's committed diff against
+`base_branch`, and warns (stderr + JSON `staged_contamination` / `warnings` fields) if
+staged modified or deleted paths fall outside the implementer run, or if `--since` cannot be
+resolved from git history or has no committed files (uncommitted work requires
+`--implementer-file`). Warns, never refuses.
 
 ```bash
 keel wrap .keel/project.yaml --json
@@ -2783,11 +2785,14 @@ check-rollup through the selected GitHub transport), each gate's result, and the
 **merge decision**
 (`MERGE` / `DEFER` / `BLOCK`).
 
-`--implementer-file <path>` (repeatable) and `--since <ref|when>` (committed-history
-heuristic when commits exist since `WHEN`; uncommitted work requires `--implementer-file`)
-check the staged change set for contamination: if deleted or modified paths outside the
-implementer run are staged in the index, a warning is emitted on stderr and recorded in the
-JSON result's `warnings` and `staged_contamination` blocks (warns, never blocks).
+`--implementer-file <path>` (repeatable; falling back to `--declared-file` or the PR's
+ledger `declared.files`), `--since <ref|when>` (committed-history heuristic when commits
+exist since `WHEN`; uncommitted work requires `--implementer-file`), or by default the
+branch's committed diff against `base_branch` check the staged change set (`git diff --cached
+--diff-filter=MD`) for contamination: if deleted (`D`) or modified (`M`) paths outside the
+baseline are staged in the index (newly added `A` files are excluded), a warning is emitted
+on stderr and recorded in the JSON result's `warnings` and `staged_contamination` blocks
+(warns, never blocks).
 
 With `--pr N`, `keel ship` also reads the pull request's labels and, when the evidence gate
 governs the PR (the same `gate_decision` as `evidence-verify`, fed the PR's own head ref and reviews from the pulls API, its comments from the issues API, its labels

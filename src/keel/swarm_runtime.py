@@ -283,7 +283,7 @@ class ReviewCheckoutError(RuntimeError):
 
 
 def review_worktree_path(name: str, root: str | Path = ".", *, run_id: str | None = None) -> Path:
-    """A reviewer seat's resolved checkout path under .keel/worktrees/."""
+    """Resolved checkout path under .keel/worktrees/ for an isolated review worktree."""
     leaf = f"review-{name}-{run_id}" if run_id else f"review-{name}"
     return Path(root).resolve() / ".keel" / "worktrees" / leaf
 
@@ -297,10 +297,11 @@ def review_checkout(
     run_id: str | None = None,
     runner: SubprocessRunner | None = None,
 ):
-    """Context manager providing an isolated detached worktree at ``head_sha`` for a reviewer seat.
+    """Context manager providing an isolated detached worktree at ``head_sha`` for a review run.
 
     Allocates a unique invocation-owned path (refusing without deleting if an explicit
-    ``run_id`` path already exists) and removes only that path on exit.
+    ``run_id`` path already exists), copies untracked ``jury.toml``, ``jury-policy.toml``,
+    and ``.jury`` entries without overwriting tracked files, and removes only that path on exit.
     """
     root_path = Path(root).resolve()
     token = run_id if run_id is not None else uuid.uuid4().hex[:12]
@@ -322,14 +323,24 @@ def review_checkout(
         why = added.output.strip()[:200] or f"exit {added.code}"
         raise ReviewCheckoutError(f"could not create review checkout at {checkout}: {why}")
     try:
-        for cfg_name in ("jury.toml", "jury-policy.toml", ".jury"):
-            src_cfg = root_path / cfg_name
-            dst_cfg = checkout / cfg_name
-            if src_cfg.exists() and not dst_cfg.exists():
+        try:
+            for cfg_name in ("jury.toml", "jury-policy.toml", ".jury"):
+                src_cfg = root_path / cfg_name
                 if src_cfg.is_dir():
-                    shutil.copytree(src_cfg, dst_cfg)
+                    srcs = [p for p in sorted(src_cfg.rglob("*")) if not p.is_dir()]
+                elif os.path.lexists(src_cfg):
+                    srcs = [src_cfg]
                 else:
-                    shutil.copy2(src_cfg, dst_cfg)
+                    srcs = []
+                for src_file in srcs:
+                    dst_file = checkout / src_file.relative_to(root_path)
+                    if not os.path.lexists(dst_file):
+                        dst_file.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_file, dst_file)
+        except OSError as exc:
+            raise ReviewCheckoutError(
+                f"could not copy review configuration into {checkout}: {exc}"
+            ) from exc
         yield checkout
     finally:
         if not remove_swarm_worktree(root_path, checkout, runner=run):

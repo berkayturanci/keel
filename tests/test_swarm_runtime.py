@@ -3456,16 +3456,19 @@ class ReviewCheckoutTests(unittest.TestCase):
             root = Path(tmpdir)
             (root / "jury.toml").write_text("[jury]\ndecision = 'vote'\n", encoding="utf-8")
             (root / "jury-policy.toml").write_text("strict = true\n", encoding="utf-8")
-            (root / ".jury").mkdir()
+            (root / ".jury" / "sub").mkdir(parents=True)
+            (root / ".jury" / "tracked.toml").write_text("local-edit = true\n", encoding="utf-8")
             (root / ".jury" / "policy.toml").write_text("rules = []\n", encoding="utf-8")
-            # Symlink and missing files are skipped; pre-existing tracked file in checkout is kept
-            (root / " tracked.txt").write_text("x", encoding="utf-8")
+            (root / ".jury" / "sub" / "nested.toml").write_text("x = 1\n", encoding="utf-8")
 
             def fake_runner(cmd, cwd):
                 if "add" in cmd:
                     wt_dir = Path(cmd[4])
-                    wt_dir.mkdir(parents=True, exist_ok=True)
+                    (wt_dir / ".jury").mkdir(parents=True, exist_ok=True)
                     (wt_dir / "jury-policy.toml").write_text("tracked = true\n", encoding="utf-8")
+                    (wt_dir / ".jury" / "tracked.toml").write_text(
+                        "committed = true\n", encoding="utf-8"
+                    )
                 return CommandResult(True, 0, "")
 
             err = io.StringIO()
@@ -3482,12 +3485,36 @@ class ReviewCheckoutTests(unittest.TestCase):
                         (wt / ".jury" / "policy.toml").read_text(encoding="utf-8"),
                         "rules = []\n",
                     )
-                    # Tracked file already in checkout is not overwritten
+                    self.assertEqual(
+                        (wt / ".jury" / "sub" / "nested.toml").read_text(encoding="utf-8"),
+                        "x = 1\n",
+                    )
+                    # Tracked files already in checkout are not overwritten
                     self.assertEqual(
                         (wt / "jury-policy.toml").read_text(encoding="utf-8"),
                         "tracked = true\n",
                     )
+                    self.assertEqual(
+                        (wt / ".jury" / "tracked.toml").read_text(encoding="utf-8"),
+                        "committed = true\n",
+                    )
             self.assertIn("warning: could not remove review checkout", err.getvalue())
+
+    def test_review_checkout_translates_config_copy_oserror_to_review_checkout_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".jury").mkdir()
+            os.symlink(root / "nonexistent-target.toml", root / ".jury" / "broken.toml")
+
+            def fake_runner(cmd, cwd):
+                if "add" in cmd:
+                    Path(cmd[4]).mkdir(parents=True, exist_ok=True)
+                return CommandResult(True, 0, "")
+
+            with self.assertRaises(ReviewCheckoutError) as cm:
+                with review_checkout("head123", name="jury", root=root, runner=fake_runner):
+                    pass
+            self.assertIn("could not copy review configuration", str(cm.exception))
 
 
 if __name__ == "__main__":

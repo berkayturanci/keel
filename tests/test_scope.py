@@ -1,5 +1,6 @@
 """Tests for pure branch-scope verification (declared files vs. PR diff)."""
 
+import os
 import unittest
 from types import SimpleNamespace
 
@@ -208,6 +209,22 @@ class TestStagedContamination(unittest.TestCase):
             root="/repo",
         )
         self.assertFalse(res_root["has_contamination"])
+
+        cwd_abs = os.path.abspath("src/b.py")
+        res_dot_root = scope.check_staged_contamination(
+            ["src/b.py"],
+            implementer_files=[cwd_abs],
+            root=".",
+        )
+        self.assertFalse(res_dot_root["has_contamination"])
+        self.assertEqual(res_dot_root["suspect_paths"], [])
+
+        res_dot_root_dir = scope.check_staged_contamination(
+            ["src/b.py"],
+            implementer_files=[os.path.abspath(".")],
+            root=".",
+        )
+        self.assertFalse(res_dot_root_dir["has_contamination"])
 
     def test_contaminated_against_implementer_files(self):
         res = scope.check_staged_contamination(

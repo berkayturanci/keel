@@ -276,6 +276,9 @@ def _consensus_finding(data: dict | str, *, gating: bool) -> Finding | None:
 #: The source of the findings a jury gate carries over from a reused panel (#1437).
 REUSED_SOURCE = "jury:reused"
 
+#: The source of the finding emitted when an isolated review checkout cannot be prepared (#1516).
+REVIEW_CHECKOUT_SOURCE = "jury:review-checkout"
+
 
 def reuse_posted_verdict(body: str, *, gating: bool) -> tuple[bool, list[Finding]] | None:
     """The jury gate's outcome read off the panel already posted for the head (#1437).
@@ -333,9 +336,6 @@ def reuse_posted_verdict(body: str, *, gating: bool) -> tuple[bool, list[Finding
     return (not blocked), findings
 
 
-REVIEW_CHECKOUT_SOURCE = "jury:review-checkout"
-
-
 def could_not_run(findings) -> bool:
     """Did this jury gate result come back without running (no CLI, or an empty diff)?"""
     return any(f.source == NOT_RUN_SOURCE for f in findings)
@@ -351,6 +351,11 @@ def run_gate(
     _run=None,
 ) -> tuple[bool, list[Finding], bool]:
     """Run ``jury`` on ``diff_text`` and map its findings.
+
+    When ``head_sha`` is provided, executes ``jury`` inside an isolated detached checkout of
+    ``head_sha`` created via :func:`keel.swarm_runtime.review_checkout` (under ``cwd``) and
+    removed on exit; a checkout setup failure returns a ``major`` (gating) or ``minor``
+    (advisory) finding from :data:`REVIEW_CHECKOUT_SOURCE`.
 
     Returns ``(ok, findings, timed_out)``. ``ok`` is False when a finding blocks
     (critical/major) or when the run produced no verdict at all in gating mode — and, in

@@ -1878,8 +1878,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     has_jury_gate = any(spec.kind == "builtin" and spec.id == gates.JURY_ID for spec in specs)
-    jury_head_sha = getattr(args, "head_sha", None) or (
-        git.rev_parse("HEAD", cwd=args.root) if has_jury_gate else None
+    jury_head_sha = (
+        getattr(args, "head_sha", None) or git.rev_parse("HEAD", cwd=args.root) or "HEAD"
+        if has_jury_gate
+        else None
     )
     diff_text = git.diff(base_ref, jury_head_sha or "HEAD", cwd=args.root)
     posted = _posted_panel(
@@ -2150,6 +2152,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             "redaction_count": fallback.audit["redaction_count"],
         }
     impl_files = getattr(args, "implementer_file", None) or getattr(args, "declared_file", None)
+    if impl_files is None and (args.ledger_pr or args.pr) is not None:
+        prior_run = ledger.latest_ship_run_for_pr(
+            existing_ledger_records, args.ledger_pr or args.pr
+        )
+        if prior_run is not None:
+            impl_files = ledger.declared_files_for_record(prior_run)
     since_arg = getattr(args, "since", None)
     files_since = (
         git.changed_files_since(since_arg, head="HEAD", cwd=args.root)
@@ -2157,11 +2165,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         else None
     )
     since_unreadable = bool(since_arg and impl_files is None and files_since is None)
+    default_branch_baseline = bool(impl_files is None and not since_arg and changed_read)
     staged_md = (
         git.staged_modified_or_deleted_files(cwd=args.root)
-        if impl_files is not None or files_since
+        if impl_files is not None or files_since or default_branch_baseline
         else None
     )
+    if default_branch_baseline and staged_md is not None:
+        files_since = changed_read
     staged_contamination = scope.check_staged_contamination(
         staged_md,
         implementer_files=impl_files,

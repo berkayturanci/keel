@@ -577,7 +577,7 @@ def staged_modified_or_deleted_files(*, cwd: str | None = None, _run=None) -> li
 
 
 _SINCE_DATE_RE = re.compile(
-    r"\A(?:\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|\d+\s+(?:second|minute|hour|day|week|month|year)s?\s+ago|yesterday|today)\b",
+    r"\A(?:\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}|\b)|\d{1,2}:\d{2}\b|(?:\d+\s+(?:second|minute|hour|day|week|month|year)s?\s+ago|yesterday|today)\b)",
     re.IGNORECASE,
 )
 

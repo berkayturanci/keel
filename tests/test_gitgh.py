@@ -1209,6 +1209,9 @@ class StagedAndChangedSinceTests(unittest.TestCase):
         self.assertEqual(files, ["a.py", "b.py"])
         self.assertEqual(calls[-1][-1], "--")
 
+        files_iso = git.changed_files_since("2026-10-14T08:00:00Z", _run=run)
+        self.assertEqual(files_iso, ["a.py", "b.py"])
+
     def test_changed_files_since_git_log_error_and_non_date_label_refusal(self):
         calls = []
 
