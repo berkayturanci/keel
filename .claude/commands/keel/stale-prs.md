@@ -96,6 +96,34 @@ A PR both behind and a stale draft → drift; a clean stale draft → abandoned.
 merge-state cannot be classified and that do not match the abandoned criteria are dropped
 with a one-line stdout note and no comment.
 
+## Step 2b — blocker-cleared PRs (read-only)
+
+A PR can be idle only because its body says it waits on something — `blocked by #N`,
+`depends on #N`, `do not merge before #N` / `before <tag>` — and that something has since
+landed. Activity age never shows it. Run the read-only check and surface the result,
+independent of the staleness cutoff:
+
+```bash
+keel stale-blockers --root . --json
+```
+
+Print the result as a **"Blocker status"** list. For each PR in `prs`, add a line to the
+summary naming the cleared blockers. `abandoned` ones (a PR closed unmerged, an issue closed as
+not planned) are reported as such, not as cleared; a PR whose blockers are all abandoned is
+"blocker abandoned — needs a decision", not cleared. Note that `all_cleared` is a best-effort
+hint for an operator to look at, never a certificate ("blockers look cleared — check the PR"):
+an operator must read the PR before acting. A PR with `incomplete: true` has a reference the
+parser could not read, and one with `blockers: []` is reported as "blocker reference could not
+be read". Otherwise list the still-pending or `unknown` ones, with each `unknown` entry's
+`reason`. A blocker whose state is `unknown` could not be read and is not treated as cleared.
+Exit code 2 means `unknown_blockers` is above zero, and `truncated: true` means only the first
+`--limit` open PRs were read (even when the command exits 0): say how many blockers could not be
+checked and/or that the open-PR scan was truncated at `--limit` (pass a higher `--limit` to read
+more), and never report an empty or short list as "no blocker has cleared".
+If the command exits 1 (`ok: false`), print one note that blocker state could not be read and
+carry on. This step never comments, edits or merges; a cleared blocker is a prompt for the
+author or `/keel:ship`, not an action taken here.
+
 ## Step 3 — build the per-PR triage comment
 
 Build a comment body whose **literal first line** is a codename `STALE-PRS-<DATE>-<UTC_TIMESTAMP>`
@@ -154,7 +182,8 @@ merging here.
 Print a summary table: PR · title · bucket · action, where action is one of `commented`,
 `already-commented-today`, `merge-pushed`, `conflict-skipped`, `dry-run-noted`,
 `error-skipped — <reason>`. If no PR is stale at the threshold, print a single line
-`No stale PRs at threshold <days> days.`
+`No stale PRs at threshold <days> days.` instead of the table. Either way, then print the
+"Blocker status" list from Step 2b: it does not depend on the staleness cutoff.
 
 ## Stop conditions / invariants
 
@@ -168,4 +197,4 @@ Print a summary table: PR · title · bucket · action, where action is one of `
 - **Never modify a PR's tree** beyond the merge commit that brings in `base_branch`.
 - Fail-soft per PR; deterministic ordering.
 
-<!-- keel-generated: surface=claude command=stale-prs keel_version=1.32.0 source_sha256=c38026730f14278d6bb7c41bc9ee38d2b1ed30b9c9ca370c079291613c0dd67a generated_sha256=c38026730f14278d6bb7c41bc9ee38d2b1ed30b9c9ca370c079291613c0dd67a -->
+<!-- keel-generated: surface=claude command=stale-prs keel_version=1.32.0 source_sha256=733d1b42c3acb41a72dcb44663a7c16dec7fd5489a1815bd983c17ef87398a42 generated_sha256=733d1b42c3acb41a72dcb44663a7c16dec7fd5489a1815bd983c17ef87398a42 -->

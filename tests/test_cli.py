@@ -7,6 +7,7 @@ import io
 import itertools
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -2715,10 +2716,11 @@ class TestShip(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
             rc, out, _ = run(
                 [
                     "ship",
-                    _write_config_with_ledger("'true'"),
+                    config,
                     "--root",
                     d,
                     "--live",
@@ -2730,32 +2732,34 @@ class TestShip(unittest.TestCase):
                     "tester",
                 ]
             )
-        self.assertEqual(rc, 1)
-        data = json.loads(out)
-        self.assertEqual(
-            data["error"], "--capture-status is required when --live --append-ledger is used"
-        )
+            self.assertEqual(rc, 1)
+            data = json.loads(out)
+            self.assertTrue(
+                data["error"].startswith(
+                    "--capture-status is required when --live --append-ledger is used;"
+                )
+            )
+            cmd = data["error"].split(": `", 1)[1].rstrip("`")
+            rc2, out2, _ = run(shlex.split(cmd)[1:] + ["--json"])
+            self.assertEqual(rc2, 0)
+            self.assertTrue(json.loads(out2)["result"]["run_ledger"]["appended"])
 
     def test_ship_live_append_requires_capture_status_human_output(self):
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as d:
-            rc, _, err = run(
-                [
-                    "ship",
-                    _write_config_with_ledger("'true'"),
-                    "--root",
-                    d,
-                    "--live",
-                    "--append-ledger",
-                    "--approve-scope",
-                    "filesystem,git,github",
-                    "--operator",
-                    "tester",
-                ]
-            )
+        rc, _, err = run(
+            [
+                "ship",
+                _write_config_with_ledger("'true'"),
+                "--live",
+                "--append-ledger",
+                "--approve-scope",
+                "filesystem,git,github",
+                "--operator",
+                "tester",
+            ]
+        )
         self.assertEqual(rc, 1)
         self.assertIn("--capture-status is required", err)
+        self.assertIn("--capture-status not-run", err)
 
     def test_ship_rejects_invalid_capture_status_before_command_runs(self):
         parser = cli.build_parser()
@@ -3112,10 +3116,55 @@ class TestShip(unittest.TestCase):
         self.assertIn("ledger append : yes", first_out)
         self.assertIn("ledger append : skipped", second_out)
         self.assertIn("this head already has a capture marker (run ship-42)", second_out)
+        self.assertIn(
+            "to re-record gates on this head without a capture marker: `keel ship ", second_out
+        )
         self.assertEqual(len(json.loads(read_json)["records"]), 1)
         # …and the session stays verifiable, which is the whole point.
         self.assertEqual(verify_rc, 0)
         self.assertNotIn("multiple capture markers", verify_out)
+
+    def test_duplicate_capture_marker_suggested_command_resolves_refusal(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            config = _write_config_with_ledger("'true'")
+            argv = [
+                "ship",
+                config,
+                "--root",
+                d,
+                "--live",
+                "--append-ledger",
+                "--run-id",
+                "ship-42",
+                "--issue",
+                "1507",
+                "--pull-request",
+                "7",
+                "--head-sha",
+                "a" * 40,
+                "--capture-status",
+                "skipped",
+                "--approve-scope",
+                "filesystem,git,github",
+                "--operator",
+                "tester",
+            ]
+            run(argv)
+            _, second_out, _ = run(argv)
+            self.assertIn("capture marker: `keel ship ", second_out)
+            cmd = second_out.split("capture marker: `", 1)[1].split("`", 1)[0]
+            retry_argv = shlex.split(cmd.replace("<new-run-id>", "ship-43"))[1:] + ["--json"]
+            rc, retry_out, _ = run(retry_argv)
+            retry_ledger = json.loads(retry_out)["result"]["run_ledger"]
+            records = ledger.read_records(retry_ledger["path"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(retry_ledger["appended"])
+        self.assertNotIn("skipped", retry_ledger)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[-1]["run_id"], "ship-43")
+        self.assertTrue(ledger.gates_pass_for_head(records, 7, "a" * 40)[0])
 
     def test_capture_verify_reports_complete_from_ledger_marker(self):
         import tempfile
@@ -11857,22 +11906,53 @@ class TestMergeCheckpointGate(unittest.TestCase):
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:
             rc, out, _ = self._run_merge(config=config, root=d)
-        data = json.loads(out)
-        self.assertEqual(rc, 1)
-        self.assertFalse(data["merged"])
-        self.assertEqual(data["checkpoint_gate"]["status"], "missing")
-        self.assertIn("no current checkpoint for run RUN-1 at step s10", data["reason"])
+            data = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertFalse(data["merged"])
+            self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+            self.assertIn("no current checkpoint for run RUN-1 at step s10", data["reason"])
+            self.assertIn("write it: `keel checkpoint ", data["reason"])
+            cmd = data["reason"].split(": `", 1)[1].rstrip("`")
+            self.assertEqual(run(shlex.split(cmd)[1:])[0], 0)
+            rc2, out2, _ = self._run_merge(config=config, root=d)
+        self.assertEqual(rc2, 0)
+        self.assertTrue(json.loads(out2)["merged"])
+
+    def test_merge_refused_when_checkpoint_is_for_another_run(self):
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(d, config, run_id="RUN-OLD", step="s10")
+            rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-NEW")
+            data = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+            self.assertIn(
+                "no current checkpoint for run RUN-NEW at step s10 (checkpoint is for run RUN-OLD)",
+                data["reason"],
+            )
+            self.assertIn("write it: `keel checkpoint ", data["reason"])
+            cmd = data["reason"].split(": `", 1)[1].rstrip("`")
+            self.assertEqual(run(shlex.split(cmd)[1:])[0], 0)
+            rc2, out2, _ = self._run_merge(config=config, root=d, run_id="RUN-NEW")
+        self.assertEqual(rc2, 0)
+        self.assertTrue(json.loads(out2)["merged"])
 
     def test_merge_refused_when_checkpoint_is_stale_step(self):
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:
             self._write_checkpoint(d, config, run_id="RUN-1", step="s6")
             rc, out, _ = self._run_merge(config=config, root=d)
-        data = json.loads(out)
-        self.assertEqual(rc, 1)
-        self.assertFalse(data["merged"])
-        self.assertEqual(data["checkpoint_gate"]["status"], "stale-step")
-        self.assertIn("run is at s6", data["reason"])
+            data = json.loads(out)
+            self.assertEqual(rc, 1)
+            self.assertFalse(data["merged"])
+            self.assertEqual(data["checkpoint_gate"]["status"], "stale-step")
+            self.assertIn("run is at s6", data["reason"])
+            self.assertIn("advance it: `keel checkpoint ", data["reason"])
+            cmd = data["reason"].split(": `", 1)[1].rstrip("`")
+            self.assertEqual(run(shlex.split(cmd)[1:])[0], 0)
+            rc2, out2, _ = self._run_merge(config=config, root=d)
+        self.assertEqual(rc2, 0)
+        self.assertTrue(json.loads(out2)["merged"])
 
     def test_merge_refused_when_no_run_id_available(self):
         config = _write_config_with_checkpoint("'true'")
@@ -11882,6 +11962,15 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(data["checkpoint_gate"]["status"], "missing")
         self.assertIn("no run-id is available", data["reason"])
+        self.assertIn("--no-checkpoint-gate --operator tester", data["reason"])
+        gate_payload, gate_error = cli._checkpoint_gate(
+            Namespace(no_checkpoint_gate=False, root=".", path=config, pr=123),
+            cli.cfg.load_config(config),
+            run_id=None,
+            operator=None,
+        )
+        self.assertEqual(gate_payload["status"], "missing")
+        self.assertIn("--no-checkpoint-gate --operator <operator>", gate_error)
 
     def test_explicit_run_id_overrides_gates_pass_run_id(self):
         config = _write_config_with_checkpoint("'true'")

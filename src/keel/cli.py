@@ -1071,6 +1071,7 @@ def _checkpoint_gate(
     *,
     run_id: str | None,
     operator: str | None,
+    head_sha: str | None = None,
 ) -> tuple[dict[str, object], str | None]:
     """Gate the merge on a covering checkpoint for the run at step s10.
 
@@ -1123,6 +1124,11 @@ def _checkpoint_gate(
         )
 
     if not run_id:
+        bypass = (
+            f"--no-checkpoint-gate --operator {shlex.quote(operator)}"
+            if operator
+            else "--no-checkpoint-gate --operator <operator>"
+        )
         return (
             {
                 "enforced": True,
@@ -1136,7 +1142,7 @@ def _checkpoint_gate(
             },
             (
                 "checkpointing is configured but no run-id is available for the "
-                "checkpoint gate; pass --run-id or use --no-checkpoint-gate"
+                f"checkpoint gate; pass --run-id <run-id> or bypass with {bypass}"
             ),
         )
 
@@ -1148,7 +1154,15 @@ def _checkpoint_gate(
             {"enforced": True, "status": "invalid", "bypassed": False, "reason": str(exc)},
             f"invalid checkpoint: {exc}",
         )
-    coverage = checkpoint.covering_checkpoint(record, run_id, CHECKPOINT_MERGE_STEP)
+    coverage = checkpoint.covering_checkpoint(
+        record,
+        run_id,
+        CHECKPOINT_MERGE_STEP,
+        path=args.path,
+        root=args.root,
+        pull_request=args.pr,
+        head_sha=head_sha,
+    )
     gate_payload = {
         "enforced": True,
         "status": coverage["status"],
@@ -1403,7 +1417,11 @@ def _cmd_merge(args: argparse.Namespace) -> int:
                 )
 
         gate_payload, gate_error = _checkpoint_gate(
-            args, config, run_id=args.run_id or gates_run_id, operator=approval_operator
+            args,
+            config,
+            run_id=args.run_id or gates_run_id,
+            operator=approval_operator,
+            head_sha=head_sha,
         )
         payload["checkpoint_gate"] = gate_payload
         if gate_error is not None:
@@ -1639,6 +1657,39 @@ def _ship_base_ref(base_branch: str, root: str) -> str:
     return remote_ref if git.resolve_ref(remote_ref, cwd=root) else f"refs/heads/{base_branch}"
 
 
+def _ship_rerecord_command(
+    args: argparse.Namespace,
+    *,
+    command: str,
+    run_id: str | None,
+    approved_scopes: tuple[str, ...],
+    approval_operator: str | None,
+    consent_mode: str,
+) -> str:
+    """Build the ``keel ship`` command that records a gates-pass without a capture marker."""
+    parts = ["keel", command, shlex.quote(args.path)]
+    if args.root and args.root != ".":
+        parts += ["--root", shlex.quote(args.root)]
+    parts += ["--live", "--append-ledger"]
+    for flag, val in (
+        ("--run-id", run_id),
+        ("--issue", args.issue),
+        ("--pr", args.pr),
+        ("--pull-request", args.ledger_pr if args.pr is None else None),
+        ("--branch", args.branch),
+        ("--head-sha", args.head_sha),
+        ("--capture-status", CAPTURE_STATUS_NOT_RUN),
+        ("--implementer", args.implementer),
+        ("--approve-scope", ",".join(approved_scopes) if approved_scopes else None),
+        ("--operator", approval_operator),
+        ("--consent-mode", consent_mode if consent_mode != "explicit" else None),
+    ):
+        if val is not None and val != "":
+            token = str(val)
+            parts += [flag, token if token == "<new-run-id>" else shlex.quote(token)]
+    return " ".join(parts)
+
+
 def _cmd_ship(args: argparse.Namespace) -> int:
     if args.dry_run and args.live:
         print("--dry-run and --live cannot be used together", file=sys.stderr)
@@ -1765,7 +1816,19 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                     print(f"  question: {question}", file=sys.stderr)
             return 1
     if args.live and args.append_ledger and args.capture_status is None:
-        message = "--capture-status is required when --live --append-ledger is used"
+        cmd = _ship_rerecord_command(
+            args,
+            command=command,
+            run_id=args.run_id,
+            approved_scopes=approved_scopes,
+            approval_operator=approval_operator,
+            consent_mode=consent_mode,
+        )
+        message = (
+            "--capture-status is required when --live --append-ledger is used; "
+            "for a gates record before capture (s11), pass "
+            f"--capture-status {CAPTURE_STATUS_NOT_RUN}: `{cmd}`"
+        )
         if args.json:
             print(json.dumps({"contract": contract, "error": message}, indent=2, sort_keys=True))
         else:
@@ -2011,18 +2074,21 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # appends fingerprint the same lesson.
     capture_facts = _capture_issue_facts(args)
     capture_changed = _capture_changed_files(args, config, changed_read)
+    capture_status_value = _resolved_capture_status(args.capture_status)
     # **Ask the clash first.** The append no-ops when this (PR, head) already
-    # carries a marker, and the write ran before that was known — so a retry whose
-    # fingerprint had moved (a `gh` outage on the first attempt, a label fetched on
-    # the second) scattered a second document into the sink, possibly a shared
-    # knowledge folder, that no ledger record would ever name.
+    # carries a marker and this run would write another, and the write ran before
+    # that was known — so a retry whose fingerprint had moved (a `gh` outage on the
+    # first attempt, a label fetched on the second) scattered a second document into
+    # the sink, possibly a shared knowledge folder, that no ledger record would ever
+    # name. A `--capture-status not-run` record writes no marker (`capture_status_value`
+    # is `None`), so it never clashes (#1507).
     capture_clash = (
         ledger.capture_marker_for_head(
             existing_ledger_records,
             pr_number=args.ledger_pr or args.pr,
             head_sha=args.head_sha,
         )
-        if args.append_ledger and args.live
+        if args.append_ledger and args.live and capture_status_value is not None
         else None
     )
     # **A named artifact is recorded, not written again** (#1203). With an in-repo sink
@@ -2038,7 +2104,6 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             args, config, capture_changed, existing_ledger_records, outcomes, capture_facts
         )
     )
-    capture_status_value = _resolved_capture_status(args.capture_status)
     capture_reason_value = args.capture_reason
     capture_artifact_value = args.capture_artifact
     if capture_write is not None:
@@ -2162,6 +2227,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             # append is the natural retry after a crash mid-s11, so it no-ops instead.
             ledger_result["skipped"] = "duplicate-capture-marker"
             ledger_result["existing_run_id"] = clash.get("run_id")
+            ledger_result["rerecord_command"] = _ship_rerecord_command(
+                args,
+                command=command,
+                run_id="<new-run-id>",
+                approved_scopes=approved_scopes,
+                approval_operator=approval_operator,
+                consent_mode=consent_mode,
+            )
 
     if args.json:
         print(
@@ -2222,7 +2295,9 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             print(
                 "  ledger append : skipped — this head already has a capture marker "
                 f"(run {ledger_result['existing_run_id']}); a second one on the same "
-                "head would block capture-verify with no automated repair"
+                "head would block capture-verify with no automated repair; "
+                "to re-record gates on this head without a capture marker: "
+                f"`{ledger_result['rerecord_command']}`"
             )
         else:
             print(f"  ledger append : {'yes' if ledger_result['appended'] else 'dry-run/no-live'}")
@@ -9095,6 +9170,20 @@ def _cmd_cost_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_stale_blockers(args: argparse.Namespace) -> int:
+    from . import blockers
+
+    report = blockers.stale_blockers(limit=args.limit, cwd=args.root)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(blockers.render(report))
+    if not report["ok"]:
+        return 1
+    # 2: some blocker could not be read, so an empty or short list is not "all clear".
+    return 2 if report["unknown_blockers"] else 0
+
+
 def _finish_clock() -> float:
     return time.monotonic()
 
@@ -11876,6 +11965,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_cost.add_argument("--root", default=".", help="repo root containing .keel/activity")
     p_cost.add_argument("--json", action="store_true", help="emit structured JSON")
     p_cost.set_defaults(func=_cmd_cost_report)
+
+    p_sb = sub.add_parser(
+        "stale-blockers",
+        help=(
+            "list open PRs whose stated blocker (PR merged, issue completed, tag created) "
+            "has cleared, was abandoned or could not be checked"
+        ),
+    )
+    p_sb.add_argument("--root", default=".", help="repo root (the checkout `gh` reads)")
+    p_sb.add_argument(
+        "--limit", type=_positive_int, default=200, help="open PRs to read (default 200)"
+    )
+    p_sb.add_argument("--json", action="store_true", help="emit structured JSON")
+    p_sb.set_defaults(func=_cmd_stale_blockers)
 
     return parser
 

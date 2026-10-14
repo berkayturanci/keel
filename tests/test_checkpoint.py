@@ -347,6 +347,9 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertFalse(result["covered"])
         self.assertIsNone(result["checkpoint_run_id"])
         self.assertIn("no current checkpoint for run RUN-149 at step s10", result["reason"])
+        self.assertIn(
+            "keel checkpoint <project.yaml> --write --run-id RUN-149 --step s10", result["reason"]
+        )
 
     def test_missing_when_checkpoint_is_for_another_run(self):
         record = _record(run_id="RUN-OTHER", current_step="s10")
@@ -354,6 +357,9 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertEqual(result["status"], "missing")
         self.assertFalse(result["covered"])
         self.assertIn("checkpoint is for run RUN-OTHER", result["reason"])
+        self.assertIn(
+            "keel checkpoint <project.yaml> --write --run-id RUN-149 --step s10", result["reason"]
+        )
 
     def test_stale_step_when_run_has_not_reached_the_expected_step(self):
         record = _record(current_step="s6")
@@ -361,6 +367,9 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertEqual(result["status"], "stale-step")
         self.assertFalse(result["covered"])
         self.assertIn("run is at s6", result["reason"])
+        self.assertIn(
+            "keel checkpoint <project.yaml> --write --run-id RUN-149 --step s10", result["reason"]
+        )
 
     def test_invalid_expected_step_is_rejected(self):
         with self.assertRaisesRegex(checkpoint.CheckpointError, "backbone step id"):
