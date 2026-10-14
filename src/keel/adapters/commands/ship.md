@@ -753,12 +753,14 @@ implementation commit, so a looped test-first branch passes it as a single-pass 
 ### s5 classify
 `keel ship .keel/project.yaml --root .` prints, deterministically: the **risk tier** (from
 `tier3_globs` against the diff) → reviewer count, the window state, the gate results, and
-the merge decision. Pass `--implementer-file <path>` (repeatable) or `--since <ref>` (a
-committed-history heuristic when prior implementation commits exist; uncommitted work
-requires `--implementer-file`) on `keel ship` calls (at s5, before a fix-round commit at s9,
-or at s10/s11 after s7/s8 reviewers finish); `keel ship` checks the staged change set and
-warns (stderr + JSON field) if it includes deleted or modified files not touched by the
-implementer run (warns, never refuses).
+the merge decision. When changes are staged in the git index (for example before a
+fix-round commit at s9, or at s10/s11 after s7/s8 reviewers finish) and you pass
+`--implementer-file <path>` (repeatable; `--declared-file` also supplies this baseline) or
+`--since <ref>` (a committed-history baseline when prior implementation commits exist;
+uncommitted work requires `--implementer-file`), `keel ship` checks `git diff --cached`
+and warns (stderr + JSON field) if staged modified or deleted files fall outside that
+baseline (warns, never refuses; when the index is empty or neither baseline flag is passed,
+`comparison_source` is `none`).
 Tiers: **tier-3** (any `tier3_globs` match → most reviewers + jury
 auto-on), **tier-1** (all paths in `docs_gate_paths` → fewest reviewers), **tier-2**
 (everything else). `--reviewers N` overrides the count but does **not** suppress the
@@ -828,9 +830,13 @@ working tree. Read the panel off the contract, never off this prose:
 ROOT=$(pwd)
 HEAD_SHA=$(git rev-parse HEAD)
 DIFF_ABS=$(cd "$(dirname "$DIFF")" && pwd)/$(basename "$DIFF")
-JURY_WT="$ROOT/.keel/worktrees/review-$RUN_ID-jury-$$"
+JURY_WT="$ROOT/.keel/worktrees/review-$RUN_ID-jury"
 mkdir -p "$ROOT/.keel/worktrees" "$ROOT/.keel/state/jury"
 if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
+  for cfg in jury.toml jury-policy.toml; do
+    test -f "$ROOT/$cfg" && test ! -e "$JURY_WT/$cfg" && cp "$ROOT/$cfg" "$JURY_WT/$cfg"
+  done
+  test -d "$ROOT/.jury" && test ! -e "$JURY_WT/.jury" && cp -R "$ROOT/.jury" "$JURY_WT/.jury"
   (cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
   JURY_RC=$?
   keel worktree-remove "$JURY_WT" --root "$ROOT"
@@ -940,12 +946,13 @@ own `provider` (plus `:model` / `--effort` when the seat carries them), read str
 `review_merge_contract.reviewers.slots[i]` — never one vendor reused for every slot:
 
 ```bash
-# one dispatch per slot i (SLOT_INDEX=0, 1, ... in review_merge_contract.reviewers.slots[i])
-# give each reviewer seat its own separate detached checkout of the head:
+# one synchronous dispatch per slot i (SLOT_INDEX=0, 1, ... in review_merge_contract.reviewers.slots[i])
+# give each reviewer seat its own separate detached checkout of the head, keyed on $RUN_ID
+# (never $$, which changes across separate shell invocations):
 ROOT=$(pwd)
 mkdir -p "$ROOT/.keel/worktrees"
 HEAD_SHA=$(git rev-parse HEAD)
-REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX-$$"
+REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
 if test ! -e "$REVIEW_WT" && git worktree add -d "$REVIEW_WT" "$HEAD_SHA"; then
   keel delegate run --provider "$SLOT_PROVIDER" --role review \
     --prompt-file "$RUBRIC_AND_DIFF" --cwd "$REVIEW_WT" --timeout 900 --project .keel/project.yaml \
@@ -958,7 +965,7 @@ else
 fi
 
 # the gate review, when assignment.gate is present
-GATE_WT="$ROOT/.keel/worktrees/review-$RUN_ID-gate-$$"
+GATE_WT="$ROOT/.keel/worktrees/review-$RUN_ID-gate"
 if test ! -e "$GATE_WT" && git worktree add -d "$GATE_WT" "$HEAD_SHA"; then
   keel delegate run --provider "$GATE_PROVIDER" --role gate \
     --prompt-file "$RUBRIC_AND_DIFF" --cwd "$GATE_WT" --timeout 900 --project .keel/project.yaml \
@@ -975,22 +982,41 @@ fi
 exactly as in s4; parallel reviewers finishing together are serialised by core.
 
 A slot whose `kind` is `subagent` never reaches `keel delegate run`: it is a host
-(Claude-class) subagent named by `slot.name`, dispatched in its own separate detached
-checkout at `$HEAD_SHA` and removed afterwards with `keel worktree-remove`. Every
-reviewer seat (jury, delegate, gate, or subagent) must run in a separate detached checkout
-and never share the implementer's worktree so exploratory checks or temporary deletions
-cannot mutate or contaminate staged changes. Because a fresh detached checkout contains
-only tracked files at `$HEAD_SHA` — without untracked `.venv`, `node_modules`,
-`.keel/state`, or `.jury` configuration — seats inspect tracked files and the diff rather
-than running the test suite in the review checkout.
+(Claude-class) subagent named by `slot.name`. Because host subagent tools have no `--cwd`
+parameter, create its detached checkout at `$HEAD_SHA`, pass that checkout path in the
+subagent prompt with the instruction to `cd` into it before running any shell or file-inspection
+commands (and never touch the implementer's worktree), and remove the checkout afterwards with
+`keel worktree-remove`. Note that a fresh detached checkout contains only tracked files at
+`$HEAD_SHA` (plus untracked `jury.toml`/`jury-policy.toml`/`.jury` copied for `jury` gate
+runs), without uncommitted working-tree state or untracked `.venv`/`node_modules`/`.keel/state`.
 
 Read the same JSON contract s4 documents: `text` is the verdict, `attribution` is what
 you record per reviewer, `error_code` is what you branch on. Long panels detach exactly
-as s4 does — `--detach` per reviewer with `--timeout`, then `keel delegate wait <run-id>
---timeout <s>` on each, running `keel worktree-remove "$REVIEW_WT" --root "$ROOT"` only
-after `keel delegate wait` has collected the detached reviewer (never on launch exit, or
-the checkout is deleted while the reviewer is still reading it); never a sleep loop. The
-`secrets`-scope and
+as s4 does — launch with `--detach`, `--timeout` and a deterministic `--run-id`, then collect with
+`keel delegate wait --timeout` and call `keel worktree-remove` only after `keel delegate wait`
+finishes (never on launch exit, or the checkout is deleted while the reviewer is still
+reading it); never a sleep loop:
+
+```bash
+# detached panel launch (do NOT call worktree-remove here):
+REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
+if test ! -e "$REVIEW_WT" && git worktree add -d "$REVIEW_WT" "$HEAD_SHA"; then
+  keel delegate run --provider "$SLOT_PROVIDER" --role review \
+    --prompt-file "$RUBRIC_AND_DIFF" --cwd "$REVIEW_WT" --timeout 900 --project .keel/project.yaml \
+    --detach --run-id "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --activity-run-id "$RUN_ID"
+else
+  echo "error: could not create isolated review checkout $REVIEW_WT" >&2; false
+fi
+
+# collect + cleanup (in the same or a later shell using the same $RUN_ID and $SLOT_INDEX):
+REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
+keel delegate wait "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --timeout 900
+WAIT_RC=$?
+keel worktree-remove "$REVIEW_WT" --root "$ROOT"
+(exit "$WAIT_RC")
+```
+
+The `secrets`-scope and
 no-retry-on-`rate-limit` rules are unchanged; there is **no tier restriction**, because
 review output is advisory, not a mutation. The orchestrator still posts — the
 **orchestrator owns all writes**; reviewers never call a GitHub write API.

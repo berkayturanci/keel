@@ -305,8 +305,14 @@ def review_checkout(
     root_path = Path(root).resolve()
     token = run_id if run_id is not None else uuid.uuid4().hex[:12]
     checkout = review_worktree_path(name, root=root_path, run_id=token)
-    checkout.parent.mkdir(parents=True, exist_ok=True)
-    if checkout.exists():
+    try:
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        exists = checkout.exists()
+    except OSError as exc:
+        raise ReviewCheckoutError(
+            f"could not prepare review checkout at {checkout}: {exc}"
+        ) from exc
+    if exists:
         raise ReviewCheckoutError(
             f"review checkout path already exists at {checkout}; refusing to remove active checkout"
         )
@@ -316,9 +322,18 @@ def review_checkout(
         why = added.output.strip()[:200] or f"exit {added.code}"
         raise ReviewCheckoutError(f"could not create review checkout at {checkout}: {why}")
     try:
+        for cfg_name in ("jury.toml", "jury-policy.toml", ".jury"):
+            src_cfg = root_path / cfg_name
+            dst_cfg = checkout / cfg_name
+            if src_cfg.exists() and not dst_cfg.exists():
+                if src_cfg.is_dir():
+                    shutil.copytree(src_cfg, dst_cfg)
+                else:
+                    shutil.copy2(src_cfg, dst_cfg)
         yield checkout
     finally:
-        remove_swarm_worktree(root_path, checkout, runner=run)
+        if not remove_swarm_worktree(root_path, checkout, runner=run):
+            print(f"warning: could not remove review checkout at {checkout}", file=sys.stderr)
 
 
 def prune_worktrees(repo_root: Path, runner: SubprocessRunner | None = None) -> str:

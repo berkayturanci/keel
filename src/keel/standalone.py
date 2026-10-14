@@ -217,6 +217,7 @@ def cmd_standalone(args: argparse.Namespace) -> int:
     consent_ok, consent_message = consent.assert_operator_consent(contract["operator_consent"])
     warnings: list[str] = []
     staged_contamination: dict[str, Any] | None = None
+    staged_warning: str | None = None
     if command == "wrap":
         impl_files = getattr(args, "implementer_file", None)
         since_arg = getattr(args, "since", None)
@@ -225,6 +226,7 @@ def cmd_standalone(args: argparse.Namespace) -> int:
             if since_arg and impl_files is None
             else None
         )
+        since_unreadable = bool(since_arg and impl_files is None and files_since is None)
         staged_md = (
             git.staged_modified_or_deleted_files(cwd=args.root)
             if impl_files is not None or files_since
@@ -234,11 +236,13 @@ def cmd_standalone(args: argparse.Namespace) -> int:
             staged_md,
             implementer_files=impl_files,
             files_since_start=files_since,
+            since_unreadable=since_unreadable,
             root=args.root,
         )
-        if staged_contamination["warning"]:
-            warnings.append(staged_contamination["warning"])
-            print(f"warning: {staged_contamination['warning']}", file=sys.stderr)
+        if isinstance(staged_contamination["warning"], str):
+            staged_warning = staged_contamination["warning"]
+            warnings.append(staged_warning)
+            print(f"warning: {staged_warning}", file=sys.stderr)
 
     result = contracts.standalone_result_as_dict(
         command=command,
@@ -319,8 +323,8 @@ def cmd_standalone(args: argparse.Namespace) -> int:
             ]
             print(f"  worktree      : linked required={linked_required}")
             print("  pr            : ready PR after configured gates")
-            if staged_contamination["warning"]:  # type: ignore[index]
-                print(f"  staged files  : warning: {staged_contamination['warning']}")  # type: ignore[index]
+            if staged_warning:
+                print(f"  staged files  : warning: {staged_warning}")
         elif command == "work-block":
             print("  mode source   : keel work-block")
             print("  queue         : explicit issues or selector")

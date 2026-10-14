@@ -1209,11 +1209,24 @@ class StagedAndChangedSinceTests(unittest.TestCase):
         self.assertEqual(files, ["a.py", "b.py"])
         self.assertEqual(calls[-1][-1], "--")
 
-    def test_changed_files_since_git_log_error(self):
-        def run(argv, **kw):
+    def test_changed_files_since_git_log_error_and_non_date_label_refusal(self):
+        calls = []
+
+        def run_ok_approxidate(argv, **kw):
+            calls.append(list(argv))
+            if "log" in argv and any(a.startswith("--since=") for a in argv):
+                return _Proc(0, "", "")
+            return _Proc(128, "", "fatal: ambiguous argument")
+
+        # Non-date opaque labels or typo'd refs must return None without calling git log --since=
+        self.assertIsNone(git.changed_files_since("morning-session", _run=run_ok_approxidate))
+        self.assertIsNone(git.changed_files_since("invalid-date", _run=run_ok_approxidate))
+        self.assertFalse(any(any(a.startswith("--since=") for a in c) for c in calls))
+
+        def run_fail(argv, **kw):
             return _Proc(1, "", "fatal: log error")
 
-        self.assertIsNone(git.changed_files_since("invalid-date", _run=run))
+        self.assertIsNone(git.changed_files_since("2 hours ago", _run=run_fail))
 
 
 if __name__ == "__main__":

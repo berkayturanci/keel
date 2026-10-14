@@ -1453,8 +1453,8 @@ keel wrap <project.yaml> [TITLE] [--root DIR] [--since WHEN]
 | `path` | file path | required | Project config. |
 | `TITLE` | optional positional string | `None` | PR title override; when present it becomes the contract target. |
 | `--root DIR` | path | `.` | Root for git and capability checks. |
-| `--since WHEN` | label, commit ref, or timestamp | `None` | Session start label echoed in the contract; when `--implementer-file` is omitted and `WHEN` resolves to non-empty committed history (`<WHEN>..HEAD`), also used as the committed-history baseline for staged contamination (opaque labels or uncommitted-only sessions yield no baseline). |
-| `--implementer-file PATH` | repo-relative path, repeatable | none | File touched by the implementer; checked against staged modified/deleted files before commit to warn on contamination (required when work is uncommitted). |
+| `--since WHEN` | label, commit ref, or timestamp | `None` | Session start label echoed in the contract; when `--implementer-file` is omitted, also queried against git history (`<WHEN>..HEAD` or a recognized date/time expression) as the committed-history baseline for staged contamination, surfacing a warning when `WHEN` is an unresolvable ref/label or has no committed files. |
+| `--implementer-file PATH` | repo-relative path, repeatable | none | File touched by the implementer; compared against staged modified/deleted files (`git diff --cached`) to warn on contamination (required when work is uncommitted). |
 | `--target TEXT` | string | `None` | Extra target text. |
 | `--dry-run` / `--live` | shared | dry | Mutually exclusive. |
 | `--approve-scope` / `--operator` / `--consent-mode` | shared | — | Consent flags. |
@@ -1832,9 +1832,9 @@ keel ship <project.yaml> [--root DIR] [--pr N] [--hotfix] [--dry-run] [--live]
 | `--review-comments` / `--reviewers` / jury flags | shared | — | Shape `review_merge_contract`; the jury mode also drives the built-in jury gate's gating-vs-advisory behavior. |
 | `--role` / `--delegate` / `--review-delegate` (repeatable) | shared | — | Per-run overrides of `knobs.team`; shape `assignment` and `review_merge_contract.reviewers.slots`. |
 | `--effort` / `--team` | shared staffing flags | seat, then bench | See [Staffing a batch](#staffing-a-batch---team---effort-and-the-difficulty-bench); pass the same values to `evidence-verify` and `merge`. |
-| `--declared-file PATH` | repo-relative path, repeatable | none | The implementer's declared in-scope files: recorded in the `ship_run` ledger record for `keel scope-verify`'s branch-contamination check, and used (before the diff) to retrieve relevant learnings. |
-| `--implementer-file PATH` | repo-relative path, repeatable | none | File touched by the implementer; checked against staged modified/deleted files before commit to warn on contamination (required when work is uncommitted). |
-| `--since WHEN` | commit, ref, or git log date | `None` | Committed-history baseline (`<WHEN>..HEAD`) to compare staged changes against when checking contamination if `--implementer-file` is not provided; yields no baseline when no commits exist since `WHEN`. |
+| `--declared-file PATH` | repo-relative path, repeatable | none | The implementer's declared in-scope files: recorded in the `ship_run` ledger record for `keel scope-verify`'s branch-contamination check, used (before the diff) to retrieve relevant learnings, and used as the fallback baseline for staged contamination when `--implementer-file` is omitted. |
+| `--implementer-file PATH` | repo-relative path, repeatable | none | File touched by the implementer; compared against staged modified/deleted files (`git diff --cached`) to warn on contamination when changes are staged (required when work is uncommitted and `--declared-file` is not set). |
+| `--since WHEN` | commit, ref, or git log date | `None` | Committed-history baseline (`<WHEN>..HEAD` or a recognized date/time expression) to compare staged changes against when checking contamination if `--implementer-file` and `--declared-file` are omitted; surfaces a warning when `WHEN` cannot be resolved or has no commits. |
 | `--gate-result ID=pass\|fail` | repeatable | none | Record the verdict of a gate this command cannot execute (an `agentic` gate the agent dispatched). Naming a gate keel executed, or one not in the plan, exits 1. See [`cli.md`](cli.md). |
 | `--profile` | `standard` \| `compound` | `standard` | Workflow profile in the contract. |
 | `--compound` | flag | off | Alias for `--profile compound`. |

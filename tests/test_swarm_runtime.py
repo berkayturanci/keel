@@ -40,6 +40,7 @@ from keel.swarm import (
 from keel.swarm_landing import land_wave_clusters
 from keel.swarm_runtime import (
     LiveRun,
+    ReviewCheckoutError,
     build_brief_path,
     build_worktree_path,
     create_swarm_worktree,
@@ -3434,11 +3435,59 @@ class ReviewCheckoutTests(unittest.TestCase):
             def failing_runner(cmd, cwd):
                 return CommandResult(False, 128, "fatal: not a valid object name: head123")
 
-            with self.assertRaises(RuntimeError) as cm:
+            with self.assertRaises(ReviewCheckoutError) as cm:
                 with review_checkout("head123", name="test-seat", root=root, runner=failing_runner):
                     pass
             self.assertIn("could not create review checkout", str(cm.exception))
             self.assertIn("fatal: not a valid object name: head123", str(cm.exception))
+
+    def test_review_checkout_translates_mkdir_oserror_to_review_checkout_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".keel").write_text("blocking file", encoding="utf-8")
+
+            with self.assertRaises(ReviewCheckoutError) as cm:
+                with review_checkout("head123", name="test-seat", root=root):
+                    pass
+            self.assertIn("could not prepare review checkout", str(cm.exception))
+
+    def test_review_checkout_copies_untracked_jury_config_and_warns_when_removal_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "jury.toml").write_text("[jury]\ndecision = 'vote'\n", encoding="utf-8")
+            (root / "jury-policy.toml").write_text("strict = true\n", encoding="utf-8")
+            (root / ".jury").mkdir()
+            (root / ".jury" / "policy.toml").write_text("rules = []\n", encoding="utf-8")
+            # Symlink and missing files are skipped; pre-existing tracked file in checkout is kept
+            (root / " tracked.txt").write_text("x", encoding="utf-8")
+
+            def fake_runner(cmd, cwd):
+                if "add" in cmd:
+                    wt_dir = Path(cmd[4])
+                    wt_dir.mkdir(parents=True, exist_ok=True)
+                    (wt_dir / "jury-policy.toml").write_text("tracked = true\n", encoding="utf-8")
+                return CommandResult(True, 0, "")
+
+            err = io.StringIO()
+            with (
+                patch("keel.swarm_runtime.remove_swarm_worktree", return_value=False),
+                patch("sys.stderr", err),
+            ):
+                with review_checkout("head123", name="jury", root=root, runner=fake_runner) as wt:
+                    self.assertEqual(
+                        (wt / "jury.toml").read_text(encoding="utf-8"),
+                        "[jury]\ndecision = 'vote'\n",
+                    )
+                    self.assertEqual(
+                        (wt / ".jury" / "policy.toml").read_text(encoding="utf-8"),
+                        "rules = []\n",
+                    )
+                    # Tracked file already in checkout is not overwritten
+                    self.assertEqual(
+                        (wt / "jury-policy.toml").read_text(encoding="utf-8"),
+                        "tracked = true\n",
+                    )
+            self.assertIn("warning: could not remove review checkout", err.getvalue())
 
 
 if __name__ == "__main__":

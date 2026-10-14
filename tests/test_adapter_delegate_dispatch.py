@@ -157,6 +157,9 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
         self.assertIn("git fetch origin", review_cycle_md)
         self.assertIn("SLOT_INDEX", ship_md)
         self.assertNotIn('review-$RUN_ID-$SLOT"', ship_md)
+        self.assertNotIn("-$$", ship_md)
+        self.assertNotIn("-$$", review_cycle_md)
+        self.assertNotIn("rather than running the test suite", ship_md)
 
         # Extract the s7 reviewer dispatch bash block from ship.md and verify its behaviour:
         blocks = re.findall(r"```bash\n(.*?)```", ship_md, re.DOTALL)

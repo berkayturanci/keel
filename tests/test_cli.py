@@ -1764,21 +1764,30 @@ class TestShip(unittest.TestCase):
             (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
             _run_git(root, "add", "app.py")
             _run_git(root, "commit", "-m", "add app")
-            expected_head = git.rev_parse("HEAD", cwd=d)
-            self.assertIsNotNone(expected_head)
+            first_head = git.rev_parse("HEAD", cwd=d)
+            self.assertIsNotNone(first_head)
+
+            (root / "later.py").write_text("print('later')\n", encoding="utf-8")
+            _run_git(root, "add", "later.py")
+            _run_git(root, "commit", "-m", "add later")
 
             config = _write_raw(
                 "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
                 "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n"
             )
             observed_jury_cwds: list[str] = []
-            observed_checkout_files_exist: list[bool] = []
+            observed_checkout_files: list[tuple[bool, bool]] = []
+            observed_diffs: list[str] = []
 
             def fake_jury_run_argv(argv, *, cwd=None, timeout=None, **_kw):
                 if "--version" in argv:
                     return CommandResult(True, 0, "jury 1.0", stdout="jury 1.0")
                 observed_jury_cwds.append(str(cwd))
-                observed_checkout_files_exist.append((Path(cwd) / "app.py").exists())
+                observed_checkout_files.append(
+                    ((Path(cwd) / "app.py").exists(), (Path(cwd) / "later.py").exists())
+                )
+                diff_idx = argv.index("--diff-file") + 1
+                observed_diffs.append(Path(argv[diff_idx]).read_text(encoding="utf-8"))
                 report = json.dumps(
                     {
                         "schema_version": "1.2",
@@ -1806,13 +1815,91 @@ class TestShip(unittest.TestCase):
                 patch.object(jury_mod, "run_argv", side_effect=fake_jury_run_argv),
             ):
                 rc, out, err = run(["ship", config, "--root", d, "--jury", "--json"])
+                # Explicit --head-sha pointing to first_head (differing from HEAD):
+                # both diff_text and the isolated checkout must reflect first_head.
+                rc_sha, out_sha, err_sha = run(
+                    [
+                        "ship",
+                        config,
+                        "--root",
+                        d,
+                        "--jury",
+                        "--head-sha",
+                        str(first_head),
+                        "--json",
+                    ]
+                )
 
             self.assertEqual(rc, 0, out + err)
-            self.assertEqual(len(observed_jury_cwds), 1)
+            self.assertEqual(rc_sha, 0, out_sha + err_sha)
+            self.assertEqual(len(observed_jury_cwds), 2)
             self.assertNotEqual(Path(observed_jury_cwds[0]).resolve(), root.resolve())
             self.assertIn(".keel/worktrees/review-jury-", observed_jury_cwds[0])
-            self.assertEqual(observed_checkout_files_exist, [True])
+            self.assertEqual(observed_checkout_files[0], (True, True))
+            self.assertIn("later.py", observed_diffs[0])
+            # For explicit --head-sha=first_head, later.py is absent from both checkout and diff:
+            self.assertEqual(observed_checkout_files[1], (True, False))
+            self.assertIn("app.py", observed_diffs[1])
+            self.assertNotIn("later.py", observed_diffs[1])
             self.assertFalse(Path(observed_jury_cwds[0]).exists())
+            self.assertFalse(Path(observed_jury_cwds[1]).exists())
+
+    def test_ship_declared_file_baseline_and_unresolvable_since_warn(self):
+        with tempfile.TemporaryDirectory() as d:
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch(
+                    "keel.git.staged_modified_or_deleted_files",
+                    return_value=["src/keel/cli.py", "stray.py"],
+                ),
+            ):
+                rc, out, err = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--declared-file",
+                        "src/keel/cli.py",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc, 0)
+                payload = json.loads(out)
+                self.assertTrue(payload["result"]["staged_contamination"]["has_contamination"])
+                self.assertEqual(
+                    payload["result"]["staged_contamination"]["suspect_paths"], ["stray.py"]
+                )
+                self.assertIn("stray.py", err)
+
+            with (
+                patch("keel.git.changed_files", return_value=["src/keel/cli.py"]),
+                patch("keel.git.diff", return_value=""),
+                patch("keel.git.changed_files_since", return_value=None),
+            ):
+                rc2, out2, err2 = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--since",
+                        "nonexistent-ref",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc2, 0)
+                payload2 = json.loads(out2)
+                self.assertEqual(
+                    payload2["result"]["staged_contamination"]["comparison_source"],
+                    "files-since-start",
+                )
+                self.assertIn(
+                    "could not resolve --since baseline",
+                    payload2["result"]["staged_contamination"]["warning"],
+                )
+                self.assertIn("could not resolve --since baseline", err2)
 
     def test_ship_gating_jury_checkout_failure_blocks_not_skipped(self):
         from keel import jury as jury_mod

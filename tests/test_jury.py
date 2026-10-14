@@ -1473,6 +1473,34 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         remove_calls = [c for c in calls if "worktree" in c[0] and "remove" in c[0]]
         self.assertEqual(len(remove_calls), 1)
 
+    def test_run_gate_filesystem_setup_failure_returns_finding_in_both_modes(self):
+        from pathlib import Path
+
+        (Path(self.root) / ".keel").write_text("file blocking worktrees dir", encoding="utf-8")
+
+        def _ok_version(argv, cwd=None, **kw):
+            return _Proc(0, "jury 1.0")
+
+        for mode, expected_ok, expected_sev in (
+            ("gating", False, "major"),
+            ("advisory", True, "minor"),
+        ):
+            with self.subTest(mode=mode):
+                ok, findings, timed_out = jury.run_gate(
+                    "diff content",
+                    cwd=self.root,
+                    mode=mode,
+                    head_sha="head123",
+                    _run=_ok_version,
+                )
+                self.assertEqual(ok, expected_ok)
+                self.assertFalse(timed_out)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0].severity, expected_sev)
+                self.assertEqual(findings[0].source, "jury:review-checkout")
+                self.assertIn("could not prepare review checkout", findings[0].message)
+                self.assertFalse(jury.could_not_run(findings))
+
 
 if __name__ == "__main__":
     unittest.main()

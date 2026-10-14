@@ -576,6 +576,12 @@ def staged_modified_or_deleted_files(*, cwd: str | None = None, _run=None) -> li
     return [name for name in result.stdout.split("\0") if name]
 
 
+_SINCE_DATE_RE = re.compile(
+    r"\A(?:\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|\d+\s+(?:second|minute|hour|day|week|month|year)s?\s+ago|yesterday|today)\b",
+    re.IGNORECASE,
+)
+
+
 def changed_files_since(
     since: str, *, head: str = "HEAD", cwd: str | None = None, _run=None
 ) -> list[str] | None:
@@ -583,10 +589,12 @@ def changed_files_since(
 
     Committed-history heuristic: enumerates paths across intervening commits in
     ``<since>..<head>`` first when ``since`` resolves as a revision, falling back to
-    ``git log --since=<since> --name-only --format= -z <head> --``. Uncommitted edits are not
-    in commit history (use ``--implementer-file`` when no implementation commit exists yet).
-    Returns ``None`` when git could not read the history or when ``since`` / ``head``
-    starts with ``-``.
+    ``git log --since=<since> --name-only --format= -z <head> --`` only when ``since``
+    has a recognized date/time shape (so opaque labels or ref typos are not parsed by git
+    approxidate as "now"). Uncommitted edits are not in commit history (use
+    ``--implementer-file`` when no implementation commit exists yet). Returns ``None``
+    when git could not read the history, when ``since`` is neither a revision nor a
+    date/time expression, or when ``since`` / ``head`` starts with ``-``.
     """
     if not since or since.startswith("-") or head.startswith("-"):
         return None
@@ -607,6 +615,8 @@ def changed_files_since(
     )
     if rev_result.ok:
         return sorted({name for name in rev_result.stdout.split("\0") if name})
+    if not _SINCE_DATE_RE.search(since.strip()):
+        return None
     result = run_argv(
         [
             "git",

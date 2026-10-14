@@ -181,29 +181,39 @@ class TestStandaloneHelpers(unittest.TestCase):
                     "files-since-start",
                 )
 
-            # An opaque session label or uncommitted HEAD yields [] from changed_files_since:
-            # must not query staged files or falsely flag staged work as contamination.
-            args.json = True
-            args.implementer_file = None
-            args.since = "morning-session"
-            with (
-                patch(
-                    "keel.git.staged_modified_or_deleted_files",
-                    side_effect=AssertionError("should not query staged files without baseline"),
-                ),
-                patch("keel.git.changed_files_since", return_value=[]),
+            # An unresolvable --since label or empty range warns rather than failing silently.
+            for since_ret, expected_msg in (
+                (None, "could not resolve --since baseline"),
+                ([], "no committed files found since --since baseline"),
             ):
-                err = io.StringIO()
-                out = io.StringIO()
-                with patch("sys.stderr", err), patch("sys.stdout", out):
-                    code = standalone.cmd_standalone(args)
-                self.assertEqual(code, 0)
-                data = json.loads(out.getvalue())
-                self.assertFalse(data["result"]["staged_contamination"]["has_contamination"])
-                self.assertEqual(
-                    data["result"]["staged_contamination"]["comparison_source"],
-                    "none",
-                )
+                args.json = True
+                args.implementer_file = None
+                args.since = "morning-session"
+                with (
+                    patch(
+                        "keel.git.staged_modified_or_deleted_files",
+                        side_effect=AssertionError(
+                            "should not query staged files without files_since"
+                        ),
+                    ),
+                    patch("keel.git.changed_files_since", return_value=since_ret),
+                ):
+                    err = io.StringIO()
+                    out = io.StringIO()
+                    with patch("sys.stderr", err), patch("sys.stdout", out):
+                        code = standalone.cmd_standalone(args)
+                    self.assertEqual(code, 0)
+                    data = json.loads(out.getvalue())
+                    self.assertFalse(data["result"]["staged_contamination"]["has_contamination"])
+                    self.assertEqual(
+                        data["result"]["staged_contamination"]["comparison_source"],
+                        "files-since-start",
+                    )
+                    self.assertIn(
+                        expected_msg,
+                        data["result"]["staged_contamination"]["warning"],
+                    )
+                    self.assertIn(expected_msg, err.getvalue())
 
             args.json = False
             args.implementer_file = ["src/app.py"]

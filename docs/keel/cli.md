@@ -1934,11 +1934,11 @@ and the shared deferral queue. Project-specific changed-file gates and recap des
 stay in policy packs and extensions. Wrap also receives the run-ledger contract so session
 recaps can include structured ship outcomes offline.
 
-After `git add -A` and before committing, `keel wrap` checks the staged change set and
-warns (stderr + JSON `staged_contamination` / `warnings` fields) if deleted or modified
-paths outside the implementer run are staged (compared against `--implementer-file`, or
-against non-empty committed history since `--since`; uncommitted work requires
-`--implementer-file`). Warns, never refuses.
+When changes are staged in the git index (`git diff --cached`) and a baseline is supplied via
+`--implementer-file` or `--since`, `keel wrap` checks the staged change set and warns (stderr
++ JSON `staged_contamination` / `warnings` fields) if deleted or modified paths outside the
+implementer run are staged, or if `--since` cannot be resolved from git history or has no
+committed files (uncommitted work requires `--implementer-file`). Warns, never refuses.
 
 ```bash
 keel wrap .keel/project.yaml --json

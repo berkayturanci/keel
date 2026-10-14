@@ -160,17 +160,29 @@ class TestStagedContamination(unittest.TestCase):
         self.assertEqual(res_since["comparison_source"], "files-since-start")
         self.assertIsNotNone(res_since["warning"])
 
-    def test_no_baseline_or_empty_committed_since_returns_no_contamination(self):
-        for kwargs in ({}, {"files_since_start": []}):
-            self.assertEqual(
-                scope.check_staged_contamination(["a.py"], **kwargs),
-                {
-                    "has_contamination": False,
-                    "suspect_paths": [],
-                    "warning": None,
-                    "comparison_source": "none",
-                },
-            )
+    def test_no_baseline_returns_no_contamination(self):
+        self.assertEqual(
+            scope.check_staged_contamination(["a.py"]),
+            {
+                "has_contamination": False,
+                "suspect_paths": [],
+                "warning": None,
+                "comparison_source": "none",
+            },
+        )
+
+    def test_unresolvable_or_empty_since_baseline_surfaces_warning(self):
+        unresolvable = scope.check_staged_contamination(["a.py"], since_unreadable=True)
+        self.assertFalse(unresolvable["has_contamination"])
+        self.assertEqual(unresolvable["suspect_paths"], [])
+        self.assertEqual(unresolvable["comparison_source"], "files-since-start")
+        self.assertIn("could not resolve --since baseline", unresolvable["warning"])
+
+        empty_since = scope.check_staged_contamination(["a.py"], files_since_start=[])
+        self.assertFalse(empty_since["has_contamination"])
+        self.assertEqual(empty_since["suspect_paths"], [])
+        self.assertEqual(empty_since["comparison_source"], "files-since-start")
+        self.assertIn("no committed files found since --since baseline", empty_since["warning"])
 
     def test_clean_against_implementer_files(self):
         res = scope.check_staged_contamination(["a.py"], implementer_files=["a.py", "b.py"])

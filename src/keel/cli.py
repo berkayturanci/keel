@@ -193,11 +193,12 @@ def _gate_runner(
                 reused_ok, reused_found = posted_panel
                 return reused_ok, reused_found, False, False, False
             jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
-            jury_kw = {}
-            if head_sha is not None:
-                jury_kw["head_sha"] = head_sha
             ok, found, timed_out = jury.run_gate(
-                diff_text, cwd=root, mode=jury_mode, timeout=jury_limit, **jury_kw
+                diff_text,
+                cwd=root,
+                mode=jury_mode,
+                timeout=jury_limit,
+                head_sha=head_sha,
             )
             # A jury that could not run (no CLI, empty diff) judged nothing: `SKIPPED`,
             # never `ok` (#1369).
@@ -1876,12 +1877,11 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     except gates.GateError as exc:  # pragma: no cover - defensive duplicate of the build_plan guard
         print(str(exc), file=sys.stderr)
         return 1
-    diff_text = git.diff(base_ref, "HEAD", cwd=args.root)
+    has_jury_gate = any(spec.kind == "builtin" and spec.id == gates.JURY_ID for spec in specs)
     jury_head_sha = getattr(args, "head_sha", None) or (
-        git.rev_parse("HEAD", cwd=args.root)
-        if any(spec.kind == "builtin" and spec.id == gates.JURY_ID for spec in specs)
-        else None
+        git.rev_parse("HEAD", cwd=args.root) if has_jury_gate else None
     )
+    diff_text = git.diff(base_ref, jury_head_sha or "HEAD", cwd=args.root)
     posted = _posted_panel(
         args, config, specs, transport, gating=review_contract["jury"]["mode"] == "gating"
     )
@@ -2149,13 +2149,14 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             "rules": fallback.audit["rules"],
             "redaction_count": fallback.audit["redaction_count"],
         }
-    impl_files = getattr(args, "implementer_file", None)
+    impl_files = getattr(args, "implementer_file", None) or getattr(args, "declared_file", None)
     since_arg = getattr(args, "since", None)
     files_since = (
         git.changed_files_since(since_arg, head="HEAD", cwd=args.root)
         if since_arg and impl_files is None
         else None
     )
+    since_unreadable = bool(since_arg and impl_files is None and files_since is None)
     staged_md = (
         git.staged_modified_or_deleted_files(cwd=args.root)
         if impl_files is not None or files_since
@@ -2165,6 +2166,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         staged_md,
         implementer_files=impl_files,
         files_since_start=files_since,
+        since_unreadable=since_unreadable,
         root=args.root,
     )
     staged_warnings: list[str] = []

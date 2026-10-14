@@ -110,21 +110,42 @@ def check_staged_contamination(
     *,
     implementer_files: list[str] | None = None,
     files_since_start: list[str] | None = None,
+    since_unreadable: bool = False,
     root: str | None = None,
 ) -> dict[str, Any]:
     """Check whether staged modified or deleted files include paths outside the implementer run.
 
     Compares against ``implementer_files`` when available, else against a non-empty
-    committed-history ``files_since_start`` baseline. When no commits exist since ``since``
-    (e.g., uncommitted work at ``HEAD`` or an opaque session label), ``files_since_start``
-    is empty and yields ``comparison_source: 'none'`` — pass ``implementer_files`` to
+    committed-history ``files_since_start`` baseline. When ``since_unreadable`` is true or
+    ``files_since_start`` is an empty list (no commits since ``since``), surfaces an
+    explicit warning rather than silently reporting clean — pass ``implementer_files`` to
     check uncommitted work. When a baseline is present and ``staged_modified_or_deleted``
     is ``None`` (unreadable git index), surfaces a warning. Warns, never blocks.
     """
     if implementer_files is not None:
         expected = {_normalize_repo_path(p, root) for p in implementer_files}
         source = "implementer-files"
-    elif files_since_start:
+    elif since_unreadable:
+        return {
+            "has_contamination": False,
+            "suspect_paths": [],
+            "warning": (
+                "could not resolve --since baseline from git history "
+                "to check for staged contamination"
+            ),
+            "comparison_source": "files-since-start",
+        }
+    elif files_since_start is not None:
+        if not files_since_start:
+            return {
+                "has_contamination": False,
+                "suspect_paths": [],
+                "warning": (
+                    "no committed files found since --since baseline; "
+                    "pass --implementer-file to check uncommitted work"
+                ),
+                "comparison_source": "files-since-start",
+            }
         expected = {_normalize_repo_path(p, root) for p in files_since_start}
         source = "files-since-start"
     else:
