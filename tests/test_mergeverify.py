@@ -113,3 +113,71 @@ class TestReportSurface(unittest.TestCase):
             mv.verify_merge(["a"], {"a": 1}),
         ):
             self.assertEqual(report["schema_version"], mv.SCHEMA_VERSION)
+
+
+class TestLineSurvival(unittest.TestCase):
+    def test_shared_file_with_all_added_lines_present_is_clean(self):
+        report = mv.verify_merge(
+            landed=["CHANGELOG.md"],
+            overtaken={"CHANGELOG.md": 550},
+            added_by_pr={550: {"CHANGELOG.md": ["- entry 550", "   ", ""]}},
+            merged_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n- entry 543\n"},
+        )
+        self.assertEqual(report["status"], "clean")
+        self.assertEqual(report["reason"], "clean (1 shared files, 0 lost lines)")
+        self.assertEqual(report["overtaken"], {"CHANGELOG.md": 550})
+        self.assertEqual(report["lost_lines"], {})
+        self.assertEqual(report["unverifiable"], [])
+        self.assertIn("clean (1 shared files, 0 lost lines)", mv.render(report))
+
+    def test_shared_file_with_lost_added_lines_is_drift(self):
+        report = mv.verify_merge(
+            landed=["src/keel/github.py"],
+            overtaken={"src/keel/github.py": 550},
+            added_by_pr={
+                550: {
+                    "src/keel/github.py": [
+                        "kept = 1",
+                        "lost_a = 1",
+                        "lost_b = 2",
+                        "lost_c = 3",
+                        "lost_d = 4",
+                    ]
+                }
+            },
+            merged_contents={"src/keel/github.py": "kept = 1\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(
+            report["lost_lines"],
+            {
+                "src/keel/github.py": {
+                    "pr": 550,
+                    "count": 4,
+                    "samples": ["lost_a = 1", "lost_b = 2", "lost_c = 3"],
+                }
+            },
+        )
+        self.assertEqual(report["unverifiable"], [])
+        rendered = mv.render(report)
+        self.assertIn("4 lost line(s)", rendered)
+        self.assertIn("lost_a = 1", rendered)
+        self.assertNotIn("lost_d = 4", rendered)
+
+    def test_unverifiable_file_falls_back_to_drift(self):
+        for added, contents in (
+            ({550: {"a.py": None}}, {"a.py": "x = 1\n"}),
+            ({550: {"a.py": ["x = 1"]}}, {"a.py": None}),
+        ):
+            with self.subTest(added=added, contents=contents):
+                report = mv.verify_merge(
+                    landed=["a.py"],
+                    overtaken={"a.py": 550},
+                    added_by_pr=added,
+                    merged_contents=contents,
+                )
+                self.assertEqual(report["status"], "drift")
+                self.assertIn("unverifiable", report["reason"])
+                self.assertEqual(report["unverifiable"], ["a.py"])
+                self.assertEqual(report["lost_lines"], {})
+                self.assertIn("unverifiable", mv.render(report))

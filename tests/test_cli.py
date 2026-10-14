@@ -11336,14 +11336,32 @@ class TestVerifyMergeCommand(unittest.TestCase):
     }
 
     def _run(
-        self, *, window=WINDOW, others=None, files_by_pr=None, commit_files=None, argv_extra=()
+        self,
+        *,
+        window=WINDOW,
+        others=None,
+        files_by_pr=None,
+        commit_files=None,
+        added_by_pr=None,
+        file_contents=None,
+        argv_extra=(),
     ):
         files_by_pr = files_by_pr or {}
+        added_by_pr = added_by_pr or {}
+        file_contents = file_contents or {}
         with (
             patch("keel.cli.github.pr_merge_window", return_value=window),
             patch("keel.cli.github.prs_merged_between", return_value=others),
             patch("keel.cli.github.commit_files", return_value=commit_files),
             patch("keel.cli.github.pr_files", side_effect=lambda pr, **kw: files_by_pr.get(pr)),
+            patch(
+                "keel.cli.github.pr_added_lines",
+                side_effect=lambda pr, **kw: added_by_pr.get(pr),
+            ),
+            patch(
+                "keel.cli.github.commit_file_content",
+                side_effect=lambda _sha, path, **kw: file_contents.get(path),
+            ),
         ):
             return run(
                 ["verify-merge", _write_config("'true'"), "--root", ".", "--pr", "543", *argv_extra]
@@ -11582,6 +11600,39 @@ class TestVerifyMergeCommand(unittest.TestCase):
         rc, _, err = run(["verify-merge", bad, "--pr", "1"])
         self.assertEqual(rc, 1)
         self.assertIn("invalid keel config", err)
+
+    def test_shared_file_with_surviving_lines_is_clean(self):
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["CHANGELOG.md"], 550: ["CHANGELOG.md"]},
+            commit_files=["CHANGELOG.md"],
+            added_by_pr={550: {"CHANGELOG.md": ["- entry 550"]}},
+            file_contents={"CHANGELOG.md": "# Changelog\n- entry 550\n- entry 543\n"},
+            argv_extra=("--json",),
+        )
+        payload = json.loads(out)
+        self.assertEqual(rc, 0, payload)
+        self.assertEqual(payload["status"], "clean")
+        self.assertEqual(payload["reason"], "clean (1 shared files, 0 lost lines)")
+        self.assertEqual(payload["lost_lines"], {})
+        self.assertEqual(payload["unverifiable"], [])
+
+    def test_shared_file_with_lost_lines_reports_drift(self):
+        rc, out, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["a.py"], 550: ["a.py"]},
+            commit_files=["a.py"],
+            added_by_pr={550: {"a.py": ["missing_line = 1"]}},
+            file_contents={"a.py": "other_line = 2\n"},
+            argv_extra=("--json",),
+        )
+        payload = json.loads(out)
+        self.assertEqual(rc, 1, payload)
+        self.assertEqual(payload["status"], "drift")
+        self.assertEqual(
+            payload["lost_lines"],
+            {"a.py": {"pr": 550, "count": 1, "samples": ["missing_line = 1"]}},
+        )
 
 
 class TestMergeCheckpointGate(unittest.TestCase):

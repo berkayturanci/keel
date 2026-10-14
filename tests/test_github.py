@@ -474,6 +474,71 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
             github.MERGE_COMMIT_POLL_ATTEMPTS,
         )
 
+    def test_pr_added_lines_extracts_added_lines_and_marks_unverifiable(self):
+        payload = json.dumps(
+            [
+                {
+                    "filename": "a.py",
+                    "status": "modified",
+                    "patch": (
+                        "@@ -1,2 +1,4 @@\n context\n-removed\n"
+                        "+added 1\n+\n+   \n+added 2\n+++ b/fake\n"
+                    ),
+                },
+                {"filename": "renamed.py", "status": "renamed", "patch": "@@ -0,0 +1 @@\n+x\n"},
+                {"filename": "deleted.py", "status": "removed", "patch": "@@ -1 +0,0 @@\n-x\n"},
+                {"filename": "binary.bin", "status": "modified"},
+                {"filename": "", "status": "modified", "patch": "+x"},
+            ]
+        )
+        mock_run = MagicMock(return_value=_proc(payload))
+        res = github.pr_added_lines(550, _run=mock_run, _sleep=lambda _s: None)
+        self.assertEqual(
+            res,
+            {
+                "a.py": ["added 1", "", "   ", "added 2"],
+                "renamed.py": None,
+                "deleted.py": None,
+                "binary.bin": None,
+            },
+        )
+        self.assertIsNone(
+            github.pr_added_lines(
+                550, _run=MagicMock(return_value=_proc("{}", 0)), _sleep=lambda _s: None
+            )
+        )
+
+    def test_commit_file_content_decodes_base64_and_fails_soft(self):
+        import base64
+
+        encoded = base64.b64encode(b"line 1\nline 2\n").decode("ascii")
+        payload = json.dumps({"type": "file", "encoding": "base64", "content": encoded})
+        self.assertEqual(
+            github.commit_file_content(
+                "deadbeef", "a/b.py", _run=MagicMock(return_value=_proc(payload))
+            ),
+            "line 1\nline 2\n",
+        )
+        for bad in (
+            _proc("404", 1),
+            _proc("[]"),
+            _proc(json.dumps({"type": "dir", "encoding": "base64", "content": encoded})),
+            _proc(json.dumps({"type": "file", "encoding": "base64", "content": "!!!not_b64!!!"})),
+            _proc(
+                json.dumps(
+                    {
+                        "type": "file",
+                        "encoding": "base64",
+                        "content": base64.b64encode(b"\xff\xfe").decode("ascii"),
+                    }
+                )
+            ),
+        ):
+            with self.subTest(bad=bad):
+                self.assertIsNone(
+                    github.commit_file_content("deadbeef", "a.py", _run=MagicMock(return_value=bad))
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

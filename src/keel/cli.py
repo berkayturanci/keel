@@ -4846,7 +4846,22 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             )
             if not ok
         ]
-        report = mergeverify.verify_merge(landed, overtaken=overtaken, intended=intended)
+        landed_set = {p.strip() for p in (landed or []) if p.strip()}
+        shared = {p.strip(): pr for p, pr in overtaken.items() if p.strip() in landed_set}
+        added_by_pr = {
+            pr: github.pr_added_lines(pr, cwd=args.root) for pr in sorted(set(shared.values()))
+        }
+        merged_contents = {
+            path: github.commit_file_content(merge_sha, path, cwd=args.root)
+            for path in sorted(shared)
+        }
+        report = mergeverify.verify_merge(
+            landed,
+            overtaken=overtaken,
+            intended=intended,
+            added_by_pr=added_by_pr,
+            merged_contents=merged_contents,
+        )
         if unreadable:
             note = "could not read " + ", ".join(name for name, _ in unreadable)
             if report["status"] in ("drift", "out-of-scope"):

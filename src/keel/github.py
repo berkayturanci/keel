@@ -7,6 +7,7 @@ unit-tested offline; live behaviour is opt-in.
 
 from __future__ import annotations
 
+import base64
 import json
 import random
 import re
@@ -316,6 +317,60 @@ def commit_files(sha: str, *, cwd: str | None = None, _run=None, _sleep=None) ->
         _run=_run,
         _sleep=_sleep,
     )
+
+
+def pr_added_lines(
+    pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None
+) -> dict[str, list[str] | None] | None:
+    """Added lines per file in ``pr`` (#1511). ``None`` value marks an unverifiable file."""
+    rows = _json_rows(
+        ["gh", "api", f"repos/{{owner}}/{{repo}}/pulls/{pr}/files?per_page=100"],
+        cwd=cwd,
+        _run=_run,
+        _sleep=_sleep,
+    )
+    if rows is None:
+        return None
+    out: dict[str, list[str] | None] = {}
+    for row in rows:
+        path = str(row.get("filename") or "").strip()
+        if not path:
+            continue
+        patch = row.get("patch")
+        if row.get("status") not in ("added", "modified") or not isinstance(patch, str):
+            out[path] = None
+        else:
+            out[path] = [
+                line[1:]
+                for line in patch.splitlines()
+                if line.startswith("+") and not line.startswith("+++")
+            ]
+    return out
+
+
+def commit_file_content(
+    sha: str, path: str, *, cwd: str | None = None, _run=None, _sleep=None
+) -> str | None:
+    """UTF-8 file content at ``sha`` from GitHub's contents endpoint, or ``None``."""
+    data = rest_json(
+        run_argv_retry(
+            ["gh", "api", f"repos/{{owner}}/{{repo}}/contents/{path}?ref={sha}"],
+            cwd=cwd,
+            _run=_run,
+            _sleep=_sleep,
+        )
+    )
+    if (
+        not isinstance(data, dict)
+        or data.get("type") != "file"
+        or data.get("encoding") != "base64"
+        or not isinstance(data.get("content"), str)
+    ):
+        return None
+    try:
+        return base64.b64decode("".join(data["content"].split()), validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
 
 
 def _lines(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[str] | None:

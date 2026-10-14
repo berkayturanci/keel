@@ -43,6 +43,9 @@ def verify_merge(
     landed: Sequence[str] | None,
     overtaken: Mapping[str, int] | None = None,
     intended: Sequence[str] | None = None,
+    *,
+    added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None = None,
+    merged_contents: Mapping[str, str | None] | None = None,
 ) -> dict:
     """Judge whether a merge may have silently reverted other merged work.
 
@@ -57,29 +60,38 @@ def verify_merge(
     ``status``:
 
     * ``drift``      — the merge wrote to files another PR changed after this one
-      branched. The silent-revert shape; loud, and names the overtaking PR.
-    * ``out-of-scope`` — no overtaking, but the merge changed files the PR's own
+      branched and lost added lines (or was unverifiable).
+    * ``out-of-scope`` — no drift, but the merge changed files the PR's own
       diff did not list. A different (rarer) way for a merge to do more than it said.
-    * ``clean``      — neither.
+    * ``clean``      — neither (or all shared files retained their added lines).
     * ``unknown``    — nothing could be read.
     """
     if landed is None:
         return _report("unknown", "could not read the merge commit's file list from GitHub")
     landed_set = {p.strip() for p in landed if p.strip()}
-    collisions = {
-        path: pr
-        for path, pr in (overtaken or {}).items()
-        if path.strip() and path.strip() in landed_set
-    }
-    if collisions:
-        listed = ", ".join(f"{p} (#{pr})" for p, pr in sorted(collisions.items()))
-        return _report(
-            "drift",
-            f"the merge wrote to {len(collisions)} file(s) that another pull request "
-            f"changed after this one branched — the shape of a silent revert: {listed}",
-            overtaken=dict(sorted(collisions.items())),
-            landed_count=len(landed_set),
+    collisions = dict(
+        sorted(
+            (path.strip(), pr)
+            for path, pr in (overtaken or {}).items()
+            if path.strip() and path.strip() in landed_set
         )
+    )
+    if collisions:
+        lost_lines, unverifiable = _check_survival(collisions, added_by_pr, merged_contents)
+        if lost_lines or unverifiable:
+            parts = [
+                f"{p} (#{info['pr']}: {info['count']} lost)" for p, info in lost_lines.items()
+            ] + [f"{p} (#{collisions[p]}: unverifiable)" for p in unverifiable]
+            return _report(
+                "drift",
+                f"the merge wrote to {len(collisions)} file(s) that another pull request "
+                f"changed after this one branched — the shape of a silent revert: "
+                f"{', '.join(parts)}",
+                overtaken=collisions,
+                lost_lines=lost_lines,
+                unverifiable=unverifiable,
+                landed_count=len(landed_set),
+            )
     if intended is not None:
         unexpected = sorted(landed_set - {p.strip() for p in intended if p.strip()})
         if unexpected:
@@ -87,14 +99,42 @@ def verify_merge(
                 "out-of-scope",
                 f"the merge changed {len(unexpected)} file(s) the pull request's own "
                 "diff did not list",
+                overtaken=collisions,
                 unexpected=unexpected,
                 landed_count=len(landed_set),
             )
+    if collisions:
+        return _report(
+            "clean",
+            f"clean ({len(collisions)} shared files, 0 lost lines)",
+            overtaken=collisions,
+            landed_count=len(landed_set),
+        )
     return _report(
         "clean",
         "no file in this merge was changed by another pull request after this one branched",
         landed_count=len(landed_set),
     )
+
+
+def _check_survival(
+    collisions: Mapping[str, int],
+    added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None,
+    merged_contents: Mapping[str, str | None] | None,
+) -> tuple[dict[str, dict], list[str]]:
+    lost_lines: dict[str, dict] = {}
+    unverifiable: list[str] = []
+    for path, pr in collisions.items():
+        added = ((added_by_pr or {}).get(pr) or {}).get(path)
+        content = (merged_contents or {}).get(path)
+        if added is None or content is None:
+            unverifiable.append(path)
+            continue
+        present = {line for line in content.splitlines() if line.strip()}
+        missing = [line for line in added if line.strip() and line not in present]
+        if missing:
+            lost_lines[path] = {"pr": pr, "count": len(missing), "samples": missing[:3]}
+    return lost_lines, unverifiable
 
 
 def _report(status: str, reason: str, **extra) -> dict:
@@ -103,6 +143,8 @@ def _report(status: str, reason: str, **extra) -> dict:
         "status": status,
         "reason": reason,
         "overtaken": {},
+        "lost_lines": {},
+        "unverifiable": [],
         "unexpected": [],
         "landed_count": 0,
         # Present on every report, so a consumer never has to distinguish
@@ -125,8 +167,16 @@ def render(report: dict) -> str:
         f"keel verify-merge — {report.get('status', 'unknown')}",
         f"  {report.get('reason', '')}",
     ]
+    lost = report.get("lost_lines") or {}
+    unverifiable = set(report.get("unverifiable") or [])
     for path, pr in (report.get("overtaken") or {}).items():
-        lines.append(f"    {path}  — also changed by #{pr} after this PR branched")
+        if path in lost:
+            info = lost[path]
+            lines.append(f"    {path}  — also changed by #{pr} ({info['count']} lost line(s))")
+            for sample in info.get("samples") or []:
+                lines.append(f"      - {sample}")
+        elif path in unverifiable:
+            lines.append(f"    {path}  — also changed by #{pr} (unverifiable)")
     for path in report.get("unexpected") or []:
         lines.append(f"    {path}  — not in the PR's own diff")
     return "\n".join(lines)
