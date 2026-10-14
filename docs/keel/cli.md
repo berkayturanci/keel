@@ -3181,6 +3181,108 @@ so the working tree is left clean rather than mid-revert, and reports the git ou
 
 Exit 0 when the revert commit was created, 1 otherwise.
 
+## `keel stale-blockers [--root DIR] [--limit N] [--json]`
+
+List open pull requests that deserve attention about their **stated blockers** (#1512): one
+cleared, one abandoned, one that could not be checked, or one whose reference could not be read.
+It reads each open PR's body for a blocked phrase (`blocked by`, `depends on`, `waiting on`,
+`blocked until`, and the labels `dependency:` / `needs dependency:`; the plural `Dependencies:` is
+not recognised) and for `do not merge before|until [after]|prior to` (also `dont`, `don't` with a
+straight or curly apostrophe, `must not`, `should not`, `shouldn't`, `cannot`, `can't`; `this PR`,
+`the pull request` or `it` may follow `merge`). Then it asks GitHub through `gh api` whether each
+referenced blocker is done.
+
+**Best-effort blocker detection.** The parser reads the recognised phrases and marks a PR `incomplete`
+when it sees a reference it could not read in a phrase's zone. `all_cleared` is a best-effort hint for an
+operator to look at, never a certificate: an operator must read the PR before acting. A phrase that is
+not in the list is not detected at all and produces no flag of any kind: `Blocked on #5`, `Waiting for #5`,
+`Stacked on #5`, `Requires #5`, `Merge after #5` and `Do not merge this PR into main until #5` are all
+invisible to this command. Bodies with `\r\n` or `\r` line endings are read like `\n` ones.
+
+- **Strict target grammar:** after a blocked phrase (`blocked by`, `depends on`, `waiting on`,
+  `blocked until`, `dependency:` / `needs dependency:`), items are `#N`, `PR #N`, `PR#N`, `issue #N`
+  or `pull request #N`, joined by `,`, `, and`, `, or`, `and`, `or`, `/`, `&`, `+`, or written as a
+  markdown bullet list on the lines directly under the phrase (a blank line ends the list). Tag targets
+  are read only after `do not merge before|until [after]|prior to` (so `blocked until v2.0` is not read
+  as a tag blocker and marks the PR `incomplete: true` with `blockers: []`). A `before` target is `#N`,
+  a `v`-prefixed tag (`v2`, `v1.2.0`) or a three-part version (`1.2.0`; it checks for a tag named
+  exactly that, not `v1.2.0`). A tag target must end at whitespace or sentence punctuation
+  (`[.,;:!?)\]}]`); any other non-whitespace continuation (such as `do not merge before v2/sdk#12`
+  or `do not merge before v2.0.0@rc1`) is not read as a tag prefix and marks the PR `incomplete`.
+  `5pm`, `10.30` and `2026.10.15` are not tags.
+- **Zone and token accounting:** for a recognised phrase, its zone spans the rest of the line (bounded
+  by any subsequent blocker phrase), or the immediately following non-blank line when the phrase ends its
+  line, plus any contiguous bullet lines directly below that (a blank or non-bullet line ends the zone).
+  Reference-like tokens in the zone are `#N`, foreign
+  `owner/repo#N`, URLs, `/issues/N` or `/pull/N` paths, and tag-like targets. If the spans of the
+  tokens captured by the strict grammar do not match the spans of the reference-like tokens in the zone,
+  the PR is marked `incomplete: true` and `all_cleared` is false for it. Because the zone covers the
+  entire line and any immediately following bullet lines, an unrelated reference on the same line
+  (`Depends on #12. Closes #15`) or on a contiguous bullet line without a blank line before it
+  (`Depends on #12` followed by `- Fixes #15`) also marks the PR `incomplete: true` (an expected false
+  negative for `all_cleared`; put closing keywords on a separate non-bullet line or after a blank line).
+  Incomplete PRs are listed in the report regardless of whether their parsed blockers are cleared,
+  abandoned, or pending, so unread references in scanned text are surfaced for operator review. A PR
+  where a blocker phrase has unreadable references and no parsed blockers is listed with `blockers: []`
+  ("blocker reference could not be read").
+- **Deliberately not read:** negated or historical phrases (`not`, `no longer`, `never`, `n't`,
+  `nothing`, `previously`, `formerly`, `was`, or `were` — optionally followed by `currently`,
+  `really`, or `yet` — immediately preceding the phrase on the same line; trailing qualifiers after
+  the target such as `Blocked by #5 — no longer applies` are not read as negations), phrases with no
+  reference-like token at all ("behaviour depends on the config", `Dependency: bump`, "do not merge before release"),
+  phrases or headings separated from their targets by a blank line (`Blocked by\n\n#5`, `Do not merge before\n\n#5`,
+  `## Blocked by\n\n- #5` — the blank line ends the zone, so no blocker is read and `incomplete` is false),
+  and unrecognised phrasings (`blocked on`, `waiting for`, `stacked on`, `requires`). Note that label
+  forms like `Dependency: #123` are parsed, but `Dependency: bump, see #4` sees prose and flags the PR
+  as incomplete. Also ignored as non-claims: the bare noun `dependency` / `needs dependency` without a
+  colon ("Upgrade dependency lodash (#123)"), `Depends on: none`, fenced code (` ``` ` or `~~~` of three
+  or more characters, closed by a matching or longer fence, including inside GitHub alert blocks), inline code spans (single- or multi-backtick, including multiline spans within a paragraph) quoting a
+  phrase, HTML comments, standard blockquotes (`> ...`, including nested `> >`), and text collapsed inside
+  `<details>...</details>` blocks (case-insensitive, nested, or unterminated — an unterminated `<details>`
+  drops through the end of the body without setting `incomplete`, so truncated bot release notes are not
+  flagged and any blocker written after an unclosed `<details>` is missed).
+  GitHub alert blocks (`> [!NOTE]`, `> [!WARNING]`, `> [!IMPORTANT]`, `> [!CAUTION]`, `> [!TIP]` and the
+  lines quoted under them) are the author's own text and are scanned rather than stripped (fenced code
+  inside an alert is still stripped as non-claim code).
+- **Markdown:** `**#12**`, `_#12_`, `**Blocked by:** #12` and a link whose text is `#12` read as
+  `#12` when the link is to this repository's own `#12` (a bare `/issues/12` or `/pull/12` path with no
+  `owner/repo` prefix — even though GitHub resolves a leading `/` against the site root, a path without
+  `owner/repo` segments cannot name another repository — `#12`, or absolute and matching `gh repo view`).
+  The same label over another repository's URL (including `/owner/repo/issues/12`, `//host/...`,
+  `../other/...`, `issues/12` without a leading `/`, or a path or `#N` fragment naming a different number
+  than the label) is a foreign reference: `incomplete`, not resolved here.
+- **States:** a PR is `cleared` once **merged** (`merged_at` timestamp); an issue once closed as `completed` (or with no
+  reason, as old issues are) (`repos/{owner}/{repo}/issues/N`). A PR closed unmerged, or an issue
+  closed `not_planned` or as a duplicate, is `abandoned` — reported, not counted as cleared. A
+  tag is `cleared` once `repos/{owner}/{repo}/git/ref/tags/<tag>` returns `refs/tags/<tag>` and `pending` only on an
+  HTTP 404 while `repos/{owner}/{repo}` itself answers. An open issue or PR is `pending`. Issue and
+  PR blockers are both `kind: issue`.
+
+**Reporting unreadable blockers.** Each distinct blocker across the scanned PRs is resolved with one
+sequential `gh api` call (plus a repository probe on a tag 404) with no batching; anything that cannot
+be confirmed (offline, no auth, rate limit, a 5xx, 404 on an issue, odd output) is `unknown`. A PR with
+an `unknown` blocker is listed, each such entry carries a
+`reason`, the report's `unknown_blockers` counts the distinct blockers that could not be read, the
+text output says how many, and the command exits **2**. An empty list with exit 0 and `truncated: false`
+means every blocker the command recognised was read, not that no PR is blocked.
+
+Read-only and fail-soft. `all_cleared` is a best-effort indicator that every parsed blocker cleared
+and the list is not `incomplete`; an operator must read the PR before acting on it. `--limit` (a
+positive integer, default 200) caps the open PRs read; `truncated` is true, and the text says so,
+only when more than that many are open. It reads through the `gh` CLI, not the selected GitHub
+transport. Exit 0: every blocker on the scanned PRs was read (including when `truncated: true` —
+check `truncated` or the trailing text warning for whether `--limit` capped the PR list); 1: the PR
+list itself cannot be read; 2: some blocker could not be read (shared with `argparse` usage errors, so
+`--json` callers should check `ok` and `unknown_blockers` in the payload rather than the exit code
+alone). `/keel:stale-prs` and `/keel:morning`
+run it.
+
+```json
+{"ok": true, "error": null, "truncated": false, "unknown_blockers": 0,
+  "prs": [{"number": 42, "title": "...", "url": "...", "draft": true, "incomplete": false,
+  "all_cleared": true, "blockers": [{"kind": "issue", "ref": "3177", "state": "cleared"}]}]}
+```
+
 ## `keel cost-report [--root DIR] [--json]`
 
 Report recorded or estimated token counts, estimated USD cost and per-model analytics from
@@ -3997,7 +4099,7 @@ Most commands use only 0 and 1; a few give a third answer its own code, so a cal
 
 | code | meaning |
 |---|---|
-| 0 | success |
+| 0 | success (`keel stale-blockers`: every blocker on the scanned PRs was read; check `truncated` for whether `--limit` capped the PR list) |
 | 1 | a config was invalid/missing, a plan target could not be loaded, or the command's own check failed or blocked |
-| 2 | no command given (help printed); a usage error argparse rejects (an unknown flag, a bad choice); `keel evidence-verify`: required evidence is still `waiting`; `keel verify-merge`: the result is `unknown` or `incomplete`; `keel run-gates`: `--phases` names an unknown phase; `keel ship`: a `--loop-iteration` contradicts the loop policy |
+| 2 | no command given (help printed); a usage error argparse rejects (an unknown flag, a bad choice); `keel evidence-verify`: required evidence is still `waiting`; `keel verify-merge`: the result is `unknown` or `incomplete`; `keel run-gates`: `--phases` names an unknown phase; `keel ship`: a `--loop-iteration` contradicts the loop policy; `keel stale-blockers`: some blocker's state could not be read |
 | 3 | `keel merge`: the merge landed, but drift was detected — it may have written over work another PR merged after this one branched |

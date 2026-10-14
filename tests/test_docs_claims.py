@@ -49,6 +49,8 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+import yaml
+
 from keel import (
     api_delegate,
     cli,
@@ -72,8 +74,57 @@ CONFIG_DOC = REPO_ROOT / "docs" / "keel" / "configuration.md"
 PARAM_DOC = REPO_ROOT / "docs" / "keel" / "parameter-reference.md"
 MODELS_DOC = REPO_ROOT / "docs" / "keel" / "models.md"
 SCHEMA = REPO_ROOT / "src" / "keel" / "schema" / "project.schema.json"
+CLAIMS_PATH = REPO_ROOT / "docs" / "keel" / "claims.yaml"
+_CLAIMS_CACHE: dict | None = None
 
-#: `## `keel <name> …`` / `### `keel <name> …`` — the signature headings cli.md uses.
+
+def _load_claims(reload: bool = False) -> dict:
+    """Load docs/keel/claims.yaml lazily. Caches result; reload=True re-reads."""
+    global _CLAIMS_CACHE
+    if _CLAIMS_CACHE is None or reload:
+        if not CLAIMS_PATH.is_file():
+            raise FileNotFoundError(f"Claims file missing at {CLAIMS_PATH}")
+        content = CLAIMS_PATH.read_text(encoding="utf-8")
+        loaded = yaml.safe_load(content)
+        if not isinstance(loaded, dict):
+            raise ValueError(f"Claims file at {CLAIMS_PATH} is not a YAML dictionary")
+        _CLAIMS_CACHE = loaded
+    return _CLAIMS_CACHE
+
+
+def _number_to_words(n: int) -> str:
+    """Convert a non-negative integer to its English word representation."""
+    ones = [
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+    ]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+    if 0 <= n < 20:
+        return ones[n]
+    if 20 <= n < 100:
+        t, rem = divmod(n, 10)
+        return tens[t] + (f"-{ones[rem]}" if rem else "")
+    return str(n)
+
+
 _CLI_SECTION = re.compile(r"(?m)^#{2,3} `keel ([a-z][a-z0-9-]*)")
 
 #: A `knobs` key as configuration.md spells it: a table row and a detail heading.
@@ -1271,28 +1322,37 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         sandbox repository, with two review seats of a single vendor, and `swarm-land --live`
         then merged both pull requests. A surface that names `swarm-review` must say that much
         — experimental, the sandbox repository, single-vendor seats — and nothing more: no
-        maturity, no production readiness, no multi-vendor review. The set is counted."""
+        maturity, no production readiness, no multi-vendor review. The set is counted.
+
+        #1514: every surface naming swarm-review must quote the canonical status line from
+        docs/keel/claims.yaml verbatim.
+        """
         named = set()
+        claims = _load_claims()
+        status_line = claims["swarm"]["status_line"]
+        status = claims["swarm"]["status"]
         for rel in _SWARM_STATUS_SURFACES:
             text = _flat(rel)
             for claim in _OVERCLAIMED_SWARM_REVIEW:
-                with self.subTest(surface=rel, claim=claim.pattern):
-                    self.assertIsNone(claim.search(text))
+                self.assertIsNone(
+                    claim.search(text), f"{rel} matched overclaimed pattern {claim.pattern}"
+                )
             if "swarm-review" not in text:
                 continue
             named.add(rel)
-            with self.subTest(surface=rel):
-                self.assertIn("experimental", text.lower())
-                self.assertIn("sandbox repository", text)
-                self.assertRegex(text, r"single[- ]vendor")
+            self.assertIn(status, text.lower(), f"{rel} does not contain status {status}")
+            self.assertIn(status_line, text, f"{rel} does not contain status_line {status_line}")
         self.assertEqual(named, _SURFACES_NAMING_SWARM_REVIEW)
 
     def test_every_swarm_status_surface_says_experimental(self):
         """One run on a toy repository, single-vendor review seats, and run, review and land
-        as separate opt-in commands: swarm stays experimental on every surface (#1423)."""
+        as separate opt-in commands: swarm stays experimental on every surface (#1423).
+
+        #1514: read from CLAIMS['swarm']['status'].
+        """
+        status = _load_claims()["swarm"]["status"]
         for rel in _SWARM_STATUS_SURFACES:
-            with self.subTest(surface=rel):
-                self.assertIn("experimental", _flat(rel).lower())
+            self.assertIn(status, _flat(rel).lower(), f"{rel} does not contain {status}")
 
     def test_the_claim_detectors_fire_on_the_wording_they_ban(self):
         for claim in (
@@ -1315,14 +1375,22 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         ):
             with self.subTest(stale=stale):
                 self.assertTrue(any(p.search(stale) for p in _STALE_SWARM_STATUS))
-        # The true sentence trips neither detector.
-        true = (
-            "`swarm-review` has run once, on a sandbox repository, with single-vendor review "
-            "seats; swarm stays experimental."
-        )
+        # The true sentence trips neither detector (#1514: canonical summary in claims.yaml).
+        true = _load_claims()["swarm"]["summary"]
         for pattern in _OVERCLAIMED_SWARM_REVIEW + _STALE_SWARM_STATUS:
             with self.subTest(pattern=pattern.pattern):
                 self.assertIsNone(pattern.search(true))
+
+    def test_swarm_claims_check_fails_when_yaml_differs(self):
+        """Mutation test: if claims.yaml specifies a different status, surface checks must fail."""
+        with unittest.mock.patch.dict(
+            _load_claims()["swarm"],
+            {"status": "production-ready", "status_line": "unlimited production runs"},
+        ):
+            with self.assertRaises(AssertionError):
+                self.test_a_surface_naming_swarm_review_states_its_one_run_and_its_limits()
+            with self.assertRaises(AssertionError):
+                self.test_every_swarm_status_surface_says_experimental()
 
     def test_the_security_page_says_the_august_audit_predates_the_live_path(self):
         security = re.sub(r"\s+", " ", (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8"))
@@ -2739,10 +2807,39 @@ class TheReadmeCoverageClaimIsTheGate(unittest.TestCase):
     def test_the_gate_measures_the_whole_package_at_100(self):
         self.assertEqual(self.coverage["run"]["source"], ["keel"])
         self.assertEqual(self.coverage["report"]["fail_under"], 100)
+        self.assertEqual(
+            _load_claims()["coverage"]["fail_under"], self.coverage["report"]["fail_under"]
+        )
 
     def test_the_readme_claims_the_whole_package(self):
-        self.assertIn("Every module under `src/keel/` is held at **100% line + branch", self.readme)
+        self.assertIn(_load_claims()["coverage"]["claim"], self.readme)
         self.assertNotRegex(self.readme, r"The pure core \([^)]*\) is held at")
+
+    def test_every_surface_stating_coverage_bar_quotes_canonical_claim(self):
+        claim = _load_claims()["coverage"]["claim"]
+        surfaces = ("README.md", "CONTRIBUTING.md", "AGENTS.md")
+        for rel in surfaces:
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            self.assertIn(claim, text, f"{rel} does not quote canonical coverage claim: {claim}")
+
+    def test_no_surface_states_the_stale_pure_core_coverage_bar(self):
+        surfaces = ("README.md", "CONTRIBUTING.md", "AGENTS.md", ".github/pull_request_template.md")
+        stale_pattern = re.compile(r"pure core (?:is held at|stays at)", re.IGNORECASE)
+        for rel in surfaces:
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            with self.subTest(surface=rel):
+                self.assertIsNone(stale_pattern.search(text))
+
+    def test_coverage_claim_check_fails_when_yaml_claim_differs(self):
+        """Mutation test: if claims.yaml specifies a different claim, surface checks must fail."""
+        with unittest.mock.patch.dict(
+            _load_claims()["coverage"],
+            {"claim": "Every module under `src/keel/` is held at **90% line coverage**"},
+        ):
+            with self.assertRaises(AssertionError):
+                self.test_the_readme_claims_the_whole_package()
+            with self.assertRaises(AssertionError):
+                self.test_every_surface_stating_coverage_bar_quotes_canonical_claim()
 
     def test_the_readme_names_every_omitted_file(self):
         omitted = self.coverage["run"]["omit"]
@@ -2874,8 +2971,7 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
     and the following sentence is not.
     """
 
-    CLAIM = re.compile(r"audit\s+of\s+(?:14|fourteen)\s+closed\s+fixes", re.IGNORECASE)
-    QUALIFIER = "at the time their issue was closed"
+    CLAIM = re.compile(r"audit\s+of\s+(?:\d+|[a-zA-Z-]+)\s+closed\s+fixes", re.IGNORECASE)
     EXTENSIONS = (".md", ".html", ".js", ".py", ".yaml", ".yml", ".toml")
     BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z(*\[`])")
     KNOWN = (
@@ -2943,9 +3039,10 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
                 self.assertIn(known, names)
 
     def test_every_statement_of_the_audit_says_when(self):
+        qualifier = _load_claims()["revert_check"]["qualifier"]
         for name, sentence in self._found():
             with self.subTest(path=name):
-                self.assertIn(self.QUALIFIER, sentence)
+                self.assertIn(qualifier, sentence)
 
     def test_no_statement_of_the_audit_is_present_tense(self):
         found = self._found()
@@ -2980,6 +3077,102 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
         # The past tense the surfaces use is not caught as present tense.
         self.assertNotRegex("all 14 failed without their fix", r"(?i)\b(?:today|fails?|failing)\b")
         self.assertRegex(self.sentences(bad)[0], r"(?i)\btoday\b")
+
+    def test_every_statement_of_the_audit_reports_canonical_numbers(self):
+        claims = _load_claims()["revert_check"]
+        fixes_audited = claims["fixes_audited"]
+        fixes_survived = claims["fixes_survived"]
+        audited_words = rf"(?:{fixes_audited}|{_number_to_words(fixes_audited)})"
+        survived_words = rf"(?:{fixes_survived}|{_number_to_words(fixes_survived)})"
+        audited_pat = re.compile(rf"\b{audited_words}\s+closed\s+fixes\b", re.IGNORECASE)
+        survived_pat = re.compile(rf"\bfound\s+{survived_words}\b", re.IGNORECASE)
+        for name, sentence in self._found():
+            self.assertRegex(
+                sentence,
+                audited_pat,
+                f"{name}: sentence does not state audited count {fixes_audited}: {sentence}",
+            )
+            self.assertRegex(
+                sentence,
+                survived_pat,
+                f"{name}: sentence does not state survived count {fixes_survived}: {sentence}",
+            )
+
+    def test_audit_numbers_check_fails_when_yaml_numbers_differ(self):
+        """Mutation test: proving that test_every_statement_of_the_audit_reports_canonical_numbers
+        fails if claims.yaml specifies different audit counts (#1514 review)."""
+        for mutated_audited, mutated_survived in [(14, 7), (14, 0), (4, 3), (1, 99)]:
+            with self.subTest(audited=mutated_audited, survived=mutated_survived):
+                with unittest.mock.patch.dict(
+                    _load_claims()["revert_check"],
+                    {"fixes_audited": mutated_audited, "fixes_survived": mutated_survived},
+                ):
+                    with self.assertRaises(AssertionError):
+                        self.test_every_statement_of_the_audit_reports_canonical_numbers()
+
+
+class TestPublicClaimsSource(unittest.TestCase):
+    """#1514: One canonical, test-pinned source for public claims.
+
+    docs/keel/claims.yaml holds the current swarm status line, coverage bar,
+    and revert-check numbers. Every surface stating these claims must quote
+    them verbatim, and promo copy quotes the same file.
+    """
+
+    def test_claims_file_exists_and_is_valid_yaml(self):
+        self.assertTrue(CLAIMS_PATH.is_file(), f"{CLAIMS_PATH} is missing")
+        claims = _load_claims(reload=True)
+        self.assertIsInstance(claims, dict)
+
+    def test_swarm_claims_schema_and_types(self):
+        claims = _load_claims()
+        self.assertIn("swarm", claims)
+        swarm = claims["swarm"]
+        self.assertIsInstance(swarm, dict)
+        for key in ("status", "status_line", "summary"):
+            self.assertIn(key, swarm)
+            self.assertIsInstance(swarm[key], str)
+            self.assertTrue(swarm[key].strip(), f"swarm.{key} must not be empty")
+        # Internal consistency: the canonical summary includes status and status_line
+        self.assertIn(swarm["status"], swarm["summary"])
+        self.assertIn(swarm["status_line"], swarm["summary"])
+
+    def test_coverage_claims_schema_and_matches_gate(self):
+        claims = _load_claims()
+        self.assertIn("coverage", claims)
+        cov = claims["coverage"]
+        self.assertIsInstance(cov, dict)
+        for key in ("bar", "claim", "fail_under"):
+            self.assertIn(key, cov)
+        self.assertIsInstance(cov["bar"], str)
+        self.assertTrue(cov["bar"].strip())
+        self.assertIsInstance(cov["claim"], str)
+        self.assertTrue(cov["claim"].strip())
+        self.assertIsInstance(cov["fail_under"], int)
+        # Gate matches pyproject.toml
+        with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+            pyproject = tomllib.load(fh)
+        gate = pyproject["tool"]["coverage"]["report"]["fail_under"]
+        self.assertEqual(cov["fail_under"], gate)
+        # Consistency: claim quotes the bar
+        self.assertIn(cov["bar"], cov["claim"])
+
+    def test_revert_check_schema_and_types(self):
+        claims = _load_claims()
+        self.assertIn("revert_check", claims)
+        rev = claims["revert_check"]
+        self.assertIsInstance(rev, dict)
+        for key in ("fixes_audited", "fixes_survived", "qualifier", "audit_ref"):
+            self.assertIn(key, rev)
+        self.assertIsInstance(rev["fixes_audited"], int)
+        self.assertGreater(rev["fixes_audited"], 0)
+        self.assertIsInstance(rev["fixes_survived"], int)
+        self.assertGreaterEqual(rev["fixes_survived"], 0)
+        self.assertLessEqual(rev["fixes_survived"], rev["fixes_audited"])
+        self.assertIsInstance(rev["qualifier"], str)
+        self.assertTrue(rev["qualifier"].strip())
+        self.assertIsInstance(rev["audit_ref"], str)
+        self.assertTrue(rev["audit_ref"].startswith("#"))
 
 
 if __name__ == "__main__":

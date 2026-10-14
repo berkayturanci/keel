@@ -45,7 +45,7 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    hundred syntax errors that look like a regression. `PY=/path/to/python make test`
    overrides the resolver; `make doctor-python` prints what it picked, and
    `keel doctor` reports the same interpreter under its `python_toolchain` check.
-4. The pure core is held at **100% line + branch coverage**. New core logic needs tests —
+4. Every module under `src/keel/` is held at **100% line + branch coverage**. New code needs tests —
    and for a *fix*, coverage is not the bar; see step 7.
    `make test` also fails if any tracked file — `CHANGELOG.md` most often, since it conflicts
    on nearly every PR — still carries an unresolved `<<<<<<<`/`=======`/`>>>>>>>` marker after
@@ -54,7 +54,9 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    changes: `changelog.d/<issue>.<type>.md` (`added`, `changed`, `deprecated`, `removed`,
    `fixed` or `security`) holding the bullet lines. Do not edit `CHANGELOG.md`; fragments exist
    so parallel PRs never conflict on it, and `make release-bump` collects them
-   (`make changelog-preview` shows the result). If you change the `/keel:<command>` adapters, re-install with
+   (`make changelog-preview` shows the result). If a public claim changes (swarm status,
+   coverage bar, revert-check numbers), update `docs/keel/claims.yaml` — tests enforce
+   that documentation surfaces quote it verbatim. If you change the `/keel:<command>` adapters, re-install with
    `keel install-adapter all --force`.
 6. Write a real PR description: a **Summary** in your own prose plus a **Related issues**
    reference (`Closes #N` / `Relates to #N`, or `no issue` for a pure chore). The

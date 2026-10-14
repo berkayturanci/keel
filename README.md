@@ -542,6 +542,7 @@ and a `/keel-progress` side panel, read from `keel status --json` and the activi
 - [`docs/keel/github-actions.md`](docs/keel/github-actions.md) — run keel live on GitHub's free runner (the `keel-ship` workflow)
 - [`docs/keel/release.md`](docs/keel/release.md) — PyPI/TestPyPI release runbook and package smoke test
 - [`docs/keel/homebrew-release-chain.md`](docs/keel/homebrew-release-chain.md) — how a release reaches `brew install`, every guard on the way, and what has already gone wrong
+- [`docs/keel/claims.yaml`](docs/keel/claims.yaml) — canonical public claims (swarm status, coverage bar, revert-check numbers) pinned by tests (#1514)
 - [`docs/proposals/keel-architecture.md`](docs/proposals/keel-architecture.md) — the original design proposal (historical; current behaviour is in `docs/keel/`)
 - [`docs/proposals/api-token-delegate.md`](docs/proposals/api-token-delegate.md) — hosted-API (API-token) implementer/reviewer delegate design (#548)
 
