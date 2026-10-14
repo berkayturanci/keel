@@ -255,11 +255,14 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             bin_dir.mkdir()
             log_file = root / "calls.log"
             (root / "diff.patch").write_text("diff\n", encoding="utf-8", newline="\n")
-            (root / "jury.toml").write_text("[jury]\n", encoding="utf-8", newline="\n")
+            (root / "jury.toml").write_text("local-jury = true\n", encoding="utf-8", newline="\n")
             (root / "jury-policy.toml").write_text("[policy]\n", encoding="utf-8", newline="\n")
             (root / ".jury" / "sub").mkdir(parents=True)
             (root / ".jury" / "tracked.toml").write_text(
                 "local = true\n", encoding="utf-8", newline="\n"
+            )
+            (root / ".jury" / "later.toml").write_text(
+                "later = true\n", encoding="utf-8", newline="\n"
             )
             (root / ".jury" / "untracked.toml").write_text(
                 "extra = true\n", encoding="utf-8", newline="\n"
@@ -271,6 +274,15 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             (bin_dir / "git").write_text(
                 "#!/bin/sh\n"
                 'if [ "$1" = "rev-parse" ]; then echo "abc1234"; exit 0; fi\n'
+                'if [ "$1" = "ls-tree" ]; then\n'
+                '  case "$*" in *jury.toml*|*.jury/tracked.toml*)'
+                ' echo "100644 blob 1111111	$4" ;; esac\n'
+                "  exit 0\n"
+                "fi\n"
+                'if [ "$1" = "ls-files" ]; then\n'
+                '  case "$*" in *.jury/tracked.toml*|*.jury/later.toml*) echo "$3" ;; esac\n'
+                "  exit 0\n"
+                "fi\n"
                 'echo "git $*" >> "$CALL_LOG"\n'
                 'if [ "$FAIL_WORKTREE_ADD" = "1" ]; then exit 128; fi\n'
                 'case "$*" in *review-r1-slot-0*)'
@@ -278,6 +290,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 'case "$*" in *review-r1-gate*)'
                 ' [ "$FAIL_GATE_WORKTREE_ADD" = "1" ] && exit 128 ;; esac\n'
                 'mkdir -p "$4/.jury"\n'
+                'printf "committed-jury = true\\n" > "$4/jury.toml"\n'
                 'printf "committed = true\\n" > "$4/.jury/tracked.toml"\n'
                 "exit 0\n",
                 encoding="utf-8",
@@ -301,7 +314,10 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             (bin_dir / "jury").write_text(
                 "#!/bin/sh\n"
                 'echo "jury $*" >> "$CALL_LOG"\n'
+                'cat jury.toml > "$JURY_CHECK_TOP"\n'
                 'cat .jury/tracked.toml > "$JURY_CHECK_TRACKED"\n'
+                'if [ -e .jury/later.toml ]; then cat .jury/later.toml > "$JURY_CHECK_LATER";'
+                ' else printf "absent\\n" > "$JURY_CHECK_LATER"; fi\n'
                 'cat .jury/untracked.toml > "$JURY_CHECK_UNTRACKED"\n'
                 'cat .jury/sub/nested.toml > "$JURY_CHECK_NESTED"\n'
                 'if [ "$FAIL_JURY" = "1" ]; then exit 4; fi\n'
@@ -334,7 +350,9 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 "GATE_PROVIDER": "codex",
                 "RUBRIC_AND_DIFF": "/tmp/prompt.md",
                 "DIFF": (root / "diff.patch").as_posix(),
+                "JURY_CHECK_TOP": (root / "checked_top.txt").as_posix(),
                 "JURY_CHECK_TRACKED": (root / "checked_tracked.txt").as_posix(),
+                "JURY_CHECK_LATER": (root / "checked_later.txt").as_posix(),
                 "JURY_CHECK_UNTRACKED": (root / "checked_untracked.txt").as_posix(),
                 "JURY_CHECK_NESTED": (root / "checked_nested.txt").as_posix(),
             }
@@ -430,8 +448,16 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             res_jury = _run_bash(jury_panel_script)
             self.assertEqual(res_jury.returncode, 0, res_jury.stderr)
             self.assertEqual(
+                (root / "checked_top.txt").read_text(encoding="utf-8"),
+                "committed-jury = true\n",
+            )
+            self.assertEqual(
                 (root / "checked_tracked.txt").read_text(encoding="utf-8"),
                 "committed = true\n",
+            )
+            self.assertEqual(
+                (root / "checked_later.txt").read_text(encoding="utf-8"),
+                "absent\n",
             )
             self.assertEqual(
                 (root / "checked_untracked.txt").read_text(encoding="utf-8"),

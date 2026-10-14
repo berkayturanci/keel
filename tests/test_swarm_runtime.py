@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock as mock
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
@@ -3469,12 +3470,16 @@ class ReviewCheckoutTests(unittest.TestCase):
                     (wt_dir / ".jury" / "tracked.toml").write_text(
                         "committed = true\n", encoding="utf-8"
                     )
+                if "ls-tree" in cmd:
+                    target = cmd[-1]
+                    if target in ("jury-policy.toml", ".jury/tracked.toml"):
+                        return CommandResult(True, 0, f"100644 blob 1111111\t{target}\n")
                 return CommandResult(True, 0, "")
 
             err = io.StringIO()
             with (
-                patch("keel.swarm_runtime.remove_swarm_worktree", return_value=False),
-                patch("sys.stderr", err),
+                mock.patch("keel.swarm_runtime.remove_swarm_worktree", return_value=False),
+                mock.patch("sys.stderr", err),
             ):
                 with review_checkout("head123", name="jury", root=root, runner=fake_runner) as wt:
                     self.assertEqual(
@@ -3499,6 +3504,79 @@ class ReviewCheckoutTests(unittest.TestCase):
                         "committed = true\n",
                     )
             self.assertIn("warning: could not remove review checkout", err.getvalue())
+
+    @unittest.skipUnless(shutil.which("git"), "git is not installed")
+    def test_review_checkout_real_git_skips_tracked_and_later_committed_configs(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            tmp = Path(tmpdir).resolve()
+            empty_cfg = tmp / "empty-gitconfig"
+            empty_cfg.write_text("", encoding="utf-8")
+            repo = tmp / "repo"
+            clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+            clean_env.update(
+                GIT_CONFIG_GLOBAL=str(empty_cfg),
+                GIT_CONFIG_NOSYSTEM="1",
+                GIT_AUTHOR_NAME="t",
+                GIT_AUTHOR_EMAIL="t@example.invalid",
+                GIT_COMMITTER_NAME="t",
+                GIT_COMMITTER_EMAIL="t@example.invalid",
+            )
+            with mock.patch.dict(os.environ, clean_env, clear=True):
+                self.assertEqual(
+                    _git_cli(["init", "-q", "-b", "main", str(repo)], tmp).returncode, 0
+                )
+                (repo / ".jury").mkdir(parents=True)
+                (repo / "jury-policy.toml").write_text("policy = 'at-head'\n", encoding="utf-8")
+                (repo / ".jury" / "tracked.toml").write_text(
+                    "tracked = 'at-head'\n", encoding="utf-8"
+                )
+                self.assertEqual(
+                    _git_cli(["add", "jury-policy.toml", ".jury/tracked.toml"], repo).returncode, 0
+                )
+                self.assertEqual(_git_cli(["commit", "-q", "-m", "c1"], repo).returncode, 0)
+                requested_head = _git_cli(["rev-parse", "HEAD"], repo).stdout.strip()
+
+                # Commit 2 introduces a new tracked config file after requested_head
+                (repo / ".jury" / "later.toml").write_text(
+                    "later = 'committed'\n", encoding="utf-8"
+                )
+                self.assertEqual(_git_cli(["add", ".jury/later.toml"], repo).returncode, 0)
+                self.assertEqual(_git_cli(["commit", "-q", "-m", "c2"], repo).returncode, 0)
+
+                # Working tree has uncommitted edits to both tracked files, plus untracked configs
+                (repo / "jury-policy.toml").write_text(
+                    "policy = 'dirty-working-tree'\n", encoding="utf-8"
+                )
+                (repo / ".jury" / "tracked.toml").write_text(
+                    "tracked = 'dirty-working-tree'\n", encoding="utf-8"
+                )
+                (repo / ".jury" / "later.toml").write_text(
+                    "later = 'dirty-working-tree'\n", encoding="utf-8"
+                )
+                (repo / "jury.toml").write_text("[jury]\nuntracked = true\n", encoding="utf-8")
+                (repo / ".jury" / "untracked.toml").write_text("local = true\n", encoding="utf-8")
+
+                with review_checkout(requested_head, name="jury", root=repo) as wt:
+                    # Tracked at requested_head: comes from the checkout itself, never working tree
+                    self.assertEqual(
+                        (wt / "jury-policy.toml").read_text(encoding="utf-8"),
+                        "policy = 'at-head'\n",
+                    )
+                    self.assertEqual(
+                        (wt / ".jury" / "tracked.toml").read_text(encoding="utf-8"),
+                        "tracked = 'at-head'\n",
+                    )
+                    # Committed after requested_head: absent from requested_head and not copied
+                    self.assertFalse((wt / ".jury" / "later.toml").exists())
+                    # Genuinely untracked configs: copied into the review checkout
+                    self.assertEqual(
+                        (wt / "jury.toml").read_text(encoding="utf-8"),
+                        "[jury]\nuntracked = true\n",
+                    )
+                    self.assertEqual(
+                        (wt / ".jury" / "untracked.toml").read_text(encoding="utf-8"),
+                        "local = true\n",
+                    )
 
     def test_review_checkout_translates_config_copy_oserror_to_review_checkout_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -838,7 +838,7 @@ JURY_RC=1
 if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
   JURY_RC=0
   for cfg in jury.toml jury-policy.toml; do
-    if test -f "$ROOT/$cfg" && test ! -e "$JURY_WT/$cfg"; then
+    if test -f "$ROOT/$cfg" && test -z "$(git ls-tree "$HEAD_SHA" -- "$cfg")$(git ls-files -- "$cfg")"; then
       cp "$ROOT/$cfg" "$JURY_WT/$cfg" || { JURY_RC=$?; break; }
     fi
   done
@@ -846,9 +846,8 @@ if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
     (
       set -o pipefail
       cd "$ROOT" && find .jury -type f | while IFS= read -r cfg; do
-        mkdir -p "$(dirname "$JURY_WT/$cfg")" || exit 1
-        if test ! -e "$JURY_WT/$cfg"; then
-          cp "$ROOT/$cfg" "$JURY_WT/$cfg" || exit 1
+        if test -z "$(git ls-tree "$HEAD_SHA" -- "$cfg")$(git ls-files -- "$cfg")"; then
+          mkdir -p "$(dirname "$JURY_WT/$cfg")" && cp "$ROOT/$cfg" "$JURY_WT/$cfg" || exit 1
         fi
       done
     ) || JURY_RC=$?

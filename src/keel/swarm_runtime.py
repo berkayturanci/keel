@@ -300,8 +300,9 @@ def review_checkout(
     """Context manager providing an isolated detached worktree at ``head_sha`` for a review run.
 
     Allocates a unique invocation-owned path (refusing without deleting if an explicit
-    ``run_id`` path already exists), copies untracked ``jury.toml``, ``jury-policy.toml``,
-    and ``.jury`` entries without overwriting tracked files, and removes only that path on exit.
+    ``run_id`` path already exists), copies ``jury.toml``, ``jury-policy.toml``, and
+    ``.jury`` entries only when untracked at ``head_sha`` and in the working-tree index,
+    and removes only that path on exit.
     """
     root_path = Path(root).resolve()
     token = run_id if run_id is not None else uuid.uuid4().hex[:12]
@@ -333,8 +334,17 @@ def review_checkout(
                 else:
                     srcs = []
                 for src_file in srcs:
-                    dst_file = checkout / src_file.relative_to(root_path)
-                    if not os.path.lexists(dst_file):
+                    rel_file = src_file.relative_to(root_path)
+                    rel_posix = rel_file.as_posix()
+                    dst_file = checkout / rel_file
+                    is_tracked = any(
+                        run(cmd, root_path).output.strip()
+                        for cmd in (
+                            ["git", "ls-tree", head_sha, "--", rel_posix],
+                            ["git", "ls-files", "--", rel_posix],
+                        )
+                    )
+                    if not is_tracked:
                         dst_file.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src_file, dst_file)
         except OSError as exc:

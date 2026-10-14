@@ -841,7 +841,7 @@ JURY_RC=1
 if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
   JURY_RC=0
   for cfg in jury.toml jury-policy.toml; do
-    if test -f "$ROOT/$cfg" && test ! -e "$JURY_WT/$cfg"; then
+    if test -f "$ROOT/$cfg" && test -z "$(git ls-tree "$HEAD_SHA" -- "$cfg")$(git ls-files -- "$cfg")"; then
       cp "$ROOT/$cfg" "$JURY_WT/$cfg" || { JURY_RC=$?; break; }
     fi
   done
@@ -849,9 +849,8 @@ if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
     (
       set -o pipefail
       cd "$ROOT" && find .jury -type f | while IFS= read -r cfg; do
-        mkdir -p "$(dirname "$JURY_WT/$cfg")" || exit 1
-        if test ! -e "$JURY_WT/$cfg"; then
-          cp "$ROOT/$cfg" "$JURY_WT/$cfg" || exit 1
+        if test -z "$(git ls-tree "$HEAD_SHA" -- "$cfg")$(git ls-files -- "$cfg")"; then
+          mkdir -p "$(dirname "$JURY_WT/$cfg")" && cp "$ROOT/$cfg" "$JURY_WT/$cfg" || exit 1
         fi
       done
     ) || JURY_RC=$?
@@ -1764,4 +1763,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=skills command=ship keel_version=1.32.0 source_sha256=b686c698a83a0f5fcd6297b5ee76954b7efd6c3731e88f8d326aa1ff8e45f999 generated_sha256=8c5bfe5f94f1b96c599f260b450041f07652e24bd1f81f027f295b54e248611f -->
+<!-- keel-generated: surface=skills command=ship keel_version=1.32.0 source_sha256=1d26484f78ee6e3bf70cb21281970425f0a9bf6c94500655d093bf70464b04a6 generated_sha256=434bb1f4483e83cab997a94ac898046fbce68a75126f6c6febedef1d8a8bdd6d -->
