@@ -339,8 +339,9 @@ the checkpoint file. The result is reported in the `checkpoint_gate` block of th
 - **`covered`** — a current checkpoint for this run reached `s10` (its `current_step` is at
   or past `s10`, or `s10` is in `completed_steps`). The merge proceeds.
 - **`missing`** — no checkpoint, or the checkpoint is for a different run. Refused with
-  `no current checkpoint for run <id> at step s10`.
-- **`stale-step`** — a checkpoint for this run that has not reached `s10`. Refused.
+  `no current checkpoint for run <id> at step s10; write it: \`keel checkpoint … --write --run-id <id> --step s10 …\``.
+- **`stale-step`** — a checkpoint for this run that has not reached `s10`. Refused with the
+  same `keel checkpoint … --write --run-id <id> --step s10` command to advance it.
 
 The run-id is the gates-SHA `run_id` by default; override it with `--run-id`.
 
