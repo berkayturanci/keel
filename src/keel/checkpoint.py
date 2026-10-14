@@ -336,7 +336,14 @@ def resume_plan_as_dict(
     }
 
 
-COVERAGE_STATES = ("covered", "missing", "stale-step", "stale-head")
+COVERAGE_STATES = (
+    "covered",
+    "missing",
+    "stale-step",
+    "stale-head",
+    "already-merged",
+    "in-flight",
+)
 
 
 def _resolution_checkpoint_command(
@@ -376,22 +383,23 @@ def covering_checkpoint(
     (or ``None`` when no checkpoint file exists); ``expected_step`` must be a
     backbone step id. A run is *covered* when its checkpoint reached ``expected_step``
     (the recorded ``current_step`` is at or past it, or the step is in
-    ``completed_steps``) and either:
+    ``completed_steps``), its ``state.merge`` is neither ``merged`` nor ``pending``,
+    and either:
 
     * the checkpoint is for the same ``run_id``;
-    * or the checkpoint is for the same pull request (``pr_number``) and head commit,
-      or an accepted run id (such as a second merge attempt accepting the PR's latest
-      gates run at s10 for the same head, carrying the checkpoint forward — #1507).
-      Because a project has a single checkpoint file, any run's checkpoint at or past
-      ``expected_step`` matching ``(pr_number, head_sha)`` is accepted and adopted by
-      whichever merge lands under the merge resource claim.
+    * or the checkpoint is for the same pull request (``pr_number``) and head commit
+      (and within ``accepted_run_ids`` when specified), or an accepted run id (such as
+      a second merge attempt accepting the PR's latest gates run at s10 for the same
+      head, carrying the checkpoint forward — #1507).
 
     The result distinguishes:
 
     * ``covered`` — a current checkpoint reached ``expected_step``;
     * ``missing`` — no checkpoint, or a checkpoint for a different run / PR;
     * ``stale-step`` — a checkpoint that has not reached the step;
-    * ``stale-head`` — a checkpoint for the PR that covers an earlier/different head SHA.
+    * ``stale-head`` — a checkpoint for the PR that covers an earlier/different head SHA;
+    * ``already-merged`` — a checkpoint that already records ``state.merge: merged``;
+    * ``in-flight`` — a checkpoint that records ``state.merge: pending``.
     """
     if expected_step not in STEP_IDS:
         raise CheckpointError("expected_step must be a backbone step id")
@@ -425,6 +433,7 @@ def covering_checkpoint(
     identifiers = record["identifiers"]
     checkpoint_pr = identifiers.get("pull_request")
     checkpoint_head = identifiers.get("head_sha")
+    merge_state = record["state"].get("merge")
     base = {
         "run_id": run_id,
         "expected_step": expected_step,
@@ -453,6 +462,26 @@ def covering_checkpoint(
                     f"advance it with: {advance_cmd})"
                 ),
             }
+        if merge_state == "merged":
+            return {
+                **base,
+                "status": "already-merged",
+                "covered": False,
+                "reason": (
+                    f"no current checkpoint for run {run_id} at step {expected_step} "
+                    f"(checkpoint for run {run_id} already records merge: merged)"
+                ),
+            }
+        if merge_state == "pending":
+            return {
+                **base,
+                "status": "in-flight",
+                "covered": False,
+                "reason": (
+                    f"no current checkpoint for run {run_id} at step {expected_step} "
+                    f"(checkpoint for run {run_id} records an in-flight merge: pending)"
+                ),
+            }
         return {
             **base,
             "status": "covered",
@@ -460,7 +489,15 @@ def covering_checkpoint(
             "reason": f"checkpoint for run {run_id} reached step {expected_step}",
         }
 
-    pr_matches = pr_number is not None and checkpoint_pr == pr_number
+    pr_matches = (
+        pr_number is not None
+        and checkpoint_pr == pr_number
+        and (
+            not accepted_run_ids
+            or checkpoint_run_id is None
+            or checkpoint_run_id in accepted_run_ids
+        )
+    )
     id_matches = bool(
         checkpoint_run_id
         and checkpoint_run_id in accepted_run_ids
@@ -523,25 +560,42 @@ def covering_checkpoint(
                     f"({detail}; if {expected_step} completed, advance it with: {advance_cmd})"
                 ),
             }
-        reason = (
-            (
-                f"checkpoint for PR #{checkpoint_pr} (run {checkpoint_run_id}) "
-                f"reached step {expected_step}"
-            )
+        target_desc = (
+            f"checkpoint for PR #{checkpoint_pr} (run {checkpoint_run_id})"
             if pr_matches and checkpoint_run_id
             else (
-                f"checkpoint for PR #{checkpoint_pr} reached step {expected_step}"
+                f"checkpoint for PR #{checkpoint_pr}"
                 if pr_matches
-                else f"checkpoint for run {checkpoint_run_id} reached step {expected_step}"
+                else f"checkpoint for run {checkpoint_run_id}"
             )
         )
+        if merge_state == "merged":
+            return {
+                **base,
+                "status": "already-merged",
+                "covered": False,
+                "reason": (
+                    f"no current checkpoint for run {run_id} at step {expected_step} "
+                    f"({target_desc} already records merge: merged)"
+                ),
+            }
+        if merge_state == "pending":
+            return {
+                **base,
+                "status": "in-flight",
+                "covered": False,
+                "reason": (
+                    f"no current checkpoint for run {run_id} at step {expected_step} "
+                    f"({target_desc} records an in-flight merge: pending)"
+                ),
+            }
         return {
             **base,
             "status": "covered",
             "covered": True,
             "carried_from_run_id": checkpoint_run_id,
             "adopt": True,
-            "reason": reason,
+            "reason": f"{target_desc} reached step {expected_step}",
         }
 
     return {
@@ -576,25 +630,26 @@ def mark_merged(
     (#1448). When ``carried_from_run_id`` or ``adopt`` is given, a covering checkpoint from a
     previous run (such as a retried merge carrying s10 forward) is adopted and stamped with
     the new ``run_id`` (#1507), failing closed unless the reread checkpoint still carries
-    matching pull request and head SHA provenance. Same-run checkpoints are updated without
-    requiring cross-run provenance. The merged record says ``merge: merged``, counts s10 as
-    completed and moves the run to the next step, and clears the stop that held it; a run
-    already past s10 keeps its position.
+    matching source ``run_id``, pull request, and head SHA provenance and is not already
+    merged or in-flight. Same-run checkpoints are updated without requiring cross-run
+    provenance. The merged record says ``merge: merged``, counts s10 as completed and moves
+    the run to the next step, and clears the stop that held it; a run already past s10 keeps
+    its position.
     """
     if record is None:
         return None
+    validate_checkpoint(record)
     rec_run_id = record.get("run_id")
-    raw_identifiers = record.get("identifiers")
-    identifiers = raw_identifiers if isinstance(raw_identifiers, dict) else {}
+    identifiers = record["identifiers"]
     rec_pr = identifiers.get("pull_request")
     rec_head = identifiers.get("head_sha")
 
-    is_same_run = rec_run_id == run_id
-    if not is_same_run:
+    is_adoption = adopt or (carried_from_run_id is not None and carried_from_run_id != run_id)
+    if is_adoption:
         can_adopt = (
             rec_run_id == carried_from_run_id
             if carried_from_run_id is not None
-            else (adopt and rec_run_id is None)
+            else rec_run_id is None
         )
         if not can_adopt:
             return None
@@ -602,8 +657,10 @@ def mark_merged(
             return None
         if not head_sha or not rec_head or rec_head != head_sha:
             return None
-
-    validate_checkpoint(record)
+        if record["state"].get("merge") in ("merged", "pending"):
+            return None
+    elif rec_run_id != run_id:
+        return None
     position = record["position"]
     completed = list(position.get("completed_steps", []))
     if MERGE_STEP not in completed:

@@ -1070,22 +1070,15 @@ def _resolution_ship_command(
     head_sha: str | None = None,
     operator: str | None = None,
     approve_scope: str | Collection[str] | None = None,
-    run_id: str = "<new-run-id>",
+    run_id: str | None = None,
 ) -> str:
     """Build a suggested ``keel ship`` command to resolve a gates-pass refusal."""
     parts = ["keel", "ship", shlex.quote(config_path)]
     if root and root != ".":
         parts.extend(["--root", shlex.quote(str(root))])
-    parts.extend(
-        [
-            "--live",
-            "--append-ledger",
-            "--run-id",
-            shlex.quote(run_id),
-            "--capture-status",
-            CAPTURE_STATUS_NOT_RUN,
-        ]
-    )
+    parts.extend(["--live", "--append-ledger"])
+    if run_id:
+        parts.extend(["--run-id", shlex.quote(run_id)])
     if pr_number is not None:
         parts.extend(["--pull-request", str(pr_number)])
     if head_sha is not None:
@@ -1096,8 +1089,10 @@ def _resolution_ship_command(
             scope_str = ",".join(str(s) for s in sorted(approve_scope) if s)
         else:
             scope_str = approve_scope
-    parts.extend(["--approve-scope", shlex.quote(scope_str) if scope_str else "'<scope>'"])
-    parts.extend(["--operator", shlex.quote(str(operator)) if operator else "'<operator>'"])
+    if scope_str:
+        parts.extend(["--approve-scope", shlex.quote(scope_str)])
+    if operator:
+        parts.extend(["--operator", shlex.quote(str(operator))])
     return " ".join(parts)
 
 
@@ -1178,14 +1173,16 @@ def _checkpoint_gate(
                 "reason": (
                     "checkpointing is configured but no run-id is available "
                     f"(pass --run-id, or record a gates-pass for this head: {gates_cmd}) "
-                    "-- note: --capture-status not-run asserts capture was not run prior to merge"
+                    "-- note: pass --run-id <new-run-id> and --capture-status <status> "
+                    "(use not-run only if capture was not run prior to merge)"
                 ),
             },
             (
                 "checkpointing is configured but no run-id is available for the "
                 f"checkpoint gate; pass --run-id, record a gates-pass ({gates_cmd}), "
                 "or use --no-checkpoint-gate "
-                "-- note: --capture-status not-run asserts capture was not run prior to merge"
+                "-- note: pass --run-id <new-run-id> and --capture-status <status> "
+                "(use not-run only if capture was not run prior to merge)"
             ),
         )
 
@@ -1203,7 +1200,7 @@ def _checkpoint_gate(
         CHECKPOINT_MERGE_STEP,
         pr_number=getattr(args, "pr", None),
         head_sha=head_sha,
-        accepted_run_ids=(gates_run_id,) if gates_run_id else (),
+        accepted_run_ids=(gates_run_id,) if gates_run_id and gates_run_id != run_id else (),
         config_path=args.path,
         root=args.root,
     )
@@ -1218,6 +1215,8 @@ def _checkpoint_gate(
     }
     if "carried_from_run_id" in coverage:
         gate_payload["carried_from_run_id"] = coverage["carried_from_run_id"]
+    if coverage.get("adopt"):
+        gate_payload["adopt"] = True
     if coverage["covered"]:
         return gate_payload, None
     return gate_payload, coverage["reason"]
@@ -1485,7 +1484,8 @@ def _cmd_merge(args: argparse.Namespace) -> int:
                     payload,
                     f"no gates-pass recorded for the current head {head_sha} "
                     f"(record one with: {res_cmd}) "
-                    "-- note: --capture-status not-run asserts capture was not run prior to merge",
+                    "-- note: pass --run-id <new-run-id> and --capture-status <status> "
+                    "(use not-run only if capture was not run prior to merge)",
                     code=1,
                 )
 
@@ -1522,7 +1522,7 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         if isinstance(landed, dict) and isinstance(landed.get("sha"), str):
             args.merge_sha = landed["sha"]
         carried_id = gate_payload.get("carried_from_run_id")
-        should_adopt = "carried_from_run_id" in gate_payload and carried_id is None
+        should_adopt = bool(gate_payload.get("adopt"))
         payload["checkpoint_update"] = _record_merge_in_checkpoint(
             args,
             config,
@@ -2116,14 +2116,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     # fingerprint had moved (a `gh` outage on the first attempt, a label fetched on
     # the second) scattered a second document into the sink, possibly a shared
     # knowledge folder, that no ledger record would ever name.
-    capture_status_value = _resolved_capture_status(args.capture_status)
     capture_clash = (
         ledger.capture_marker_for_head(
             existing_ledger_records,
             pr_number=args.ledger_pr or args.pr,
             head_sha=args.head_sha,
         )
-        if args.append_ledger and args.live and capture_status_value is not None
+        if args.append_ledger and args.live
         else None
     )
     # **A named artifact is recorded, not written again** (#1203). With an in-repo sink
@@ -2139,6 +2138,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             args, config, capture_changed, existing_ledger_records, outcomes, capture_facts
         )
     )
+    capture_status_value = _resolved_capture_status(args.capture_status)
     capture_reason_value = args.capture_reason
     capture_artifact_value = args.capture_artifact
     if capture_write is not None:

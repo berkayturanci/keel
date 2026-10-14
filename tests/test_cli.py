@@ -11656,7 +11656,12 @@ class TestMergeCheckpointGate(unittest.TestCase):
         cli.checkpoint.write_checkpoint(path, record)
 
     def _assert_command_runnable(self, text, command_name):
-        match = re.search(r"(keel " + command_name + r" [^\)]+)", text)
+        match = re.search(
+            r"(keel "
+            + re.escape(command_name)
+            + r" .+?)\)(?:, or use --no-checkpoint-gate)?(?: -- note:|$)",
+            text,
+        )
         self.assertIsNotNone(match, f"Could not find keel {command_name} command in {text}")
         cmd = match.group(1).strip()
         parser = cli.build_parser()
@@ -11803,13 +11808,17 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(data["checkpoint_gate"]["status"], "missing")
         self.assertIn("no run-id is available", data["reason"])
         self.assertIn("record a gates-pass", data["reason"])
+        self.assertIn(
+            "-- note: pass --run-id <new-run-id> and --capture-status <status>",
+            data["reason"],
+        )
         parsed_ship = self._assert_command_runnable(data["reason"], "ship")
         self.assertEqual(parsed_ship.ledger_pr, 123)
         self.assertEqual(parsed_ship.head_sha, "abc")
         self.assertEqual(parsed_ship.approve_scope, ["filesystem,git,github"])
         self.assertEqual(parsed_ship.operator, "tester")
-        self.assertEqual(parsed_ship.capture_status, "not-run")
-        self.assertEqual(parsed_ship.run_id, "<new-run-id>")
+        self.assertIsNone(parsed_ship.capture_status)
+        self.assertIsNone(parsed_ship.run_id)
         self.assertTrue(parsed_ship.live)
         self.assertTrue(parsed_ship.append_ledger)
 
@@ -11824,6 +11833,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertTrue(data["merged"])
         self.assertEqual(data["checkpoint_gate"]["status"], "covered")
         self.assertEqual(data["checkpoint_gate"]["carried_from_run_id"], "RUN-PREV")
+        self.assertTrue(data["checkpoint_gate"]["adopt"])
         self.assertEqual(
             data["checkpoint_update"],
             {
@@ -11869,6 +11879,56 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertIn("checkpoint is for run RUN-GATES", data["reason"])
         self.assertEqual(record["run_id"], "RUN-GATES")
 
+    def test_retry_merge_refuses_unaccepted_run_checkpoint_when_run_id_overridden(self):
+        # When --run-id overrides gates_run_id, only --run-id or gates_run_id is accepted,
+        # not an unrelated third run on the same PR and head.
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(
+                d, config, run_id="RUN-OTHER", step="s10", pull_request=123, head_sha="abc"
+            )
+            rc, out, _ = self._run_merge(
+                config=config, root=d, run_id="RUN-GATES", extra=["--run-id", "RUN-MERGE"]
+            )
+            record = self._read_checkpoint(d, config)
+        data = json.loads(out)
+        self.assertEqual(rc, 1)
+        self.assertFalse(data["merged"])
+        self.assertEqual(data["checkpoint_gate"]["status"], "missing")
+        self.assertIn("checkpoint is for run RUN-OTHER", data["reason"])
+        self.assertEqual(record["run_id"], "RUN-OTHER")
+
+    def test_merge_refused_when_checkpoint_already_merged_or_in_flight(self):
+        config = _write_config_with_checkpoint("'true'")
+        for merge_state, expected_status in (
+            ("merged", "already-merged"),
+            ("pending", "in-flight"),
+        ):
+            for cp_run_id in ("RUN-1", "RUN-PREV"):
+                with (
+                    self.subTest(merge_state=merge_state, cp_run_id=cp_run_id),
+                    tempfile.TemporaryDirectory() as d,
+                ):
+                    self._write_checkpoint(
+                        d,
+                        config,
+                        run_id=cp_run_id,
+                        step="s10",
+                        pull_request=123,
+                        head_sha="abc",
+                    )
+                    cfg_obj = cli.cfg.load_config(config)
+                    path = cli.checkpoint.resolve_path(d, cfg_obj)
+                    rec = cli.checkpoint.read_checkpoint(path)
+                    rec["state"]["merge"] = merge_state
+                    cli.checkpoint.write_checkpoint(path, rec)
+
+                    rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-1")
+                    data = json.loads(out)
+                    self.assertEqual(rc, 1)
+                    self.assertFalse(data["merged"])
+                    self.assertEqual(data["checkpoint_gate"]["status"], expected_status)
+
     def test_retry_merge_accepts_and_updates_checkpoint_with_missing_run_id(self):
         config = _write_config_with_checkpoint("'true'")
         with tempfile.TemporaryDirectory() as d:
@@ -11888,6 +11948,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertTrue(data["merged"])
         self.assertEqual(data["checkpoint_gate"]["status"], "covered")
         self.assertIsNone(data["checkpoint_gate"].get("carried_from_run_id"))
+        self.assertTrue(data["checkpoint_gate"]["adopt"])
         self.assertEqual(
             data["checkpoint_update"],
             {
@@ -11916,6 +11977,7 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertTrue(data["merged"])
         self.assertEqual(data["checkpoint_gate"]["status"], "covered")
         self.assertEqual(data["checkpoint_gate"]["carried_from_run_id"], "RUN-GATES")
+        self.assertTrue(data["checkpoint_gate"]["adopt"])
         self.assertEqual(
             data["checkpoint_update"],
             {
@@ -11991,9 +12053,10 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertFalse(data["merged"])
         self.assertIn("no gates-pass recorded for the current head abc", data["reason"])
         self.assertIn("record one with: keel ship", data["reason"])
-        self.assertIn("--capture-status not-run", data["reason"])
+        self.assertNotIn("--capture-status not-run", data["reason"].split("-- note:")[0])
         self.assertIn(
-            "--capture-status not-run asserts capture was not run prior to merge",
+            "-- note: pass --run-id <new-run-id> and --capture-status <status> "
+            "(use not-run only if capture was not run prior to merge)",
             data["reason"],
         )
         parsed_ship = self._assert_command_runnable(data["reason"], "ship")
@@ -12001,8 +12064,8 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(parsed_ship.head_sha, "abc")
         self.assertEqual(parsed_ship.approve_scope, ["filesystem,git,github"])
         self.assertEqual(parsed_ship.operator, "tester")
-        self.assertEqual(parsed_ship.capture_status, "not-run")
-        self.assertEqual(parsed_ship.run_id, "<new-run-id>")
+        self.assertIsNone(parsed_ship.capture_status)
+        self.assertIsNone(parsed_ship.run_id)
         self.assertTrue(parsed_ship.live)
         self.assertTrue(parsed_ship.append_ledger)
 
@@ -12025,16 +12088,19 @@ class TestMergeCheckpointGate(unittest.TestCase):
 
     def test_resolution_ship_command_variations_parseable(self):
         cmd_min = cli._resolution_ship_command("p.yaml", root=".")
-        self.assertIn("'<new-run-id>'", cmd_min)
-        self.assertIn("'<scope>'", cmd_min)
-        self.assertIn("'<operator>'", cmd_min)
+        self.assertNotIn("--capture-status", cmd_min)
+        self.assertNotIn("--run-id", cmd_min)
+        self.assertNotIn("--approve-scope", cmd_min)
+        self.assertNotIn("--operator", cmd_min)
         args_min = cli.build_parser().parse_args(shlex.split(cmd_min)[1:])
         self.assertEqual(args_min.command, "ship")
         self.assertEqual(args_min.root, ".")
         self.assertIsNone(args_min.ledger_pr)
         self.assertIsNone(args_min.head_sha)
-        self.assertEqual(args_min.approve_scope, ["<scope>"])
-        self.assertEqual(args_min.operator, "<operator>")
+        self.assertEqual(args_min.approve_scope, [])
+        self.assertIsNone(args_min.operator)
+        self.assertIsNone(args_min.capture_status)
+        self.assertIsNone(args_min.run_id)
 
         cmd_real = cli._resolution_ship_command("p.yaml", run_id="REAL-RUN-123")
         self.assertIn("--run-id REAL-RUN-123", cmd_real)
@@ -12048,19 +12114,20 @@ class TestMergeCheckpointGate(unittest.TestCase):
         self.assertEqual(args_scope_str.approve_scope, ["git"])
 
         cmd_custom = cli._resolution_ship_command(
-            "p with space.yaml",
-            root="/custom dir",
+            "p (with) space.yaml",
+            root="/custom (dir)",
             pr_number=123,
             head_sha="sha123",
-            operator="alice",
+            operator="alice (ops)",
             approve_scope={"filesystem", "git"},
         )
-        args_custom = cli.build_parser().parse_args(shlex.split(cmd_custom)[1:])
-        self.assertEqual(args_custom.path, "p with space.yaml")
-        self.assertEqual(args_custom.root, "/custom dir")
+        reason_text = f"no gates-pass recorded (record one with: {cmd_custom}) -- note: test"
+        args_custom = self._assert_command_runnable(reason_text, "ship")
+        self.assertEqual(args_custom.path, "p (with) space.yaml")
+        self.assertEqual(args_custom.root, "/custom (dir)")
         self.assertEqual(args_custom.ledger_pr, 123)
         self.assertEqual(args_custom.head_sha, "sha123")
-        self.assertEqual(args_custom.operator, "alice")
+        self.assertEqual(args_custom.operator, "alice (ops)")
         self.assertEqual(args_custom.approve_scope, ["filesystem,git"])
 
         cmd_tuple = cli._resolution_ship_command(
@@ -12122,42 +12189,44 @@ class TestMergeCheckpointGate(unittest.TestCase):
                 self.assertEqual(rc, 0)
                 self.assertTrue(data["merged"])
                 self.assertEqual(data["checkpoint_gate"]["status"], "covered")
-                self.assertNotIn("adopt", data["checkpoint_gate"])
+                self.assertTrue(data["checkpoint_gate"]["adopt"])
                 self.assertEqual(
                     data["checkpoint_update"],
                     {"updated": False, "reason": "no checkpoint for run RUN-RETRY"},
                 )
 
-    def test_resolution_ship_command_records_gates_pass_when_capture_marker_already_exists(self):
+    def test_retry_merge_refuses_post_merge_adoption_when_reread_run_id_replaced(self):
+        # Codex finding: if gate accepted RUN-PREV for PR 123/head abc, and the reread
+        # checkpoint replaced run_id with RUN-RETRY and different PR/head, adoption must fail.
+        config = _write_config_with_checkpoint("'true'")
+        with tempfile.TemporaryDirectory() as d:
+            self._write_checkpoint(
+                d, config, run_id="RUN-PREV", step="s10", pull_request=123, head_sha="abc"
+            )
+            cfg_obj = cli.cfg.load_config(config)
+            path = cli.checkpoint.resolve_path(d, cfg_obj)
+            original = cli.checkpoint.read_checkpoint(path)
+            replaced = json.loads(json.dumps(original))
+            replaced["run_id"] = "RUN-RETRY"
+            replaced["identifiers"]["pull_request"] = 999
+            replaced["identifiers"]["head_sha"] = "other"
+            with patch("keel.cli.checkpoint.read_checkpoint", side_effect=[original, replaced]):
+                rc, out, _ = self._run_merge(config=config, root=d, run_id="RUN-RETRY")
+            data = json.loads(out)
+            self.assertEqual(rc, 0)
+            self.assertTrue(data["merged"])
+            self.assertEqual(data["checkpoint_gate"]["status"], "covered")
+            self.assertTrue(data["checkpoint_gate"]["adopt"])
+            self.assertEqual(
+                data["checkpoint_update"],
+                {"updated": False, "reason": "no checkpoint for run RUN-RETRY"},
+            )
+
+    def test_resolution_ship_command_fails_fast_unedited_and_preserves_capture_clash(self):
         with tempfile.TemporaryDirectory() as d:
             config = _write_config_with_ledger("'true'")
             head = "d" * 40
-            # An earlier run on the same head recorded a capture marker.
-            rc_first, _, _ = run(
-                [
-                    "ship",
-                    config,
-                    "--root",
-                    d,
-                    "--live",
-                    "--append-ledger",
-                    "--run-id",
-                    "RUN-1",
-                    "--pull-request",
-                    "123",
-                    "--head-sha",
-                    head,
-                    "--capture-status",
-                    "deferred",
-                    "--approve-scope",
-                    "filesystem,git,github",
-                    "--operator",
-                    "tester",
-                ]
-            )
-            self.assertEqual(rc_first, 0)
-            # The suggested resolution ship command uses --capture-status not-run,
-            # so it appends a new ship_run record without clashing with the existing marker.
+            # Running the suggested command unedited fails fast because --capture-status is omitted.
             cmd = cli._resolution_ship_command(
                 config,
                 root=d,
@@ -12165,13 +12234,43 @@ class TestMergeCheckpointGate(unittest.TestCase):
                 head_sha=head,
                 operator="tester",
                 approve_scope=["filesystem", "git", "github"],
-                run_id="RUN-2",
             )
-            rc_second, out_second, _ = run([*shlex.split(cmd)[1:], "--json"])
-            self.assertEqual(rc_second, 0)
-            ledger_res = json.loads(out_second)["result"]["run_ledger"]
-            self.assertTrue(ledger_res["appended"])
-            self.assertNotIn("skipped", ledger_res)
+            rc_unedited, out_unedited, _ = run([*shlex.split(cmd)[1:], "--json"])
+            self.assertEqual(rc_unedited, 1)
+            self.assertIn(
+                "--capture-status is required when --live --append-ledger is used",
+                json.loads(out_unedited)["error"],
+            )
+            # Supplying --run-id and --capture-status not-run on a fresh head records gates-pass.
+            rc_first, out_first, _ = run(
+                [
+                    *shlex.split(cmd)[1:],
+                    "--run-id",
+                    "RUN-1",
+                    "--capture-status",
+                    "deferred",
+                    "--json",
+                ]
+            )
+            self.assertEqual(rc_first, 0)
+            self.assertTrue(json.loads(out_first)["result"]["run_ledger"]["appended"])
+            # And a second run on the same head still hits the capture-marker clash guard (#1203)
+            # whether --capture-status not-run or deferred is passed.
+            for status_arg, run_id_arg in (("not-run", "RUN-2"), ("deferred", "RUN-3")):
+                rc_second, out_second, _ = run(
+                    [
+                        *shlex.split(cmd)[1:],
+                        "--run-id",
+                        run_id_arg,
+                        "--capture-status",
+                        status_arg,
+                        "--json",
+                    ]
+                )
+                self.assertEqual(rc_second, 0)
+                ledger_res = json.loads(out_second)["result"]["run_ledger"]
+                self.assertFalse(ledger_res["appended"])
+                self.assertEqual(ledger_res["skipped"], "duplicate-capture-marker")
 
     def test_explicit_run_id_overrides_gates_pass_run_id(self):
         config = _write_config_with_checkpoint("'true'")

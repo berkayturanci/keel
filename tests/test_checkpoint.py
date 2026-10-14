@@ -442,6 +442,94 @@ class TestCoveringCheckpoint(unittest.TestCase):
         self.assertFalse(result["covered"])
         self.assertIn("checkpoint is for run RUN-1", result["reason"])
 
+    def test_refused_when_pr_matches_but_run_id_not_in_accepted_run_ids(self):
+        record = _record(
+            run_id="RUN-OTHER", pull_request=170, head_sha="abc123", current_step="s10"
+        )
+        result = checkpoint.covering_checkpoint(
+            record,
+            "RUN-2",
+            "s10",
+            pr_number=170,
+            accepted_run_ids=["RUN-GATES"],
+            head_sha="abc123",
+        )
+        self.assertEqual(result["status"], "missing")
+        self.assertFalse(result["covered"])
+        self.assertIn("checkpoint is for run RUN-OTHER", result["reason"])
+
+    def test_refused_when_checkpoint_already_merged_or_in_flight(self):
+        # Same-run already merged
+        same_merged = _record(
+            run_id="RUN-1", current_step="s11", completed_steps=["s10"], merge_state="merged"
+        )
+        res_same_merged = checkpoint.covering_checkpoint(same_merged, "RUN-1", "s10")
+        self.assertEqual(res_same_merged["status"], "already-merged")
+        self.assertFalse(res_same_merged["covered"])
+        self.assertIn("already records merge: merged", res_same_merged["reason"])
+
+        # Same-run in-flight
+        same_pending = _record(run_id="RUN-1", current_step="s10", merge_state="pending")
+        res_same_pending = checkpoint.covering_checkpoint(same_pending, "RUN-1", "s10")
+        self.assertEqual(res_same_pending["status"], "in-flight")
+        self.assertFalse(res_same_pending["covered"])
+        self.assertIn("in-flight merge: pending", res_same_pending["reason"])
+
+        # Cross-run already merged (PR match)
+        cross_merged = _record(
+            run_id="RUN-1",
+            pull_request=170,
+            head_sha="abc123",
+            current_step="s11",
+            completed_steps=["s10"],
+            merge_state="merged",
+        )
+        res_cross_merged = checkpoint.covering_checkpoint(
+            cross_merged, "RUN-2", "s10", pr_number=170, head_sha="abc123"
+        )
+        self.assertEqual(res_cross_merged["status"], "already-merged")
+        self.assertFalse(res_cross_merged["covered"])
+        self.assertIn(
+            "checkpoint for PR #170 (run RUN-1) already records merge: merged",
+            res_cross_merged["reason"],
+        )
+
+        # Cross-run in-flight (accepted_run_ids without PR number, and PR match with None run_id)
+        cross_pending_id = _record(
+            run_id="RUN-1",
+            pull_request=None,
+            head_sha="abc123",
+            current_step="s10",
+            merge_state="pending",
+        )
+        res_cross_pending_id = checkpoint.covering_checkpoint(
+            cross_pending_id, "RUN-2", "s10", accepted_run_ids=["RUN-1"], head_sha="abc123"
+        )
+        self.assertEqual(res_cross_pending_id["status"], "in-flight")
+        self.assertFalse(res_cross_pending_id["covered"])
+        self.assertIn(
+            "checkpoint for run RUN-1 records an in-flight merge: pending",
+            res_cross_pending_id["reason"],
+        )
+
+        cross_pending_anon = _record(
+            run_id="",
+            pull_request=170,
+            head_sha="abc123",
+            current_step="s10",
+            merge_state="pending",
+        )
+        cross_pending_anon["run_id"] = None
+        res_cross_pending_anon = checkpoint.covering_checkpoint(
+            cross_pending_anon, "RUN-2", "s10", pr_number=170, head_sha="abc123"
+        )
+        self.assertEqual(res_cross_pending_anon["status"], "in-flight")
+        self.assertFalse(res_cross_pending_anon["covered"])
+        self.assertIn(
+            "checkpoint for PR #170 records an in-flight merge: pending",
+            res_cross_pending_anon["reason"],
+        )
+
     def test_stale_step_with_pr_match_names_resolution_command(self):
         record = _record(run_id="RUN-1", pull_request=170, head_sha="abc123", current_step="s6")
         result = checkpoint.covering_checkpoint(
@@ -715,6 +803,51 @@ class TestMarkMerged(unittest.TestCase):
                 rec_adopt_no_head, "RUN-NEW", adopt=True, pr_number=123, head_sha="abc"
             )
         )
+
+    def test_mark_merged_rejects_when_reread_run_id_replaced_with_destination_run_id(self):
+        # Codex finding: if gate accepted RUN-OLD for PR 123/head abc, but reread checkpoint
+        # names RUN-NEW with another PR or head, adoption must not take the same-run shortcut.
+        replaced_other_pr = _record(
+            run_id="RUN-NEW", current_step="s10", pull_request=999, head_sha="other"
+        )
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                replaced_other_pr,
+                "RUN-NEW",
+                carried_from_run_id="RUN-OLD",
+                adopt=True,
+                pr_number=123,
+                head_sha="abc",
+            )
+        )
+        self.assertIsNone(
+            checkpoint.mark_merged(
+                replaced_other_pr,
+                "RUN-NEW",
+                adopt=True,
+                pr_number=123,
+                head_sha="abc",
+            )
+        )
+        # Cross-run adoption also refuses a reread checkpoint already marked merged or pending.
+        for state_val in ("merged", "pending"):
+            rec_state = _record(
+                run_id="RUN-OLD",
+                current_step="s10",
+                pull_request=123,
+                head_sha="abc",
+                merge_state=state_val,
+            )
+            self.assertIsNone(
+                checkpoint.mark_merged(
+                    rec_state,
+                    "RUN-NEW",
+                    carried_from_run_id="RUN-OLD",
+                    adopt=True,
+                    pr_number=123,
+                    head_sha="abc",
+                )
+            )
 
     def test_mark_merged_updates_same_run_even_when_head_differs_or_provenance_missing(self):
         # Same-run checkpoint is covered whatever the head (#1448 / #1507).
