@@ -3207,8 +3207,9 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
   abandoned, or pending, so unread references in scanned text are surfaced for operator review. A PR
   where a blocker phrase has unreadable references and no parsed blockers is listed with `blockers: []`
   ("blocker reference could not be read").
-- **Deliberately not read:** negated or historical phrases (`not blocked by`, `no longer blocked by`,
-  `previously` / `formerly` / `was` immediately preceding the phrase on the same line), phrases with no
+- **Deliberately not read:** negated or historical phrases (`not`, `no longer`, `never`, `n't`,
+  `nothing`, `previously`, `formerly`, `was`, or `were` — optionally followed by `currently`,
+  `really`, or `yet` — immediately preceding the phrase on the same line), phrases with no
   reference-like token at all ("behaviour depends on the config", `Dependency: bump`, "do not merge before release"),
   phrases or headings separated from their targets by a blank line (`Blocked by\n\n#5`, `Do not merge before\n\n#5`,
   `## Blocked by\n\n- #5` — the blank line ends the zone, so no blocker is read and `incomplete` is false),
@@ -3237,8 +3238,10 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
   HTTP 404 while `repos/{owner}/{repo}` itself answers. An open issue or PR is `pending`. Issue and
   PR blockers are both `kind: issue`.
 
-**Reporting unreadable blockers.** Anything else (offline, no auth, rate limit, a 5xx, 404 on an
-issue, odd output) is `unknown`. A PR with an `unknown` blocker is listed, each such entry carries a
+**Reporting unreadable blockers.** Each distinct blocker across the scanned PRs is resolved with one
+sequential `gh api` call (plus a repository probe on a tag 404) with no batching; anything that cannot
+be confirmed (offline, no auth, rate limit, a 5xx, 404 on an issue, odd output) is `unknown`. A PR with
+an `unknown` blocker is listed, each such entry carries a
 `reason`, the report's `unknown_blockers` counts the distinct blockers that could not be read, the
 text output says how many, and the command exits **2**. An empty list with exit 0 and `truncated: false`
 means every blocker the command recognised was read, not that no PR is blocked.

@@ -80,7 +80,7 @@ _AFTER_BEFORE_RE = re.compile(
 )
 _NEGATION_RE = re.compile(
     r"(?:\bnot|\bno longer|\bnever|n't|\bnothing|\bpreviously|\bformerly|\bwas|\bwere)[ \t]+"
-    r"(?:(?:currently|really|yet)[ \t]+)?$",
+    r"(?:(?:currently|really|yet)[ \t]+)?\Z",
     re.IGNORECASE,
 )
 #: A terminated fence only: a stray unterminated opener must not swallow (hide) the rest of
@@ -95,8 +95,10 @@ _INLINE_CODE_RE = re.compile(r"(?<!`)(`+)(?!`)([^\n]*?)(?<!`)\1(?!`)")
 #: ``[#12](https://...)`` reads as its link text; a link whose text carries no ``#N`` keeps
 #: its URL, so an issue URL behind prose stays visible to the "could not read" check.
 _LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
-#: ``_#12_`` / ``*#12*`` (``**`` and ``__`` are dropped outright, so ``**Blocked by:** #5`` reads).
-_EMPHASIS_REF_RE = re.compile(r"([*_])(#\d+)\1")
+#: Paired emphasis around a phrase or target (``**Blocked by:**``, ``_#12_``, ``__v1__rc__``)
+#: is unwrapped without stripping internal ``__`` inside a tag name like ``v1__rc``.
+_BOLD_RE = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*|(?<!\w)__(?=\S)(.+?)(?<=\S)__(?!\w)")
+_ITALIC_REF_RE = re.compile(r"([*_])(#\d+)\1")
 
 
 @dataclass(frozen=True)
@@ -206,11 +208,20 @@ def _prose(body: str, repo: str | None) -> str:
     text = _HTML_COMMENT_RE.sub(" ", text)
     text = _FENCE_RE.sub(" ", text)
     text = _strip_blockquotes(text)
+    inlines: list[str] = []
+
+    def _stash_inline(m: re.Match[str]) -> str:
+        inlines.append(_unwrap_inline(m))
+        return f"\x00{len(inlines) - 1}\x00"
+
+    text = _INLINE_CODE_RE.sub(_stash_inline, text)
     text = _strip_details(text)
-    text = _INLINE_CODE_RE.sub(_unwrap_inline, text)
     text = _LINK_RE.sub(lambda m: _unwrap_link(m, repo), text)
-    text = text.replace("**", "").replace("__", "")
-    return _EMPHASIS_REF_RE.sub(r"\2", text)
+    text = _BOLD_RE.sub(lambda m: m.group(1) or m.group(2), text)
+    text = _ITALIC_REF_RE.sub(r"\2", text)
+    if inlines:
+        text = re.sub(r"\x00(\d+)\x00", lambda m: inlines[int(m.group(1))], text)
+    return text
 
 
 def _zone(text: str, pos: int) -> str:
@@ -235,6 +246,11 @@ def _zone(text: str, pos: int) -> str:
     return "\n".join(lines)
 
 
+def _negated(text: str, start: int) -> bool:
+    line_start = text.rfind("\n", 0, start) + 1
+    return bool(_NEGATION_RE.search(text[line_start:start]))
+
+
 def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Blocker, ...], bool]:
     """``(blockers, incomplete)`` stated in ``body``.
 
@@ -247,7 +263,7 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
     text = _prose(body or "", repo)
     matches: list[tuple[re.Match[str], str]] = []
     for m in BLOCKED_PHRASE_RE.finditer(text):
-        if _NEGATION_RE.search(text[: m.start()]):
+        if _negated(text, m.start()):
             continue
         label = m.group(1).lower() in _NOUN_PHRASES
         if label and not text[m.end() :].lstrip(" \t").startswith(":"):
@@ -256,7 +272,7 @@ def scan_blockers(body: str | None, repo: str | None = None) -> tuple[tuple[Bloc
             continue
         matches.append((m, "blocked"))
     for m in _BEFORE_PHRASE_RE.finditer(text):
-        if _NEGATION_RE.search(text[: m.start()]):
+        if _negated(text, m.start()):
             continue
         matches.append((m, "before"))
     matches.sort(key=lambda item: item[0].start())

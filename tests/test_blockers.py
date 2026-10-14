@@ -528,6 +528,33 @@ class ParseTests(unittest.TestCase):
     def test_backticked_ref_outside_phrase_is_kept(self):
         self.assertEqual(["7"], issues("blocked by `#7`"))
 
+    def test_backticked_details_tag_does_not_hide_subsequent_blocker(self):
+        body = "Blocked by #1\n\nUse `<details>` for release notes.\n\nBlocked by #2"
+        self.assertEqual((("1", "2"), False), self.refs(body))
+        body_with_real = (
+            "Blocked by #1\n\n"
+            "Use `<details>` or `</details>` in docs.\n\n"
+            "<details><summary>Notes</summary>\n"
+            " Mention `</details>` inside.\n"
+            " Blocked by #99\n"
+            "</details>\n\n"
+            "Blocked by #2"
+        )
+        self.assertEqual((("1", "2"), False), self.refs(body_with_real))
+
+    def test_double_underscore_and_asterisk_in_tag_ref_preserved(self):
+        for body in (
+            "Do not merge before `v1__rc`",
+            "Do not merge before v1__rc",
+            "Do not merge before **v1__rc**",
+            "Do not merge before __v1__rc__",
+        ):
+            self.assertEqual(((Blocker(TAG, "v1__rc"),), False), blockers.scan_blockers(body), body)
+
+    def test_negation_with_trailing_space_before_newline_does_not_negate_next_line(self):
+        self.assertEqual(["5"], issues("The previous fix was \nBlocked by #5"))
+        self.assertEqual(["5"], issues("The previous fix was\t\nDo not merge before #5"))
+
 
 class ResolveTests(unittest.TestCase):
     def resolve(self, blocker, result):
@@ -856,6 +883,26 @@ class StaleBlockersTests(unittest.TestCase):
     def test_slash_tag(self):
         rep = self.report(prs=[_pr(5, "do not merge before v1/rc2")], tags={"v1/rc2": "yes"})
         self.assertEqual(CLEARED, rep["prs"][0]["blockers"][0]["state"])
+
+    def test_double_underscore_tag_reaches_github_unchanged(self):
+        rep = self.report(
+            prs=[_pr(5, "Do not merge before `v1__rc`")],
+            tags={"v1__rc": "yes", "v1rc": "no"},
+        )
+        self.assertEqual(
+            [{"kind": TAG, "ref": "v1__rc", "state": CLEARED}],
+            rep["prs"][0]["blockers"],
+        )
+        self.assertTrue(rep["prs"][0]["all_cleared"])
+
+    def test_backticked_details_does_not_cause_false_all_cleared(self):
+        body = "Blocked by #1\n\nUse `<details>` for release notes.\n\nBlocked by #2"
+        rep = self.report(prs=[_pr(5, body)], issue_states={"1": C, "2": OPEN})
+        self.assertEqual(
+            [("1", CLEARED), ("2", PENDING)],
+            [(e["ref"], e["state"]) for e in rep["prs"][0]["blockers"]],
+        )
+        self.assertFalse(rep["prs"][0]["all_cleared"])
 
     def test_truncation_is_flagged(self):
         limits = []
