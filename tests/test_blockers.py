@@ -100,6 +100,20 @@ class ParseTests(unittest.TestCase):
             issues("~~~\nstray opener\nBlocked by #5\n```\nblocked by #99\n```"),
         )
 
+    def test_four_char_and_longer_closing_fences(self):
+        for body in (
+            "````\nBlocked by #12\n````",
+            "~~~~\nBlocked by #12\n~~~~",
+            "```\nBlocked by #12\n`````",
+            "~~~\nBlocked by #12\n~~~~",
+            "````markdown\n```\nBlocked by #12\n```\n````",
+        ):
+            self.assertEqual(((), False), blockers.scan_blockers(body), body)
+        self.assertEqual(
+            ["5"],
+            issues("````\nunterminated 4-tick\nBlocked by #5\n```\nblocked by #99\n```"),
+        )
+
     def test_blockquotes_are_not_claims(self):
         for body in (
             "> blocked by #1234",
@@ -212,6 +226,9 @@ class ParseTests(unittest.TestCase):
             "Blocked by [#12](/issues/99)",
             "Blocked by [#12](#99)",
             "Blocked by [#12](../keel/issues/12)",
+            "Blocked by [#12](issues/12)",
+            "Blocked by [#12](/issues/12abc)",
+            "Blocked by [#12](/issues/12/../../other/issues/12)",
         ):
             self.assertEqual(((), True), self.refs(body, "me/keel"), body)
         self.assertEqual((("12",), False), self.refs("Blocked by [#12](/pull/12)", "me/keel"))
@@ -238,6 +255,13 @@ class ParseTests(unittest.TestCase):
     def test_first_target_may_not_sit_past_a_blank_line(self):
         self.assertEqual(((), False), self.refs("Blocked by\n\n#5 is the next ticket"))
         self.assertEqual((("5",), False), self.refs("Blocked by\n#5"))
+        self.assertEqual(((), False), self.refs("Depends on:"))
+
+    def test_phrase_ending_its_line_stops_at_non_bullet_line(self):
+        self.assertEqual((("12",), False), self.refs("Depends on:\n- #12\nFixes #15"))
+        self.assertEqual((("12", "13"), False), self.refs("Depends on:\n- #12\n- #13\nFixes #15"))
+        self.assertEqual((("12",), False), self.refs("Depends on:\n#12\nFixes #15"))
+        self.assertEqual(((), True), self.refs("Depends on:\n- owner/repo#9\nFixes #15"))
 
     def test_inline_code_quoting_a_phrase_is_not_a_claim(self):
         for body in ("Use `do not merge before #2` in a body.", "Say `depends on #3` here."):
@@ -348,12 +372,21 @@ class ParseTests(unittest.TestCase):
             "do not merge before v1.0, 2.0.1",
             "do not merge before #1 & #2",
             "Do not merge before v2 is released and #2 is merged",
+            "do not merge before v1.0 and then v2 lands",
             "Blocked by #1 and v2.0",
         ):
             self.assertTrue(blockers.scan_blockers(body)[1], body)
         self.assertFalse(
-            blockers.scan_blockers("do not merge before v1.0 and then v2 reviewers sign off")[1]
+            blockers.scan_blockers("do not merge before v1.0 and then 2 reviewers sign off")[1]
         )
+
+    def test_before_tag_followed_by_plain_prose_is_complete(self):
+        for body, want in (
+            ("Do not merge before v2 is released", "v2"),
+            ("Do not merge before v1.2.0 ships", "v1.2.0"),
+            ("do not merge until 1.2.0 is cut", "1.2.0"),
+        ):
+            self.assertEqual(((Blocker(TAG, want),), False), blockers.scan_blockers(body), body)
 
     def test_tag_with_dot_dot_is_refused(self):
         self.assertEqual(((), True), self.refs("do not merge before v1/../../x"))
@@ -518,6 +551,13 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("repos/{owner}/{repo}/issues/9", calls[0])
         self.assertIn("merged_at", calls[0][-1])
 
+    def test_malformed_successful_responses_are_unknown(self):
+        issue, tag = Blocker(ISSUE, "9"), Blocker(TAG, "v1")
+        for out in ("closed - nonsense", "closed completed null", "open - nonsense"):
+            self.assertEqual(UNKNOWN, self.resolve(issue, _ok(out + "\n"))[0], out)
+        for out in ("null", "refs/tags/v1.0", "refs/heads/v1"):
+            self.assertEqual(UNKNOWN, self.resolve(tag, _ok(out + "\n"))[0], out)
+
     def test_tag_states(self):
         b = Blocker(TAG, "v1")
         state, calls = self.resolve(b, _ok("refs/tags/v1"))
@@ -559,7 +599,15 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(
             (UNKNOWN, "unexpected answer: 'locked - issue'"), detail(issue, _ok("locked - issue"))
         )
+        self.assertEqual(
+            (UNKNOWN, "unexpected answer: 'closed - nonsense'"),
+            detail(issue, _ok("closed - nonsense")),
+        )
         self.assertEqual((UNKNOWN, "empty answer for the tag lookup"), detail(tag, _ok("")))
+        self.assertEqual(
+            (UNKNOWN, "unexpected answer: 'null'"),
+            detail(tag, _ok("null\n")),
+        )
         self.assertEqual((UNKNOWN, "x" * 120), detail(issue, _fail("x" * 300)))
         self.assertEqual((CLEARED, None), detail(issue, _ok("closed - issue")))
         self.assertEqual(
@@ -709,6 +757,12 @@ class StaleBlockersTests(unittest.TestCase):
         self.assertEqual([{"kind": TAG, "ref": "v2", "state": CLEARED}], rep["prs"][0]["blockers"])
         self.assertTrue(rep["prs"][0]["incomplete"])
         self.assertFalse(rep["prs"][0]["all_cleared"])
+        rep_clean = self.report(
+            prs=[_pr(6, "Do not merge before v2 is released")],
+            tags={"v2": "yes"},
+        )
+        self.assertFalse(rep_clean["prs"][0]["incomplete"])
+        self.assertTrue(rep_clean["prs"][0]["all_cleared"])
 
     def test_incomplete_pr_with_pending_blocker_is_reported(self):
         rep = self.report(
@@ -966,13 +1020,26 @@ class RenderAndCliTests(unittest.TestCase):
                             {"kind": ISSUE, "ref": "1", "state": ABANDONED},
                             {"kind": ISSUE, "ref": "2", "state": UNKNOWN, "reason": "rate limit"},
                         ],
-                    }
+                    },
+                    {
+                        "number": 10,
+                        "title": "p",
+                        "draft": False,
+                        "all_cleared": False,
+                        "incomplete": False,
+                        "blockers": [
+                            {"kind": ISSUE, "ref": "1", "state": ABANDONED},
+                            {"kind": ISSUE, "ref": "3", "state": PENDING},
+                        ],
+                    },
                 ],
             }
         )
         self.assertIn("#9 m — some blockers cleared, abandoned or unchecked", out)
         self.assertIn("  - #1: abandoned", out)
         self.assertIn("  - #2: unknown (rate limit)", out)
+        self.assertIn("#10 p — some blockers cleared, abandoned or unchecked", out)
+        self.assertNotIn("#10 p — blocker abandoned, none cleared", out)
 
     def run_cli(self, argv, router):
         buf = io.StringIO()

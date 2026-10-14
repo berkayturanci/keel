@@ -51,7 +51,6 @@ _AFTER_BLOCKED_RE = re.compile(
 #: Phrases that are also ordinary nouns: "Upgrade dependency #123" quotes an upstream issue
 #: number, so they only count when written as a label ("Dependency: #123").
 _NOUN_PHRASES = frozenset({"dependency", "needs dependency"})
-_TAG_DELIM = r"(?:[^\w\s]|(?:\s+(?:and|or|&|/|\+)\b)|\s*$)"
 #: Reference-like tokens in a blocker zone: this-repo `#N`, foreign `owner/repo#N`,
 #: URLs, issue/pull paths, and tag-like targets (`v1`, `v1.2.0`, `1.2.0`).
 _REFLIKE_RE = re.compile(
@@ -59,8 +58,7 @@ _REFLIKE_RE = re.compile(
     r"|(?<![\w.-])[\w.-]++/[\w.-]++#\d+"
     r"|/(?:issues|pull)/\d+"
     r"|#\d+"
-    r"|(?:\bv\d[\w.+\-/]*|\b\d{1,3}\.\d+\.\d[\w.+\-/]*)"
-    rf"(?=\s*{_TAG_DELIM})",
+    r"|\bv\d[\w.+\-/]*|\b\d{1,3}\.\d+\.\d[\w.+\-/]*",
     re.IGNORECASE,
 )
 _DO_NOT_MERGE = (
@@ -88,7 +86,7 @@ _NEGATION_RE = re.compile(
 #: A terminated fence only: a stray unterminated opener must not swallow (hide) the rest of
 #: the body or mispair with a later fenced block's opener, so what follows it is still read.
 _FENCE_RE = re.compile(
-    r"^[ \t]*(```|~~~)[^\n]*\n(?:(?!^[ \t]*(?:```|~~~))[^\n]*\n)*?^[ \t]*\1[ \t]*$",
+    r"^[ \t]*+([`~])(\1{2,}+)[^\n]*\n(?:(?!^[ \t]*\1\2)[^\n]*\n)*?^[ \t]*\1\2\1*[ \t]*$",
     re.MULTILINE,
 )
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -136,7 +134,7 @@ def _own_link(label: str, url: str, repo: str | None) -> bool:
     if named and labelled and named.group(1) != labelled.group(1):
         return False
     if not re.match(r"[a-z][a-z0-9+.-]*:", url, re.IGNORECASE):
-        return bool(re.match(r"(?:/?(?:issues|pull)/\d+|#\d+$)", url))
+        return bool(re.match(r"(?:/(?:issues|pull)/\d+|#\d+)$", url))
     if repo is None:
         return False
     return bool(
@@ -215,17 +213,20 @@ def _prose(body: str, repo: str | None) -> str:
 
 
 def _zone(text: str, pos: int) -> str:
-    """The span a blocker phrase governs: the rest of its line, or the bullet block
-    under it when the phrase ends its line, plus any bullet lines directly under it."""
+    """The span a blocker phrase governs: the rest of its line (or the next line when the
+    phrase ends its line), plus any bullet lines directly under that."""
     rest = text[pos:]
     nl = rest.find("\n")
-    head = rest[:nl] if nl != -1 else rest
-    if not head.strip(" \t:"):
-        return re.split(r"\n[ \t]*\n", rest, maxsplit=1)[0]
     if nl == -1:
-        return head
+        return rest
+    head = rest[:nl]
     lines = [head]
-    for line in rest[nl + 1 :].split("\n"):
+    after = rest[nl + 1 :].split("\n")
+    if not head.strip(" \t:"):
+        if not after[0].strip(" \t"):
+            return head
+        lines.append(after.pop(0))
+    for line in after:
         if re.match(r"^[ \t]*[-*+]", line):
             lines.append(line)
         else:
@@ -323,6 +324,7 @@ _ISSUE_JQ = (
     '.state + " " + (.state_reason // "-") + " " + '
     '(if .pull_request then (.pull_request.merged_at // "unmerged") else "issue" end)'
 )
+_MERGED_AT_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})")
 
 
 def _kw(_run):
@@ -355,7 +357,11 @@ def resolve_detail(
         if not result.ok:
             return UNKNOWN, _why(result)
         parts = result.stdout.split()
-        if len(parts) != 3 or parts[0] not in ("open", "closed"):
+        if (
+            len(parts) != 3
+            or parts[0] not in ("open", "closed")
+            or (parts[2] not in ("issue", "unmerged") and not _MERGED_AT_RE.fullmatch(parts[2]))
+        ):
             return UNKNOWN, f"unexpected answer: {result.stdout.strip()[:60]!r}"
         state, reason, merged = parts
         if state == "open":
@@ -366,9 +372,12 @@ def resolve_detail(
     argv = ["gh", "api", f"repos/{{owner}}/{{repo}}/git/ref/tags/{blocker.ref}", "--jq", ".ref"]
     result = run_argv(argv, cwd=cwd, **_kw(_run))
     if result.ok:
-        if result.stdout.strip():
+        ans = result.stdout.strip()
+        if ans == f"refs/tags/{blocker.ref}":
             return CLEARED, None
-        return UNKNOWN, "empty answer for the tag lookup"
+        if not ans:
+            return UNKNOWN, "empty answer for the tag lookup"
+        return UNKNOWN, f"unexpected answer: {ans[:60]!r}"
     if "HTTP 404" not in result.stderr:
         return UNKNOWN, _why(result)
     # A 404 also answers a repository the caller cannot see (private, no auth, wrong
@@ -512,7 +521,7 @@ def render(report: dict[str, Any]) -> str:
             kind = "blocker list may be incomplete"
         elif states == {UNKNOWN}:
             kind = "blocker state could not be checked"
-        elif CLEARED not in states and ABANDONED in states and UNKNOWN not in states:
+        elif states == {ABANDONED}:
             kind = "blocker abandoned, none cleared"
         else:
             kind = "some blockers cleared, abandoned or unchecked"

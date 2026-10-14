@@ -3190,8 +3190,9 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
   continuation, such as `do not merge before v2/sdk#12`); such a target is recognized as a foreign
   reference rather than a tag, marking the PR `incomplete`. `5pm`, `10.30` and `2026.10.15` are not tags.
 - **Zone and token accounting:** for a recognised phrase, its zone spans the rest of the line (bounded
-  by any subsequent blocker phrase) plus any bullet block directly below it (when the phrase ends its
-  line, or contiguous bullet lines under it). Reference-like tokens in the zone are `#N`, foreign
+  by any subsequent blocker phrase), or the immediately following non-blank line when the phrase ends its
+  line, plus any contiguous bullet lines directly below that (a blank or non-bullet line ends the zone).
+  Reference-like tokens in the zone are `#N`, foreign
   `owner/repo#N`, URLs, `/issues/N` or `/pull/N` paths, and tag-like targets. If the spans of the
   tokens captured by the strict grammar do not match the spans of the reference-like tokens in the zone,
   the PR is marked `incomplete: true` and `all_cleared` is false for it. Because the zone covers the
@@ -3206,10 +3207,13 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
 - **Deliberately not read:** negated or historical phrases (`not blocked by`, `no longer blocked by`,
   `previously` / `formerly` / `was` immediately preceding the phrase on the same line), phrases with no
   reference-like token at all ("behaviour depends on the config", `Dependency: bump`, "do not merge before release"),
+  phrases or headings separated from their targets by a blank line (`Blocked by\n\n#5`, `## Blocked by\n\n- #5` —
+  the blank line ends the zone, so no blocker is read and `incomplete` is false),
   and unrecognised phrasings (`blocked on`, `waiting for`, `stacked on`, `requires`). Note that label
   forms like `Dependency: #123` are parsed, but `Dependency: bump, see #4` sees prose and flags the PR
   as incomplete. Also ignored as non-claims: the bare noun `dependency` / `needs dependency` without a
-  colon ("Upgrade dependency lodash (#123)"), `Depends on: none`, fenced code, inline code quoting a
+  colon ("Upgrade dependency lodash (#123)"), `Depends on: none`, fenced code (` ``` ` or `~~~` of three
+  or more characters, closed by a matching or longer fence), inline code quoting a
   phrase, HTML comments, standard blockquotes (`> ...`, including nested `> >`), and text collapsed inside
   `<details>...</details>` blocks (case-insensitive, nested, or unterminated — an unterminated `<details>`
   drops through the end of the body without setting `incomplete`, so truncated bot release notes are not
@@ -3219,12 +3223,12 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
 - **Markdown:** `**#12**`, `_#12_`, `**Blocked by:** #12` and a link whose text is `#12` read as
   `#12` when the link is to this repository's own `#12` (root-relative `/issues/12` or `/pull/12`, `#12`,
   or absolute and matching `gh repo view`). The same label over another repository's URL (including
-  `//host/...`, `../other/...`, or a path or `#N` fragment naming a different number than the label) is a
+  `//host/...`, `../other/...`, `issues/12` without a leading `/`, or a path or `#N` fragment naming a different number than the label) is a
   foreign reference: `incomplete`, not resolved here.
-- **States:** a PR is `cleared` once **merged**; an issue once closed as `completed` (or with no
+- **States:** a PR is `cleared` once **merged** (`merged_at` timestamp); an issue once closed as `completed` (or with no
   reason, as old issues are) (`repos/{owner}/{repo}/issues/N`). A PR closed unmerged, or an issue
   closed `not_planned` or as a duplicate, is `abandoned` — reported, not counted as cleared. A
-  tag is `cleared` once `repos/{owner}/{repo}/git/ref/tags/<tag>` exists and `pending` only on an
+  tag is `cleared` once `repos/{owner}/{repo}/git/ref/tags/<tag>` returns `refs/tags/<tag>` and `pending` only on an
   HTTP 404 while `repos/{owner}/{repo}` itself answers. An open issue or PR is `pending`. Issue and
   PR blockers are both `kind: issue`.
 
@@ -3238,8 +3242,10 @@ Read-only and fail-soft. `all_cleared` is a best-effort indicator that every par
 and the list is not `incomplete`; an operator must read the PR before acting on it. `--limit` (a
 positive integer, default 200) caps the open PRs read; `truncated` is true, and the text says so,
 only when more than that many are open. It reads through the `gh` CLI, not the selected GitHub
-transport. Exit 0: everything was read; 1: the PR list itself cannot be read; 2: some blocker could
-not be read. `/keel:stale-prs` and `/keel:morning` run it.
+transport. Exit 0: every blocker on the scanned PRs was read (including when `truncated: true` —
+check `truncated` or the trailing text warning for whether `--limit` capped the PR list); 1: the PR
+list itself cannot be read; 2: some blocker could not be read. `/keel:stale-prs` and `/keel:morning`
+run it.
 
 ```json
 {"ok": true, "error": null, "truncated": false, "unknown_blockers": 0,
@@ -4063,7 +4069,7 @@ Most commands use only 0 and 1; a few give a third answer its own code, so a cal
 
 | code | meaning |
 |---|---|
-| 0 | success |
+| 0 | success (`keel stale-blockers`: every blocker on the scanned PRs was read; check `truncated` for whether `--limit` capped the PR list) |
 | 1 | a config was invalid/missing, a plan target could not be loaded, or the command's own check failed or blocked |
 | 2 | no command given (help printed); a usage error argparse rejects (an unknown flag, a bad choice); `keel evidence-verify`: required evidence is still `waiting`; `keel verify-merge`: the result is `unknown` or `incomplete`; `keel run-gates`: `--phases` names an unknown phase; `keel ship`: a `--loop-iteration` contradicts the loop policy; `keel stale-blockers`: some blocker's state could not be read |
 | 3 | `keel merge`: the merge landed, but drift was detected — it may have written over work another PR merged after this one branched |
