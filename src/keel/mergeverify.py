@@ -45,6 +45,7 @@ def verify_merge(
     intended: Sequence[str] | None = None,
     *,
     added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None = None,
+    removed_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None = None,
     merged_contents: Mapping[str, str | None] | None = None,
 ) -> dict:
     """Judge whether a merge may have silently reverted other merged work.
@@ -77,7 +78,7 @@ def verify_merge(
     collisions: dict[str, int] = {}
     if raw_collisions:
         collisions, lost_lines, unverifiable, unverifiable_by_path = _check_survival(
-            raw_collisions, added_by_pr, merged_contents
+            raw_collisions, added_by_pr, removed_by_pr, merged_contents
         )
         if lost_lines or unverifiable:
             parts: list[str] = []
@@ -93,12 +94,13 @@ def verify_merge(
                     parts.append(f"{p} ({', '.join(sub)})")
             return _report(
                 "drift",
-                f"the merge wrote to {len(collisions)} file(s) that another pull request "
+                f"the merge wrote to {len(parts)} file(s) that another pull request "
                 f"changed after this one branched — the shape of a silent revert: "
                 f"{', '.join(parts)}",
                 overtaken=collisions,
                 lost_lines=lost_lines,
                 unverifiable=unverifiable,
+                unverifiable_prs=unverifiable_by_path,
                 landed_count=len(landed_set),
             )
     if intended is not None:
@@ -129,6 +131,7 @@ def verify_merge(
 def _check_survival(
     collisions: Mapping[str, Sequence[int]],
     added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None,
+    removed_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None,
     merged_contents: Mapping[str, str | None] | None,
 ) -> tuple[dict[str, int], dict[str, dict], list[str], dict[str, list[int]]]:
     overtaken: dict[str, int] = {}
@@ -142,15 +145,23 @@ def _check_survival(
             if content is not None
             else set()
         )
-        missing_all: list[str] = []
-        by_pr: dict[int, dict] = {}
+        active_by_pr: dict[int, list[str]] = {}
         unverifiable_prs: list[int] = []
         for pr in prs:
             added = ((added_by_pr or {}).get(pr) or {}).get(path)
             if content is None or added is None:
                 unverifiable_prs.append(pr)
                 continue
-            missing = [line for line in added if line.strip() and line not in present]
+            removed = set(((removed_by_pr or {}).get(pr) or {}).get(path) or ())
+            for prev_pr in active_by_pr:
+                active_by_pr[prev_pr] = [
+                    line for line in active_by_pr[prev_pr] if line not in removed
+                ]
+            active_by_pr[pr] = [line for line in added if line.strip()]
+        missing_all: list[str] = []
+        by_pr: dict[int, dict] = {}
+        for pr, active in active_by_pr.items():
+            missing = [line for line in active if line not in present]
             if missing:
                 by_pr[pr] = {"count": len(missing), "samples": missing[:3]}
                 missing_all.extend(missing)
@@ -184,6 +195,7 @@ def _report(status: str, reason: str, **extra) -> dict:
         "overtaken": {},
         "lost_lines": {},
         "unverifiable": [],
+        "unverifiable_prs": {},
         "unexpected": [],
         "landed_count": 0,
         # Present on every report, so a consumer never has to distinguish
@@ -226,7 +238,8 @@ def render(report: dict) -> str:
             for pr_num in info.get("unverifiable_prs") or []:
                 lines.append(f"    {path}  — also changed by #{pr_num} (unverifiable)")
         elif path in unverifiable:
-            lines.append(f"    {path}  — also changed by #{pr} (unverifiable)")
+            for pr_num in report.get("unverifiable_prs", {}).get(path, [pr]):
+                lines.append(f"    {path}  — also changed by #{pr_num} (unverifiable)")
     for path in report.get("unexpected") or []:
         lines.append(f"    {path}  — not in the PR's own diff")
     return "\n".join(lines)

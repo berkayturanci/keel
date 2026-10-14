@@ -521,6 +521,28 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
             )
         )
 
+    def test_pr_removed_lines_and_zero_change_files(self):
+        payload = json.dumps(
+            [
+                {
+                    "filename": "a.py",
+                    "status": "modified",
+                    "patch": "@@ -1 +1 @@\n-x = 1\n+x = 2\n",
+                },
+                {"filename": "empty.py", "status": "added", "changes": 0},
+                {"filename": "mode.py", "status": "modified", "changes": 0},
+            ]
+        )
+        mock_run = MagicMock(return_value=_proc(payload))
+        self.assertEqual(
+            github.pr_added_lines(551, _run=mock_run, _sleep=lambda _s: None),
+            {"a.py": ["x = 2"], "empty.py": [], "mode.py": []},
+        )
+        self.assertEqual(
+            github.pr_removed_lines(551, _run=mock_run, _sleep=lambda _s: None),
+            {"a.py": ["x = 1"], "empty.py": [], "mode.py": []},
+        )
+
     def test_commit_file_content_decodes_base64_and_fails_soft(self):
         import base64
 

@@ -1733,8 +1733,9 @@ merged work twice in one day while shipping 1.8.1/1.8.2, and CI never saw it —
 reverted state was internally consistent, so every gate stayed green.
 
 The check asks whether the merge wrote to files another PR changed **after this one
-branched**, and whether any non-blank lines that each overtaking PR added are missing from
-the merge commit's version of the file (#1511).
+branched**, and whether any non-blank lines that each overtaking PR added (and that a
+later overtaking PR did not remove) are missing from the merge commit's version of the
+file (#1511).
 
 ```bash
 keel verify-merge .keel/project.yaml --root . --pr 543
@@ -1745,14 +1746,14 @@ keel verify-merge .keel/project.yaml --root . --pr 543 --json
 | --- | --- | --- |
 | `drift` | wrote to files another PR changed after this one branched and lost added lines (or a shared file's patch/content was `unverifiable`) — read the diff | 1 |
 | `out-of-scope` | changed files the PR's own diff did not list | 0, or 2 when `incomplete` |
-| `clean` | neither, or all shared files kept every overtaking PR's added lines (`clean (N shared files, 0 lost lines)`) | 0 |
+| `clean` | neither, or all shared files kept every overtaking PR's surviving added lines (`clean (N shared files, 0 lost lines)`) | 0 |
 | `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 2 |
 
 `drift` is a *stop and look* signal: the report lists `lost_lines` per file (`{pr, count,
-samples}` with up to 3 sample lines) and `unverifiable` files (deleted, renamed, binary,
-files over 1 MB, files beyond the 100-file PR page, or unreadable content/patch) so a
-human can judge. Survival is a line-membership heuristic over added lines only (deletions
-are not verified).
+samples}` with up to 3 sample lines) and `unverifiable` / `unverifiable_prs` files (deleted,
+renamed, binary, files over 1 MB, files beyond the 100-file PR page, or unreadable
+content/patch) so a human can judge. Survival is a line-membership heuristic over added
+lines after intervening overtaking removals (standalone deletions are not verified).
 
 `unknown` exits **2**, not 0. The status line has always said "not a pass", but the
 exit code said otherwise, and the exit code is what a caller wiring this in after

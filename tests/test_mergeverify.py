@@ -276,3 +276,53 @@ class TestLineSurvival(unittest.TestCase):
         rendered = mv.render(report)
         self.assertIn("a.py  — also changed by #550 (1 lost line(s))", rendered)
         self.assertIn("a.py  — also changed by #551 (unverifiable)", rendered)
+
+    def test_sequential_replacement_across_overtaking_prs_is_not_lost(self):
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550, 551]},
+            added_by_pr={
+                550: {"a.py": ["x = 1"]},
+                551: {"a.py": ["x = 2"]},
+            },
+            removed_by_pr={
+                551: {"a.py": ["x = 1"]},
+            },
+            merged_contents={"a.py": "x = 2\ny = 3\n"},
+        )
+        self.assertEqual(report["status"], "clean")
+        self.assertEqual(report["lost_lines"], {})
+
+        partial_drift = mv.verify_merge(
+            landed=["a.py", "b.py"],
+            overtaken={"a.py": [550, 551], "b.py": 552},
+            added_by_pr={
+                550: {"a.py": ["x = 1"]},
+                551: {"a.py": ["x = 2"]},
+                552: {"b.py": ["z = 1"]},
+            },
+            removed_by_pr={
+                551: {"a.py": ["x = 1"]},
+            },
+            merged_contents={"a.py": "x = 2\ny = 3\n", "b.py": "z = 0\n"},
+        )
+        self.assertEqual(partial_drift["status"], "drift")
+        self.assertIn("the merge wrote to 1 file(s)", partial_drift["reason"])
+        self.assertEqual(list(partial_drift["lost_lines"]), ["b.py"])
+
+    def test_multiple_unverifiable_prs_without_lost_lines_preserves_all_prs(self):
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550, 551]},
+            added_by_pr={
+                550: {"a.py": None},
+                551: {"a.py": None},
+            },
+            merged_contents={"a.py": "x = 1\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["unverifiable"], ["a.py"])
+        self.assertEqual(report["unverifiable_prs"], {"a.py": [550, 551]})
+        rendered = mv.render(report)
+        self.assertIn("a.py  — also changed by #550 (unverifiable)", rendered)
+        self.assertIn("a.py  — also changed by #551 (unverifiable)", rendered)

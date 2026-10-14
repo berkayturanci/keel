@@ -11343,11 +11343,13 @@ class TestVerifyMergeCommand(unittest.TestCase):
         files_by_pr=None,
         commit_files=None,
         added_by_pr=None,
+        removed_by_pr=None,
         file_contents=None,
         argv_extra=(),
     ):
         files_by_pr = files_by_pr or {}
         added_by_pr = added_by_pr or {}
+        removed_by_pr = removed_by_pr or {}
         file_contents = file_contents or {}
         with (
             patch("keel.cli.github.pr_merge_window", return_value=window),
@@ -11357,6 +11359,10 @@ class TestVerifyMergeCommand(unittest.TestCase):
             patch(
                 "keel.cli.github.pr_added_lines",
                 side_effect=lambda pr, **kw: added_by_pr.get(pr),
+            ),
+            patch(
+                "keel.cli.github.pr_removed_lines",
+                side_effect=lambda pr, **kw: removed_by_pr.get(pr),
             ),
             patch(
                 "keel.cli.github.commit_file_content",
@@ -11658,6 +11664,31 @@ class TestVerifyMergeCommand(unittest.TestCase):
             payload["lost_lines"],
             {"CHANGELOG.md": {"pr": 551, "count": 1, "samples": ["- entry 551"]}},
         )
+
+    def test_shared_file_with_sequential_replacement_is_clean(self):
+        rc, out, _ = self._run(
+            others=[550, 551],
+            files_by_pr={
+                543: ["a.py"],
+                550: ["a.py"],
+                551: ["a.py"],
+            },
+            commit_files=["a.py"],
+            added_by_pr={
+                550: {"a.py": ["x = 1"]},
+                551: {"a.py": ["x = 2"]},
+            },
+            removed_by_pr={
+                550: {"a.py": []},
+                551: {"a.py": ["x = 1"]},
+            },
+            file_contents={"a.py": "x = 2\ny = 3\n"},
+            argv_extra=("--json",),
+        )
+        payload = json.loads(out)
+        self.assertEqual(rc, 0, payload)
+        self.assertEqual(payload["status"], "clean")
+        self.assertEqual(payload["lost_lines"], {})
 
 
 class TestMergeCheckpointGate(unittest.TestCase):
