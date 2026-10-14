@@ -76,7 +76,7 @@ _BEFORE_PHRASE_RE = re.compile(rf"(?<![\w/]){_DO_NOT_MERGE}", re.IGNORECASE)
 _AFTER_BEFORE_RE = re.compile(
     r"\s+(?:the\s+)?(?:"
     r"(?P<issue>(?:(?:pull request|pr|issue)\s*)?#\d+)"
-    r"|(?P<tag>(?:v\d|\d{1,3}\.\d+\.\d)[\w.+\-/]*+)(?=[.,;:!?)\]}]*+(?:\s|$)))",
+    r"|(?P<tag>(?:v\d|\d{1,3}\.\d+\.\d)[\w.+\-/]*+)(?=[.,;:!?)\]}]*+(?!\S)))",
     re.IGNORECASE,
 )
 _NEGATION_RE = re.compile(
