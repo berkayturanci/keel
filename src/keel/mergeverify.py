@@ -30,11 +30,17 @@ So the first question to ask is: *did this merge write to files that some other 
 request changed after this one branched?* That is the only way an update-branch
 squash can undo merged work, and it is cheap to answer. Because two PRs editing one
 file in sequence is ordinary, we refine file overlap with multiset line counting per
-overtaking PR (#1511). It remains a **look at this** signal rather than a proof —
-for example, if a later overtaking PR modifies a line an earlier overtaking PR added,
-or if an overtaking PR deleted a generic line that this PR legitimately adds, it is
-conservatively flagged so the report names the violating overtaking PR(s) for each
-drifted file and lets a human judge.
+overtaking PR (#1511). It remains a **look at this** heuristic rather than a proof:
+- False drift (conservative): if a later overtaking PR (or this PR) modifies a line an
+  earlier overtaking PR added, or if an overtaking PR deleted a generic line that this
+  PR legitimately adds, it is flagged so the report names the violating overtaking PR(s)
+  for each drifted file and lets a human judge.
+- False clean (same-line swap): because whole-file multiset counts are compared without
+  subtracting this PR's own diff (which bakes in any `update-branch` + squash revert),
+  reverting an overtaking PR's added line (such as `}`, `return None`, or `pass`) is
+  masked if this PR also adds an identical line elsewhere in the same file (or deletes
+  an identical line elsewhere while re-adding a deleted line), keeping the whole-file
+  count `>=` (for additions) or `<=` (for deletions) the overtaking PR's landed count.
 
 For every file shared between this merge and pull requests that merged in the window
 (branch point, merge commit), compare the file content as of each overtaking PR's merge
@@ -44,18 +50,19 @@ For every file shared between this merge and pull requests that merged in the wi
 - For every line the PR deleted, its count in the merge commit must be <= its count in
   the PR's landed version (catching re-added deletions).
 - Blank lines are ignored.
-- A PR that deleted a whole file (`+++ /dev/null`): the file must be confirmed absent
-  at both the overtaking PR's merge commit and this merge commit (`FILE_ABSENT`); the
-  file reappearing in the merge commit is drift.
+- A PR that deleted a whole file (`+++ /dev/null` or `rename from`): the file must be
+  confirmed absent at both the overtaking PR's merge commit and this merge commit
+  (`FILE_ABSENT`); the file reappearing in the merge commit is drift.
 - Unreadable content at either commit is distinguished from confirmed absent files
   via :data:`FILE_ABSENT`, ensuring failed reads are reported as drift, not stayed deletions.
 - Baseline mismatches at the overtaking PR's own merge commit (``deleted file still present
   in overtaking commit``, ``landed content absent``) and shared files whose diff record
-  cannot be verified by text-line survival (file mode changes, non-deleted binary diffs,
-  or hunkless non-deletion records) are classified as ``could not verify line survival
-  (fail-closed)``, whereas a valid baseline at the overtaking PR's commit that disappears
-  (``file missing in merge commit``) or reappears (``deleted file reappeared in merge
-  commit``) at this merge commit is classified as ``the shape of a silent revert``.
+  cannot be verified by text-line survival (multiple diff records for the same path such as
+  file-to-symlink type replacements, file mode changes, non-deleted binary diffs, or hunkless
+  non-deletion records) are classified as ``could not verify line survival (fail-closed)``,
+  whereas a valid baseline at the overtaking PR's commit that disappears (``file missing in
+  merge commit``) or reappears (``deleted file reappeared in merge commit``) at this merge
+  commit is classified as ``the shape of a silent revert``.
 - Any unreadable input (missing diff, malformed diff, unreadable file content) stays
   conservative drift.
 
@@ -120,6 +127,7 @@ class FileDiff:
     has_hunks: bool = True
     has_mode_change: bool = False
     is_binary: bool = False
+    has_multiple_records: bool = False
 
 
 @dataclass
@@ -171,7 +179,7 @@ def _clean_diff_path(raw: str, *, is_new: bool, strip_prefix: bool = True) -> st
     return raw
 
 
-def _parse_git_header(line: str) -> tuple[str, bool]:
+def _parse_git_header(line: str) -> tuple[str, bool] | None:
     """Extract ``(target_path, has_ab_prefix)`` from a ``diff --git`` header line."""
     rest = line[len("diff --git ") :].strip()
     mid = len(rest) // 2
@@ -190,7 +198,9 @@ def _parse_git_header(line: str) -> tuple[str, bool]:
         left, right = left_raw, "b/" + right_raw
     else:
         parts = rest.split(None, 1)
-        left, right = parts[0], parts[-1]
+        if len(parts) < 2:
+            return None
+        left, right = parts[0], parts[1]
     if left == right:
         return right, False
     has_ab = left.startswith("a/") and right.startswith("b/")
@@ -240,22 +250,28 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
                         return False
                 elif st.index_shas is not None and st.index_shas[0] != st.index_shas[1]:
                     return False
+            prev = result.get(st.current_file)
             result[st.current_file] = FileDiff(
                 path=st.current_file,
-                added_lines=tuple(st.current_added),
-                deleted_lines=tuple(st.current_deleted),
+                added_lines=(prev.added_lines if prev else ()) + tuple(st.current_added),
+                deleted_lines=(prev.deleted_lines if prev else ()) + tuple(st.current_deleted),
                 is_deleted=st.is_deleted,
-                has_hunks=st.saw_hunk_for_file,
-                has_mode_change=st.saw_old_mode,
-                is_binary=st.saw_binary,
+                has_hunks=(prev.has_hunks if prev else False) or st.saw_hunk_for_file,
+                has_mode_change=(prev.has_mode_change if prev else False) or st.saw_old_mode,
+                is_binary=(prev.is_binary if prev else False) or st.saw_binary,
+                has_multiple_records=prev is not None,
             )
             if st.rename_old:
+                prev_old = result.get(st.rename_old)
                 result[st.rename_old] = FileDiff(
                     path=st.rename_old,
-                    added_lines=(),
-                    deleted_lines=(),
-                    is_deleted=True,
-                    has_hunks=False,
+                    added_lines=prev_old.added_lines if prev_old else (),
+                    deleted_lines=prev_old.deleted_lines if prev_old else (),
+                    is_deleted=True if prev_old is None else prev_old.is_deleted,
+                    has_hunks=prev_old.has_hunks if prev_old else False,
+                    has_mode_change=prev_old.has_mode_change if prev_old else False,
+                    is_binary=prev_old.is_binary if prev_old else False,
+                    has_multiple_records=prev_old is not None,
                 )
         st = _FileParseState()
         return True
@@ -264,7 +280,10 @@ def parse_diff_by_file(diff_text: str | None) -> dict[str, FileDiff] | None:
         if line.startswith("diff --git "):
             if in_hunk or not _flush_current_file():
                 return None
-            st.header_file, st.has_ab_prefix = _parse_git_header(line)
+            header = _parse_git_header(line)
+            if header is None:
+                return None
+            st.header_file, st.has_ab_prefix = header
             st.in_file = True
             continue
 
@@ -409,6 +428,8 @@ _PR_PATH_VIOLATIONS = frozenset(
 
 def _unverifiable_reason(fd: FileDiff) -> str | None:
     """Return a fail-closed violation string if ``fd`` cannot be verified by line survival."""
+    if fd.has_multiple_records:
+        return "multiple diff records cannot be verified by line survival"
     if fd.has_mode_change:
         return "file mode change cannot be verified by line survival"
     if not fd.is_deleted:
@@ -548,15 +569,21 @@ def verify_merge(
             drifted = {p: list(prs) for p, prs in collisions.items()}
         else:
             parsed_diffs: dict[int, dict[str, FileDiff] | None] = {}
+            prs_in_collisions = {pr for prs in collisions.values() for pr in prs}
+            for pr in sorted(prs_in_collisions):
+                pr_diff = diffs.get(pr)
+                parsed = parse_diff_by_file(pr_diff) if pr_diff is not None else None
+                parsed_diffs[pr] = parsed
+                if parsed is not None:
+                    for p in parsed:
+                        if p in landed_set:
+                            pr_list = collisions.setdefault(p, [])
+                            if pr not in pr_list:
+                                pr_list.append(pr)
+
             for path, prs in sorted(collisions.items()):
                 merge_content = file_contents.get(path)
                 for pr in sorted(prs):
-                    if pr not in parsed_diffs:
-                        pr_diff = diffs.get(pr)
-                        parsed_diffs[pr] = (
-                            parse_diff_by_file(pr_diff) if pr_diff is not None else None
-                        )
-
                     pr_parsed = parsed_diffs[pr]
                     if pr_parsed is None:
                         drifted.setdefault(path, []).append(pr)

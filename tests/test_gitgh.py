@@ -782,6 +782,12 @@ class TestGitHub(unittest.TestCase):
         self.assertIsNone(github.commit_file_content("abc", "big.bin", cwd="/repo", _run=rec_403))
         self.assertEqual(rec_403.cwds[0], "/repo")
 
+    def test_empty_stdout_does_not_fall_back_to_stderr_in_diff_and_content_readers(self):
+        rec = _Recorder(code=0, out="", err="gh: warning: token expiring soon\n")
+        self.assertEqual(github.pr_diff(42, _run=rec), "")
+        self.assertEqual(github.rest_pr_diff(42, _run=rec), "")
+        self.assertEqual(github.commit_file_content("abc", "empty.py", _run=rec), "")
+
     def test_pr_merge_window_parsed(self):
         rec = _Recorder(out="2026-07-08T23:02:16Z\t2026-07-10T15:19:57Z\tmain\t7c140f3\n")
         self.assertEqual(

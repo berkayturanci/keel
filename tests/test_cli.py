@@ -11370,6 +11370,7 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self,
         *,
         window=WINDOW,
+        window_by_pr=None,
         others=None,
         files_by_pr=None,
         commit_files=None,
@@ -11382,8 +11383,11 @@ class TestVerifyMergeCommand(unittest.TestCase):
         files_by_pr = files_by_pr or {}
         diff_by_pr = diff_by_pr or {}
         content_by_path = content_by_path or {}
+        window_by_pr = window_by_pr or {}
 
         def _window(pr, *, rest=False, **kw):
+            if pr in window_by_pr:
+                return window_by_pr[pr]
             if callable(window):
                 return window(pr, rest=rest)
             if isinstance(window, dict):
@@ -11885,19 +11889,8 @@ class TestVerifyMergeCommand(unittest.TestCase):
             None,
         ):
             with self.subTest(overtaking_window=overtaking_window):
-
-                def _window(pr, _ow=overtaking_window, **kw):
-                    if str(pr) == "543":
-                        return {
-                            "branched_at": "2026-08-08T10:00:00Z",
-                            "merged_at": "2026-08-08T15:19:00Z",
-                            "base": "main",
-                            "merge_commit": "7c140f3",
-                        }
-                    return _ow
-
                 rc, out, _ = self._run(
-                    window=_window,
+                    window_by_pr={550: overtaking_window},
                     others=[550],
                     files_by_pr={543: ["a.py"], 550: ["a.py"]},
                     commit_files=["a.py"],
@@ -12050,6 +12043,96 @@ class TestVerifyMergeCommand(unittest.TestCase):
         self.assertEqual(rc_unread, 1)
         self.assertIn("could not verify line survival (fail-closed)", out_unread)
         self.assertIn("unreadable merge commit content for old.png", out_unread)
+
+    def test_rename_from_path_checked_end_to_end_when_pr_files_lists_only_new_path(self):
+        rename_diff = (
+            "diff --git a/old_name.py b/new_name.py\n"
+            "similarity index 85%\n"
+            "rename from old_name.py\n"
+            "rename to new_name.py\n"
+            "--- a/old_name.py\n"
+            "+++ b/new_name.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " base\n"
+            "+renamed_feature\n"
+        )
+        # `gh pr view --json files` for #550 reports only `new_name.py` (and `other.py`).
+        # A stale squash that recreates `old_name.py` is caught via the unioned diff paths.
+        rc_drift, out_drift, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["old_name.py", "new_name.py"], 550: ["new_name.py"]},
+            commit_files=["old_name.py", "new_name.py"],
+            diff_by_pr={550: rename_diff},
+            content_by_path={
+                ("commit_550", "old_name.py"): cli.mergeverify.FILE_ABSENT,
+                ("commit_550", "new_name.py"): "base\nrenamed_feature\n",
+                ("7c140f3", "old_name.py"): "base\n",
+                ("7c140f3", "new_name.py"): "base\nrenamed_feature\n",
+            },
+        )
+        self.assertEqual(rc_drift, 1)
+        self.assertIn("the shape of a silent revert: old_name.py (#550)", out_drift)
+        self.assertIn("deleted file reappeared in merge commit (#550)", out_drift)
+
+        # When `old_name.py` stays absent and `new_name.py` survives, both paths pass:
+        rc_clean, out_clean, _ = self._run(
+            others=[550],
+            files_by_pr={543: ["old_name.py", "new_name.py"], 550: ["new_name.py"]},
+            commit_files=["old_name.py", "new_name.py"],
+            diff_by_pr={550: rename_diff},
+            content_by_path={
+                ("commit_550", "old_name.py"): cli.mergeverify.FILE_ABSENT,
+                ("commit_550", "new_name.py"): "base\nrenamed_feature\n",
+                ("7c140f3", "old_name.py"): cli.mergeverify.FILE_ABSENT,
+                ("7c140f3", "new_name.py"): "base\nrenamed_feature\n",
+            },
+        )
+        self.assertEqual(rc_clean, 0)
+        self.assertIn("clean (2 shared files, 0 lost lines)", out_clean)
+
+        # Clean per-file survival coexisting with an unreadable sibling PR (`999`)
+        # demotes the report to `unknown` and exits 2:
+        rc_unk, out_unk, _ = self._run(
+            others=[550, 999],
+            files_by_pr={543: ["new_name.py"], 550: ["new_name.py"]},
+            commit_files=["new_name.py"],
+            diff_by_pr={550: rename_diff},
+            content_by_path={
+                ("commit_550", "new_name.py"): "base\nrenamed_feature\n",
+                ("7c140f3", "new_name.py"): "base\nrenamed_feature\n",
+            },
+        )
+        self.assertEqual(rc_unk, 2)
+        self.assertIn("unknown", out_unk)
+        self.assertIn("the pull requests merged alongside this one", out_unk)
+
+    def test_read_content_memoises_by_sha_and_path(self):
+        diff550 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line 1\n"
+        diff551 = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1,1 @@\n+line 2\n"
+        gh_calls = []
+
+        def _count_gh(sha, path, **kw):
+            gh_calls.append((sha, path))
+            return "line 1\nline 2\n"
+
+        shared_window = {
+            "branched_at": "2026-08-08T10:00:00Z",
+            "merged_at": "2026-08-08T13:02:00Z",
+            "base": "main",
+            "merge_commit": "shared_sha",
+        }
+        rc, out, _ = self._run(
+            window_by_pr={550: shared_window, 551: shared_window},
+            others=[550, 551],
+            files_by_pr={543: ["a.py"], 550: ["a.py"], 551: ["a.py"]},
+            commit_files=["a.py"],
+            diff_by_pr={550: diff550, 551: diff551},
+            use_git_for_content=False,
+            gh_content=_count_gh,
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("clean (1 shared file, 0 lost lines)", out)
+        self.assertEqual(gh_calls.count(("shared_sha", "a.py")), 1)
 
     def test_a_bad_config_path_fails_cleanly(self):
         rc, _, err = run(["verify-merge", "/nope/x.yaml", "--pr", "1"])

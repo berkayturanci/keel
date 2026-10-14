@@ -333,7 +333,7 @@ def pr_diff(pr: int | str, *, cwd: str | None = None, _run=None, _sleep=None) ->
     )
     if not result.ok:
         return None
-    return result.stdout or result.output
+    return result.stdout
 
 
 def commit_file_content(
@@ -374,7 +374,7 @@ def commit_file_content(
             if commit_res.ok and commit_res.stdout.strip():
                 return FILE_ABSENT
         return None
-    return result.stdout or result.output
+    return result.stdout
 
 
 def _lines(argv: list[str], *, cwd: str | None, _run, _sleep=None) -> list[str] | None:
@@ -1032,7 +1032,7 @@ def rest_pr_diff(pr: int | str, *, cwd: str | None = None, _run=None, _sleep=Non
     )
     if not result.ok:
         return None
-    return result.stdout or result.output
+    return result.stdout
 
 
 def _rest_commit_on_branch(sha: str, base: str, *, cwd: str | None, _run) -> bool:

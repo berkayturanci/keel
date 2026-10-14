@@ -228,13 +228,17 @@ carries `pending_checks` and `failing_checks` name lists (empty when none).
 
 Once the merge lands, `keel merge` runs the [`verify-merge`](#keel-verify-merge-projectyaml---root-dir---pr-n---merge-sha-sha---transport-autographqlrest---json)
 drift check on it and reports the result as `merge_verification` (`keel.merge-verify.v2`) in
-the payload and a `drift :` line in human output. Exit codes: **0** merged and clean, **1**
-the merge did not happen, **3** it happened *and* may have written over work another PR
-merged after this one branched — a distinct code because "fail" on a landed merge reads as
-"retry it". On drift the overtaking pull request(s) are named in full, since the merge is
-already irreversible and the operator has to act on it now. Before #934 this check was
-documented as running after s10 and was called from nowhere; a stale-base squash reverted
-#811 on main and nothing noticed for six days.
+the payload and a `drift :` line in human output. Exit codes: **0** merged without detected
+drift (including when `merge_verification.status` is `out-of-scope` or `unknown` because the
+post-merge window/file-list lookup could not be read — unlike standalone `keel verify-merge`,
+which exits **2** on `unknown`/`incomplete`, `keel merge` reserves non-zero after a landed
+merge for `drift`), **1** the merge did not happen, **3** it happened *and*
+`merge_verification.status` is `drift` (it may have written over work another PR merged after
+this one branched, or a shared file's survival could not be verified) — a distinct code
+because "fail" on a landed merge reads as "retry it". On drift the overtaking pull request(s)
+are named in full, since the merge is already irreversible and the operator has to act on it
+now. Before #934 this check was documented as running after s10 and was called from nowhere; a
+stale-base squash reverted #811 on main and nothing noticed for six days.
 
 ### Transport: GraphQL, or REST when the endpoint is blocked
 
@@ -1698,9 +1702,9 @@ line endings):
 
 * **Added lines:** each line the overtaking PR added must appear at least as many times in the merge commit as in the overtaking PR's landed version.
 * **Deleted lines:** each line the overtaking PR deleted must appear no more times in the merge commit than in the overtaking PR's landed version (catching re-added deletions).
-* **Whole-file deletions (`+++ /dev/null`) and non-hunk records:** a deleted file (including a deleted binary file or a `rename from` path when present in `overtaken`) must be confirmed absent (`FILE_ABSENT`) at both the overtaking PR's merge commit and this merge commit; reappearing in the merge commit is drift. Metadata-only and binary records on *other* files in an overtaking PR's diff do not invalidate parsing of that PR's text diffs, while a shared file whose own change has a file mode change (`old mode` / `new mode`), a non-deleted binary diff, or no text hunks fails closed (`could not verify line survival (fail-closed)`).
-* **Unreadable inputs fail closed:** truncated or malformed diffs (including diffs exceeding GitHub's 20,000-line / 300-file HTTP 406 limit, truncated hunk headers, or metadata-only headers whose `index` or similarity indicates omitted content) or unreadable file contents at either commit (including >1 MB HTTP 403 responses on the REST contents fallback when the commit is not in the local git object store) are reported as drift with reason `could not verify line survival (fail-closed)` (distinct from `the shape of a silent revert` when lines are lost, deleted lines are re-added, or a deleted file reappears), never as a stayed deletion.
-* **Conservative by design:** each overtaking PR is compared independently against its own landed `merge_commit` rather than subtracting this PR's diff (because an `update-branch` + squash revert bakes the revert into this PR's own diff). If a later overtaking PR (or this PR) modifies a line an earlier overtaking PR added, or re-introduces a generic line (such as `return None` or `}`) that an overtaking PR deleted, it is flagged as drift so a human can judge.
+* **Whole-file deletions (`+++ /dev/null`), renames, and non-hunk records:** a deleted file (including a deleted binary file or a `rename from` path unioned from an inspected overtaking PR's diff when that path is also touched by the merge commit) must be confirmed absent (`FILE_ABSENT`) at both the overtaking PR's merge commit and this merge commit; reappearing in the merge commit is drift. Metadata-only and binary records on *other* files in an overtaking PR's diff do not invalidate parsing of that PR's text diffs, while a shared file whose own change has multiple diff records for the same path (such as a regular-file-to-symlink replacement), a file mode change (`old mode` / `new mode`), a non-deleted binary diff, or no text hunks fails closed (`could not verify line survival (fail-closed)`).
+* **Unreadable inputs fail closed:** truncated or malformed diffs (including diffs exceeding GitHub's 20,000-line / 300-file HTTP 406 limit, truncated `diff --git` or hunk headers, space-stripped empty hunk lines, or metadata-only headers whose `index` or similarity indicates omitted content) or unreadable file contents at either commit (including >1 MB HTTP 403 responses on the REST contents fallback when the commit is not in the local git object store) are reported as drift with reason `could not verify line survival (fail-closed)` (distinct from `the shape of a silent revert` when lines are lost, deleted lines are re-added, or a deleted file reappears), never as a stayed deletion.
+* **Whole-file multiset trade-offs:** each overtaking PR is compared independently against its own landed `merge_commit` rather than subtracting this PR's diff (because an `update-branch` + squash revert bakes the revert into this PR's own diff). In the false-drift direction, if a later overtaking PR (or this PR) modifies a line an earlier overtaking PR added, or re-introduces a generic line (such as `return None` or `}`) that an overtaking PR deleted, it is conservatively flagged as drift so a human can judge. In the false-clean direction, because `"0 lost lines"` measures net whole-file multiset counts rather than AST or hunk positions, reverting an overtaking PR's added line is masked if this PR also adds an identical line elsewhere in the same file (or deletes an identical line elsewhere while re-adding a deleted line).
 
 The JSON report uses schema `keel.merge-verify.v2`:
 * `overtaken` maps `{path: [int, ...]}` to the overtaking PRs whose changes drifted or could not be verified on that path (`{}` when `clean`; in v1 it was `{path: int}` recording only the first collider);

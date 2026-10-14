@@ -4846,15 +4846,27 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             for pr_num in sorted(prs_to_fetch):
                 raw_diff = diff_reader(pr_num, cwd=args.root)
                 diffs[pr_num] = raw_diff
-                parsed_by_pr[pr_num] = (
-                    mergeverify.parse_diff_by_file(raw_diff) if raw_diff is not None else None
-                )
+                parsed = mergeverify.parse_diff_by_file(raw_diff) if raw_diff is not None else None
+                parsed_by_pr[pr_num] = parsed
+                if parsed is not None:
+                    for p in parsed:
+                        if p in landed_set:
+                            pr_list = overtaken.setdefault(p, [])
+                            if pr_num not in pr_list:
+                                pr_list.append(pr_num)
+                            if p not in shared_paths:
+                                shared_paths.append(p)
+
+            content_cache: dict[tuple[str, str], mergeverify.FileContent] = {}
 
             def _read_content(sha: str, p: str) -> mergeverify.FileContent:
-                val = git.show_file(sha, p, cwd=args.root)
-                if val is None:
-                    val = github.commit_file_content(sha, p, cwd=args.root)
-                return val
+                key = (sha, p)
+                if key not in content_cache:
+                    val = git.show_file(sha, p, cwd=args.root)
+                    if val is None:
+                        val = github.commit_file_content(sha, p, cwd=args.root)
+                    content_cache[key] = val
+                return content_cache[key]
 
             for path in sorted(shared_paths):
                 if any(

@@ -1685,3 +1685,158 @@ class TestLineSurvivalInVerifyMerge(unittest.TestCase):
         self.assertEqual(report["status"], "drift")
         self.assertIn("could not verify line survival (fail-closed)", report["reason"])
         self.assertNotIn("the shape of a silent revert", report["reason"])
+
+    def test_multiple_diff_records_for_same_path_preserve_obligations_and_fail_closed(self):
+        # Regular-file-to-symlink replacement emits two diff records for the same path:
+        # a deletion of the regular file followed by creation of the symlink.
+        diff = (
+            "diff --git a/mode_swap b/mode_swap\n"
+            "deleted file mode 100644\n"
+            "index 1111111..0000000\n"
+            "--- a/mode_swap\n"
+            "+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n"
+            "-target\n"
+            "-legacy\n"
+            "diff --git a/mode_swap b/mode_swap\n"
+            "new file mode 120000\n"
+            "index 0000000..2222222\n"
+            "--- /dev/null\n"
+            "+++ b/mode_swap\n"
+            "@@ -0,0 +1 @@\n"
+            "+target\n"
+            "\\ No newline at end of file\n"
+            "diff --git a/other.py b/other.py\n"
+            "--- a/other.py\n"
+            "+++ b/other.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+survived_other\n"
+        )
+        parsed = mv.parse_diff_by_file(diff)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["mode_swap"].added_lines, ("target",))
+        self.assertEqual(parsed["mode_swap"].deleted_lines, ("target", "legacy"))
+        self.assertTrue(parsed["mode_swap"].has_multiple_records)
+        self.assertFalse(parsed["other.py"].has_multiple_records)
+
+        # Unrelated file in the same PR still verifies cleanly
+        report_other = mv.verify_merge(
+            landed=["other.py"],
+            overtaken={"other.py": [550]},
+            diffs={550: diff},
+            file_contents={"other.py": "survived_other\n"},
+            pr_file_contents={550: {"other.py": "survived_other\n"}},
+        )
+        self.assertEqual(report_other["status"], "clean")
+
+        # Reverting mode_swap back to the original regular file ('target\nlegacy\n')
+        # must fail closed as drift, never report clean.
+        report_reverted = mv.verify_merge(
+            landed=["mode_swap"],
+            overtaken={"mode_swap": [550]},
+            diffs={550: diff},
+            file_contents={"mode_swap": "target\nlegacy\n"},
+            pr_file_contents={550: {"mode_swap": "target"}},
+        )
+        self.assertEqual(report_reverted["status"], "drift")
+        self.assertEqual(report_reverted["overtaken"], {"mode_swap": [550]})
+        self.assertIn("could not verify line survival (fail-closed)", report_reverted["reason"])
+        self.assertEqual(
+            report_reverted["drift_details"],
+            {
+                "mode_swap": [
+                    "multiple diff records cannot be verified by line survival for mode_swap (#550)"
+                ]
+            },
+        )
+
+        # Multi-record via rename_old colliding with another record in the same diff
+        diff_rename_multi = (
+            "diff --git a/a.py b/a.py\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+pre_rename\n"
+            "diff --git a/a.py b/b.py\n"
+            "similarity index 100%\n"
+            "rename from a.py\n"
+            "rename to b.py\n"
+        )
+        parsed_rm = mv.parse_diff_by_file(diff_rename_multi)
+        self.assertIsNotNone(parsed_rm)
+        self.assertTrue(parsed_rm["a.py"].has_multiple_records)
+        self.assertEqual(parsed_rm["a.py"].added_lines, ("pre_rename",))
+
+    def test_truncated_git_header_returns_none_and_reports_drift(self):
+        for bad_diff in (
+            "diff --git \n",
+            "diff --git   \n",
+            "diff --git a/only_one_path.py\n",
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,2 @@\n\n-old\n+new\n",
+        ):
+            with self.subTest(bad_diff=bad_diff):
+                self.assertIsNone(mv.parse_diff_by_file(bad_diff))
+                report = mv.verify_merge(
+                    landed=["a.py"],
+                    overtaken={"a.py": [550]},
+                    diffs={550: bad_diff},
+                    file_contents={"a.py": "new\n"},
+                    pr_file_contents={550: {"a.py": "new\n"}},
+                )
+                self.assertEqual(report["status"], "drift")
+                self.assertEqual(report["overtaken"], {"a.py": [550]})
+                self.assertIn("could not verify line survival (fail-closed)", report["reason"])
+                self.assertEqual(
+                    report["drift_details"],
+                    {"a.py": ["unreadable or malformed diff for #550"]},
+                )
+
+        # Documented whole-file multiset trade-off: if an overtaking hunk added only a
+        # generic line ('return None') and the merge reverts that hunk while adding an
+        # identical 'return None' elsewhere in the same file, the whole-file count stays >= 1.
+        lost, viols = mv.check_multiset_survival(
+            added_lines=["    return None"],
+            deleted_lines=[],
+            landed_content="def f1():\n    return None\n",
+            merge_content="def f1():\n    return 0\ndef f2():\n    return None\n",
+        )
+        self.assertEqual((lost, viols), (0, []))
+
+    def test_rename_from_path_in_parsed_diff_unioned_into_collisions_when_absent_from_overtaken(
+        self,
+    ):
+        diff = (
+            "diff --git a/old_name.py b/new_name.py\n"
+            "similarity index 85%\n"
+            "rename from old_name.py\n"
+            "rename to new_name.py\n"
+            "--- a/old_name.py\n"
+            "+++ b/new_name.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " base\n"
+            "+added_in_rename\n"
+        )
+        # `overtaken` only lists `new_name.py` (as `gh pr view --json files` returns),
+        # while the stale merge recreated `old_name.py` alongside `new_name.py`.
+        report = mv.verify_merge(
+            landed=["old_name.py", "new_name.py"],
+            overtaken={"new_name.py": [550]},
+            diffs={550: diff},
+            file_contents={
+                "old_name.py": "base\n",
+                "new_name.py": "base\nadded_in_rename\n",
+            },
+            pr_file_contents={
+                550: {
+                    "old_name.py": mv.FILE_ABSENT,
+                    "new_name.py": "base\nadded_in_rename\n",
+                }
+            },
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"old_name.py": [550]})
+        self.assertEqual(report["shared_files"], ["new_name.py", "old_name.py"])
+        self.assertEqual(
+            report["drift_details"],
+            {"old_name.py": ["deleted file reappeared in merge commit (#550)"]},
+        )
