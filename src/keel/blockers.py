@@ -58,7 +58,7 @@ _REFLIKE_RE = re.compile(
     r"|(?<![\w.-])[\w.-]++/[\w.-]++#\d+"
     r"|/(?:issues|pull)/\d+"
     r"|#\d+"
-    r"|\bv\d[\w.+\-/]*|\b\d{1,3}\.\d+\.\d[\w.+\-/]*",
+    r"|\bv\d\S*|\b\d{1,3}\.\d+\.\d\S*",
     re.IGNORECASE,
 )
 _DO_NOT_MERGE = (
@@ -70,12 +70,13 @@ _BEFORE_PHRASE_RE = re.compile(rf"(?<![\w/]){_DO_NOT_MERGE}", re.IGNORECASE)
 #: What may follow ``do not merge before``: ``#N`` (or ``PR #N``), a ``v``-prefixed tag
 #: (``v2``, ``v1.2.0``) or a three-part dotted version (``1.2.0``). A bare word ("before
 #: release") or a time/count ("before 5pm", "before 3 reviewers") is not a reference.
-#: A tag target must not be followed by ``#\d`` (or an ``/owner/repo#N`` continuation),
-#: which is a foreign repository reference.
+#: A tag target must end at whitespace or sentence punctuation (``[.,;:!?)\]}]``) so a
+#: foreign ``v2/sdk#12`` or unsupported ``v2.0.0@rc1`` continuation is not read as a tag
+#: prefix.
 _AFTER_BEFORE_RE = re.compile(
     r"\s+(?:the\s+)?(?:"
     r"(?P<issue>(?:(?:pull request|pr|issue)\s*)?#\d+)"
-    r"|(?P<tag>(?:v\d|\d{1,3}\.\d+\.\d)[\w.+\-/]*+)(?!#\d))",
+    r"|(?P<tag>(?:v\d|\d{1,3}\.\d+\.\d)[\w.+\-/]*+)(?=[.,;:!?)\]}]*+(?:\s|$)))",
     re.IGNORECASE,
 )
 _NEGATION_RE = re.compile(
@@ -84,9 +85,10 @@ _NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 #: A terminated fence only: a stray unterminated opener must not swallow (hide) the rest of
-#: the body or mispair with a later fenced block's opener, so what follows it is still read.
+#: the body, and an opener must only close at a valid closing-fence line (the fence characters
+#: and optional trailing spaces/tabs).
 _FENCE_RE = re.compile(
-    r"^[ \t]*+([`~])(\1{2,}+)[^\n]*\n(?:(?!^[ \t]*\1\2)[^\n]*\n)*?^[ \t]*\1\2\1*[ \t]*$",
+    r"^[ \t]*+([`~])(\1{2,}+)[^\n]*\n(?:(?!^[ \t]*\1\2\1*[ \t]*$)[^\n]*\n)*?^[ \t]*\1\2\1*[ \t]*$",
     re.MULTILINE,
 )
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)

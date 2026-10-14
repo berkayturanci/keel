@@ -3189,9 +3189,10 @@ invisible to this command. Bodies with `\r\n` or `\r` line endings are read like
   are read only after `do not merge before|until [after]|prior to` (so `blocked until v2.0` is not read
   as a tag blocker and marks the PR `incomplete: true` with `blockers: []`). A `before` target is `#N`,
   a `v`-prefixed tag (`v2`, `v1.2.0`) or a three-part version (`1.2.0`; it checks for a tag named
-  exactly that, not `v1.2.0`). A tag target must not be followed by `#\d` (or an `/owner/repo#N`
-  continuation, such as `do not merge before v2/sdk#12`); such a target is recognized as a foreign
-  reference rather than a tag, marking the PR `incomplete`. `5pm`, `10.30` and `2026.10.15` are not tags.
+  exactly that, not `v1.2.0`). A tag target must end at whitespace or sentence punctuation
+  (`[.,;:!?)\]}]`); any other non-whitespace continuation (such as `do not merge before v2/sdk#12`
+  or `do not merge before v2.0.0@rc1`) is not read as a tag prefix and marks the PR `incomplete`.
+  `5pm`, `10.30` and `2026.10.15` are not tags.
 - **Zone and token accounting:** for a recognised phrase, its zone spans the rest of the line (bounded
   by any subsequent blocker phrase), or the immediately following non-blank line when the phrase ends its
   line, plus any contiguous bullet lines directly below that (a blank or non-bullet line ends the zone).

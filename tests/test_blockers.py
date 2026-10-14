@@ -92,13 +92,25 @@ class ParseTests(unittest.TestCase):
     def test_unterminated_fence_does_not_hide_the_rest(self):
         self.assertEqual(["5"], issues("```\nstray opener\nBlocked by #5"))
         self.assertEqual(
-            ["5"],
+            [],
+            issues("```text\nBlocked by #5\n```python\nexample\n```"),
+        )
+        self.assertEqual(
+            [],
             issues("```\nstray opener\nBlocked by #5\n```python\nblocked by #99\n```"),
         )
         self.assertEqual(
             ["5"],
             issues("~~~\nstray opener\nBlocked by #5\n```\nblocked by #99\n```"),
         )
+
+    def test_tag_continuation_characters(self):
+        for body in (
+            "Do not merge before v2.0.0@rc1",
+            "Do not merge before v2.0.0~beta1",
+            "Do not merge before 1.2.0@rc1",
+        ):
+            self.assertEqual(((), True), self.refs(body), body)
 
     def test_four_char_and_longer_closing_fences(self):
         for body in (
@@ -750,6 +762,7 @@ class StaleBlockersTests(unittest.TestCase):
             prs=prs, issue_states={"1": C, "2": OPEN, "99": OPEN}, tags={"v2.0": "yes"}
         )
         self.assertTrue(rep["ok"])
+        self.assertEqual(0, rep["unknown_blockers"])
         self.assertEqual([10, 30], [p["number"] for p in rep["prs"]])
         ten, thirty = rep["prs"]
         self.assertTrue(ten["all_cleared"])
@@ -894,6 +907,16 @@ class StaleBlockersTests(unittest.TestCase):
             rep["prs"][0]["blockers"],
         )
         self.assertTrue(rep["prs"][0]["all_cleared"])
+
+    def test_prefix_tag_does_not_clear_unsupported_continuation(self):
+        rep = self.report(
+            prs=[_pr(5, "Do not merge before v2.0.0@rc1")],
+            tags={"v2.0.0": "yes"},
+        )
+        self.assertEqual([5], [p["number"] for p in rep["prs"]])
+        self.assertEqual([], rep["prs"][0]["blockers"])
+        self.assertTrue(rep["prs"][0]["incomplete"])
+        self.assertFalse(rep["prs"][0]["all_cleared"])
 
     def test_backticked_details_does_not_cause_false_all_cleared(self):
         body = "Blocked by #1\n\nUse `<details>` for release notes.\n\nBlocked by #2"
@@ -1138,6 +1161,12 @@ class RenderAndCliTests(unittest.TestCase):
         self.assertEqual(0, code)
         data = json.loads(out)
         self.assertEqual(8, data["prs"][0]["number"])
+        abandoned_router = _router(
+            prs=[_pr(9, "Blocked by #2")], issue_states={"2": "closed - unmerged"}
+        )
+        code, out = self.run_cli(["stale-blockers"], abandoned_router)
+        self.assertEqual(0, code)
+        self.assertIn("#9 t — blocker abandoned, none cleared", out)
 
     def test_cli_passes_root_as_cwd_and_rejects_bad_limit(self):
         cwds = []
