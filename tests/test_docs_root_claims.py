@@ -18,6 +18,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+import yaml
+
 from keel import cli, swarm_runtime
 from keel.runner import CommandResult
 
@@ -30,7 +32,7 @@ def _read(*parts: str) -> str:
 
 def _flat(text: str) -> str:
     """Whitespace collapsed, so a sentence wrapped across lines still matches."""
-    return " ".join(text.split())
+    return " ".join(re.sub(r"(?m)^[ \t]*>[ \t]?", "", text).split())
 
 
 def _pyproject() -> dict:
@@ -232,6 +234,11 @@ class TheSwarmPagesDescribeTheSwarmThatShipped(unittest.TestCase):
             if line.startswith("| `swarm` |")
         )
         self.assertIn("experimental", row.lower())
+
+    def test_the_swarm_page_quotes_canonical_claims(self):
+        claims = yaml.safe_load(_read("docs", "keel", "claims.yaml"))
+        self.assertIn(claims["swarm"]["status_line"], self.swarm)
+        self.assertIn(claims["swarm"]["status"], self.swarm.lower())
 
 
 if __name__ == "__main__":
