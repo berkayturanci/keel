@@ -11634,6 +11634,31 @@ class TestVerifyMergeCommand(unittest.TestCase):
             {"a.py": {"pr": 550, "count": 1, "samples": ["missing_line = 1"]}},
         )
 
+    def test_shared_file_with_two_overtaking_prs_reports_drift_when_second_pr_lines_lost(self):
+        rc, out, _ = self._run(
+            others=[550, 551],
+            files_by_pr={
+                543: ["CHANGELOG.md"],
+                550: ["CHANGELOG.md"],
+                551: ["CHANGELOG.md", "CHANGELOG.md"],
+            },
+            commit_files=["CHANGELOG.md"],
+            added_by_pr={
+                550: {"CHANGELOG.md": ["- entry 550"]},
+                551: {"CHANGELOG.md": ["- entry 551"]},
+            },
+            file_contents={"CHANGELOG.md": "# Changelog\n- entry 550\n- entry 543\n"},
+            argv_extra=("--json",),
+        )
+        payload = json.loads(out)
+        self.assertEqual(rc, 1, payload)
+        self.assertEqual(payload["status"], "drift")
+        self.assertEqual(payload["overtaken"], {"CHANGELOG.md": 551})
+        self.assertEqual(
+            payload["lost_lines"],
+            {"CHANGELOG.md": {"pr": 551, "count": 1, "samples": ["- entry 551"]}},
+        )
+
 
 class TestMergeCheckpointGate(unittest.TestCase):
     """The s10 checkpoint gate in `keel merge` (audit GAP-13)."""

@@ -526,14 +526,19 @@ class TestRestTransportDegradesHonestly(unittest.TestCase):
 
         encoded = base64.b64encode(b"line 1\nline 2\n").decode("ascii")
         payload = json.dumps({"type": "file", "encoding": "base64", "content": encoded})
+        runner = MagicMock(return_value=_proc(payload))
         self.assertEqual(
             github.commit_file_content(
                 "deadbeef",
-                "a/b.py",
-                _run=MagicMock(return_value=_proc(payload)),
+                "a/b#1?2.py",
+                _run=runner,
                 _sleep=lambda _s: None,
             ),
             "line 1\nline 2\n",
+        )
+        self.assertEqual(
+            runner.call_args[0][0],
+            ["gh", "api", "repos/{owner}/{repo}/contents/a/b%231%3F2.py?ref=deadbeef"],
         )
         for bad in (
             _proc("404", 1),

@@ -12,6 +12,7 @@ import json
 import random
 import re
 import time
+import urllib.parse
 from collections.abc import Sequence
 
 from .runner import CommandResult, run_argv
@@ -347,10 +348,11 @@ def pr_added_lines(
 def commit_file_content(
     sha: str, path: str, *, cwd: str | None = None, _run=None, _sleep=None
 ) -> str | None:
-    """UTF-8 file content at ``sha`` from GitHub's contents endpoint, or ``None``."""
+    """UTF-8 file content at ``sha`` from GitHub's contents endpoint (<= 1 MB), or ``None``."""
+    quoted = urllib.parse.quote(path.lstrip("/"), safe="/")
     data = rest_json(
         run_argv_retry(
-            ["gh", "api", f"repos/{{owner}}/{{repo}}/contents/{path}?ref={sha}"],
+            ["gh", "api", f"repos/{{owner}}/{{repo}}/contents/{quoted}?ref={sha}"],
             cwd=cwd,
             _run=_run,
             _sleep=_sleep,

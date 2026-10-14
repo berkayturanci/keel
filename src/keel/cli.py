@@ -4769,7 +4769,7 @@ def _overtaking_prs(
     others = reader(timing["base"], timing["branched_at"], timing["merged_at"], cwd=args.root)
     if others is None:
         return {}, False
-    overtaken: dict = {}
+    overtaken: dict[str, list[int]] = {}
     complete = True
     for number in others:
         if number == args.pr:
@@ -4782,8 +4782,8 @@ def _overtaking_prs(
         if files is None:
             complete = False
             continue
-        for path in files:
-            overtaken.setdefault(path, number)
+        for path in dict.fromkeys(files):
+            overtaken.setdefault(path, []).append(number)
     return overtaken, complete
 
 
@@ -4847,10 +4847,9 @@ def _merge_drift_report(args: argparse.Namespace, *, transport: str | None = Non
             if not ok
         ]
         landed_set = {p.strip() for p in (landed or []) if p.strip()}
-        shared = {p.strip(): pr for p, pr in overtaken.items() if p.strip() in landed_set}
-        added_by_pr = {
-            pr: github.pr_added_lines(pr, cwd=args.root) for pr in sorted(set(shared.values()))
-        }
+        shared = {p.strip(): prs for p, prs in overtaken.items() if p.strip() in landed_set}
+        shared_prs = sorted({pr for prs in shared.values() for pr in prs})
+        added_by_pr = {pr: github.pr_added_lines(pr, cwd=args.root) for pr in shared_prs}
         merged_contents = {
             path: github.commit_file_content(merge_sha, path, cwd=args.root)
             for path in sorted(shared)

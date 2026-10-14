@@ -181,3 +181,48 @@ class TestLineSurvival(unittest.TestCase):
                 self.assertEqual(report["unverifiable"], ["a.py"])
                 self.assertEqual(report["lost_lines"], {})
                 self.assertIn("unverifiable", mv.render(report))
+
+    def test_multiple_overtaking_prs_on_same_file_checks_every_pr(self):
+        report = mv.verify_merge(
+            landed=["CHANGELOG.md"],
+            overtaken={"CHANGELOG.md": [550, 551]},
+            added_by_pr={
+                550: {"CHANGELOG.md": ["- entry 550"]},
+                551: {"CHANGELOG.md": ["- entry 551"]},
+            },
+            merged_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n- entry 543\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"CHANGELOG.md": 551})
+        self.assertEqual(
+            report["lost_lines"],
+            {"CHANGELOG.md": {"pr": 551, "count": 1, "samples": ["- entry 551"]}},
+        )
+        self.assertIn("CHANGELOG.md  — also changed by #551 (1 lost line(s))", mv.render(report))
+
+        unverifiable_second = mv.verify_merge(
+            landed=["CHANGELOG.md"],
+            overtaken={"CHANGELOG.md": [550, 551]},
+            added_by_pr={
+                550: {"CHANGELOG.md": ["- entry 550"]},
+                551: {"CHANGELOG.md": None},
+            },
+            merged_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n"},
+        )
+        self.assertEqual(unverifiable_second["status"], "drift")
+        self.assertEqual(unverifiable_second["overtaken"], {"CHANGELOG.md": 551})
+        self.assertEqual(unverifiable_second["unverifiable"], ["CHANGELOG.md"])
+
+        both_clean = mv.verify_merge(
+            landed=["CHANGELOG.md", "extra.py"],
+            overtaken={"CHANGELOG.md": [550, 551]},
+            intended=["CHANGELOG.md"],
+            added_by_pr={
+                550: {"CHANGELOG.md": ["- entry 550"]},
+                551: {"CHANGELOG.md": ["- entry 551"]},
+            },
+            merged_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n- entry 551\n"},
+        )
+        self.assertEqual(both_clean["status"], "out-of-scope")
+        self.assertEqual(both_clean["overtaken"], {"CHANGELOG.md": 550})
+        self.assertEqual(both_clean["unexpected"], ["extra.py"])

@@ -41,7 +41,7 @@ SCHEMA_VERSION = "keel.merge-verify.v1"
 
 def verify_merge(
     landed: Sequence[str] | None,
-    overtaken: Mapping[str, int] | None = None,
+    overtaken: Mapping[str, int | Sequence[int]] | None = None,
     intended: Sequence[str] | None = None,
     *,
     added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None = None,
@@ -50,9 +50,9 @@ def verify_merge(
     """Judge whether a merge may have silently reverted other merged work.
 
     ``landed`` is what the merge commit changed. ``overtaken`` maps a path to the
-    pull request that changed it **after this PR branched and before this PR
-    merged** — the window in which a stale branch can carry a revert. ``intended``
-    is the PR's own file list, used only for the weaker secondary signal.
+    pull request (or pull requests) that changed it **after this PR branched and
+    before this PR merged** — the window in which a stale branch can carry a revert.
+    ``intended`` is the PR's own file list, used only for the weaker secondary signal.
 
     ``None`` for ``landed`` means *not observed* and yields ``unknown`` rather than
     a clean bill: failing to look is not evidence that nothing drifted.
@@ -69,15 +69,16 @@ def verify_merge(
     if landed is None:
         return _report("unknown", "could not read the merge commit's file list from GitHub")
     landed_set = {p.strip() for p in landed if p.strip()}
-    collisions = dict(
-        sorted(
-            (path.strip(), pr)
-            for path, pr in (overtaken or {}).items()
-            if path.strip() and path.strip() in landed_set
+    raw_collisions = {
+        path.strip(): ([pr] if isinstance(pr, int) else list(dict.fromkeys(pr)))
+        for path, pr in sorted((overtaken or {}).items())
+        if path.strip() and path.strip() in landed_set and pr
+    }
+    collisions: dict[str, int] = {}
+    if raw_collisions:
+        collisions, lost_lines, unverifiable = _check_survival(
+            raw_collisions, added_by_pr, merged_contents
         )
-    )
-    if collisions:
-        lost_lines, unverifiable = _check_survival(collisions, added_by_pr, merged_contents)
         if lost_lines or unverifiable:
             parts = [
                 f"{p} (#{info['pr']}: {info['count']} lost)" for p, info in lost_lines.items()
@@ -118,23 +119,45 @@ def verify_merge(
 
 
 def _check_survival(
-    collisions: Mapping[str, int],
+    collisions: Mapping[str, Sequence[int]],
     added_by_pr: Mapping[int, Mapping[str, Sequence[str] | None]] | None,
     merged_contents: Mapping[str, str | None] | None,
-) -> tuple[dict[str, dict], list[str]]:
+) -> tuple[dict[str, int], dict[str, dict], list[str]]:
+    overtaken: dict[str, int] = {}
     lost_lines: dict[str, dict] = {}
     unverifiable: list[str] = []
-    for path, pr in collisions.items():
-        added = ((added_by_pr or {}).get(pr) or {}).get(path)
+    for path, prs in collisions.items():
         content = (merged_contents or {}).get(path)
-        if added is None or content is None:
+        present = (
+            {line for line in content.splitlines() if line.strip()}
+            if content is not None
+            else set()
+        )
+        missing_all: list[str] = []
+        lost_pr: int | None = None
+        unverifiable_pr: int | None = None
+        for pr in prs:
+            added = ((added_by_pr or {}).get(pr) or {}).get(path)
+            if content is None or added is None:
+                unverifiable_pr = unverifiable_pr or pr
+                continue
+            missing = [line for line in added if line.strip() and line not in present]
+            if missing:
+                lost_pr = lost_pr or pr
+                missing_all.extend(missing)
+        if lost_pr is not None:
+            overtaken[path] = lost_pr
+            lost_lines[path] = {
+                "pr": lost_pr,
+                "count": len(missing_all),
+                "samples": missing_all[:3],
+            }
+        elif unverifiable_pr is not None:
+            overtaken[path] = unverifiable_pr
             unverifiable.append(path)
-            continue
-        present = {line for line in content.splitlines() if line.strip()}
-        missing = [line for line in added if line.strip() and line not in present]
-        if missing:
-            lost_lines[path] = {"pr": pr, "count": len(missing), "samples": missing[:3]}
-    return lost_lines, unverifiable
+        else:
+            overtaken[path] = prs[0]
+    return overtaken, lost_lines, unverifiable
 
 
 def _report(status: str, reason: str, **extra) -> dict:
