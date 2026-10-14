@@ -834,6 +834,7 @@ HEAD_SHA=$(git rev-parse HEAD)
 DIFF_ABS=$(cd "$(dirname "$DIFF")" && pwd)/$(basename "$DIFF")
 JURY_WT="$ROOT/.keel/worktrees/review-$RUN_ID-jury"
 mkdir -p "$ROOT/.keel/worktrees" "$ROOT/.keel/state/jury"
+JURY_RC=1
 if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
   JURY_RC=0
   for cfg in jury.toml jury-policy.toml; do
@@ -853,20 +854,21 @@ if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
     ) || JURY_RC=$?
   fi
   if test "$JURY_RC" -eq 0; then
+    rm -f "$ROOT/.keel/state/jury/$RUN_ID.json"
     (cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
     JURY_RC=$?
   else
     echo "error: could not copy jury configuration into $JURY_WT" >&2
   fi
   keel worktree-remove "$JURY_WT" --root "$ROOT" || JURY_RC=1
-  (exit "$JURY_RC")
 else
-  echo "error: could not create isolated jury checkout $JURY_WT" >&2; false
+  echo "error: could not create isolated jury checkout $JURY_WT" >&2
 fi
+(exit "$JURY_RC")
 
 # 2. its ballots become the s7 evidence: one head-pinned verdict per panelist,
 #    carrying the vendor and model that produced it, plus the jury verdict
-keel review .keel/project.yaml --root . --pr <PR> \
+test "$JURY_RC" -eq 0 && keel review .keel/project.yaml --root . --pr <PR> \
   --from-jury ".keel/state/jury/$RUN_ID.json" --run-id "$RUN_ID" --live
 ```
 
@@ -1037,7 +1039,7 @@ ROOT=$(pwd)
 REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
 keel delegate wait "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --timeout 900
 WAIT_RC=$?
-keel worktree-remove "$REVIEW_WT" --root "$ROOT"
+keel worktree-remove "$REVIEW_WT" --root "$ROOT" || WAIT_RC=1
 (exit "$WAIT_RC")
 ```
 
@@ -1759,4 +1761,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.32.0 source_sha256=d59654c99ca54caddc9f846ec8d2caff05fdd1f3385e397150044a2f270e325c generated_sha256=d59654c99ca54caddc9f846ec8d2caff05fdd1f3385e397150044a2f270e325c -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.32.0 source_sha256=b686c698a83a0f5fcd6297b5ee76954b7efd6c3731e88f8d326aa1ff8e45f999 generated_sha256=b686c698a83a0f5fcd6297b5ee76954b7efd6c3731e88f8d326aa1ff8e45f999 -->

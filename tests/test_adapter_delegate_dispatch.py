@@ -223,7 +223,8 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
         # Extract the s7 bash blocks from ship.md and verify their behaviour:
         blocks = re.findall(r"```bash\n(.*?)```", ship_md, re.DOTALL)
         jury_block = next(b for b in blocks if "JURY_WT=" in b)
-        jury_panel_script = jury_block.split("# 2. its ballots", 1)[0]
+        self.assertIn("keel review .keel/project.yaml", jury_block)
+        jury_panel_script = jury_block.replace("<PR>", "42")
         reviewer_block = next(b for b in blocks if "--role review" in b and "REVIEW_WT=" in b)
         slot_script, gate_script = reviewer_block.split("# the gate review", 1)
         gate_script = "ROOT=$(pwd)\nHEAD_SHA=$(git rev-parse HEAD)\n" + gate_script
@@ -260,7 +261,11 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             )
             (bin_dir / "keel").write_text(
                 '#!/bin/sh\necho "keel $*" >> "$CALL_LOG"\n'
-                'if [ "$1" = "worktree-remove" ]; then rm -rf "$2"; exit 0; fi\n'
+                'if [ "$1" = "worktree-remove" ]; then\n'
+                '  [ "$FAIL_WORKTREE_REMOVE" = "1" ] && exit 1\n'
+                '  rm -rf "$2"\n'
+                "  exit 0\n"
+                "fi\n"
                 'case "$*" in *"--role review"*)'
                 ' [ "$FAIL_REVIEW_DELEGATE" = "1" ] && exit 2 ;; esac\n'
                 'case "$*" in *"--role gate"*)'
@@ -274,6 +279,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 'cat .jury/tracked.toml > "$JURY_CHECK_TRACKED"\n'
                 'cat .jury/untracked.toml > "$JURY_CHECK_UNTRACKED"\n'
                 'cat .jury/sub/nested.toml > "$JURY_CHECK_NESTED"\n'
+                'if [ "$FAIL_JURY" = "1" ]; then exit 4; fi\n'
                 "exit 0\n",
                 encoding="utf-8",
             )
@@ -417,6 +423,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 )
 
             # 4. Jury block merges untracked .jury files while preserving tracked .jury files
+            # and converts ballots via keel review --from-jury on success
             log_file.unlink(missing_ok=True)
             res_jury = subprocess.run(
                 ["bash", "-c", jury_panel_script],
@@ -438,10 +445,22 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 (root / "checked_nested.txt").read_text(encoding="utf-8"),
                 "n = 1\n",
             )
+            jury_ok_calls = log_file.read_text(encoding="utf-8").splitlines()
+            self.assertTrue(
+                any(
+                    c.startswith("keel review ") and "--from-jury .keel/state/jury/r1.json" in c
+                    for c in jury_ok_calls
+                ),
+                jury_ok_calls,
+            )
 
-            # 4b. Jury block fails closed, skips jury execution, and cleans up on copy failure
+            # 4b. Complete jury block fails closed before step 2 evidence conversion (even with
+            # an existing $RUN_ID.json on disk) when checkout, copy, jury, or cleanup fails
+            existing_report = root / ".keel" / "state" / "jury" / "r1.json"
+            existing_report.parent.mkdir(parents=True, exist_ok=True)
             for fail_target in ("jury-policy.toml", "untracked.toml"):
                 with self.subTest(fail_target=fail_target):
+                    existing_report.write_text('{"stale": true}\n', encoding="utf-8")
                     log_file.unlink(missing_ok=True)
                     res_jury_cp_fail = subprocess.run(
                         ["bash", "-c", jury_panel_script],
@@ -453,11 +472,38 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                     self.assertNotEqual(res_jury_cp_fail.returncode, 0)
                     cp_fail_calls = log_file.read_text(encoding="utf-8").splitlines()
                     self.assertFalse(any(c.startswith("jury ") for c in cp_fail_calls))
+                    self.assertFalse(any(c.startswith("keel review ") for c in cp_fail_calls))
                     self.assertTrue(
                         any(
                             c.startswith("keel worktree-remove ") and "review-r1-jury" in c
                             for c in cp_fail_calls
                         )
+                    )
+
+            for fail_case, fail_env in (
+                ("worktree_add", {"FAIL_WORKTREE_ADD": "1"}),
+                ("jury_exec", {"FAIL_JURY": "1"}),
+                ("worktree_remove", {"FAIL_WORKTREE_REMOVE": "1"}),
+            ):
+                with self.subTest(jury_fail_case=fail_case):
+                    existing_report.write_text('{"stale": true}\n', encoding="utf-8")
+                    log_file.unlink(missing_ok=True)
+                    res_jury_fail = subprocess.run(
+                        ["bash", "-c", jury_panel_script],
+                        cwd=root,
+                        env={**env, **fail_env},
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertNotEqual(res_jury_fail.returncode, 0)
+                    jury_fail_calls = (
+                        log_file.read_text(encoding="utf-8").splitlines()
+                        if log_file.exists()
+                        else []
+                    )
+                    self.assertFalse(
+                        any(c.startswith("keel review ") for c in jury_fail_calls),
+                        jury_fail_calls,
                     )
 
             # 5. Detached launch and collect+cleanup run in separate fresh shells
@@ -496,6 +542,16 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 ),
                 detach_calls,
             )
+
+            # 5b. Detached collect propagates worktree-remove failure even when wait succeeded
+            res_collect_rm_fail = subprocess.run(
+                ["bash", "-c", detach_collect_script],
+                cwd=root,
+                env={**env, "FAIL_WORKTREE_REMOVE": "1"},
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(res_collect_rm_fail.returncode, 0)
 
     def test_the_detach_primitive_replaces_sleep_polling_advice(self):
         for path in _adapter_files():
