@@ -1914,8 +1914,10 @@ class TestShip(unittest.TestCase):
             self.assertEqual(rc, 0, out + err)
             self.assertEqual(rc_sha, 0, out_sha + err_sha)
             self.assertEqual(len(observed_jury_cwds), 2)
-            self.assertNotEqual(Path(observed_jury_cwds[0]).resolve(), root.resolve())
-            self.assertIn(".keel/worktrees/review-jury-", observed_jury_cwds[0])
+            checkout_path = Path(observed_jury_cwds[0]).resolve()
+            self.assertNotEqual(checkout_path, root.resolve())
+            self.assertEqual(checkout_path.parent, (root.resolve() / ".keel" / "worktrees"))
+            self.assertTrue(checkout_path.name.startswith("review-jury-"))
             self.assertEqual(observed_checkout_files[0], (True, True))
             self.assertIn("later.py", observed_diffs[0])
             # For explicit --head-sha=first_head, later.py is absent from both checkout and diff:
@@ -2080,10 +2082,12 @@ class TestShip(unittest.TestCase):
             wt_abs.parent.mkdir(parents=True, exist_ok=True)
             _run_git(root, "worktree", "add", "--detach", str(wt_abs), "HEAD")
             self.assertTrue(wt_abs.exists())
+            other_cwd = root / "elsewhere"
+            other_cwd.mkdir()
 
             old_cwd = os.getcwd()
             try:
-                os.chdir(wt_abs)
+                os.chdir(other_cwd)
                 rc, out, err = run(["worktree-remove", wt_rel, "--root", str(root), "--json"])
             finally:
                 os.chdir(old_cwd)

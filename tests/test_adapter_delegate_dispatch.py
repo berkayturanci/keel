@@ -232,18 +232,41 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
         detach_launch_script, detach_collect_script = detach_block.split("# collect + cleanup", 1)
         detach_collect_script = "# collect + cleanup" + detach_collect_script
 
+        import shutil
+        import sys
+
+        bash_bin = shutil.which("bash")
+        if sys.platform == "win32" and (not bash_bin or "system32" in bash_bin.lower()):
+            git_bin = shutil.which("git")
+            if git_bin:
+                for parent in Path(git_bin).resolve().parents:
+                    for rel in ("usr/bin/bash.exe", "bin/bash.exe"):
+                        candidate = parent / rel
+                        if candidate.exists():
+                            bash_bin = str(candidate)
+                            break
+                    if bash_bin and "system32" not in bash_bin.lower():
+                        break
+        bash_bin = bash_bin or "bash"
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             bin_dir = root / "bin"
             bin_dir.mkdir()
             log_file = root / "calls.log"
-            (root / "diff.patch").write_text("diff\n", encoding="utf-8")
-            (root / "jury.toml").write_text("[jury]\n", encoding="utf-8")
-            (root / "jury-policy.toml").write_text("[policy]\n", encoding="utf-8")
+            (root / "diff.patch").write_text("diff\n", encoding="utf-8", newline="\n")
+            (root / "jury.toml").write_text("[jury]\n", encoding="utf-8", newline="\n")
+            (root / "jury-policy.toml").write_text("[policy]\n", encoding="utf-8", newline="\n")
             (root / ".jury" / "sub").mkdir(parents=True)
-            (root / ".jury" / "tracked.toml").write_text("local = true\n", encoding="utf-8")
-            (root / ".jury" / "untracked.toml").write_text("extra = true\n", encoding="utf-8")
-            (root / ".jury" / "sub" / "nested.toml").write_text("n = 1\n", encoding="utf-8")
+            (root / ".jury" / "tracked.toml").write_text(
+                "local = true\n", encoding="utf-8", newline="\n"
+            )
+            (root / ".jury" / "untracked.toml").write_text(
+                "extra = true\n", encoding="utf-8", newline="\n"
+            )
+            (root / ".jury" / "sub" / "nested.toml").write_text(
+                "n = 1\n", encoding="utf-8", newline="\n"
+            )
 
             (bin_dir / "git").write_text(
                 "#!/bin/sh\n"
@@ -258,6 +281,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 'printf "committed = true\\n" > "$4/.jury/tracked.toml"\n'
                 "exit 0\n",
                 encoding="utf-8",
+                newline="\n",
             )
             (bin_dir / "keel").write_text(
                 '#!/bin/sh\necho "keel $*" >> "$CALL_LOG"\n'
@@ -272,6 +296,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 ' [ "$FAIL_GATE_DELEGATE" = "1" ] && exit 3 ;; esac\n'
                 "exit 0\n",
                 encoding="utf-8",
+                newline="\n",
             )
             (bin_dir / "jury").write_text(
                 "#!/bin/sh\n"
@@ -282,43 +307,54 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 'if [ "$FAIL_JURY" = "1" ]; then exit 4; fi\n'
                 "exit 0\n",
                 encoding="utf-8",
+                newline="\n",
             )
             (bin_dir / "cp").write_text(
                 "#!/bin/sh\n"
                 'if [ -n "$FAIL_CP_MATCH" ]; then\n'
                 '  case "$*" in *"$FAIL_CP_MATCH"*) exit 1 ;; esac\n'
                 "fi\n"
-                'exec /bin/cp "$@"\n',
+                'cat "$1" > "$2"\n',
                 encoding="utf-8",
+                newline="\n",
             )
-            os.chmod(bin_dir / "git", 0o755)
-            os.chmod(bin_dir / "keel", 0o755)
-            os.chmod(bin_dir / "jury", 0o755)
-            os.chmod(bin_dir / "cp", 0o755)
+            os.chmod(bin_dir / "git", 0o700)
+            os.chmod(bin_dir / "keel", 0o700)
+            os.chmod(bin_dir / "jury", 0o700)
+            os.chmod(bin_dir / "cp", 0o700)
 
             env = {
                 **os.environ,
-                "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
-                "CALL_LOG": str(log_file),
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "STUB_BIN": bin_dir.as_posix(),
+                "CALL_LOG": log_file.as_posix(),
                 "RUN_ID": "r1",
                 "SLOT_INDEX": "0",
                 "SLOT_PROVIDER": "claude",
                 "GATE_PROVIDER": "codex",
                 "RUBRIC_AND_DIFF": "/tmp/prompt.md",
-                "DIFF": str(root / "diff.patch"),
-                "JURY_CHECK_TRACKED": str(root / "checked_tracked.txt"),
-                "JURY_CHECK_UNTRACKED": str(root / "checked_untracked.txt"),
-                "JURY_CHECK_NESTED": str(root / "checked_nested.txt"),
+                "DIFF": (root / "diff.patch").as_posix(),
+                "JURY_CHECK_TRACKED": (root / "checked_tracked.txt").as_posix(),
+                "JURY_CHECK_UNTRACKED": (root / "checked_untracked.txt").as_posix(),
+                "JURY_CHECK_NESTED": (root / "checked_nested.txt").as_posix(),
             }
 
+            def _run_bash(script: str, extra_env: dict[str, str] | None = None):
+                preamble = (
+                    'export PATH="$(cd "$STUB_BIN" && pwd):$(dirname "$BASH"):/usr/bin:/bin"\n'
+                )
+                return subprocess.run(
+                    [bash_bin, "-c", preamble + script],
+                    cwd=root,
+                    env={**env, **(extra_env or {})},
+                    capture_output=True,
+                    text=True,
+                )
+
+            bash_root = _run_bash("pwd").stdout.strip()
+
             # 1. When git worktree add fails, keel delegate run must NOT be dispatched
-            res_fail = subprocess.run(
-                ["bash", "-c", slot_script],
-                cwd=root,
-                env={**env, "FAIL_WORKTREE_ADD": "1"},
-                capture_output=True,
-                text=True,
-            )
+            res_fail = _run_bash(slot_script, {"FAIL_WORKTREE_ADD": "1"})
             self.assertNotEqual(res_fail.returncode, 0)
             calls_on_fail = log_file.read_text(encoding="utf-8") if log_file.exists() else ""
             self.assertNotIn("keel delegate run", calls_on_fail)
@@ -326,33 +362,21 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
 
             # 2. When git worktree add succeeds, delegate run executes and worktree-remove cleans up
             log_file.unlink(missing_ok=True)
-            res_ok = subprocess.run(
-                ["bash", "-c", slot_script],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
+            res_ok = _run_bash(slot_script)
             self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
             calls_on_ok = log_file.read_text(encoding="utf-8").splitlines()
             self.assertTrue(any(c.startswith("git worktree add -d ") for c in calls_on_ok))
             self.assertTrue(any(c.startswith("keel delegate run ") for c in calls_on_ok))
             self.assertTrue(
                 any(
-                    c.startswith("keel worktree-remove ") and f"--root {root.resolve()}" in c
+                    c.startswith("keel worktree-remove ") and f"--root {bash_root}" in c
                     for c in calls_on_ok
                 )
             )
 
             # 3. Gate block executes in isolated checkout and cleans up
             log_file.unlink(missing_ok=True)
-            res_gate = subprocess.run(
-                ["bash", "-c", gate_script],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
+            res_gate = _run_bash(gate_script)
             self.assertEqual(res_gate.returncode, 0, res_gate.stderr)
             gate_calls = log_file.read_text(encoding="utf-8").splitlines()
             self.assertTrue(any("--role gate" in c for c in gate_calls))
@@ -362,26 +386,14 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             # or delegate dispatch fails, even when the other dispatch succeeds
             with self.subTest(case="combined_reviewer_worktree_add_fails"):
                 log_file.unlink(missing_ok=True)
-                res_combined_wt_fail = subprocess.run(
-                    ["bash", "-c", reviewer_block],
-                    cwd=root,
-                    env={**env, "FAIL_REVIEW_WORKTREE_ADD": "1"},
-                    capture_output=True,
-                    text=True,
-                )
+                res_combined_wt_fail = _run_bash(reviewer_block, {"FAIL_REVIEW_WORKTREE_ADD": "1"})
                 self.assertNotEqual(res_combined_wt_fail.returncode, 0)
                 combined_wt_calls = log_file.read_text(encoding="utf-8")
                 self.assertNotIn("--role review", combined_wt_calls)
 
             with self.subTest(case="combined_reviewer_delegate_fails"):
                 log_file.unlink(missing_ok=True)
-                res_combined_rev_fail = subprocess.run(
-                    ["bash", "-c", reviewer_block],
-                    cwd=root,
-                    env={**env, "FAIL_REVIEW_DELEGATE": "1"},
-                    capture_output=True,
-                    text=True,
-                )
+                res_combined_rev_fail = _run_bash(reviewer_block, {"FAIL_REVIEW_DELEGATE": "1"})
                 self.assertNotEqual(res_combined_rev_fail.returncode, 0)
                 combined_rev_calls = log_file.read_text(encoding="utf-8").splitlines()
                 self.assertTrue(
@@ -393,12 +405,8 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
 
             with self.subTest(case="combined_gate_worktree_add_fails"):
                 log_file.unlink(missing_ok=True)
-                res_combined_gate_wt_fail = subprocess.run(
-                    ["bash", "-c", reviewer_block],
-                    cwd=root,
-                    env={**env, "FAIL_GATE_WORKTREE_ADD": "1"},
-                    capture_output=True,
-                    text=True,
+                res_combined_gate_wt_fail = _run_bash(
+                    reviewer_block, {"FAIL_GATE_WORKTREE_ADD": "1"}
                 )
                 self.assertNotEqual(res_combined_gate_wt_fail.returncode, 0)
                 combined_gate_wt_calls = log_file.read_text(encoding="utf-8")
@@ -406,13 +414,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
 
             with self.subTest(case="combined_gate_delegate_fails"):
                 log_file.unlink(missing_ok=True)
-                res_combined_gate_fail = subprocess.run(
-                    ["bash", "-c", reviewer_block],
-                    cwd=root,
-                    env={**env, "FAIL_GATE_DELEGATE": "1"},
-                    capture_output=True,
-                    text=True,
-                )
+                res_combined_gate_fail = _run_bash(reviewer_block, {"FAIL_GATE_DELEGATE": "1"})
                 self.assertNotEqual(res_combined_gate_fail.returncode, 0)
                 combined_gate_calls = log_file.read_text(encoding="utf-8").splitlines()
                 self.assertTrue(
@@ -425,13 +427,7 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             # 4. Jury block merges untracked .jury files while preserving tracked .jury files
             # and converts ballots via keel review --from-jury on success
             log_file.unlink(missing_ok=True)
-            res_jury = subprocess.run(
-                ["bash", "-c", jury_panel_script],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
+            res_jury = _run_bash(jury_panel_script)
             self.assertEqual(res_jury.returncode, 0, res_jury.stderr)
             self.assertEqual(
                 (root / "checked_tracked.txt").read_text(encoding="utf-8"),
@@ -460,15 +456,9 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             existing_report.parent.mkdir(parents=True, exist_ok=True)
             for fail_target in ("jury-policy.toml", "untracked.toml"):
                 with self.subTest(fail_target=fail_target):
-                    existing_report.write_text('{"stale": true}\n', encoding="utf-8")
+                    existing_report.write_text('{"stale": true}\n', encoding="utf-8", newline="\n")
                     log_file.unlink(missing_ok=True)
-                    res_jury_cp_fail = subprocess.run(
-                        ["bash", "-c", jury_panel_script],
-                        cwd=root,
-                        env={**env, "FAIL_CP_MATCH": fail_target},
-                        capture_output=True,
-                        text=True,
-                    )
+                    res_jury_cp_fail = _run_bash(jury_panel_script, {"FAIL_CP_MATCH": fail_target})
                     self.assertNotEqual(res_jury_cp_fail.returncode, 0)
                     cp_fail_calls = log_file.read_text(encoding="utf-8").splitlines()
                     self.assertFalse(any(c.startswith("jury ") for c in cp_fail_calls))
@@ -486,15 +476,9 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 ("worktree_remove", {"FAIL_WORKTREE_REMOVE": "1"}),
             ):
                 with self.subTest(jury_fail_case=fail_case):
-                    existing_report.write_text('{"stale": true}\n', encoding="utf-8")
+                    existing_report.write_text('{"stale": true}\n', encoding="utf-8", newline="\n")
                     log_file.unlink(missing_ok=True)
-                    res_jury_fail = subprocess.run(
-                        ["bash", "-c", jury_panel_script],
-                        cwd=root,
-                        env={**env, **fail_env},
-                        capture_output=True,
-                        text=True,
-                    )
+                    res_jury_fail = _run_bash(jury_panel_script, fail_env)
                     self.assertNotEqual(res_jury_fail.returncode, 0)
                     jury_fail_calls = (
                         log_file.read_text(encoding="utf-8").splitlines()
@@ -508,27 +492,14 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
 
             # 5. Detached launch and collect+cleanup run in separate fresh shells
             log_file.unlink(missing_ok=True)
-            res_launch = subprocess.run(
-                ["bash", "-c", detach_launch_script],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
+            res_launch = _run_bash(detach_launch_script)
             self.assertEqual(res_launch.returncode, 0, res_launch.stderr)
-            res_collect = subprocess.run(
-                ["bash", "-c", detach_collect_script],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                text=True,
-            )
+            res_collect = _run_bash(detach_collect_script)
             self.assertEqual(res_collect.returncode, 0, res_collect.stderr)
             detach_calls = log_file.read_text(encoding="utf-8").splitlines()
             self.assertTrue(
                 any(
-                    c.startswith("keel delegate wait r1-slot-0 ")
-                    and f"--root {root.resolve()}" in c
+                    c.startswith("keel delegate wait r1-slot-0 ") and f"--root {bash_root}" in c
                     for c in detach_calls
                 ),
                 detach_calls,
@@ -536,21 +507,15 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
             self.assertTrue(
                 any(
                     c.startswith("keel worktree-remove ")
-                    and f"{root.resolve()}/.keel/worktrees/review-r1-slot-0" in c
-                    and f"--root {root.resolve()}" in c
+                    and f"{bash_root}/.keel/worktrees/review-r1-slot-0" in c
+                    and f"--root {bash_root}" in c
                     for c in detach_calls
                 ),
                 detach_calls,
             )
 
             # 5b. Detached collect propagates worktree-remove failure even when wait succeeded
-            res_collect_rm_fail = subprocess.run(
-                ["bash", "-c", detach_collect_script],
-                cwd=root,
-                env={**env, "FAIL_WORKTREE_REMOVE": "1"},
-                capture_output=True,
-                text=True,
-            )
+            res_collect_rm_fail = _run_bash(detach_collect_script, {"FAIL_WORKTREE_REMOVE": "1"})
             self.assertNotEqual(res_collect_rm_fail.returncode, 0)
 
     def test_the_detach_primitive_replaces_sleep_polling_advice(self):

@@ -1331,10 +1331,14 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         add_calls = [c for c in calls if "worktree" in c[0] and "add" in c[0]]
         self.assertEqual(len(add_calls), 1)
         self.assertIn("head123", add_calls[0][0])
+        from pathlib import Path
+
         jury_calls = [c for c in calls if c[0][0] == "jury" and "--version" not in c[0]]
         self.assertEqual(len(jury_calls), 1)
         checkout_cwd = jury_calls[0][1]
-        self.assertIn(".keel/worktrees/review-jury-", checkout_cwd)
+        checkout_path = Path(checkout_cwd).resolve()
+        self.assertEqual(checkout_path.parent, (Path(self.root).resolve() / ".keel" / "worktrees"))
+        self.assertTrue(checkout_path.name.startswith("review-jury-"))
         remove_calls = [c for c in calls if "worktree" in c[0] and "remove" in c[0]]
         self.assertEqual(len(remove_calls), 1)
         self.assertIn(checkout_cwd, remove_calls[0][0])
@@ -1378,7 +1382,9 @@ class TestRunGateWithHeadSha(unittest.TestCase):
         self.assertIn("remove", wt_calls[1][0])
         jury_runs = [c for c in argv_calls if "--diff-file" in c[0]]
         self.assertEqual(len(jury_runs), 1)
-        self.assertIn(".keel/worktrees/review-jury-", jury_runs[0][1])
+        checkout_path = Path(jury_runs[0][1]).resolve()
+        self.assertEqual(checkout_path.parent, (Path(self.root).resolve() / ".keel" / "worktrees"))
+        self.assertTrue(checkout_path.name.startswith("review-jury-"))
 
     def test_run_gate_skips_checkout_on_early_exits(self):
         calls = []
