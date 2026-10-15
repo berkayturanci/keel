@@ -156,6 +156,7 @@ def _gate_runner(
     run_jury: bool = True,
     phases: frozenset[str] | None = None,
     posted_panel: tuple[bool, list[fnd.Finding]] | None = None,
+    head_sha: str | None = None,
 ):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
 
@@ -193,7 +194,11 @@ def _gate_runner(
                 return reused_ok, reused_found, False, False, False
             jury_limit = spec.timeout if spec.timeout is not None else DEFAULT_JURY_TIMEOUT_S
             ok, found, timed_out = jury.run_gate(
-                diff_text, cwd=root, mode=jury_mode, timeout=jury_limit
+                diff_text,
+                cwd=root,
+                mode=jury_mode,
+                timeout=jury_limit,
+                head_sha=head_sha,
             )
             # A jury that could not run (no CLI, empty diff) judged nothing: `SKIPPED`,
             # never `ok` (#1369).
@@ -1935,7 +1940,13 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     except gates.GateError as exc:  # pragma: no cover - defensive duplicate of the build_plan guard
         print(str(exc), file=sys.stderr)
         return 1
-    diff_text = git.diff(base_ref, "HEAD", cwd=args.root)
+    has_jury_gate = any(spec.kind == "builtin" and spec.id == gates.JURY_ID for spec in specs)
+    jury_head_sha = (
+        getattr(args, "head_sha", None) or git.rev_parse("HEAD", cwd=args.root) or "HEAD"
+        if has_jury_gate
+        else None
+    )
+    diff_text = git.diff(base_ref, jury_head_sha or "HEAD", cwd=args.root)
     posted = _posted_panel(
         args, config, specs, transport, gating=review_contract["jury"]["mode"] == "gating"
     )
@@ -1947,6 +1958,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             jury_mode=review_contract["jury"]["mode"],
             timeout=config.knobs.gate_timeout_s,
             posted_panel=posted[1] if posted is not None else None,
+            head_sha=jury_head_sha,
         ),
         config=config,
         root=args.root,

@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import tempfile
 import unittest
 
 from keel import jury
@@ -1296,6 +1297,252 @@ class ReusePostedVerdict(unittest.TestCase):
         self.assertIsNone(
             jury.reuse_posted_verdict("keel.jury-verdict.v1\nAI Jury verdict: LGTM.\n", gating=True)
         )
+
+
+class TestRunGateWithHeadSha(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = tmp.name
+
+    def test_run_gate_creates_checkout_and_runs_in_it(self):
+        calls = []
+
+        def _runner(argv, cwd=None, **kw):
+            calls.append((list(argv), cwd))
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            if "worktree" in argv and "add" in argv:
+                return _Proc(0, "")
+            if "worktree" in argv and "remove" in argv:
+                return _Proc(0, "")
+            return _Proc(0, json.dumps(_ballot_report("APPROVE")))
+
+        ok, findings, timed_out = jury.run_gate(
+            "diff content",
+            cwd=self.root,
+            mode="gating",
+            head_sha="head123",
+            _run=_runner,
+        )
+        self.assertTrue(ok)
+        self.assertFalse(timed_out)
+        self.assertEqual(findings, [])
+        add_calls = [c for c in calls if "worktree" in c[0] and "add" in c[0]]
+        self.assertEqual(len(add_calls), 1)
+        self.assertIn("head123", add_calls[0][0])
+        from pathlib import Path
+
+        jury_calls = [c for c in calls if c[0][0] == "jury" and "--version" not in c[0]]
+        self.assertEqual(len(jury_calls), 1)
+        checkout_cwd = jury_calls[0][1]
+        checkout_path = Path(checkout_cwd).resolve()
+        self.assertEqual(checkout_path.parent, (Path(self.root).resolve() / ".keel" / "worktrees"))
+        self.assertTrue(checkout_path.name.startswith("review-jury-"))
+        remove_calls = [c for c in calls if "worktree" in c[0] and "remove" in c[0]]
+        self.assertEqual(len(remove_calls), 1)
+        self.assertIn(checkout_cwd, remove_calls[0][0])
+
+    def test_run_gate_with_default_runner_uses_review_checkout_and_removes_it(self):
+        import unittest.mock as mock
+        from pathlib import Path
+
+        from keel import swarm_runtime
+
+        wt_calls = []
+
+        def _fake_default_runner(cmd, cwd):
+            wt_calls.append((list(cmd), Path(cwd)))
+            return jury.CommandResult(True, 0, "")
+
+        argv_calls = []
+
+        def _fake_run_argv(argv, *, cwd=None, timeout=None, **_kw):
+            argv_calls.append((list(argv), cwd))
+            if "--version" in argv:
+                return jury.CommandResult(True, 0, "jury 1.0", stdout="jury 1.0")
+            out = json.dumps(_ballot_report("APPROVE"))
+            return jury.CommandResult(True, 0, out, stdout=out)
+
+        with (
+            mock.patch.object(swarm_runtime, "default_runner", side_effect=_fake_default_runner),
+            mock.patch.object(jury, "run_argv", side_effect=_fake_run_argv),
+        ):
+            ok, findings, timed_out = jury.run_gate(
+                "diff content",
+                cwd=self.root,
+                mode="gating",
+                head_sha="head123",
+            )
+        self.assertTrue(ok)
+        self.assertFalse(timed_out)
+        self.assertEqual(findings, [])
+        self.assertEqual(len(wt_calls), 2)
+        self.assertIn("add", wt_calls[0][0])
+        self.assertIn("remove", wt_calls[1][0])
+        jury_runs = [c for c in argv_calls if "--diff-file" in c[0]]
+        self.assertEqual(len(jury_runs), 1)
+        checkout_path = Path(jury_runs[0][1]).resolve()
+        self.assertEqual(checkout_path.parent, (Path(self.root).resolve() / ".keel" / "worktrees"))
+        self.assertTrue(checkout_path.name.startswith("review-jury-"))
+
+    def test_run_gate_skips_checkout_on_early_exits(self):
+        calls = []
+
+        def _runner(argv, cwd=None, **kw):
+            calls.append((list(argv), cwd))
+            if "--version" in argv:
+                return _Proc(1, "", "not installed")
+            return _Proc(0, "")
+
+        for diff_val in (None, "", "x" * (jury.MAX_DIFF_BYTES + 10), "valid diff"):
+            calls.clear()
+            ok, findings, _ = jury.run_gate(
+                diff_val,
+                cwd=self.root,
+                mode="gating",
+                head_sha="head123",
+                _run=_runner,
+            )
+            add_calls = [c for c in calls if "worktree" in c[0]]
+            self.assertEqual(add_calls, [], f"unexpected worktree call for diff={diff_val!r}")
+            if diff_val == "" or diff_val == "valid diff":
+                self.assertTrue(ok)
+                self.assertTrue(jury.could_not_run(findings))
+
+    def test_run_gate_checkout_failure_blocks_in_gating_mode(self):
+        def _failing_git(argv, cwd=None, **kw):
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            if "worktree" in argv and "add" in argv:
+                return jury.CommandResult(False, 128, "fatal: bad object")
+            return jury.CommandResult(True, 0, "")
+
+        ok, findings, timed_out = jury.run_gate(
+            "diff content",
+            cwd=self.root,
+            mode="gating",
+            head_sha="badhead",
+            _run=_failing_git,
+        )
+        self.assertFalse(ok)
+        self.assertFalse(timed_out)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "major")
+        self.assertEqual(findings[0].source, "jury:review-checkout")
+        self.assertIn("fatal: bad object", findings[0].message)
+        self.assertFalse(jury.could_not_run(findings))
+
+    def test_run_gate_checkout_failure_surfaces_as_minor_in_advisory_mode(self):
+        def _failing_git(argv, cwd=None, **kw):
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            if "worktree" in argv and "add" in argv:
+                return _Proc(128, "", "fatal: bad object")
+            return _Proc(0, "")
+
+        ok, findings, timed_out = jury.run_gate(
+            "diff content",
+            cwd=self.root,
+            mode="advisory",
+            head_sha="badhead",
+            _run=_failing_git,
+        )
+        self.assertTrue(ok)
+        self.assertFalse(timed_out)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "minor")
+        self.assertEqual(findings[0].source, "jury:review-checkout")
+        self.assertIn("fatal: bad object", findings[0].message)
+        self.assertFalse(jury.could_not_run(findings))
+
+    def test_run_gate_runtime_error_inside_jury_is_not_relabeled_as_checkout_failure(self):
+        calls = []
+
+        def _exploding_jury(argv, cwd=None, **kw):
+            calls.append((list(argv), cwd))
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            if "worktree" in argv:
+                return _Proc(0, "")
+            raise RuntimeError("unexpected internal runner error")
+
+        with self.assertRaises(RuntimeError) as cm:
+            jury.run_gate(
+                "diff content",
+                cwd=self.root,
+                mode="gating",
+                head_sha="head123",
+                _run=_exploding_jury,
+            )
+        self.assertIn("unexpected internal runner error", str(cm.exception))
+        remove_calls = [c for c in calls if "worktree" in c[0] and "remove" in c[0]]
+        self.assertEqual(len(remove_calls), 1)
+
+    def test_run_gate_filesystem_setup_failure_returns_finding_in_both_modes(self):
+        from pathlib import Path
+
+        (Path(self.root) / ".keel").write_text("file blocking worktrees dir", encoding="utf-8")
+
+        def _ok_version(argv, cwd=None, **kw):
+            return _Proc(0, "jury 1.0")
+
+        for mode, expected_ok, expected_sev in (
+            ("gating", False, "major"),
+            ("advisory", True, "minor"),
+        ):
+            with self.subTest(mode=mode):
+                ok, findings, timed_out = jury.run_gate(
+                    "diff content",
+                    cwd=self.root,
+                    mode=mode,
+                    head_sha="head123",
+                    _run=_ok_version,
+                )
+                self.assertEqual(ok, expected_ok)
+                self.assertFalse(timed_out)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0].severity, expected_sev)
+                self.assertEqual(findings[0].source, "jury:review-checkout")
+                self.assertIn("could not prepare review checkout", findings[0].message)
+                self.assertFalse(jury.could_not_run(findings))
+
+    def test_run_gate_config_copy_failure_returns_finding_in_both_modes(self):
+        import os
+        from pathlib import Path
+
+        os.symlink(
+            Path(self.root) / "missing-jury-target.toml",
+            Path(self.root) / "jury.toml",
+        )
+
+        def _fake_runner(argv, cwd=None, **kw):
+            if "--version" in argv:
+                return _Proc(0, "jury 1.0")
+            if "worktree" in argv and "add" in argv:
+                Path(argv[4]).mkdir(parents=True, exist_ok=True)
+                return _Proc(0, "")
+            return _Proc(0, "")
+
+        for mode, expected_ok, expected_sev in (
+            ("gating", False, "major"),
+            ("advisory", True, "minor"),
+        ):
+            with self.subTest(mode=mode):
+                ok, findings, timed_out = jury.run_gate(
+                    "diff content",
+                    cwd=self.root,
+                    mode=mode,
+                    head_sha="head123",
+                    _run=_fake_runner,
+                )
+                self.assertEqual(ok, expected_ok)
+                self.assertFalse(timed_out)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0].severity, expected_sev)
+                self.assertEqual(findings[0].source, "jury:review-checkout")
+                self.assertIn("could not copy review configuration", findings[0].message)
+                self.assertFalse(jury.could_not_run(findings))
 
 
 if __name__ == "__main__":

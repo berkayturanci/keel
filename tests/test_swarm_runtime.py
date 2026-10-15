@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock as mock
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from pathlib import Path
@@ -40,12 +41,15 @@ from keel.swarm import (
 from keel.swarm_landing import land_wave_clusters
 from keel.swarm_runtime import (
     LiveRun,
+    ReviewCheckoutError,
     build_brief_path,
     build_worktree_path,
     create_swarm_worktree,
     default_runner,
     execute_cluster_worker,
     remove_swarm_worktree,
+    review_checkout,
+    review_worktree_path,
     run_swarm_orchestration,
 )
 
@@ -3321,6 +3325,286 @@ class ALiveWorkerLeavesWhatLandingNeeds(unittest.TestCase):
         self.assertEqual((res.ok, res.output), (False, "422"))
         self.assertEqual([c.args[0] for c in made.call_args_list], ["agent:codex"])
         add.assert_called_once()
+
+
+class ReviewCheckoutTests(unittest.TestCase):
+    def test_review_worktree_path(self):
+        self.assertEqual(
+            review_worktree_path("seat1"),
+            Path(".").resolve() / ".keel" / "worktrees" / "review-seat1",
+        )
+        self.assertEqual(
+            review_worktree_path("seat1", root="/tmp/repo"),
+            Path("/tmp/repo").resolve() / ".keel" / "worktrees" / "review-seat1",
+        )
+        self.assertEqual(
+            review_worktree_path("seat1", root="rel/repo", run_id="run42"),
+            Path("rel/repo").resolve() / ".keel" / "worktrees" / "review-seat1-run42",
+        )
+
+    def test_review_checkout_creates_and_cleans_up_with_relative_root(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base = Path(tmpdir)
+            repo = base / "nested" / "repo"
+            repo.mkdir(parents=True)
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(base)
+                calls = []
+
+                def fake_runner(cmd, cwd):
+                    calls.append((list(cmd), cwd))
+                    if "add" in cmd:
+                        Path(cmd[4]).mkdir(parents=True, exist_ok=True)
+                    return CommandResult(True, 0, "")
+
+                with review_checkout(
+                    "head123", name="test-seat", root="nested/repo", runner=fake_runner
+                ) as wt:
+                    self.assertTrue(wt.is_absolute())
+                    self.assertEqual(wt.parent, (repo / ".keel" / "worktrees").resolve())
+                    self.assertTrue(wt.name.startswith("review-test-seat-"))
+                    self.assertTrue(wt.exists())
+                    self.assertEqual(calls[0][1], repo.resolve())
+                    self.assertEqual(
+                        calls[0][0],
+                        ["git", "worktree", "add", "--detach", str(wt), "head123"],
+                    )
+
+                self.assertIn(
+                    ["git", "worktree", "remove", "--force", str(wt)],
+                    [c[0] for c in calls],
+                )
+                self.assertFalse(wt.exists())
+            finally:
+                os.chdir(old_cwd)
+
+    def test_review_checkout_concurrent_invocations_do_not_clobber_each_other(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            calls = []
+
+            def fake_runner(cmd, cwd):
+                calls.append((list(cmd), cwd))
+                if "add" in cmd:
+                    Path(cmd[4]).mkdir(parents=True, exist_ok=True)
+                elif "remove" in cmd:
+                    shutil.rmtree(cmd[4], ignore_errors=True)
+                return CommandResult(True, 0, "")
+
+            with review_checkout("head1", name="jury", root=root, runner=fake_runner) as wt1:
+                self.assertTrue(wt1.exists())
+                with review_checkout("head2", name="jury", root=root, runner=fake_runner) as wt2:
+                    self.assertNotEqual(wt1, wt2)
+                    self.assertTrue(wt1.exists())
+                    self.assertTrue(wt2.exists())
+                # Exiting wt2 removes only wt2; wt1 stays intact
+                self.assertTrue(wt1.exists())
+                self.assertFalse(wt2.exists())
+            self.assertFalse(wt1.exists())
+
+    def test_review_checkout_refuses_preexisting_owned_path_without_deleting_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = review_worktree_path("test-seat", root=root, run_id="same-id")
+            target.mkdir(parents=True, exist_ok=True)
+            marker = target / "active.txt"
+            marker.write_text("in-use", encoding="utf-8")
+            calls = []
+
+            def fake_runner(cmd, cwd):
+                calls.append((list(cmd), cwd))
+                return CommandResult(True, 0, "")
+
+            with self.assertRaises(RuntimeError) as cm:
+                with review_checkout(
+                    "head123",
+                    name="test-seat",
+                    root=root,
+                    run_id="same-id",
+                    runner=fake_runner,
+                ):
+                    pass
+            self.assertIn("already exists", str(cm.exception))
+            self.assertEqual(calls, [])
+            self.assertTrue(marker.exists())
+
+    def test_review_checkout_raises_when_add_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            def failing_runner(cmd, cwd):
+                return CommandResult(False, 128, "fatal: not a valid object name: head123")
+
+            with self.assertRaises(ReviewCheckoutError) as cm:
+                with review_checkout("head123", name="test-seat", root=root, runner=failing_runner):
+                    pass
+            self.assertIn("could not create review checkout", str(cm.exception))
+            self.assertIn("fatal: not a valid object name: head123", str(cm.exception))
+
+    def test_review_checkout_translates_mkdir_oserror_to_review_checkout_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".keel").write_text("blocking file", encoding="utf-8")
+
+            with self.assertRaises(ReviewCheckoutError) as cm:
+                with review_checkout("head123", name="test-seat", root=root):
+                    pass
+            self.assertIn("could not prepare review checkout", str(cm.exception))
+
+    def test_review_checkout_copies_untracked_jury_config_and_warns_when_removal_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "jury.toml").write_text("[jury]\ndecision = 'vote'\n", encoding="utf-8")
+            (root / "jury-policy.toml").write_text("strict = true\n", encoding="utf-8")
+            (root / ".jury" / "sub").mkdir(parents=True)
+            (root / ".jury" / "tracked.toml").write_text("local-edit = true\n", encoding="utf-8")
+            (root / ".jury" / "policy.toml").write_text("rules = []\n", encoding="utf-8")
+            (root / ".jury" / "sub" / "nested.toml").write_text("x = 1\n", encoding="utf-8")
+
+            def fake_runner(cmd, cwd):
+                if "add" in cmd:
+                    wt_dir = Path(cmd[4])
+                    (wt_dir / ".jury").mkdir(parents=True, exist_ok=True)
+                    (wt_dir / "jury-policy.toml").write_text("tracked = true\n", encoding="utf-8")
+                    (wt_dir / ".jury" / "tracked.toml").write_text(
+                        "committed = true\n", encoding="utf-8"
+                    )
+                if "ls-tree" in cmd:
+                    target = cmd[-1]
+                    if target in ("jury-policy.toml", ".jury/tracked.toml"):
+                        return CommandResult(
+                            True,
+                            0,
+                            f"100644 blob 1111111\t{target}\n",
+                            stdout=f"100644 blob 1111111\t{target}\n",
+                        )
+                    if target == "jury.toml":
+                        return CommandResult(
+                            False, 128, "fatal: git error\n", stdout="fatal: git error\n"
+                        )
+                if "ls-files" in cmd and cmd[-1] == ".jury/policy.toml":
+                    return CommandResult(
+                        True, 0, "warning: git stderr noise\n", stdout="", stderr="warning\n"
+                    )
+                return CommandResult(True, 0, "")
+
+            err = io.StringIO()
+            with (
+                mock.patch("keel.swarm_runtime.remove_swarm_worktree", return_value=False),
+                mock.patch("sys.stderr", err),
+            ):
+                with review_checkout("head123", name="jury", root=root, runner=fake_runner) as wt:
+                    # ls-tree failed for jury.toml: fail closed, never copy it.
+                    self.assertFalse((wt / "jury.toml").exists())
+                    self.assertEqual(
+                        (wt / ".jury" / "policy.toml").read_text(encoding="utf-8"),
+                        "rules = []\n",
+                    )
+                    self.assertEqual(
+                        (wt / ".jury" / "sub" / "nested.toml").read_text(encoding="utf-8"),
+                        "x = 1\n",
+                    )
+                    # Tracked files already in checkout are not overwritten
+                    self.assertEqual(
+                        (wt / "jury-policy.toml").read_text(encoding="utf-8"),
+                        "tracked = true\n",
+                    )
+                    self.assertEqual(
+                        (wt / ".jury" / "tracked.toml").read_text(encoding="utf-8"),
+                        "committed = true\n",
+                    )
+            self.assertIn("warning: could not remove review checkout", err.getvalue())
+            self.assertIn("not copying jury.toml into the review checkout", err.getvalue())
+
+    @unittest.skipUnless(shutil.which("git"), "git is not installed")
+    def test_review_checkout_real_git_skips_tracked_and_later_committed_configs(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            tmp = Path(tmpdir).resolve()
+            empty_cfg = tmp / "empty-gitconfig"
+            empty_cfg.write_text("", encoding="utf-8")
+            repo = tmp / "repo"
+            clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+            clean_env.update(
+                GIT_CONFIG_GLOBAL=str(empty_cfg),
+                GIT_CONFIG_NOSYSTEM="1",
+                GIT_AUTHOR_NAME="t",
+                GIT_AUTHOR_EMAIL="t@example.invalid",
+                GIT_COMMITTER_NAME="t",
+                GIT_COMMITTER_EMAIL="t@example.invalid",
+            )
+            with mock.patch.dict(os.environ, clean_env, clear=True):
+                self.assertEqual(
+                    _git_cli(["init", "-q", "-b", "main", str(repo)], tmp).returncode, 0
+                )
+                (repo / ".jury").mkdir(parents=True)
+                (repo / "jury-policy.toml").write_text("policy = 'at-head'\n", encoding="utf-8")
+                (repo / ".jury" / "tracked.toml").write_text(
+                    "tracked = 'at-head'\n", encoding="utf-8"
+                )
+                self.assertEqual(
+                    _git_cli(["add", "jury-policy.toml", ".jury/tracked.toml"], repo).returncode, 0
+                )
+                self.assertEqual(_git_cli(["commit", "-q", "-m", "c1"], repo).returncode, 0)
+                requested_head = _git_cli(["rev-parse", "HEAD"], repo).stdout.strip()
+
+                # Commit 2 introduces a new tracked config file after requested_head
+                (repo / ".jury" / "later.toml").write_text(
+                    "later = 'committed'\n", encoding="utf-8"
+                )
+                self.assertEqual(_git_cli(["add", ".jury/later.toml"], repo).returncode, 0)
+                self.assertEqual(_git_cli(["commit", "-q", "-m", "c2"], repo).returncode, 0)
+
+                # Working tree has uncommitted edits to both tracked files, plus untracked configs
+                (repo / "jury-policy.toml").write_text(
+                    "policy = 'dirty-working-tree'\n", encoding="utf-8"
+                )
+                (repo / ".jury" / "tracked.toml").write_text(
+                    "tracked = 'dirty-working-tree'\n", encoding="utf-8"
+                )
+                (repo / ".jury" / "later.toml").write_text(
+                    "later = 'dirty-working-tree'\n", encoding="utf-8"
+                )
+                (repo / "jury.toml").write_text("[jury]\nuntracked = true\n", encoding="utf-8")
+                (repo / ".jury" / "untracked.toml").write_text("local = true\n", encoding="utf-8")
+
+                with review_checkout(requested_head, name="jury", root=repo) as wt:
+                    # Tracked at requested_head: comes from the checkout itself, never working tree
+                    self.assertEqual(
+                        (wt / "jury-policy.toml").read_text(encoding="utf-8"),
+                        "policy = 'at-head'\n",
+                    )
+                    self.assertEqual(
+                        (wt / ".jury" / "tracked.toml").read_text(encoding="utf-8"),
+                        "tracked = 'at-head'\n",
+                    )
+                    # Committed after requested_head: absent from requested_head and not copied
+                    self.assertFalse((wt / ".jury" / "later.toml").exists())
+                    # Genuinely untracked configs: copied into the review checkout
+                    self.assertEqual(
+                        (wt / "jury.toml").read_text(encoding="utf-8"),
+                        "[jury]\nuntracked = true\n",
+                    )
+                    self.assertEqual(
+                        (wt / ".jury" / "untracked.toml").read_text(encoding="utf-8"),
+                        "local = true\n",
+                    )
+
+    def test_review_checkout_translates_config_copy_oserror_to_review_checkout_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".jury").mkdir()
+            os.symlink(root / "nonexistent-target.toml", root / ".jury" / "broken.toml")
+
+            def fake_runner(cmd, cwd):
+                if "add" in cmd:
+                    Path(cmd[4]).mkdir(parents=True, exist_ok=True)
+                return CommandResult(True, 0, "")
+
+            with self.assertRaises(ReviewCheckoutError) as cm:
+                with review_checkout("head123", name="jury", root=root, runner=fake_runner):
+                    pass
+            self.assertIn("could not copy review configuration", str(cm.exception))
 
 
 if __name__ == "__main__":

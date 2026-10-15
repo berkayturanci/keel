@@ -107,14 +107,31 @@ here.
 A non-host reviewer is dispatched with `keel delegate run --role review` — the one
 executor for every transport, which picks the vendor's read-only invocation for that role
 and returns the JSON contract ship.md s4 documents (`text` is the verdict, `attribution`
-is what you record per reviewer, `error_code` is what you branch on). Do not hand-build
-the invocation, and do not read a vendor's flags out of this file. Check
-**`read_only_backed`** before trusting a reviewer: `read_only` is the role you asked for,
-that field is whether anything enforces it, and for a configured profile with no
-`review_args` the answer is no. For a panel that will outlive your turn, start each
-reviewer with `--timeout <s> --detach --run-id <id>` and collect them with
-`keel delegate wait <id> --timeout <s>`: a sleep-and-poll loop cannot survive the turn
-ending, and the state file under `.keel/state/delegate/` can.
+is what you record per reviewer, `error_code` is what you branch on).
+
+Each delegated reviewer seat (indexed by `SEAT_INDEX=0, 1, ...` within cycle `CYCLE_ID`) MUST
+run in a separate detached checkout of the PR head (`ROOT=$(pwd)`, `git fetch origin
+"pull/$PR/head" && HEAD_SHA=$(git rev-parse FETCH_HEAD)`,
+`SEAT_WT="$ROOT/.keel/worktrees/review-$PR-$CYCLE_ID-seat-$SEAT_INDEX"`, requiring `test ! -e
+"$SEAT_WT" && git worktree add -d "$SEAT_WT" "$HEAD_SHA"` to succeed before dispatch; never
+embed `$$` in `SEAT_WT`, because a later shell running `keel delegate wait` has a different
+PID), with `keel delegate run` passing `--cwd "$SEAT_WT"`, and must be removed afterwards
+(`keel worktree-remove "$SEAT_WT" --root "$ROOT"`). For a host subagent seat (which has no
+`--cwd` flag), pass `"$SEAT_WT"` in its prompt so any shell or file-inspection commands run
+inside that detached checkout rather than the implementer's worktree. Reviewers must never
+mutate or share the implementer's worktree so exploratory checks or temporary file deletions
+cannot contaminate staged changes (a fresh detached checkout contains only tracked files at
+`$HEAD_SHA`, without uncommitted working-tree edits or untracked `.venv`, `node_modules`, or
+`.keel/state`). Do not hand-build the invocation, and do not read a vendor's flags out of
+this file. Check **`read_only_backed`** before trusting a reviewer: `read_only` is the
+role you asked for, that field is whether anything enforces it, and for a configured
+profile with no `review_args` the answer is no. For a panel that will outlive your turn,
+start each reviewer with `--timeout <s> --detach --run-id <id>`, collect them with
+`keel delegate wait <id> --timeout <s>`, and remove `"$SEAT_WT"` with
+`keel worktree-remove "$SEAT_WT" --root "$ROOT"` only when `keel delegate wait` succeeds
+(leaving it in place and printing the cleanup command on timeout/failure): a
+sleep-and-poll loop cannot survive the turn ending, and the state file under
+`.keel/state/delegate/` can.
 
 Each reviewer prompt MUST carry:
 

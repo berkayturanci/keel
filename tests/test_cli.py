@@ -1548,6 +1548,214 @@ class TestShip(unittest.TestCase):
         self.assertIn("MERGE", out)
         self.assertIn("github        :", out)
 
+    def test_ship_without_explicit_head_sha_runs_jury_in_isolated_checkout(self):
+        from keel import jury as jury_mod
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+            _run_git(root, "add", "app.py")
+            _run_git(root, "commit", "-m", "add app")
+            first_head = git.rev_parse("HEAD", cwd=d)
+            self.assertIsNotNone(first_head)
+
+            (root / "later.py").write_text("print('later')\n", encoding="utf-8")
+            _run_git(root, "add", "later.py")
+            _run_git(root, "commit", "-m", "add later")
+
+            config = _write_raw(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+                "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n"
+            )
+            observed_jury_cwds: list[str] = []
+            observed_checkout_files: list[tuple[bool, bool]] = []
+            observed_diffs: list[str] = []
+
+            def fake_jury_run_argv(argv, *, cwd=None, timeout=None, **_kw):
+                if "--version" in argv:
+                    return CommandResult(True, 0, "jury 1.0", stdout="jury 1.0")
+                observed_jury_cwds.append(str(cwd))
+                observed_checkout_files.append(
+                    ((Path(cwd) / "app.py").exists(), (Path(cwd) / "later.py").exists())
+                )
+                diff_idx = argv.index("--diff-file") + 1
+                observed_diffs.append(Path(argv[diff_idx]).read_text(encoding="utf-8"))
+                report = json.dumps(
+                    {
+                        "schema_version": "1.2",
+                        "findings": [],
+                        "reviewers": [
+                            {
+                                "name": "alpha",
+                                "vendor": "anthropic",
+                                "verdict": "APPROVE",
+                                "scope": "Read app.py.",
+                            },
+                            {
+                                "name": "chair",
+                                "role": "chair",
+                                "vendor": "openai",
+                                "verdict": "APPROVE",
+                            },
+                        ],
+                    }
+                )
+                return CommandResult(True, 0, report, stdout=report)
+
+            with (
+                patch.object(jury_mod, "available", return_value=True),
+                patch.object(jury_mod, "run_argv", side_effect=fake_jury_run_argv),
+            ):
+                rc, out, err = run(["ship", config, "--root", d, "--jury", "--json"])
+                # Explicit --head-sha pointing to first_head (differing from HEAD):
+                # both diff_text and the isolated checkout must reflect first_head.
+                rc_sha, out_sha, err_sha = run(
+                    [
+                        "ship",
+                        config,
+                        "--root",
+                        d,
+                        "--jury",
+                        "--head-sha",
+                        str(first_head),
+                        "--json",
+                    ]
+                )
+
+            self.assertEqual(rc, 0, out + err)
+            self.assertEqual(rc_sha, 0, out_sha + err_sha)
+            self.assertEqual(len(observed_jury_cwds), 2)
+            checkout_path = Path(observed_jury_cwds[0]).resolve()
+            self.assertNotEqual(checkout_path, root.resolve())
+            self.assertEqual(checkout_path.parent, (root.resolve() / ".keel" / "worktrees"))
+            self.assertTrue(checkout_path.name.startswith("review-jury-"))
+            self.assertEqual(observed_checkout_files[0], (True, True))
+            self.assertIn("later.py", observed_diffs[0])
+            # For explicit --head-sha=first_head, later.py is absent from both checkout and diff:
+            self.assertEqual(observed_checkout_files[1], (True, False))
+            self.assertIn("app.py", observed_diffs[1])
+            self.assertNotIn("later.py", observed_diffs[1])
+            self.assertFalse(Path(observed_jury_cwds[0]).exists())
+            self.assertFalse(Path(observed_jury_cwds[1]).exists())
+
+    def test_ship_gating_jury_checkout_failure_blocks_not_skipped(self):
+        from keel import jury as jury_mod
+        from keel import swarm_runtime
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            _run_git(root, "checkout", "-b", "feature")
+            (root / "app.py").write_text("print('hi')\n", encoding="utf-8")
+            _run_git(root, "add", "app.py")
+            _run_git(root, "commit", "-m", "add app")
+
+            config = _write_raw(
+                "extends: keel\ncore_version: '^0.1'\nbase_branch: main\nrepo: tmp\n"
+                "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n"
+            )
+            with (
+                patch.object(jury_mod, "available", return_value=True),
+                patch.object(
+                    swarm_runtime,
+                    "default_runner",
+                    return_value=CommandResult(False, 128, "fatal: worktree add failed"),
+                ),
+            ):
+                rc, out, err = run(["ship", config, "--root", d, "--jury", "--json"])
+
+            self.assertEqual(rc, 1, out + err)
+            payload = json.loads(out)
+            self.assertEqual(payload["result"]["assessment"]["merge"]["action"], "block")
+            jury_outcome = next(
+                o for o in payload["result"]["gate_outcomes"] if o["gate"] == "jury"
+            )
+            self.assertFalse(jury_outcome["ok"])
+            self.assertFalse(jury_outcome["skipped"])
+            self.assertEqual(jury_outcome["findings"][0]["source"], "jury:review-checkout")
+
+            # When rev_parse("HEAD") returns None and --head-sha is omitted, jury still
+            # attempts an isolated checkout at "HEAD" rather than silently running in root.
+            with (
+                patch("keel.git.rev_parse", return_value=None),
+                patch.object(jury_mod, "available", return_value=True),
+                patch.object(
+                    swarm_runtime,
+                    "default_runner",
+                    return_value=CommandResult(False, 128, "fatal: HEAD not resolved"),
+                ),
+            ):
+                rc_no_head, out_no_head, _ = run(["ship", config, "--root", d, "--jury", "--json"])
+            self.assertEqual(rc_no_head, 1)
+            payload_no_head = json.loads(out_no_head)
+            jury_outcome_no_head = next(
+                o for o in payload_no_head["result"]["gate_outcomes"] if o["gate"] == "jury"
+            )
+            self.assertFalse(jury_outcome_no_head["ok"])
+            self.assertEqual(jury_outcome_no_head["findings"][0]["source"], "jury:review-checkout")
+
+            # Without a jury gate, --head-sha (e.g. unfetched remote SHA) does not replace
+            # the diff base used by ship.
+            diff_heads: list[str] = []
+
+            def spy_diff(base, head="HEAD", *, cwd=None):
+                diff_heads.append(head)
+                return ""
+
+            with patch("keel.git.diff", side_effect=spy_diff):
+                rc_no_jury, _, _ = run(
+                    [
+                        "ship",
+                        _write_config("'true'"),
+                        "--root",
+                        d,
+                        "--head-sha",
+                        "deadbeef99999999",
+                        "--json",
+                    ]
+                )
+            self.assertEqual(rc_no_jury, 0)
+            self.assertEqual(diff_heads, ["HEAD", "HEAD"])
+
+    def test_worktree_remove_resolves_relative_path_against_root_when_cwd_differs(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            _run_git(root, "init", "-b", "main")
+            _run_git(root, "config", "user.email", "test@example.com")
+            _run_git(root, "config", "user.name", "Test User")
+            (root / "README.md").write_text("base\n", encoding="utf-8")
+            _run_git(root, "add", "README.md")
+            _run_git(root, "commit", "-m", "base")
+            wt_rel = ".keel/worktrees/review-rel-test"
+            wt_abs = root / wt_rel
+            wt_abs.parent.mkdir(parents=True, exist_ok=True)
+            _run_git(root, "worktree", "add", "--detach", str(wt_abs), "HEAD")
+            self.assertTrue(wt_abs.exists())
+            other_cwd = root / "elsewhere"
+            other_cwd.mkdir()
+
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(other_cwd)
+                rc, out, err = run(["worktree-remove", wt_rel, "--root", str(root), "--json"])
+            finally:
+                os.chdir(old_cwd)
+            self.assertEqual(rc, 0, out + err)
+            self.assertTrue(json.loads(out)["removed"])
+            self.assertFalse(wt_abs.exists())
+
     def test_docs_only_allowlist_reaches_the_ship_classification(self):
         # The knob was declared, parsed, hashed and echoed into the contract, and read
         # by nothing (#632). Pin the wire from config to the assessed tier: without the

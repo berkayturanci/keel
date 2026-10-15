@@ -15,6 +15,7 @@ delegated (:mod:`keel.swarm_worker`, where each of those decisions is made).
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import datetime
 import functools
 import hashlib
@@ -25,6 +26,7 @@ import sys
 import tempfile
 import threading
 import traceback
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -274,6 +276,94 @@ def remove_swarm_worktree(
     if not res.ok:
         run(["git", "worktree", "prune"], repo_root)
     return not worktree_path.exists()
+
+
+class ReviewCheckoutError(RuntimeError):
+    """Raised when an isolated review checkout cannot be created."""
+
+
+def review_worktree_path(name: str, root: str | Path = ".", *, run_id: str | None = None) -> Path:
+    """Resolved checkout path under .keel/worktrees/ for an isolated review worktree."""
+    leaf = f"review-{name}-{run_id}" if run_id else f"review-{name}"
+    return Path(root).resolve() / ".keel" / "worktrees" / leaf
+
+
+@contextlib.contextmanager
+def review_checkout(
+    head_sha: str,
+    name: str = "review",
+    *,
+    root: str | Path = ".",
+    run_id: str | None = None,
+    runner: SubprocessRunner | None = None,
+):
+    """Context manager providing an isolated detached worktree at ``head_sha`` for a review run.
+
+    Allocates a unique invocation-owned path (refusing without deleting if an explicit
+    ``run_id`` path already exists), copies ``jury.toml``, ``jury-policy.toml``, and
+    ``.jury`` entries only when untracked at ``head_sha`` and in the working-tree index,
+    and removes only that path on exit.
+    """
+    root_path = Path(root).resolve()
+    token = run_id if run_id is not None else uuid.uuid4().hex[:12]
+    checkout = review_worktree_path(name, root=root_path, run_id=token)
+    try:
+        checkout.parent.mkdir(parents=True, exist_ok=True)
+        exists = checkout.exists()
+    except OSError as exc:
+        raise ReviewCheckoutError(
+            f"could not prepare review checkout at {checkout}: {exc}"
+        ) from exc
+    if exists:
+        raise ReviewCheckoutError(
+            f"review checkout path already exists at {checkout}; refusing to remove active checkout"
+        )
+    run = runner or default_runner
+    added = run(["git", "worktree", "add", "--detach", str(checkout), head_sha], root_path)
+    if not added.ok:
+        why = added.output.strip()[:200] or f"exit {added.code}"
+        raise ReviewCheckoutError(f"could not create review checkout at {checkout}: {why}")
+    try:
+        try:
+            for cfg_name in ("jury.toml", "jury-policy.toml", ".jury"):
+                src_cfg = root_path / cfg_name
+                if src_cfg.is_dir():
+                    srcs = [p for p in sorted(src_cfg.rglob("*")) if not p.is_dir()]
+                elif os.path.lexists(src_cfg):
+                    srcs = [src_cfg]
+                else:
+                    srcs = []
+                for src_file in srcs:
+                    rel_file = src_file.relative_to(root_path)
+                    rel_posix = rel_file.as_posix()
+                    dst_file = checkout / rel_file
+                    results = [
+                        run(cmd, root_path)
+                        for cmd in (
+                            ["git", "ls-tree", head_sha, "--", rel_posix],
+                            ["git", "ls-files", "--", rel_posix],
+                        )
+                    ]
+                    if not all(res.ok for res in results):
+                        # Fail closed: an unanswered tracking query must never let the
+                        # working tree overwrite what the reviewed head carries.
+                        print(
+                            f"warning: not copying {rel_posix} into the review checkout:"
+                            " git could not say whether it is tracked",
+                            file=sys.stderr,
+                        )
+                        continue
+                    if not any(res.stdout.strip() for res in results):
+                        dst_file.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_file, dst_file)
+        except OSError as exc:
+            raise ReviewCheckoutError(
+                f"could not copy review configuration into {checkout}: {exc}"
+            ) from exc
+        yield checkout
+    finally:
+        if not remove_swarm_worktree(root_path, checkout, runner=run):
+            print(f"warning: could not remove review checkout at {checkout}", file=sys.stderr)
 
 
 def prune_worktrees(repo_root: Path, runner: SubprocessRunner | None = None) -> str:

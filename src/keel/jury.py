@@ -17,10 +17,13 @@ unit-tested; the subprocess is behind the injectable ``_run`` seam.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import subprocess
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from . import artifacts, evidence
@@ -273,6 +276,9 @@ def _consensus_finding(data: dict | str, *, gating: bool) -> Finding | None:
 #: The source of the findings a jury gate carries over from a reused panel (#1437).
 REUSED_SOURCE = "jury:reused"
 
+#: The source of the finding emitted when an isolated review checkout cannot be prepared (#1516).
+REVIEW_CHECKOUT_SOURCE = "jury:review-checkout"
+
 
 def reuse_posted_verdict(body: str, *, gating: bool) -> tuple[bool, list[Finding]] | None:
     """The jury gate's outcome read off the panel already posted for the head (#1437).
@@ -341,9 +347,15 @@ def run_gate(
     cwd: str | None = None,
     mode: str = "advisory",
     timeout: int = DEFAULT_JURY_TIMEOUT_S,
+    head_sha: str | None = None,
     _run=None,
 ) -> tuple[bool, list[Finding], bool]:
     """Run ``jury`` on ``diff_text`` and map its findings.
+
+    When ``head_sha`` is provided, executes ``jury`` inside an isolated detached checkout of
+    ``head_sha`` created via :func:`keel.swarm_runtime.review_checkout` (under ``cwd``) and
+    removed on exit; a checkout setup failure returns a ``major`` (gating) or ``minor``
+    (advisory) finding from :data:`REVIEW_CHECKOUT_SOURCE`.
 
     Returns ``(ok, findings, timed_out)``. ``ok`` is False when a finding blocks
     (critical/major) or when the run produced no verdict at all in gating mode — and, in
@@ -392,15 +404,60 @@ def run_gate(
         return True, [_oversize_finding(size)], False
     if not available(cwd=cwd, _run=_run):
         return True, [_not_run_finding(NOT_RUN_NO_CLI)], False
-    fd, path = tempfile.mkstemp(suffix=".diff")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(diff_text)
-        result = run_argv(
-            ["jury", "--format", "json", "--diff-file", path], cwd=cwd, timeout=timeout, **_kw(_run)
-        )
-    finally:
-        os.unlink(path)
+
+    run_cwd = cwd
+    with contextlib.ExitStack() as stack:
+        if head_sha is not None:
+            from . import swarm_runtime
+
+            def _wrap_runner(cmd: list[str], path: Path) -> CommandResult:
+                res = _run(cmd, cwd=str(path), stdin=subprocess.DEVNULL)
+                if isinstance(res, CommandResult):
+                    return res
+                out = getattr(res, "stdout", "") or ""
+                err = getattr(res, "stderr", "") or ""
+                code = getattr(res, "returncode", 0)
+                return CommandResult(
+                    code == 0,
+                    code,
+                    out + err,
+                    stdout=out,
+                    stderr=err,
+                )
+
+            checkout_runner = _wrap_runner if _run is not None else None
+            try:
+                checkout = stack.enter_context(
+                    swarm_runtime.review_checkout(
+                        head_sha, name="jury", root=cwd or ".", runner=checkout_runner
+                    )
+                )
+            except swarm_runtime.ReviewCheckoutError as exc:
+                gating = mode == "gating"
+                return (
+                    (not gating),
+                    [
+                        Finding(
+                            severity="major" if gating else "minor",
+                            message=str(exc),
+                            source=REVIEW_CHECKOUT_SOURCE,
+                        )
+                    ],
+                    False,
+                )
+            run_cwd = str(checkout)
+        fd, path = tempfile.mkstemp(suffix=".diff")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(diff_text)
+            result = run_argv(
+                ["jury", "--format", "json", "--diff-file", path],
+                cwd=run_cwd,
+                timeout=timeout,
+                **_kw(_run),
+            )
+        finally:
+            os.unlink(path)
     # stdout alone: ai-jury logs its progress (`[jury] …`) to stderr, and reading the
     # concatenation is what made every report unparseable (#624). `parse_report` still
     # tolerates trailing non-JSON, for a vendor that also chats on stdout.
