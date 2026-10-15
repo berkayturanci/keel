@@ -3495,10 +3495,8 @@ class ReviewCheckoutTests(unittest.TestCase):
                 mock.patch("sys.stderr", err),
             ):
                 with review_checkout("head123", name="jury", root=root, runner=fake_runner) as wt:
-                    self.assertEqual(
-                        (wt / "jury.toml").read_text(encoding="utf-8"),
-                        "[jury]\ndecision = 'vote'\n",
-                    )
+                    # ls-tree failed for jury.toml: fail closed, never copy it.
+                    self.assertFalse((wt / "jury.toml").exists())
                     self.assertEqual(
                         (wt / ".jury" / "policy.toml").read_text(encoding="utf-8"),
                         "rules = []\n",
@@ -3517,6 +3515,7 @@ class ReviewCheckoutTests(unittest.TestCase):
                         "committed = true\n",
                     )
             self.assertIn("warning: could not remove review checkout", err.getvalue())
+            self.assertIn("not copying jury.toml into the review checkout", err.getvalue())
 
     @unittest.skipUnless(shutil.which("git"), "git is not installed")
     def test_review_checkout_real_git_skips_tracked_and_later_committed_configs(self):

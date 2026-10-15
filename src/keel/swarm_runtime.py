@@ -337,17 +337,23 @@ def review_checkout(
                     rel_file = src_file.relative_to(root_path)
                     rel_posix = rel_file.as_posix()
                     dst_file = checkout / rel_file
-                    is_tracked = any(
-                        res.ok and res.stdout.strip()
-                        for res in (
-                            run(cmd, root_path)
-                            for cmd in (
-                                ["git", "ls-tree", head_sha, "--", rel_posix],
-                                ["git", "ls-files", "--", rel_posix],
-                            )
+                    results = [
+                        run(cmd, root_path)
+                        for cmd in (
+                            ["git", "ls-tree", head_sha, "--", rel_posix],
+                            ["git", "ls-files", "--", rel_posix],
                         )
-                    )
-                    if not is_tracked:
+                    ]
+                    if not all(res.ok for res in results):
+                        # Fail closed: an unanswered tracking query must never let the
+                        # working tree overwrite what the reviewed head carries.
+                        print(
+                            f"warning: not copying {rel_posix} into the review checkout:"
+                            " git could not say whether it is tracked",
+                            file=sys.stderr,
+                        )
+                        continue
+                    if not any(res.stdout.strip() for res in results):
                         dst_file.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src_file, dst_file)
         except OSError as exc:
