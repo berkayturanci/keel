@@ -1019,9 +1019,9 @@ REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
 if test ! -e "$REVIEW_WT" && git worktree add -d "$REVIEW_WT" "$HEAD_SHA"; then
   keel delegate run --provider "$SLOT_PROVIDER" --role review \
     --prompt-file "$RUBRIC_AND_DIFF" --cwd "$REVIEW_WT" --timeout 900 --project .keel/project.yaml \
-    --detach --run-id "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --activity-run-id "$RUN_ID"
+    --detach --run-id "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --activity-run-id "$RUN_ID" || exit $?
 else
-  echo "error: could not create isolated review checkout $REVIEW_WT" >&2; false
+  echo "error: could not create isolated review checkout $REVIEW_WT" >&2; exit 1
 fi
 
 # collect + cleanup (in the same or a later shell using the same $RUN_ID and $SLOT_INDEX):

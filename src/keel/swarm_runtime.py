@@ -338,10 +338,13 @@ def review_checkout(
                     rel_posix = rel_file.as_posix()
                     dst_file = checkout / rel_file
                     is_tracked = any(
-                        run(cmd, root_path).output.strip()
-                        for cmd in (
-                            ["git", "ls-tree", head_sha, "--", rel_posix],
-                            ["git", "ls-files", "--", rel_posix],
+                        res.ok and res.stdout.strip()
+                        for res in (
+                            run(cmd, root_path)
+                            for cmd in (
+                                ["git", "ls-tree", head_sha, "--", rel_posix],
+                                ["git", "ls-files", "--", rel_posix],
+                            )
                         )
                     )
                     if not is_tracked:

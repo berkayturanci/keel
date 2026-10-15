@@ -560,6 +560,35 @@ class AdapterProseCarriesNoVendorArgv(unittest.TestCase):
                 res_collect_wait_fail.stderr,
             )
 
+            # 5d. Complete detached-panel block stops at launch failure (checkout collision
+            # or dispatch failure) and never proceeds to delegate wait or worktree-remove,
+            # even when a stale delegate wait record would succeed
+            for launch_fail_case, setup_collision, extra_env in (
+                ("checkout_collision", True, {}),
+                ("dispatch_failure", False, {"FAIL_REVIEW_DELEGATE": "1"}),
+            ):
+                with self.subTest(detached_full_block_fail=launch_fail_case):
+                    shutil.rmtree(wt_dir, ignore_errors=True)
+                    if setup_collision:
+                        wt_dir.mkdir(parents=True, exist_ok=True)
+                    log_file.unlink(missing_ok=True)
+                    res_full_fail = _run_bash(detach_block, extra_env)
+                    self.assertNotEqual(res_full_fail.returncode, 0)
+                    full_fail_calls = (
+                        log_file.read_text(encoding="utf-8").splitlines()
+                        if log_file.exists()
+                        else []
+                    )
+                    self.assertFalse(
+                        any(c.startswith("keel delegate wait ") for c in full_fail_calls),
+                        full_fail_calls,
+                    )
+                    self.assertFalse(
+                        any(c.startswith("keel worktree-remove ") for c in full_fail_calls),
+                        full_fail_calls,
+                    )
+                    self.assertTrue(wt_dir.exists())
+
     def test_the_detach_primitive_replaces_sleep_polling_advice(self):
         for path in _adapter_files():
             text = path.read_text(encoding="utf-8")

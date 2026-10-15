@@ -1019,9 +1019,9 @@ REVIEW_WT="$ROOT/.keel/worktrees/review-$RUN_ID-slot-$SLOT_INDEX"
 if test ! -e "$REVIEW_WT" && git worktree add -d "$REVIEW_WT" "$HEAD_SHA"; then
   keel delegate run --provider "$SLOT_PROVIDER" --role review \
     --prompt-file "$RUBRIC_AND_DIFF" --cwd "$REVIEW_WT" --timeout 900 --project .keel/project.yaml \
-    --detach --run-id "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --activity-run-id "$RUN_ID"
+    --detach --run-id "$RUN_ID-slot-$SLOT_INDEX" --root "$ROOT" --activity-run-id "$RUN_ID" || exit $?
 else
-  echo "error: could not create isolated review checkout $REVIEW_WT" >&2; false
+  echo "error: could not create isolated review checkout $REVIEW_WT" >&2; exit 1
 fi
 
 # collect + cleanup (in the same or a later shell using the same $RUN_ID and $SLOT_INDEX):
@@ -1754,4 +1754,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.32.0 source_sha256=ff503a0130f6e5f6864a5e5fbeecf6933a9086a53c3c9dc9bdeda31fa5e614dc generated_sha256=ff503a0130f6e5f6864a5e5fbeecf6933a9086a53c3c9dc9bdeda31fa5e614dc -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.32.0 source_sha256=46d68942ee1454a945eaf370c670240a3f1e89eb34d37bc6fd5d763a82b51c4e generated_sha256=46d68942ee1454a945eaf370c670240a3f1e89eb34d37bc6fd5d763a82b51c4e -->

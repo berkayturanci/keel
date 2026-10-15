@@ -3473,7 +3473,20 @@ class ReviewCheckoutTests(unittest.TestCase):
                 if "ls-tree" in cmd:
                     target = cmd[-1]
                     if target in ("jury-policy.toml", ".jury/tracked.toml"):
-                        return CommandResult(True, 0, f"100644 blob 1111111\t{target}\n")
+                        return CommandResult(
+                            True,
+                            0,
+                            f"100644 blob 1111111\t{target}\n",
+                            stdout=f"100644 blob 1111111\t{target}\n",
+                        )
+                    if target == "jury.toml":
+                        return CommandResult(
+                            False, 128, "fatal: git error\n", stdout="fatal: git error\n"
+                        )
+                if "ls-files" in cmd and cmd[-1] == ".jury/policy.toml":
+                    return CommandResult(
+                        True, 0, "warning: git stderr noise\n", stdout="", stderr="warning\n"
+                    )
                 return CommandResult(True, 0, "")
 
             err = io.StringIO()
