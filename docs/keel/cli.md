@@ -339,8 +339,9 @@ the checkpoint file. The result is reported in the `checkpoint_gate` block of th
 - **`covered`** — a current checkpoint for this run reached `s10` (its `current_step` is at
   or past `s10`, or `s10` is in `completed_steps`). The merge proceeds.
 - **`missing`** — no checkpoint, or the checkpoint is for a different run. Refused with
-  `no current checkpoint for run <id> at step s10`.
-- **`stale-step`** — a checkpoint for this run that has not reached `s10`. Refused.
+  `no current checkpoint for run <id> at step s10; write it: \`keel checkpoint … --write --run-id <id> --step s10 …\``.
+- **`stale-step`** — a checkpoint for this run that has not reached `s10`. Refused with the
+  same `keel checkpoint … --write --run-id <id> --step s10` command to advance it.
 
 The run-id is the gates-SHA `run_id` by default; override it with `--run-id`.
 
@@ -1733,7 +1734,9 @@ merged work twice in one day while shipping 1.8.1/1.8.2, and CI never saw it —
 reverted state was internally consistent, so every gate stayed green.
 
 The check asks whether the merge wrote to files another PR changed **after this one
-branched**, which is the only way that revert can happen.
+branched**, and whether any non-blank lines that an overtaking PR added — and that were
+still present in the merge commit's first parent — are missing from the merge commit's
+version of the file (#1511).
 
 ```bash
 keel verify-merge .keel/project.yaml --root . --pr 543
@@ -1742,13 +1745,19 @@ keel verify-merge .keel/project.yaml --root . --pr 543 --json
 
 | status | meaning | exit |
 | --- | --- | --- |
-| `drift` | wrote to files another PR changed after this one branched — read the diff | 1 |
+| `drift` | wrote to files another PR changed after this one branched and lost added lines present in the first parent (or a shared file's patch/content was `unverifiable`) — read the diff | 1 |
 | `out-of-scope` | changed files the PR's own diff did not list | 0, or 2 when `incomplete` |
-| `clean` | neither | 0 |
+| `clean` | neither, or all shared files kept every overtaking PR's surviving added lines (`clean (N shared files, 0 lost lines)`) | 0 |
 | `unknown` | not merged yet, or `gh` unreadable — **not** a pass | 2 |
 
-`drift` is a *stop and look* signal, not proof: two PRs editing one file in sequence
-is ordinary. The report names the colliding PR for each file so a human can judge.
+`drift` is a *stop and look* signal: the report lists `lost_lines` per file (`{pr, count,
+samples}` with up to 3 sample lines, plus `by_pr` when multiple overtaking PRs lost lines)
+and `unverifiable` / `unverifiable_prs` files (deleted, renamed, binary, files over 1 MB,
+files beyond the 100-file PR page, or unreadable first-parent/merge content or patch) so a
+human can judge. Survival is a line-membership heuristic comparing each overtaking PR's
+added lines present in the merge commit's first parent against the merge commit (lines
+removed before the merge are absent from the first parent and not counted; standalone
+deletions are not verified).
 
 `unknown` exits **2**, not 0. The status line has always said "not a pass", but the
 exit code said otherwise, and the exit code is what a caller wiring this in after

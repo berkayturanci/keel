@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -337,10 +338,42 @@ def resume_plan_as_dict(
 COVERAGE_STATES = ("covered", "missing", "stale-step")
 
 
+def _checkpoint_write_command(
+    run_id: str,
+    expected_step: str,
+    *,
+    path: str = "<project.yaml>",
+    root: str | None = None,
+    pull_request: int | None = None,
+    head_sha: str | None = None,
+    active_issue: int | None = None,
+    branch: str | None = None,
+) -> str:
+    path_token = path if path == "<project.yaml>" else shlex.quote(path)
+    parts = ["keel", "checkpoint", path_token]
+    if root and root != ".":
+        parts += ["--root", shlex.quote(root)]
+    parts += ["--write", "--run-id", shlex.quote(run_id), "--step", shlex.quote(expected_step)]
+    for flag, val in (
+        ("--active-issue", active_issue),
+        ("--branch", branch),
+        ("--pull-request", pull_request),
+        ("--head-sha", head_sha),
+    ):
+        if val is not None and val != "":
+            parts += [flag, shlex.quote(str(val))]
+    return " ".join(parts)
+
+
 def covering_checkpoint(
     record: dict[str, Any] | None,
     run_id: str,
     expected_step: str,
+    *,
+    path: str = "<project.yaml>",
+    root: str | None = None,
+    pull_request: int | None = None,
+    head_sha: str | None = None,
 ) -> dict[str, Any]:
     """Decide whether a checkpoint covers ``run_id`` at ``expected_step``.
 
@@ -358,7 +391,16 @@ def covering_checkpoint(
     if expected_step not in STEP_IDS:
         raise CheckpointError("expected_step must be a backbone step id")
     expected_index = STEP_IDS.index(expected_step)
+    prefix = f"no current checkpoint for run {run_id} at step {expected_step}"
     if record is None:
+        cmd = _checkpoint_write_command(
+            run_id,
+            expected_step,
+            path=path,
+            root=root,
+            pull_request=pull_request,
+            head_sha=head_sha,
+        )
         return {
             "status": "missing",
             "covered": False,
@@ -366,13 +408,25 @@ def covering_checkpoint(
             "expected_step": expected_step,
             "checkpoint_run_id": None,
             "checkpoint_step": None,
-            "reason": f"no current checkpoint for run {run_id} at step {expected_step}",
+            "reason": f"{prefix}; write it: `{cmd}`",
         }
     validate_checkpoint(record)
     checkpoint_run_id = record.get("run_id")
     position = record["position"]
     current_step = position["current_step"]
     completed = position.get("completed_steps", [])
+    identifiers = record.get("identifiers", {})
+    queue = record.get("queue", {})
+    cmd = _checkpoint_write_command(
+        run_id,
+        expected_step,
+        path=path,
+        root=root,
+        pull_request=pull_request if pull_request is not None else identifiers.get("pull_request"),
+        head_sha=head_sha if head_sha is not None else identifiers.get("head_sha"),
+        active_issue=queue.get("active_issue"),
+        branch=identifiers.get("branch"),
+    )
     base = {
         "run_id": run_id,
         "expected_step": expected_step,
@@ -384,10 +438,7 @@ def covering_checkpoint(
             **base,
             "status": "missing",
             "covered": False,
-            "reason": (
-                f"no current checkpoint for run {run_id} at step {expected_step} "
-                f"(checkpoint is for run {checkpoint_run_id})"
-            ),
+            "reason": f"{prefix} (checkpoint is for run {checkpoint_run_id}); write it: `{cmd}`",
         }
     reached = expected_step in completed or STEP_IDS.index(current_step) >= expected_index
     if not reached:
@@ -395,10 +446,7 @@ def covering_checkpoint(
             **base,
             "status": "stale-step",
             "covered": False,
-            "reason": (
-                f"no current checkpoint for run {run_id} at step {expected_step} "
-                f"(run is at {current_step})"
-            ),
+            "reason": f"{prefix} (run is at {current_step}); advance it: `{cmd}`",
         }
     return {
         **base,

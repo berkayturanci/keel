@@ -113,3 +113,201 @@ class TestReportSurface(unittest.TestCase):
             mv.verify_merge(["a"], {"a": 1}),
         ):
             self.assertEqual(report["schema_version"], mv.SCHEMA_VERSION)
+
+
+class TestLineSurvival(unittest.TestCase):
+    def test_shared_file_with_all_added_lines_present_is_clean(self):
+        report = mv.verify_merge(
+            landed=["CHANGELOG.md"],
+            overtaken={"CHANGELOG.md": 550},
+            added_by_pr={550: {"CHANGELOG.md": ["- entry 550", "   ", ""]}},
+            parent_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n"},
+            merged_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n- entry 543\n"},
+        )
+        self.assertEqual(report["status"], "clean")
+        self.assertEqual(report["reason"], "clean (1 shared files, 0 lost lines)")
+        self.assertEqual(report["overtaken"], {"CHANGELOG.md": 550})
+        self.assertEqual(report["lost_lines"], {})
+        self.assertEqual(report["unverifiable"], [])
+        self.assertIn("clean (1 shared files, 0 lost lines)", mv.render(report))
+
+    def test_shared_file_with_lost_added_lines_is_drift(self):
+        report = mv.verify_merge(
+            landed=["src/keel/github.py"],
+            overtaken={"src/keel/github.py": 550},
+            added_by_pr={
+                550: {
+                    "src/keel/github.py": [
+                        "kept = 1",
+                        "lost_a = 1",
+                        "lost_b = 2",
+                        "lost_c = 3",
+                        "lost_d = 4",
+                    ]
+                }
+            },
+            parent_contents={
+                "src/keel/github.py": "kept = 1\nlost_a = 1\nlost_b = 2\nlost_c = 3\nlost_d = 4\n"
+            },
+            merged_contents={"src/keel/github.py": "kept = 1\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(
+            report["lost_lines"],
+            {
+                "src/keel/github.py": {
+                    "pr": 550,
+                    "count": 4,
+                    "samples": ["lost_a = 1", "lost_b = 2", "lost_c = 3"],
+                }
+            },
+        )
+        self.assertEqual(report["unverifiable"], [])
+        rendered = mv.render(report)
+        self.assertIn("4 lost line(s)", rendered)
+        self.assertIn("lost_a = 1", rendered)
+        self.assertNotIn("lost_d = 4", rendered)
+
+    def test_unverifiable_file_falls_back_to_drift(self):
+        for added, parent, contents in (
+            ({550: {"a.py": None}}, {"a.py": "x = 1\n"}, {"a.py": "x = 1\n"}),
+            ({550: {"a.py": ["x = 1"]}}, {"a.py": "x = 1\n"}, {"a.py": None}),
+            ({550: {"a.py": ["x = 1"]}}, {"a.py": None}, {"a.py": "x = 1\n"}),
+        ):
+            with self.subTest(added=added, parent=parent, contents=contents):
+                report = mv.verify_merge(
+                    landed=["a.py"],
+                    overtaken={"a.py": 550},
+                    added_by_pr=added,
+                    parent_contents=parent,
+                    merged_contents=contents,
+                )
+                self.assertEqual(report["status"], "drift")
+                self.assertIn("unverifiable", report["reason"])
+                self.assertEqual(report["unverifiable"], ["a.py"])
+                self.assertEqual(report["lost_lines"], {})
+                self.assertIn("unverifiable", mv.render(report))
+
+    def test_multiple_overtaking_prs_on_same_file_checks_every_pr(self):
+        report = mv.verify_merge(
+            landed=["CHANGELOG.md"],
+            overtaken={"CHANGELOG.md": [550, 551]},
+            added_by_pr={
+                550: {"CHANGELOG.md": ["- entry 550"]},
+                551: {"CHANGELOG.md": ["- entry 551"]},
+            },
+            parent_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n- entry 551\n"},
+            merged_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n- entry 543\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["overtaken"], {"CHANGELOG.md": 551})
+        self.assertEqual(
+            report["lost_lines"],
+            {"CHANGELOG.md": {"pr": 551, "count": 1, "samples": ["- entry 551"]}},
+        )
+        self.assertIn("CHANGELOG.md  — also changed by #551 (1 lost line(s))", mv.render(report))
+
+        unverifiable_second = mv.verify_merge(
+            landed=["CHANGELOG.md"],
+            overtaken={"CHANGELOG.md": [550, 551]},
+            added_by_pr={
+                550: {"CHANGELOG.md": ["- entry 550"]},
+                551: {"CHANGELOG.md": None},
+            },
+            parent_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n"},
+            merged_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n"},
+        )
+        self.assertEqual(unverifiable_second["status"], "drift")
+        self.assertEqual(unverifiable_second["overtaken"], {"CHANGELOG.md": 550})
+        self.assertEqual(unverifiable_second["unverifiable"], ["CHANGELOG.md"])
+        self.assertEqual(unverifiable_second["unverifiable_prs"], {"CHANGELOG.md": [550, 551]})
+        self.assertEqual(unverifiable_second["lost_lines"], {})
+
+        both_clean = mv.verify_merge(
+            landed=["CHANGELOG.md", "extra.py"],
+            overtaken={"CHANGELOG.md": [550, 551]},
+            intended=["CHANGELOG.md"],
+            added_by_pr={
+                550: {"CHANGELOG.md": ["- entry 550"]},
+                551: {"CHANGELOG.md": ["- entry 551"]},
+            },
+            parent_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n- entry 551\n"},
+            merged_contents={"CHANGELOG.md": "# Changelog\n\n- entry 550\n- entry 551\n"},
+        )
+        self.assertEqual(both_clean["status"], "out-of-scope")
+        self.assertEqual(both_clean["overtaken"], {"CHANGELOG.md": 550})
+        self.assertEqual(both_clean["unexpected"], ["extra.py"])
+
+    def test_multi_pr_attribution_attributes_lost_lines_to_every_overtaking_pr(self):
+        # Different lost lines across PRs, and a shared lost line added by both PRs.
+        report = mv.verify_merge(
+            landed=["a.py", "b.py"],
+            overtaken={"a.py": [551, 550], "b.py": 552},
+            added_by_pr={
+                550: {"a.py": ["shared = 1", "only_550 = 1"]},
+                551: {"a.py": ["shared = 1", "only_551 = 2"]},
+                552: {"b.py": None},
+            },
+            parent_contents={"a.py": "shared = 1\nonly_550 = 1\nonly_551 = 2\n", "b.py": "z = 1\n"},
+            merged_contents={"a.py": "", "b.py": "z = 1\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertIn("#551: 2 lost", report["reason"])
+        self.assertIn("#550: 2 lost", report["reason"])
+        self.assertIn("#552: unverifiable", report["reason"])
+        self.assertEqual(
+            report["lost_lines"],
+            {
+                "a.py": {
+                    "pr": 551,
+                    "count": 4,
+                    "samples": ["shared = 1", "only_551 = 2", "shared = 1"],
+                    "by_pr": {
+                        551: {"count": 2, "samples": ["shared = 1", "only_551 = 2"]},
+                        550: {"count": 2, "samples": ["shared = 1", "only_550 = 1"]},
+                    },
+                }
+            },
+        )
+        self.assertEqual(report["unverifiable"], ["b.py"])
+        self.assertEqual(report["unverifiable_prs"], {"b.py": [552]})
+        rendered = mv.render(report)
+        self.assertIn("a.py  — also changed by #551 (2 lost line(s))", rendered)
+        self.assertIn("a.py  — also changed by #550 (2 lost line(s))", rendered)
+        self.assertIn("b.py  — also changed by #552 (unverifiable)", rendered)
+
+    def test_later_pr_removal_absent_from_first_parent_is_not_loss(self):
+        # Order-free: even when `overtaken` is newest-first ([551, 550]), `x = 1` added by
+        # #550 and legitimately removed by #551 is absent from the first parent P, so it is
+        # not counted as lost.
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [551, 550]},
+            added_by_pr={
+                550: {"a.py": ["x = 1"]},
+                551: {"a.py": ["x = 2"]},
+            },
+            parent_contents={"a.py": "x = 2\ny = 3\n"},
+            merged_contents={"a.py": "x = 2\ny = 3\n"},
+        )
+        self.assertEqual(report["status"], "clean")
+        self.assertEqual(report["lost_lines"], {})
+
+    def test_unreadable_first_parent_marks_file_unverifiable(self):
+        report = mv.verify_merge(
+            landed=["a.py"],
+            overtaken={"a.py": [550, 551]},
+            added_by_pr={
+                550: {"a.py": ["x = 1"]},
+                551: {"a.py": ["y = 2"]},
+            },
+            parent_contents={"a.py": None},
+            merged_contents={"a.py": "x = 1\ny = 2\n"},
+        )
+        self.assertEqual(report["status"], "drift")
+        self.assertEqual(report["unverifiable"], ["a.py"])
+        self.assertEqual(report["unverifiable_prs"], {"a.py": [550, 551]})
+        self.assertEqual(report["lost_lines"], {})
+        rendered = mv.render(report)
+        self.assertIn("a.py  — also changed by #550 (unverifiable)", rendered)
+        self.assertIn("a.py  — also changed by #551 (unverifiable)", rendered)
