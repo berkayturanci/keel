@@ -9,7 +9,7 @@ All notable changes to keel are documented here. The format follows
 ## [1.33.0] - 2026-10-16
 
 - `keel finish` takes an open PR to a merge in one command, and every retry refusal after a failed merge now prints the command that resolves it.
-- A merge no longer reports drift just because another PR touched the same file: it reports drift only when lines were actually lost.
+- A merge no longer reports drift just because another PR touched the same file: it reports drift only when lines were lost or a shared file could not be verified.
 - Reviewer seats and the `jury` gate run in their own checkout of the reviewed commit, and `keel stale-blockers` lists PRs whose stated blocker has cleared.
 
 ### Added
