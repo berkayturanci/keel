@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import unittest
+import unittest.mock as mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -247,10 +249,21 @@ INSTRUCTION_EXEMPT = ("CHANGELOG.md",)
 
 #: Directories with no documents of ours in them. `tests` included: this file
 #: quotes the commands it looks for, and a walk that read it would report itself.
-SKIPPED_DIRS = {".git", ".venv", "node_modules", "htmlcov", "__pycache__", "tests"}
+#: Nested worktrees under `.claude/worktrees/` or `.keel/worktrees/` and runtime
+#: state under `.keel/` are not project documentation (#1544).
+SKIPPED_DIRS = {
+    ".git",
+    ".venv",
+    "node_modules",
+    "htmlcov",
+    "__pycache__",
+    "tests",
+    ".keel",
+    "worktrees",
+}
 
 
-def instruction_pages() -> dict[str, str]:
+def instruction_pages(root: Path | None = None) -> dict[str, str]:
     """Every tracked document that tells somebody how to install keel into a host.
 
     **Discovered, not listed.** A hardcoded four-name tuple was the same defect
@@ -259,9 +272,10 @@ def instruction_pages() -> dict[str, str]:
     the test that requires a pointer to the page owning them. A page that prints
     one of these commands is an install page whatever its title says.
     """
+    base_root = REPO_ROOT if root is None else root
     found = {}
-    for path in sorted(REPO_ROOT.rglob("*.md")):
-        relative = path.relative_to(REPO_ROOT).as_posix()
+    for path in sorted(base_root.rglob("*.md")):
+        relative = path.relative_to(base_root).as_posix()
         if SKIPPED_DIRS & set(Path(relative).parts) or relative in INSTRUCTION_EXEMPT:
             continue
         text = path.read_text(encoding="utf-8")
@@ -720,6 +734,68 @@ class TheReasonCursorIsPartialIsStillTrue(unittest.TestCase):
             with self.subTest(where=where):
                 for fact in ("`keel-onboard`", "`./skills`", "`.agents/skills"):
                     self.assertIn(fact, text)
+
+
+class NestedWorktreesAreIgnored(unittest.TestCase):
+    """Nested worktrees and runtime state under .keel must not be scanned (#1544).
+
+    Found while landing #1532 through keel swarm-land: when worktrees exist in
+    .claude/worktrees/, their markdown files (such as CHANGELOG.md) were walked by
+    instruction_pages(), causing cross-document anchor checks to fail on relative links.
+    """
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.fake_root = Path(self.temp_dir.name)
+
+        # A valid instruction page pointing at a valid doc anchor
+        (self.fake_root / "README.md").write_text(
+            "# Fake Readme\n\nRun `/plugin install keel` to install.\n\n"
+            "[valid link](docs/guide.md#valid-anchor)\n",
+            encoding="utf-8",
+        )
+        docs_dir = self.fake_root / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "guide.md").write_text(
+            "# Fake Guide\n\n## Valid Anchor\n\nSome doc text.\n",
+            encoding="utf-8",
+        )
+
+        # A nested worktree with an install command and a broken anchor link
+        self.fake_wt = self.fake_root / ".claude" / "worktrees" / "nested_wt"
+        self.fake_wt.mkdir(parents=True, exist_ok=True)
+        (self.fake_wt / "CHANGELOG.md").write_text(
+            "# Fake Worktree\n\nRun `/plugin install keel` to install.\n\n"
+            "[broken link](../../README.md#this-anchor-does-not-exist-1544)\n",
+            encoding="utf-8",
+        )
+
+        # A runtime file under .keel with an install command (not in a worktree)
+        self.fake_keel = self.fake_root / ".keel" / "runtime"
+        self.fake_keel.mkdir(parents=True, exist_ok=True)
+        (self.fake_keel / "runtime_notes.md").write_text(
+            "# Fake Keel Notes\n\nRun `/plugin install keel`.\n\n"
+            "[broken link](../../README.md#this-anchor-does-not-exist-1544)\n",
+            encoding="utf-8",
+        )
+
+    def test_nested_worktree_is_ignored_by_instruction_pages(self):
+        pages = instruction_pages(self.fake_root)
+        self.assertIn("README.md", pages)
+        for page in pages:
+            self.assertNotIn("worktrees", page)
+
+    def test_anchor_validation_passes_when_nested_worktrees_exist(self):
+        with mock.patch("tests.test_agent_install_docs.REPO_ROOT", self.fake_root):
+            validator = EveryCrossDocumentAnchorResolves()
+            validator.test_every_anchor_a_page_links_to_exists()
+
+    def test_keel_directory_is_also_ignored(self):
+        pages = instruction_pages(self.fake_root)
+        self.assertIn("README.md", pages)
+        for page in pages:
+            self.assertNotIn(".keel", page)
 
 
 if __name__ == "__main__":  # pragma: no cover
