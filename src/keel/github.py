@@ -134,7 +134,7 @@ def ci_conclusion(pr: int | str, *, cwd: str | None = None, _run=None) -> str | 
         '// ""'
         ") "
         "| map(max_by(["
-        "((.conclusion == null) and "
+        '((.conclusion == null or .conclusion == "") and '
         '(((.status // .state) | if type == "string" then ascii_upcase else "" end) '
         "| IN(" + pending_states + "))), "
         '(.completedAt // .startedAt // "")'
