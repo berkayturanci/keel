@@ -57,7 +57,11 @@ def plan_steps(*, reviews: bool, rerun: Sequence[str] = ()) -> list[dict[str, ob
     names += [STEP_CI, STEP_WINDOW, STEP_SHIP, STEP_MERGE]
     steps: list[dict[str, object]] = []
     for name in names:
-        step: dict[str, object] = {"name": name, "description": _STEP_DESCRIPTIONS[name]}
+        step: dict[str, object] = {
+            "name": name,
+            "step": name,
+            "description": _STEP_DESCRIPTIONS[name],
+        }
         if name == STEP_CI and rerun:
             step["rerun_flaky"] = list(rerun)
         steps.append(step)
@@ -182,6 +186,8 @@ def ship_argv(
     root: str,
     pr: int,
     issue: int,
+    branch: str | None = None,
+    head_sha: str | None = None,
     run_id: str | None,
     capture_status: str | None,
     capture_reason: str | None,
@@ -192,6 +198,8 @@ def ship_argv(
     argv = ["ship", path, "--root", root, "--pr", str(pr), "--issue", str(issue)]
     argv += ["--live", "--append-ledger"]
     for flag, value in (
+        ("--branch", branch),
+        ("--head-sha", head_sha),
         ("--run-id", run_id),
         ("--capture-status", capture_status),
         ("--capture-reason", capture_reason),

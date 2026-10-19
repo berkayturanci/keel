@@ -380,7 +380,7 @@ the payload:
 A dry run, a refused merge or a failed `gh` merge never reaches this step, so it carries no
 `checkpoint_update`.
 
-## `keel finish <project.yaml> --pr N --issue I [--root DIR] [--reviews FILE] [--closure FILE] [--ci-timeout S] [--ci-interval S] [--ci-settle S] [--rerun-flaky NAME]... [--method squash|merge|rebase] [--transport auto|graphql|rest] [--run-id ID] [--capture-status S] [--capture-reason TEXT] [--capture-artifact REF] [--implementer NAME] [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE] [--dry-run] [--json]`
+## `keel finish <project.yaml> --pr N --issue I [--root DIR] [--reviews FILE] [--closure FILE] [--ci-timeout S] [--ci-interval S] [--ci-settle S] [--rerun-flaky NAME]... [--method squash|merge|rebase] [--transport auto|graphql|rest] [--run-id ID] [--head-sha SHA] [--branch NAME] [--capture-status S] [--capture-reason TEXT] [--capture-artifact REF] [--implementer NAME] [--approve-scope SCOPE] [--operator ID] [--consent-mode MODE] [--dry-run] [--json]`
 
 Finish an open pull request the way operators used to hand-chain it (#1505). It is a
 separate subcommand rather than a `keel ship --finish` flag because `ship` is one assessment
@@ -415,10 +415,11 @@ The steps run in this order and stop at the first one that does not pass:
 3. **`window`**: if the project's merge window is closed, finish says so and stops with status
    `window-closed` (exit 1). There is no bypass: finish has no `--hotfix`.
 4. **`ship`**: `keel ship --live --append-ledger --pr N --issue I`, with `--run-id`,
-   `--capture-reason`, `--capture-artifact` and `--implementer` passed through, and
-   `--capture-status` defaulting to `not-run` (ship requires one for a live append, and finish
-   runs before capture, so the record carries no capture claim; pass another value to state
-   one). It records the gates-pass ledger entry the merge looks for.
+   `--head-sha`, `--branch`, `--capture-reason`, `--capture-artifact` and `--implementer`
+   passed through, and `--capture-status` defaulting to `not-run` (ship requires one for a
+   live append, and finish runs before capture, so the record carries no capture claim; pass
+   another value to state one). It records the gates-pass ledger entry the merge looks for, and
+   the step fails if ship does not record a matching gates-pass for the head.
 5. **`merge`**: `keel merge --pr N --issue I --method M`, which re-checks the window, CI,
    evidence, attribution, the gates-pass for the head, the checkpoint gate and head drift.
 
