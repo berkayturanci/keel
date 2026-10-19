@@ -111,6 +111,20 @@ class TestDecideMerge(unittest.TestCase):
         self.assertEqual(d.action, "merge")
         self.assertIn("bypass", d.reason)
 
+    def test_wait_when_checks_pending(self):
+        d = ship.decide_merge(CLEAN, window_open=True, ci_pending=True)
+        self.assertEqual(d.action, "wait")
+        self.assertEqual(d.reason, "checks pending")
+
+    def test_checks_pending_prevents_blocker_merge(self):
+        d = ship.decide_merge(CLEAN, window_open=False, is_blocker=True, ci_pending=True)
+        self.assertEqual(d.action, "wait")
+        self.assertEqual(d.reason, "checks pending")
+
+    def test_findings_block_even_when_checks_pending(self):
+        d = ship.decide_merge(BLOCKED, window_open=True, ci_pending=True)
+        self.assertEqual(d.action, "block")
+
 
 class TestFixLoop(unittest.TestCase):
     def test_runs_while_blocked_and_budget(self):
@@ -432,6 +446,63 @@ class TestAssess(unittest.TestCase):
         a = ship.assess(changed_files=["x.py"], gate_verdict=CLEAN, ci_conclusion="SUCCESS")
         self.assertTrue(a.ci_ok)
         self.assertEqual(a.merge.action, "merge")
+
+    def test_ci_pending_states(self):
+        self.assertFalse(ship.ci_pending(None))
+        self.assertFalse(ship.ci_pending(""))
+        self.assertFalse(ship.ci_pending("SUCCESS"))
+        self.assertFalse(ship.ci_pending("FAILURE"))
+        self.assertFalse(ship.ci_pending("FAILURE,PENDING"))
+        self.assertTrue(ship.ci_pending("PENDING"))
+        self.assertTrue(ship.ci_pending("PENDING,SUCCESS"))
+        self.assertTrue(ship.ci_pending("IN_PROGRESS"))
+        self.assertTrue(ship.ci_pending("QUEUED,SUCCESS"))
+        self.assertTrue(ship.ci_pending("EXPECTED"))
+        self.assertTrue(ship.ci_pending("WAITING"))
+        self.assertTrue(ship.ci_pending("REQUESTED"))
+
+    def test_ci_passing_with_pending_checks(self):
+        self.assertIsNone(ship.ci_passing("PENDING"))
+        self.assertIsNone(ship.ci_passing("PENDING,SUCCESS"))
+        self.assertFalse(ship.ci_passing("FAILURE,PENDING"))
+
+    def test_pending_ci_waits_and_does_not_merge(self):
+        for conclusion in ("PENDING", "PENDING,SUCCESS"):
+            with self.subTest(conclusion=conclusion):
+                a = ship.assess(
+                    changed_files=["x.py"], gate_verdict=CLEAN, ci_conclusion=conclusion
+                )
+                self.assertIsNone(a.ci_ok)
+                self.assertTrue(a.ci_pending)
+                self.assertEqual(a.merge.action, "wait")
+                self.assertEqual(a.merge.reason, "checks pending")
+
+    def test_failing_ci_outranks_pending(self):
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            ci_conclusion="FAILURE,PENDING",
+        )
+        self.assertEqual(a.ci_ok, False)
+        self.assertFalse(a.ci_pending)
+        self.assertEqual(a.merge.action, "block")
+        self.assertEqual(a.merge.reason, "CI failing")
+
+    def test_pending_ci_prevents_hotfix_merge(self):
+        from datetime import datetime
+
+        a = ship.assess(
+            changed_files=["x.py"],
+            gate_verdict=CLEAN,
+            ci_conclusion="PENDING",
+            is_blocker=True,
+            timezone="UTC",
+            merge_window="09:00-17:00",
+            now=datetime(2026, 6, 5, 3, 0),
+        )
+        self.assertTrue(a.ci_pending)
+        self.assertEqual(a.merge.action, "wait")
+        self.assertEqual(a.merge.reason, "checks pending")
 
     def test_zero_checks_blocks_and_says_so(self):
         """The #675 regression: a PR nothing ran on used to assess as clear to merge.

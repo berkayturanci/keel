@@ -2288,6 +2288,10 @@ def _cmd_ship(args: argparse.Namespace) -> int:
         # Print the count rather than a bare word: "0 checks" is the fact an
         # operator needs, and it used to be indistinguishable from "passing".
         ci_str = "NO CHECKS RAN (0 reported) — nothing verified this commit"
+    elif a.ci_pending:
+        ci_str = "pending"
+        if ci_names is not None:
+            ci_str += f" ({len(ci_names)} check{'' if len(ci_names) == 1 else 's'})"
     elif a.ci_ok is None:
         ci_str = "unknown"
     else:

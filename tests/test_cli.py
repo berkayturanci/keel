@@ -11478,6 +11478,38 @@ class TestShipCiVisibility(unittest.TestCase):
         self.assertIn("CodeQL", out)
         self.assertIn("declared, never ran", out)
 
+    def test_pending_checks_reports_wait_and_pending(self):
+        rc, out, _ = self._ship("PENDING", ["keel evidence (required)", "test"])
+        self.assertEqual(rc, 0)
+        self.assertIn("ci            : pending (2 checks)", out)
+        self.assertIn("decision      : WAIT — checks pending", out)
+
+    def test_one_pending_check_is_singular(self):
+        rc, out, _ = self._ship("PENDING", ["keel evidence (required)"])
+        self.assertEqual(rc, 0)
+        self.assertIn("ci            : pending (1 check)", out)
+        self.assertIn("decision      : WAIT — checks pending", out)
+
+    def test_mixed_passing_and_pending_checks_reports_wait_and_pending(self):
+        rc, out, _ = self._ship("PENDING,SUCCESS", ["keel evidence (required)", "test"])
+        self.assertEqual(rc, 0)
+        self.assertIn("ci            : pending (2 checks)", out)
+        self.assertIn("decision      : WAIT — checks pending", out)
+
+    def test_failing_outranks_pending_in_cli_output(self):
+        rc, out, _ = self._ship("FAILURE,PENDING", ["keel evidence (required)", "test"])
+        self.assertEqual(rc, 1)
+        self.assertIn("ci            : FAILING (2 checks)", out)
+        self.assertIn("decision      : BLOCK — CI failing", out)
+
+    def test_pending_count_is_omitted_when_names_unreadable(self):
+        rc, out, _ = self._ship("PENDING", None)
+        self.assertEqual(rc, 0)
+        self.assertIn("ci            : pending\n", out)
+        self.assertNotIn("check)", out)
+        self.assertNotIn("checks)", out)
+        self.assertIn("decision      : WAIT — checks pending", out)
+
 
 class TestResumeObservation(unittest.TestCase):
     """`keel resume` observes git/gh instead of being told (#635)."""

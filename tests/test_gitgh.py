@@ -577,6 +577,14 @@ class TestGitHub(unittest.TestCase):
         self.assertIn("group_by", jq_expr)
         self.assertIn("max_by", jq_expr)
 
+    def test_ci_conclusion_jq_maps_pending_and_expected_states_to_pending(self):
+        rec = _Recorder(out="PENDING\n")
+        github.ci_conclusion(7, _run=rec)
+        argv = rec.calls[0]
+        jq_expr = argv[argv.index("--jq") + 1]
+        self.assertIn('"PENDING"', jq_expr)
+        self.assertIn(".state", jq_expr)
+
     def test_pr_state_parsed(self):
         for raw, expected in (("OPEN\n", "open"), ("MERGED\n", "merged"), ("CLOSED\n", "closed")):
             with self.subTest(raw=raw):
