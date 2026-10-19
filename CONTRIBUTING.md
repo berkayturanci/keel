@@ -45,7 +45,8 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
    hundred syntax errors that look like a regression. `PY=/path/to/python make test`
    overrides the resolver; `make doctor-python` prints what it picked, and
    `keel doctor` reports the same interpreter under its `python_toolchain` check.
-4. Every module under `src/keel/` is held at **100% line + branch coverage**. New code needs tests —
+4. Every module under `src/keel/` is held at **100% line + branch coverage**; the gate omits only the
+   `python -m keel` entry shim, `src/keel/__main__.py`. New code needs tests —
    and for a *fix*, coverage is not the bar; see step 7.
    `make test` also fails if any tracked file — `CHANGELOG.md` most often, since it conflicts
    on nearly every PR — still carries an unresolved `<<<<<<<`/`=======`/`>>>>>>>` marker after

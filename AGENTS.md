@@ -25,7 +25,8 @@ The rules you will hit most often. Details follow below.
   `model`, `extensions`, `findings`, `gates`, `orchestrator`, `classify`, `ship`,
   `window`, `cli`) must stay deterministic and side-effect-free.
 - **Coverage bar is non-negotiable.** Every module under `src/keel/` is held at **100% line + branch coverage**;
-  the CI gate is `fail_under = 100` (`pyproject.toml`). New code ships with tests
+  the CI gate is `fail_under = 100` (`pyproject.toml`) and omits only the
+  `python -m keel` entry shim, `src/keel/__main__.py`. New code ships with tests
   that keep it at 100 %.
 - **Coverage is not fix evidence — a revert is.** Because `fail_under = 100` is enforced,
   "Maintained 100% line + branch test coverage across the repository." is true of every merged

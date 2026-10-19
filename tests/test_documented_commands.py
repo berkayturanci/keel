@@ -157,10 +157,13 @@ class TestModuleInvocationsCarryThePathPrefix(unittest.TestCase):
     instruction lives in prose with inline backticks, so nothing else covers it.
 
     `python3 -m keel.cli` is exempt: it appears only as a named counter-example.
+    `python -m keel` in the entry shim exemption is exempt: it names `__main__.py`,
+    not an invocation instruction.
     """
 
-    #: `python -m keel` / `python3 -m keel` not followed by a dotted submodule.
-    _INVOCATION = re.compile(r"python3? -m keel(?![.\w])")
+    #: `python -m keel` / `python3 -m keel` not followed by a dotted submodule or
+    #: entry-shim reference.
+    _INVOCATION = re.compile(r"python3? -m keel(?![.\w]|` entry shim)")
 
     def test_agents_md_prefixes_every_module_invocation(self):
         text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
