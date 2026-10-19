@@ -184,6 +184,30 @@ class RoleAndInputValidationTest(unittest.TestCase):
             delegate.plan_run(_builtin("claude"), "review", "")
         self.assertEqual(caught.exception.code, "no-prompt")
 
+    def test_plan_run_accepts_inline_prompt(self):
+        plan = delegate.plan_run(_builtin("agy"), "implement", prompt="hello world")
+        self.assertEqual(plan.prompt, "hello world")
+        self.assertEqual(plan.prompt_path, "")
+
+    def test_plan_run_refuses_both_prompt_and_prompt_file(self):
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.plan_run(_builtin("agy"), "implement", "/tmp/b.md", prompt="hello world")
+        self.assertEqual(caught.exception.code, "no-prompt")
+
+    def test_plan_run_refuses_empty_prompt(self):
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.plan_run(_builtin("agy"), "implement", prompt="   ")
+        self.assertEqual(caught.exception.code, "no-prompt")
+
+    def test_plan_run_accepts_quota_wait(self):
+        plan = delegate.plan_run(_builtin("agy"), "implement", "/tmp/b.md", quota_wait=120)
+        self.assertEqual(plan.quota_wait, 120.0)
+
+    def test_plan_run_refuses_negative_quota_wait(self):
+        with self.assertRaises(delegate.DelegateError) as caught:
+            delegate.plan_run(_builtin("agy"), "implement", "/tmp/b.md", quota_wait=-1)
+        self.assertEqual(caught.exception.code, "bad-timeout")
+
     def test_an_unsafe_model_override_is_refused(self):
         with self.assertRaises(delegate.DelegateError) as caught:
             _plan("claude", "review", model="opus; rm -rf /")

@@ -7553,12 +7553,14 @@ def _delegate_plan(args: argparse.Namespace):
         plan = delegate.plan_run(
             resolution.provider,
             args.role,
-            args.prompt_file,
+            getattr(args, "prompt_file", None),
             cwd,
             args.timeout,
             args.effort,
             args.model or resolution.model,
             profile=resolution.profile,
+            prompt=getattr(args, "prompt", None),
+            quota_wait=getattr(args, "quota_wait", None),
         )
     except delegate.DelegateError as exc:
         failure = delegaterun.planning_failure(
@@ -7585,8 +7587,6 @@ def _delegate_child_argv(args: argparse.Namespace, run_id: str) -> list[str]:
         args.provider,
         "--role",
         args.role,
-        "--prompt-file",
-        args.prompt_file,
         "--root",
         args.root,
         "--run-id",
@@ -7595,6 +7595,12 @@ def _delegate_child_argv(args: argparse.Namespace, run_id: str) -> list[str]:
         str(args.timeout),
         "--_child",
     ]
+    if getattr(args, "prompt_file", None):
+        argv.extend(["--prompt-file", args.prompt_file])
+    if getattr(args, "prompt", None):
+        argv.extend(["--prompt", args.prompt])
+    if getattr(args, "quota_wait", None) is not None:
+        argv.extend(["--quota-wait", str(args.quota_wait)])
     for flag, value in (
         ("--cwd", args.cwd),
         ("--effort", args.effort),
@@ -11533,7 +11539,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=delegate.ROLES,
         help="review/gate/chair run read-only; implement/fix run tool-enabled",
     )
-    p_dr.add_argument("--prompt-file", required=True, help="file holding the delegate's brief")
+    p_dr.add_argument("--prompt-file", default=None, help="file holding the delegate's brief")
+    p_dr.add_argument("--prompt", default=None, help="brief text passed inline")
+    p_dr.add_argument(
+        "--quota-wait",
+        type=_nonnegative_int,
+        default=None,
+        help="maximum seconds to wait and retry on retryable quota errors (default: 60)",
+    )
     p_dr.add_argument("--cwd", default=None, help="working directory for the delegate")
     p_dr.add_argument(
         "--timeout",
