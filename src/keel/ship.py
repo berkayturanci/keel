@@ -23,6 +23,11 @@ MAX_FIX_ROUNDS = 3
 #: GitHub check-rollup conclusions that count as "not failing".
 CI_OK_STATES = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
 
+#: GitHub check-rollup conclusions/states that mean a check is in-flight/pending.
+CI_PENDING_STATES = frozenset(
+    {"EXPECTED", "PENDING", "QUEUED", "REQUESTED", "WAITING", "IN_PROGRESS"}
+)
+
 POSTING_MODES = frozenset({"inline", "summary"})
 
 # A cross-vendor jury needs at least this many distinct vendors to gate. Below it
@@ -483,7 +488,7 @@ def resolve_review_contract(
 
 @dataclass(frozen=True)
 class MergeDecision:
-    action: str  # "merge" | "defer" | "block"
+    action: str  # "merge" | "defer" | "block" | "wait"
     reason: str
 
 
@@ -540,13 +545,16 @@ def decide_merge(
     window_open: bool,
     is_blocker: bool = False,
     unrun_blocking_gates: tuple[str, ...] = (),
+    ci_pending: bool = False,
 ) -> MergeDecision:
     """Decide what to do with a green-or-not PR given the window.
 
     * blocking findings ⇒ **block** (never merges);
     * a required gate that nobody ran ⇒ **block** (no verdict exists to clear it);
     * outside the merge window and not a blocker ⇒ **defer** to the morning queue;
-    * otherwise ⇒ **merge**. A blocker bypasses the window (but never the findings).
+    * pending checks ⇒ **wait** (never merges while required checks are in flight);
+    * otherwise ⇒ **merge**. A blocker bypasses the window (but never the
+      findings or pending checks).
 
     ``unrun_blocking_gates`` names ``on_fail: block`` gates this run did not execute —
     agentic gates reach the command-only runner, which does not dispatch them. The
@@ -565,6 +573,8 @@ def decide_merge(
         )
     if not window_open and not is_blocker:
         return MergeDecision("defer", "outside merge window (night no-merge)")
+    if ci_pending:
+        return MergeDecision("wait", "checks pending")
     reason = "blocker bypass" if (is_blocker and not window_open) else "clear to merge"
     return MergeDecision("merge", reason)
 
@@ -581,9 +591,23 @@ def ci_passing(ci_conclusion: str | None) -> bool | None:
     parts = [p.strip().upper() for p in ci_conclusion.split(",") if p.strip()]
     if not parts:
         return None
-    # ⚡ Bolt: ~3.4x faster validation using C-level frozenset.issuperset
-    # instead of generator expression
+    if any(p not in CI_OK_STATES and p not in CI_PENDING_STATES for p in parts):
+        return False
+    if any(p in CI_PENDING_STATES for p in parts):
+        return None
     return CI_OK_STATES.issuperset(parts)
+
+
+def ci_pending(ci_conclusion: str | None) -> bool:
+    """Return whether any check is pending and no check has failed."""
+    if ci_conclusion is None:
+        return False
+    parts = [p.strip().upper() for p in ci_conclusion.split(",") if p.strip()]
+    if not parts:
+        return False
+    if any(p not in CI_OK_STATES and p not in CI_PENDING_STATES for p in parts):
+        return False
+    return any(p in CI_PENDING_STATES for p in parts)
 
 
 def ci_ran(ci_conclusion: str | None) -> bool | None:
@@ -690,6 +714,8 @@ class ShipAssessment:
     #: every caller that measured nothing, which is not the same as a project whose
     #: directory is empty — that one retrieves and finds no hits.
     learnings: dict[str, Any] | None = None
+    #: Are any checks still in-flight/pending (without failure)?
+    ci_pending: bool = False
 
 
 def assess(
@@ -794,6 +820,7 @@ def assess(
     halted = (merge_window_mode == "pause") and not window_open and not is_blocker
     ci_ok = ci_passing(ci_conclusion)
     ran = ci_ran(ci_conclusion)
+    pending = ci_pending(ci_conclusion)
     docs_only = changed_files is not None and classify.is_docs_only(list(changed_files), docs_globs)
     missing = (
         () if docs_only else missing_ci_workflows(ci_workflow_names, ci_workflows, changed_files)
@@ -818,6 +845,7 @@ def assess(
             window_open=window_open,
             is_blocker=is_blocker,
             unrun_blocking_gates=unrun_blocking_gates,
+            ci_pending=pending,
         )
     bypassed = is_blocker and not window_open and merge.action == "merge"
     review_contract = resolve_review_contract(
@@ -846,4 +874,5 @@ def assess(
         missing,
         assignment,
         None if learnings is None else dict(learnings),
+        ci_pending=pending,
     )

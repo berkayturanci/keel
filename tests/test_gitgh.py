@@ -3,7 +3,7 @@
 import json
 import os
 import unittest
-import unittest.mock
+import unittest.mock as mock
 
 from keel import git, github, tdd
 
@@ -365,7 +365,7 @@ class TestRevertCheckGit(unittest.TestCase):
             seen.update(argv=argv, env=kwargs.get("env"))
             return _Proc(0, "diff --git a/x b/x\n", "")
 
-        with unittest.mock.patch.dict(os.environ, {"GIT_DIFF_OPTS": "--unified=5", "K": "v"}):
+        with mock.patch.dict(os.environ, {"GIT_DIFF_OPTS": "--unified=5", "K": "v"}):
             self.assertEqual(
                 git.revert_diff("origin/main", "HEAD", _run=run), "diff --git a/x b/x\n"
             )
@@ -401,7 +401,7 @@ class TestRevertCheckGit(unittest.TestCase):
         """Codex, round 9: inherited, ``GIT_DIR`` / ``GIT_WORK_TREE`` sent the scratch
         tree's ``reset --hard`` and ``clean -fdx`` to the operator's checkout."""
         inherited = {"GIT_DIR": "/op/.git", "GIT_WORK_TREE": "/op", "GIT_INDEX_FILE": "/op/i"}
-        with unittest.mock.patch.dict(os.environ, {**inherited, "K": "v"}):
+        with mock.patch.dict(os.environ, {**inherited, "K": "v"}):
             full = git.scratch_env()
             checkout = git.scratch_env(git.CHECKOUT_ENV_VARS)
             seen = []
@@ -576,6 +576,49 @@ class TestGitHub(unittest.TestCase):
         jq_expr = argv[argv.index("--jq") + 1]
         self.assertIn("group_by", jq_expr)
         self.assertIn("max_by", jq_expr)
+
+    def test_ci_conclusion_jq_maps_pending_and_expected_states_to_pending(self):
+        rec = _Recorder(out="PENDING\n")
+        github.ci_conclusion(7, _run=rec)
+        argv = rec.calls[0]
+        jq_expr = argv[argv.index("--jq") + 1]
+        self.assertIn('"PENDING"', jq_expr)
+        self.assertIn(".state", jq_expr)
+
+    def test_ci_conclusion_jq_prefers_rerun_with_empty_conclusion_over_prior_success(self):
+        rec = _Recorder(out="PENDING\n")
+        github.ci_conclusion(7, _run=rec)
+        argv = rec.calls[0]
+        jq_expr = argv[argv.index("--jq") + 1]
+        self.assertIn('(.conclusion == null or .conclusion == "")', jq_expr)
+        import shutil
+        import subprocess
+
+        if shutil.which("jq"):
+            payload = {
+                "statusCheckRollup": [
+                    {
+                        "name": "build",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "completedAt": "2026-10-19T20:01:00Z",
+                    },
+                    {
+                        "name": "build",
+                        "status": "IN_PROGRESS",
+                        "conclusion": "",
+                        "completedAt": "0001-01-01T00:00:00Z",
+                    },
+                ]
+            }
+            res = subprocess.run(
+                ["jq", "-r", jq_expr],
+                input=json.dumps(payload),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(res.stdout.strip(), "PENDING")
 
     def test_pr_state_parsed(self):
         for raw, expected in (("OPEN\n", "open"), ("MERGED\n", "merged"), ("CLOSED\n", "closed")):
