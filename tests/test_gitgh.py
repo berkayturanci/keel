@@ -730,7 +730,7 @@ class TestGitHub(unittest.TestCase):
                 "view",
                 "7",
                 "--json",
-                "headRefOid,mergeStateStatus,statusCheckRollup",
+                "headRefOid,headRefName,mergeStateStatus,statusCheckRollup",
             ],
         )
 

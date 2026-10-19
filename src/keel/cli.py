@@ -5828,7 +5828,9 @@ def _rest_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
     pull = github.rest_json(github.rest_pull(pr, cwd=cwd))
     if not isinstance(pull, dict):
         raise ValueError(f"unable to read PR merge snapshot: gh api pulls/{pr} returned no object")
-    head_sha = ((pull.get("head") or {}) if isinstance(pull.get("head"), dict) else {}).get("sha")
+    head = (pull.get("head") or {}) if isinstance(pull.get("head"), dict) else {}
+    head_sha = head.get("sha")
+    branch = head.get("ref")
     state = pull.get("mergeable_state")
     rollup: list[object] = []
     if isinstance(head_sha, str) and head_sha:
@@ -5848,6 +5850,7 @@ def _rest_snapshot(pr: int, *, cwd: str) -> dict[str, object]:
         rollup = list(github.rest_rollup(checks, statuses))
     return {
         "head_sha": head_sha,
+        "branch": branch,
         "merge_state": state.upper() if isinstance(state, str) and state else "UNKNOWN",
         "ci": _ci_rollup_state(rollup),
     }
@@ -5867,6 +5870,7 @@ def _merge_snapshot(pr: int, *, cwd: str, transport: str = TRANSPORT_GRAPHQL) ->
     rollup = rollup if isinstance(rollup, list) else []
     return {
         "head_sha": payload.get("headRefOid"),
+        "branch": payload.get("headRefName"),
         "merge_state": payload.get("mergeStateStatus") or "UNKNOWN",
         "ci": _ci_rollup_state(rollup),
     }
@@ -9312,6 +9316,10 @@ def _finish_wait_ci(args: argparse.Namespace, config: cfg.ProjectConfig) -> dict
         ctx = {"polls": poll, "elapsed": elapsed, "ci": last_ci, "reran": reran}
 
         if action == finish.ACTION_PROCEED:
+            if not getattr(args, "head_sha", None):
+                args.head_sha = snapshot.get("head_sha") or git.rev_parse("HEAD", cwd=args.root)
+            if not getattr(args, "branch", None):
+                args.branch = snapshot.get("branch") or git.current_branch(cwd=args.root)
             return _finish_ci_result("pass", "CI is green", **ctx)
         if action == finish.ACTION_FAILED:
             return _finish_ci_result("fail", summary, **ctx)
@@ -9371,11 +9379,15 @@ def _finish_step(
             consent=consent_flags,
         )
     elif name == finish.STEP_SHIP:
+        head_sha = getattr(args, "head_sha", None)
+        branch = getattr(args, "branch", None)
         argv = finish.ship_argv(
             path=args.path,
             root=args.root,
             pr=args.pr,
             issue=args.issue,
+            branch=branch,
+            head_sha=head_sha,
             run_id=args.run_id,
             capture_status=args.capture_status,
             capture_reason=args.capture_reason,
@@ -9402,6 +9414,21 @@ def _finish_step(
     if lines:
         reason += f": {lines[-1]}"
     result["reason"] = "" if passed else reason
+    if name == finish.STEP_SHIP and passed:
+        try:
+            records = ledger.read_records(
+                ledger.resolve_path(args.root, config), warn=_ledger_warning
+            )
+        except ledger.LedgerError as exc:
+            result["status"] = "fail"
+            result["exit_code"] = 1
+            result["reason"] = f"invalid run ledger: {exc}"
+            return result
+        matched, _ = ledger.gates_pass_for_head(records, args.pr, head_sha or "")
+        if not matched:
+            result["status"] = "fail"
+            result["exit_code"] = 1
+            result["reason"] = f"ship recorded no gates-pass for head {head_sha}"
     return result
 
 
@@ -9432,13 +9459,20 @@ def _cmd_finish(args: argparse.Namespace) -> int:
     for step in steps:
         name = str(step["name"])
         if args.dry_run:
-            results.append({"name": name, "status": "planned", "description": step["description"]})
+            results.append(
+                {
+                    "name": name,
+                    "step": name,
+                    "status": "planned",
+                    "description": step["description"],
+                }
+            )
             if not args.json:
                 print(f"  {name:<7} {step['description']}")
             continue
         if not args.json:
             print(f"== keel finish: {name} ==")
-        result = {"name": name, **_finish_step(name, args, config, consent_flags)}
+        result = {"name": name, "step": name, **_finish_step(name, args, config, consent_flags)}
         results.append(result)
         if result["status"] != "pass":
             doc["status"] = result["status"]
@@ -9764,6 +9798,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="how to reach GitHub: auto probes GraphQL once, rest forces the REST API",
     )
     p_finish.add_argument("--run-id", default=None, help="run id for the ledger and the merge")
+    p_finish.add_argument("--head-sha", default=None, help="head commit SHA passed to keel ship")
+    p_finish.add_argument("--branch", default=None, help="branch name passed to keel ship")
     p_finish.add_argument(
         "--capture-status",
         type=_capture_status_arg,

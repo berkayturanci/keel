@@ -15,7 +15,7 @@ import unittest
 import unittest.mock as mock
 from pathlib import Path
 
-from keel import cli, finish, github
+from keel import cli, finish, github, ledger
 from keel.runner import CommandResult
 
 
@@ -42,6 +42,12 @@ class TestPlanSteps(unittest.TestCase):
         self.assertEqual(steps[0]["rerun_flaky"], ["lint"])
         self.assertNotIn("rerun_flaky", steps[1])
         self.assertNotIn("rerun_flaky", finish.plan_steps(reviews=False)[0])
+
+    def test_every_planned_step_carries_non_null_step_key(self):
+        for reviews in (True, False):
+            for step in finish.plan_steps(reviews=reviews):
+                self.assertIn("step", step)
+                self.assertEqual(step["step"], step["name"])
 
 
 class TestTimeoutAccounting(unittest.TestCase):
@@ -216,6 +222,24 @@ class TestArgvBuilders(unittest.TestCase):
             self.assertEqual(argv[argv.index("--consent-mode") + 1], "explicit")
         self.assertEqual(finish.consent_argv([], None, None), [])
 
+    def test_ship_argv_forwards_head_sha_and_branch(self):
+        kw = dict(path="p.yaml", root=".", pr=7, consent=[])
+        ship = finish.ship_argv(
+            issue=3,
+            branch="feat/test",
+            head_sha="deadbeef",
+            run_id="R1",
+            capture_status=None,
+            capture_reason=None,
+            capture_artifact=None,
+            implementer=None,
+            **kw,
+        )
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "deadbeef")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "feat/test")
+
 
 class TestFailedCheckRuns(unittest.TestCase):
     def _runner(self, rows, *, rerun_ok=True, list_code=0, stderr=""):
@@ -346,11 +370,29 @@ class FinishCase(unittest.TestCase):
         item = self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0]
         if isinstance(item, Exception):
             raise item
-        return "gh-graphql", {"ci": item, "head_sha": "abc", "merge_state": "CLEAN"}
+        return "gh-graphql", {
+            "ci": item,
+            "head_sha": "abc",
+            "branch": "feat/test-branch",
+            "merge_state": "CLEAN",
+        }
 
     def _invoke(self, argv, *, capture):
         self.invocations.append((argv, capture))
         code = self.exit_codes.get(argv[0], 0)
+        if argv[0] == "ship" and code == 0 and "--head-sha" in argv:
+            sha = argv[argv.index("--head-sha") + 1]
+            pr = int(argv[argv.index("--pr") + 1])
+            record = {
+                "schema_version": ledger.LEDGER_SCHEMA_VERSION,
+                "record_type": ledger.RECORD_TYPE_SHIP_RUN,
+                "pull_request": {"number": pr},
+                "git": {"head_sha": sha},
+                "verdict": {"blocked": False},
+                "gates": [{"gate": "build", "ok": True}],
+            }
+            ledger_path = Path(self.dir) / ledger.DEFAULT_LEDGER_PATH
+            ledger.append_record(ledger_path, record)
         return {"exit_code": code}
 
     def finish(self, *extra, json_out=True):
@@ -375,6 +417,11 @@ class TestFinishChain(FinishCase):
         )
         self.assertEqual([a[0][0] for a in self.invocations], ["ship", "merge"])
         self.assertTrue(all(capture for _, capture in self.invocations))
+        ship = self.invocations[0][0]
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "abc")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "feat/test-branch")
 
     def test_reviews_are_posted_first_through_keel_review(self):
         self.snapshots = [_ci("pass")]
@@ -448,6 +495,59 @@ class TestFinishChain(FinishCase):
         self.finish("--capture-status", "applied")
         ship = self.invocations[0][0]
         self.assertEqual(ship[ship.index("--capture-status") + 1], "applied")
+
+    def test_ship_step_fails_when_no_gates_pass_recorded_for_head(self):
+        self.snapshots = [_ci("pass")]
+        with mock.patch("keel.cli._finish_invoke", return_value={"exit_code": 0}):
+            rc, doc, _ = self.finish()
+        self.assertEqual(rc, 1)
+        self.assertEqual((doc["status"], doc["stopped_at"]), ("fail", "ship"))
+        self.assertIn("ship recorded no gates-pass for head abc", doc["reason"])
+
+    def test_ship_step_fails_when_ledger_is_invalid(self):
+        self.snapshots = [_ci("pass")]
+        with mock.patch(
+            "keel.cli.ledger.read_records", side_effect=ledger.LedgerError("corrupted")
+        ):
+            rc, doc, _ = self.finish()
+        self.assertEqual(rc, 1)
+        self.assertEqual((doc["status"], doc["stopped_at"]), ("fail", "ship"))
+        self.assertIn("invalid run ledger: corrupted", doc["reason"])
+
+    def test_json_steps_carry_non_null_step_for_every_entry(self):
+        self.snapshots = [_ci("pass")]
+        rc, doc, _ = self.finish()
+        self.assertEqual(rc, 0)
+        for step in doc["steps"]:
+            self.assertIn("step", step)
+            self.assertEqual(step["step"], step["name"])
+
+    def test_explicit_head_sha_and_branch_are_forwarded_to_ship(self):
+        self.snapshots = [_ci("pass")]
+        rc, doc, _ = self.finish("--head-sha", "explicit-sha", "--branch", "feat/explicit")
+        self.assertEqual(rc, 0)
+        ship_argv = self.invocations[0][0]
+        self.assertEqual(ship_argv[ship_argv.index("--head-sha") + 1], "explicit-sha")
+        self.assertEqual(ship_argv[ship_argv.index("--branch") + 1], "feat/explicit")
+
+    def test_head_sha_and_branch_fall_back_to_local_git_when_snapshot_omits_them(self):
+        self.snapshot_patch.stop()
+        fake_snapshot = (
+            "gh-graphql",
+            {"ci": _ci("pass"), "head_sha": None, "branch": None, "merge_state": "CLEAN"},
+        )
+        with (
+            mock.patch("keel.cli._merge_snapshot_over_best_transport", return_value=fake_snapshot),
+            mock.patch("keel.cli.git.rev_parse", return_value="gitsha123"),
+            mock.patch("keel.cli.git.current_branch", return_value="local-branch"),
+        ):
+            rc, doc, _ = self.finish()
+        self.assertEqual(rc, 0, doc)
+        ship = self.invocations[0][0]
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "gitsha123")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "local-branch")
 
     def test_closure_without_reviews_is_refused_before_anything_runs(self):
         rc, _, err = _run(["finish", self.config, "--pr", "7", "--issue", "3", "--closure", "c"])
@@ -652,7 +752,7 @@ class TestFinishCiWait(FinishCase):
         self.assertEqual((rc, doc["steps"][0]["reran"]), (1, ["a"]))
 
     def test_every_ci_result_carries_the_documented_keys(self):
-        keys = {"status", "reason", "polls", "elapsed", "ci", "reran", "name"}
+        keys = {"status", "reason", "polls", "elapsed", "ci", "reran", "name", "step"}
         unreadable = cli._SnapshotFailed("gh-graphql", "boom")
         for snaps, extra in (
             ([_ci("pass")], []),
@@ -771,32 +871,124 @@ class TestFinishAgainstTheRealHandlers(FinishCase):
 
     def test_the_real_snapshot_reader_accepts_the_namespace_the_wait_builds(self):
         rollup = [{"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"}]
-        payload = {"headRefOid": "abc", "mergeStateStatus": "CLEAN", "statusCheckRollup": rollup}
+        payload = {
+            "headRefOid": "abc",
+            "headRefName": "feat/graphql-branch",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": rollup,
+        }
         seen, fake = self._gh({"pr view": json.dumps(payload)})
         self.snapshot_patch.stop()
         with (
-            mock.patch("keel.cli._finish_invoke", return_value={"exit_code": 0}),
+            mock.patch("keel.cli._finish_invoke", side_effect=self._invoke),
             mock.patch("keel.github.run_argv", side_effect=fake),
         ):
             rc, doc, _ = self.finish()
         self.assertEqual(rc, 0, doc)
-        self.assertEqual(seen[0][:3], ["gh", "pr", "view"])
+        self.assertEqual(
+            seen[0],
+            [
+                "gh",
+                "pr",
+                "view",
+                "7",
+                "--json",
+                "headRefOid,headRefName,mergeStateStatus,statusCheckRollup",
+            ],
+        )
         self.assertEqual(doc["steps"][0]["ci"]["state"], "pass")
+        ship = self.invocations[0][0]
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "abc")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "feat/graphql-branch")
 
     def test_the_real_snapshot_reader_over_rest_also_accepts_it(self):
-        pull = {"head": {"sha": "abc"}, "mergeable_state": "clean"}
+        pull = {
+            "head": {"sha": "abc", "ref": "feat/rest-branch"},
+            "mergeable_state": "clean",
+        }
         empty = {"check_runs": [], "total_count": 0}
         seen, fake = self._gh(
             {"check-runs": json.dumps(empty), "pulls/7": json.dumps(pull), "status": "[]"}
         )
         self.snapshot_patch.stop()
         with (
-            mock.patch("keel.cli._finish_invoke", return_value={"exit_code": 0}),
+            mock.patch("keel.cli._finish_invoke", side_effect=self._invoke),
             mock.patch("keel.github.run_argv", side_effect=fake),
         ):
             rc, doc, _ = self.finish("--transport", "rest")
         self.assertEqual(rc, 0, doc)
         self.assertEqual(doc["steps"][0]["ci"]["state"], "no-checks")
+        ship = self.invocations[0][0]
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "abc")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "feat/rest-branch")
+
+    def test_finish_end_to_end_ship_and_merge_see_matching_gates_sha(self):
+        subprocess.run(["git", "init", "-q", self.dir], check=True)
+        report = cli.runtime.CapabilityReport(
+            tuple(
+                cli.runtime.Capability(n, True, "ok", "test")
+                for n in ("shell", "git", "worktree", "gh", "gh-auth")
+            )
+        )
+        self.snapshots = [_ci("pass")]
+
+        def invoke(argv, *, capture):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                cmd = [*argv, "--json"] if capture else argv
+                code = cli.main(cmd)
+            payload = None
+            if capture:
+                try:
+                    payload = json.loads(out.getvalue())
+                except Exception:
+                    payload = out.getvalue()
+            else:
+                print(out.getvalue(), end="")
+            return {"exit_code": code, "output": payload, "stderr": err.getvalue()}
+
+        with (
+            mock.patch("keel.cli._finish_invoke", side_effect=invoke),
+            mock.patch("keel.cli.runtime.detect", return_value=report),
+            mock.patch("keel.cli.github.ci_conclusion", return_value="SUCCESS"),
+            mock.patch("keel.cli.github.ci_check_names", return_value=["build"]),
+            mock.patch("keel.cli.github.pr_labels", return_value=None),
+            mock.patch("keel.cli.github.pr_files", return_value=[]),
+            mock.patch("keel.cli.github.pr_state", return_value="OPEN"),
+            mock.patch(
+                "keel.cli._merge_snapshot_over_best_transport",
+                return_value=(
+                    "gh-graphql",
+                    {"ci": _ci("pass"), "head_sha": "abc", "merge_state": "CLEAN"},
+                ),
+            ),
+            mock.patch(
+                "keel.cli._verify_merge_evidence",
+                return_value={
+                    "head_sha": "abc",
+                    "enforced": True,
+                    "verification": {"status": "pass", "missing": []},
+                },
+            ),
+            mock.patch("keel.cli.github.merge_pr", return_value=CommandResult(True, 0, "")),
+        ):
+            rc, doc, _ = self.finish("--approve-scope", "filesystem,git,github", "--operator", "t")
+            self.assertEqual(rc, 0, doc)
+            merge_step = next(s for s in doc["steps"] if s["name"] == "merge")
+            self.assertEqual(merge_step["status"], "pass")
+            merge_output = merge_step["output"]
+            self.assertTrue(merge_output["gates_sha"]["matched"])
+            self.assertEqual(merge_output["gates_sha"]["head_sha"], "abc")
+
+            rc_human, out_human, _ = self.finish(
+                "--approve-scope", "filesystem,git,github", "--operator", "t", json_out=False
+            )
+            self.assertEqual(rc_human, 0)
+            self.assertIn("gates-sha: matched", out_human)
 
 
 class TestFinishInvoke(unittest.TestCase):
