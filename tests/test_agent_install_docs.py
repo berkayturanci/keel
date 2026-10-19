@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -247,7 +249,45 @@ INSTRUCTION_EXEMPT = ("CHANGELOG.md",)
 
 #: Directories with no documents of ours in them. `tests` included: this file
 #: quotes the commands it looks for, and a walk that read it would report itself.
-SKIPPED_DIRS = {".git", ".venv", "node_modules", "htmlcov", "__pycache__", "tests"}
+#: Nested worktrees under `.claude/worktrees/` or `.keel/worktrees/` and runtime
+#: state under `.keel/` are not project documentation (#1544).
+SKIPPED_DIRS = {
+    ".git",
+    ".venv",
+    "node_modules",
+    "htmlcov",
+    "__pycache__",
+    "tests",
+    ".keel",
+    "worktrees",
+}
+
+#: Prefixes for ignored subtrees, evaluated as repo-relative posix paths.
+SKIPPED_PREFIXES = (
+    ".claude/worktrees/",
+    ".keel/worktrees/",
+    ".keel/",
+)
+
+
+def _git_ignored(paths: list[str]) -> set[str]:
+    """The subset of repo-relative paths ignored by git (e.g. nested worktrees)."""
+    git = shutil.which("git")
+    if git is None or not paths:
+        return set()
+    try:
+        proc = subprocess.run(
+            [git, "-C", str(REPO_ROOT), "check-ignore", "--stdin", "-z"],
+            input="\0".join(paths).encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+        if proc.returncode in (0, 1):
+            return {p for p in proc.stdout.decode("utf-8", errors="replace").split("\0") if p}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return set()
 
 
 def instruction_pages() -> dict[str, str]:
@@ -259,10 +299,21 @@ def instruction_pages() -> dict[str, str]:
     the test that requires a pointer to the page owning them. A page that prints
     one of these commands is an install page whatever its title says.
     """
-    found = {}
+    candidates: list[tuple[str, Path]] = []
     for path in sorted(REPO_ROOT.rglob("*.md")):
         relative = path.relative_to(REPO_ROOT).as_posix()
-        if SKIPPED_DIRS & set(Path(relative).parts) or relative in INSTRUCTION_EXEMPT:
+        if (
+            SKIPPED_DIRS & set(Path(relative).parts)
+            or relative.startswith(SKIPPED_PREFIXES)
+            or relative in INSTRUCTION_EXEMPT
+        ):
+            continue
+        candidates.append((relative, path))
+
+    ignored = _git_ignored([rel for rel, _ in candidates])
+    found = {}
+    for relative, path in candidates:
+        if relative in ignored:
             continue
         text = path.read_text(encoding="utf-8")
         if any(command in text for command in INSTALL_COMMANDS):
@@ -720,6 +771,48 @@ class TheReasonCursorIsPartialIsStillTrue(unittest.TestCase):
             with self.subTest(where=where):
                 for fact in ("`keel-onboard`", "`./skills`", "`.agents/skills"):
                     self.assertIn(fact, text)
+
+
+class NestedWorktreesAreIgnored(unittest.TestCase):
+    """A nested worktree under .claude/worktrees or .keel/worktrees must not be scanned (#1544).
+
+    Found while landing #1532 through keel swarm-land: when worktrees exist in
+    .claude/worktrees/, their markdown files (such as CHANGELOG.md) were walked by
+    instruction_pages(), causing cross-document anchor checks to fail on relative links.
+    """
+
+    def setUp(self):
+        self.fake_wt = REPO_ROOT / ".claude" / "worktrees" / "_fake_wt_1544"
+        self.fake_wt.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(self.fake_wt, ignore_errors=True))
+        (self.fake_wt / "CHANGELOG.md").write_text(
+            "# Fake Worktree\n\nRun `/plugin install keel` to install.\n\n"
+            "[broken link](../../README.md#this-anchor-does-not-exist-1544)\n",
+            encoding="utf-8",
+        )
+
+    def test_nested_worktree_is_ignored_by_instruction_pages(self):
+        pages = instruction_pages()
+        for page in pages:
+            self.assertNotIn("worktrees", page)
+            self.assertNotIn("_fake_wt_1544", page)
+
+    def test_anchor_validation_passes_when_nested_worktrees_exist(self):
+        validator = EveryCrossDocumentAnchorResolves()
+        validator.test_every_anchor_a_page_links_to_exists()
+
+    def test_keel_worktree_is_also_ignored(self):
+        keel_wt = REPO_ROOT / ".keel" / "worktrees" / "_fake_keel_wt_1544"
+        keel_wt.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(lambda: shutil.rmtree(keel_wt, ignore_errors=True))
+        (keel_wt / "CHANGELOG.md").write_text(
+            "# Fake Keel Worktree\n\nRun `/plugin install keel`.\n\n"
+            "[broken link](../../README.md#this-anchor-does-not-exist-1544)\n",
+            encoding="utf-8",
+        )
+        pages = instruction_pages()
+        for page in pages:
+            self.assertNotIn("_fake_keel_wt_1544", page)
 
 
 if __name__ == "__main__":  # pragma: no cover
