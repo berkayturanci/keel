@@ -2998,17 +2998,7 @@ class TheRevertAuditIsStatedInTheTenseItHappened(unittest.TestCase):
                 return [r for r in proc.stdout.split("\0") if r]
         # Ignored trees (agent worktrees under .claude/, caches, build output) are not
         # project text; walking them would read every worktree's copy of the repo.
-        skip = {
-            ".git",
-            ".claude",
-            "node_modules",
-            ".venv",
-            "venv",
-            "__pycache__",
-            "build",
-            "dist",
-            "worktrees",
-        }
+        skip = {".git", ".claude", "node_modules", ".venv", "venv", "__pycache__", "build", "dist"}
         found = []
         for path in REPO_ROOT.rglob("*"):
             rel = path.relative_to(REPO_ROOT)
