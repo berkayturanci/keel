@@ -809,6 +809,7 @@ def _detached_failure(record: dict[str, Any], *, code: str, message: str) -> dic
         "effort_applied": False,
         "warnings": [],
         "usage": None,
+        "quota-wait": 0.0,
         "run_id": record.get("run_id"),
         "out_path": record.get("out_path"),
     }

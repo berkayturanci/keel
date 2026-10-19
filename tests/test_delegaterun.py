@@ -922,6 +922,19 @@ class DocumentShapeTest(unittest.TestCase):
         self.assertFalse(failure["ok"])
         self.assertEqual(failure["error_code"], "unknown-provider")
 
+    def test_a_detached_failure_carries_result_document_keys(self):
+        run = _Recorder(CommandResult(True, 0, "ok", stdout="ok"))
+        real = delegaterun.execute(_plan("claude"), _run=run, _read=_read)
+        detached = delegaterun._detached_failure(
+            {"run_id": "r1", "out_path": "/path/r1.out"},
+            code="lost",
+            message="process vanished",
+        )
+        self.assertEqual(set(real) | {"run_id", "out_path"}, set(detached))
+        self.assertEqual(detached["quota-wait"], 0.0)
+        self.assertFalse(detached["ok"])
+        self.assertEqual(detached["error_code"], "lost")
+
     def test_rate_limited_reads_the_vendors_own_prose(self):
         self.assertTrue(delegaterun.rate_limited("Error: RESOURCE_EXHAUSTED"))
         self.assertTrue(delegaterun.rate_limited("usage limit reached"))
