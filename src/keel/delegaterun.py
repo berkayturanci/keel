@@ -82,6 +82,10 @@ _RATE_LIMIT_MARKERS = (
     re.compile(r"\b429\s+(?:too many|client error|error\b)"),
 )
 
+#: Markers indicating a quota/rate-limit error is transient and retryable (#1549).
+_RETRYABLE_MARKERS = (re.compile(r"['\"]?retryable['\"]?\s*[:=]\s*(?:true|1)\b", re.IGNORECASE),)
+
+
 #: Phrases with which a vendor reports **its own** timeout, as distinct from the wall-clock
 #: bound keel imposes (exit 124, :attr:`keel.runner.CommandResult.timed_out`).
 #:
@@ -252,6 +256,7 @@ def result_document(
     error_code: str | None = None,
     error: str | None = None,
     usage: dict[str, int] | None = None,
+    quota_wait: float = 0.0,
 ) -> dict[str, Any]:
     """The one JSON document ``keel delegate run`` prints, success or failure.
 
@@ -285,6 +290,7 @@ def result_document(
         "effort_applied": plan.effort_applied,
         "warnings": list(plan.warnings),
         "usage": dict(usage) if usage else None,
+        "quota-wait": round(quota_wait, 3),
     }
 
 
@@ -298,6 +304,11 @@ def rate_limited(text: str) -> bool:
     """
     lowered = (text or "").lower()
     return any(marker.search(lowered) for marker in _RATE_LIMIT_MARKERS)
+
+
+def retryable_quota(text: str) -> bool:
+    """Does this text read as a retryable quota error? (pure, best-effort)"""
+    return rate_limited(text) and any(m.search(text) for m in _RETRYABLE_MARKERS)
 
 
 def vendor_timed_out(text: str) -> bool:
@@ -383,7 +394,9 @@ def failure_signal(
         if event is None:
             return stderr or ""
         parts = [
-            f"{field}: {event.get(field)}" for field in ("status", "error") if event.get(field)
+            f"{field}: {event.get(field)}"
+            for field in ("status", "error", "retryable")
+            if event.get(field) is not None
         ]
         # A frame that carries no error text has said nothing about *why*; stderr is then
         # the only account there is, and discarding it would lose a real quota refusal.
@@ -401,6 +414,7 @@ def execute(
     _env=os.environ,
     _now: Callable[[], float] = time.monotonic,
     _read: Callable[[str], str] = _read_text,
+    _sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """Run one plan and return the JSON contract. Never raises.
 
@@ -418,24 +432,35 @@ def execute(
     def finish(**kwargs) -> dict[str, Any]:
         return result_document(plan, duration_s=round(_now() - started, 3), **kwargs)
 
-    try:
-        prompt = _read(plan.prompt_path)
-    except OSError as exc:
-        return finish(ok=False, error_code="no-prompt", error=str(exc))
+    if plan.prompt is not None:
+        prompt = plan.prompt
+    else:
+        try:
+            prompt = _read(plan.prompt_path)
+        except OSError as exc:
+            return finish(ok=False, error_code="no-prompt", error=str(exc))
     if not prompt.strip():
+        source = plan.prompt_path or "--prompt"
         return finish(
             ok=False,
             error_code="no-prompt",
-            error=f"{plan.prompt_path} is empty; a delegate with no brief produces nothing",
+            error=f"{source} is empty; a delegate with no brief produces nothing",
         )
     if plan.transport == "ollama":
         return _run_ollama(plan, prompt, finish, opener=_opener)
     if plan.transport == "api":
         return _run_api(plan, prompt, finish, env=_env, opener=_opener)
-    return _run_argv(plan, prompt, finish, run=_run)
+    return _run_argv(plan, prompt, finish, run=_run, _sleep=_sleep)
 
 
-def _run_argv(plan: RunPlan, prompt: str, finish, *, run) -> dict[str, Any]:
+def _run_argv(
+    plan: RunPlan,
+    prompt: str,
+    finish,
+    *,
+    run,
+    _sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
     """The ``cli`` and ``profile`` transports: one subprocess, prompt on stdin.
 
     The delegate's answer is **stdout alone**. ``CommandResult.output`` glues stderr onto
@@ -455,66 +480,87 @@ def _run_argv(plan: RunPlan, prompt: str, finish, *, run) -> dict[str, Any]:
         # seam that has both.
         argv.append(prompt)
         stdin_text = None
-    result = run(argv, cwd=plan.cwd, timeout=plan.timeout, stdin_text=stdin_text)
-    raw = result.stdout
-    text = delegate.parse_stream_json(raw) if plan.stdin_mode == delegate.STDIN_STREAM_JSON else raw
-    if result.timed_out:
-        return finish(
-            ok=False,
-            exit_code=result.code,
-            timed_out=True,
-            error_code="timeout",
-            error=f"{argv[0]} timed out after {plan.timeout}s",
-            text=text,
-        )
-    if getattr(result, "spawn_failed", False):
-        # The runner's own OSError signal, not exit 127: a command that really ran can
-        # exit 127 too, and reading the code alone made this branch unreachable.
-        return finish(
-            ok=False,
-            exit_code=result.code,
-            error_code="missing-binary",
-            error=f"{argv[0]} could not be executed: {result.stderr or result.output}",
-        )
-    if not result.ok:
-        # Classified on the vendor's own error, never on the delegate's answer (#1133),
-        # and timeout-before-quota: the two codes send an operator in opposite directions
-        # — `rate-limit` says wait out a window, `timeout` says retry now, smaller or
-        # longer — and a vendor that times out often says so in a sentence that also
-        # mentions its limits.
-        signal = failure_signal(
-            stderr=result.stderr,
-            stdout=result.stdout,
-            output=result.output,
-            stream_json=plan.stdin_mode == delegate.STDIN_STREAM_JSON,
-        )
-        vendor_timeout = vendor_timed_out(signal)
-        if vendor_timeout:
-            code = "timeout"
-        elif rate_limited(signal):
-            code = "rate-limit"
+    max_quota_wait = getattr(plan, "quota_wait", 0.0)
+    quota_waited = 0.0
+    backoff = 2.0
+    attempt = 1
+    while True:
+        result = run(argv, cwd=plan.cwd, timeout=plan.timeout, stdin_text=stdin_text)
+        raw = result.stdout
+        if plan.stdin_mode == delegate.STDIN_STREAM_JSON:
+            text = delegate.parse_stream_json(raw)
         else:
-            code = "nonzero-exit"
-        return finish(
-            ok=False,
-            exit_code=result.code,
-            # True for either bound: keel's wall-clock wrapper (exit 124) or the vendor's
-            # own. The run did time out; which timer fired is in `exit_code` and `error`.
-            timed_out=vendor_timeout,
-            error_code=code,
-            # The tail still shows both streams — a diagnostic wants everything a reader
-            # might recognise, which is exactly what a decision must not read.
-            error=f"{argv[0]} exited {result.code}: {_tail(result.output)}",
-            text=text,
-        )
-    if not text.strip():
-        return finish(
-            ok=False,
-            exit_code=result.code,
-            error_code="empty-output",
-            error=f"{argv[0]} exited 0 and produced no output",
-        )
-    return finish(ok=True, exit_code=result.code, text=text)
+            text = raw
+        if result.timed_out:
+            return finish(
+                ok=False,
+                exit_code=result.code,
+                timed_out=True,
+                error_code="timeout",
+                error=f"{argv[0]} timed out after {plan.timeout}s",
+                text=text,
+                quota_wait=quota_waited,
+            )
+        if getattr(result, "spawn_failed", False):
+            # The runner's own OSError signal, not exit 127: a command that really ran can
+            # exit 127 too, and reading the code alone made this branch unreachable.
+            return finish(
+                ok=False,
+                exit_code=result.code,
+                error_code="missing-binary",
+                error=f"{argv[0]} could not be executed: {result.stderr or result.output}",
+                quota_wait=quota_waited,
+            )
+        if not result.ok:
+            # Classified on the vendor's own error, never on the delegate's answer (#1133),
+            # and timeout-before-quota: the two codes send an operator in opposite directions
+            # — `rate-limit` says wait out a window, `timeout` says retry now, smaller or
+            # longer — and a vendor that times out often says so in a sentence that also
+            # mentions its limits.
+            signal = failure_signal(
+                stderr=result.stderr,
+                stdout=result.stdout,
+                output=result.output,
+                stream_json=plan.stdin_mode == delegate.STDIN_STREAM_JSON,
+            )
+            vendor_timeout = vendor_timed_out(signal)
+            if vendor_timeout:
+                code = "timeout"
+            elif rate_limited(signal):
+                code = "rate-limit"
+            else:
+                code = "nonzero-exit"
+            if code == "rate-limit" and retryable_quota(signal):
+                remaining = max_quota_wait - quota_waited
+                if remaining > 0:
+                    delay = min(backoff, remaining)
+                    _sleep(delay)
+                    quota_waited += delay
+                    backoff *= 2
+                    attempt += 1
+                    continue
+            return finish(
+                ok=False,
+                exit_code=result.code,
+                # True for either bound: keel's wall-clock wrapper (exit 124) or the vendor's
+                # own. The run did time out; which timer fired is in `exit_code` and `error`.
+                timed_out=vendor_timeout,
+                error_code=code,
+                # The tail still shows both streams — a diagnostic wants everything a reader
+                # might recognise, which is exactly what a decision must not read.
+                error=f"{argv[0]} exited {result.code}: {_tail(result.output)}",
+                text=text,
+                quota_wait=quota_waited,
+            )
+        if not text.strip():
+            return finish(
+                ok=False,
+                exit_code=result.code,
+                error_code="empty-output",
+                error=f"{argv[0]} exited 0 and produced no output",
+                quota_wait=quota_waited,
+            )
+        return finish(ok=True, exit_code=result.code, text=text, quota_wait=quota_waited)
 
 
 def _run_api(plan: RunPlan, prompt: str, finish, *, env, opener) -> dict[str, Any]:
@@ -763,6 +809,7 @@ def _detached_failure(record: dict[str, Any], *, code: str, message: str) -> dic
         "effort_applied": False,
         "warnings": [],
         "usage": None,
+        "quota-wait": 0.0,
         "run_id": record.get("run_id"),
         "out_path": record.get("out_path"),
     }
@@ -1025,4 +1072,5 @@ def planning_failure(
         "effort_applied": False,
         "warnings": [],
         "usage": None,
+        "quota-wait": 0.0,
     }

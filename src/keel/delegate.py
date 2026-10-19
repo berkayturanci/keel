@@ -84,6 +84,7 @@ __all__ = [
     "STDIN_TEXT",
     "STDIN_STREAM_JSON",
     "DEFAULT_TIMEOUT_S",
+    "DEFAULT_QUOTA_WAIT_S",
     "OLLAMA_GENERATE_URL",
     "AGY_STREAM_ARGS",
     "CLAUDE_ALLOWED_TOOLS",
@@ -128,6 +129,9 @@ STDIN_STREAM_JSON = "stream-json"
 #: Wall-clock seconds a delegate run may take when the caller names none. Delegated
 #: implementation is measured in tens of minutes, not in the 120 s a git call gets.
 DEFAULT_TIMEOUT_S = 1800
+
+#: Default maximum seconds to back off and retry on retryable quota errors (#1549).
+DEFAULT_QUOTA_WAIT_S = 60
 
 #: Ollama's local generation endpoint. A **hardcoded loopback constant**, exactly like
 #: :data:`keel.providers.OLLAMA_TAGS_URL` and every other URL keel dials: the executor
@@ -229,7 +233,7 @@ class RunPlan:
     vendor: str
     role: str
     transport: str
-    prompt_path: str
+    prompt_path: str = ""
     model: str | None = None
     cwd: str | None = None
     timeout: int = DEFAULT_TIMEOUT_S
@@ -252,6 +256,8 @@ class RunPlan:
     effort_applied: bool = False
     warnings: tuple[str, ...] = ()
     attribution: dict[str, str | None] = field(default_factory=dict)
+    prompt: str | None = None
+    quota_wait: float = float(DEFAULT_QUOTA_WAIT_S)
 
     def as_dict(self) -> dict[str, Any]:
         """JSON-stable record (carries no secret: ``api_key_env`` is a name)."""
@@ -273,6 +279,8 @@ class RunPlan:
             "effort_applied": self.effort_applied,
             "warnings": list(self.warnings),
             "attribution": dict(self.attribution),
+            "prompt": self.prompt,
+            "quota_wait": self.quota_wait,
         }
 
 
@@ -429,13 +437,15 @@ def _profile_provider(config, name: str) -> providers_mod.Provider:
 def plan_run(
     provider: providers_mod.Provider,
     role: str,
-    prompt_path: str,
+    prompt_path: str | None = None,
     cwd: str | None = None,
     timeout: int = DEFAULT_TIMEOUT_S,
     effort: str | None = None,
     model: str | None = None,
     *,
     profile: DelegateProfile | None = None,
+    prompt: str | None = None,
+    quota_wait: float | None = None,
 ) -> RunPlan:
     """Plan one delegate invocation. Pure; raises :class:`DelegateError` on bad input.
 
@@ -452,8 +462,15 @@ def plan_run(
         raise DelegateError(
             "bad-timeout", f"timeout must be a positive number of seconds: {timeout!r}"
         )
-    if not prompt_path:
-        raise DelegateError("no-prompt", "--prompt-file is required")
+    if prompt is not None and prompt_path:
+        raise DelegateError("no-prompt", "pass either --prompt or --prompt-file, not both")
+    if not prompt_path and not prompt:
+        raise DelegateError("no-prompt", "--prompt or --prompt-file is required")
+    if prompt is not None and not prompt.strip():
+        raise DelegateError("no-prompt", "--prompt cannot be empty")
+    effective_quota_wait = float(DEFAULT_QUOTA_WAIT_S if quota_wait is None else quota_wait)
+    if effective_quota_wait < 0:
+        raise DelegateError("bad-timeout", f"quota-wait must be non-negative: {quota_wait!r}")
     # Normalised once, here, because a :class:`RunPlan` is a frozen JSON document: a
     # ``Path`` reaching this far would pass every predicate, land in ``cwd`` and in the
     # ``--add-dir`` argv, and then raise ``TypeError: Object of type PosixPath is not
@@ -501,7 +518,7 @@ def plan_run(
         vendor=provider.label_vendor(),
         role=role,
         transport=transport,
-        prompt_path=prompt_path,
+        prompt_path=str(prompt_path) if prompt_path else "",
         model=effective,
         cwd=cwd,
         timeout=timeout,
@@ -514,6 +531,8 @@ def plan_run(
         effort_applied=applied.applied,
         warnings=warnings,
         attribution=_attribution(provider, profile, effective),
+        prompt=prompt,
+        quota_wait=effective_quota_wait,
     )
 
 

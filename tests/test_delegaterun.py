@@ -12,6 +12,7 @@ import json
 import os
 import tempfile
 import unittest
+import unittest.mock as mock
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch
@@ -921,6 +922,19 @@ class DocumentShapeTest(unittest.TestCase):
         self.assertFalse(failure["ok"])
         self.assertEqual(failure["error_code"], "unknown-provider")
 
+    def test_a_detached_failure_carries_result_document_keys(self):
+        run = _Recorder(CommandResult(True, 0, "ok", stdout="ok"))
+        real = delegaterun.execute(_plan("claude"), _run=run, _read=_read)
+        detached = delegaterun._detached_failure(
+            {"run_id": "r1", "out_path": "/path/r1.out"},
+            code="lost",
+            message="process vanished",
+        )
+        self.assertEqual(set(real) | {"run_id", "out_path"}, set(detached))
+        self.assertEqual(detached["quota-wait"], 0.0)
+        self.assertFalse(detached["ok"])
+        self.assertEqual(detached["error_code"], "lost")
+
     def test_rate_limited_reads_the_vendors_own_prose(self):
         self.assertTrue(delegaterun.rate_limited("Error: RESOURCE_EXHAUSTED"))
         self.assertTrue(delegaterun.rate_limited("usage limit reached"))
@@ -1273,6 +1287,89 @@ class RecordPlanningFailureTest(unittest.TestCase):
     def test_an_unsafe_run_id_is_refused(self):
         with self.assertRaises(delegaterun.RunIdError):
             delegaterun.record_planning_failure(".", "../x", self.FAILURE, provider=None, role=None)
+
+
+class RetryableQuotaAndPromptTest(unittest.TestCase):
+    def test_retryable_quota_classification(self):
+        self.assertTrue(
+            delegaterun.retryable_quota(
+                "RESOURCE_EXHAUSTED (code 429): Resource has been exhausted, retryable: true"
+            )
+        )
+        self.assertTrue(
+            delegaterun.retryable_quota('status: 429\nerror: RESOURCE_EXHAUSTED\n"retryable": true')
+        )
+        self.assertFalse(delegaterun.retryable_quota("RESOURCE_EXHAUSTED: quota exceeded"))
+        self.assertFalse(
+            delegaterun.retryable_quota("RESOURCE_EXHAUSTED (code 429), retryable: false")
+        )
+        self.assertFalse(delegaterun.retryable_quota("model not found: gemini-9"))
+
+    def test_agy_retries_on_retryable_quota_and_succeeds(self):
+        calls = [
+            CommandResult(
+                False,
+                1,
+                "RESOURCE_EXHAUSTED (code 429), retryable: true",
+                stderr="RESOURCE_EXHAUSTED (code 429), retryable: true",
+            ),
+            CommandResult(
+                True,
+                0,
+                '{"event": "result", "result": {"response": "done"}}',
+                stdout='{"event": "result", "result": {"response": "done"}}',
+            ),
+        ]
+
+        def _run(*args, **kwargs):
+            return calls.pop(0)
+
+        plan = _plan("agy", "implement", timeout=900)
+        sleep = mock.Mock()
+        result = delegaterun.execute(plan, _run=_run, _read=_read, _sleep=sleep)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["text"], "done")
+        self.assertEqual(result["quota-wait"], 2.0)
+        sleep.assert_called_once_with(2.0)
+
+    def test_agy_retries_until_quota_wait_budget_exhausted(self):
+        fail_res = CommandResult(
+            False,
+            1,
+            "RESOURCE_EXHAUSTED (code 429), retryable: true",
+            stderr="RESOURCE_EXHAUSTED (code 429), retryable: true",
+        )
+        plan = _plan("agy", "implement", timeout=900)
+        object.__setattr__(plan, "quota_wait", 6.0) if hasattr(plan, "quota_wait") else None
+        sleep = mock.Mock()
+        result = delegaterun.execute(plan, _run=lambda *a, **k: fail_res, _read=_read, _sleep=sleep)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error_code"], "rate-limit")
+        self.assertEqual(result["quota-wait"], 6.0)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_agy_with_quota_wait_zero_does_not_retry(self):
+        fail_res = CommandResult(
+            False,
+            1,
+            "RESOURCE_EXHAUSTED (code 429), retryable: true",
+            stderr="RESOURCE_EXHAUSTED (code 429), retryable: true",
+        )
+        plan = _plan("agy", "implement", timeout=900)
+        object.__setattr__(plan, "quota_wait", 0.0) if hasattr(plan, "quota_wait") else None
+        sleep = mock.Mock()
+        result = delegaterun.execute(plan, _run=lambda *a, **k: fail_res, _read=_read, _sleep=sleep)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["quota-wait"], 0.0)
+        sleep.assert_not_called()
+
+    def test_execute_accepts_inline_prompt(self):
+        plan = _plan("agy", "implement", timeout=900)
+        object.__setattr__(plan, "prompt", "inline brief text")
+        run = _Recorder(CommandResult(True, 0, "{}", stdout="{}"))
+        result = delegaterun.execute(plan, _run=run)
+        self.assertTrue(result["ok"])
+        self.assertIn("inline brief text", run.calls[0][1]["stdin_text"])
 
 
 if __name__ == "__main__":  # pragma: no cover

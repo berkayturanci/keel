@@ -15654,6 +15654,63 @@ class DelegateCommandTest(unittest.TestCase):
         ran.assert_not_called()
         self.assertEqual(err, "")
 
+    def test_run_accepts_inline_prompt_flag(self):
+        rc, out, _err = run(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "agy",
+                "--role",
+                "implement",
+                "--prompt",
+                "inline brief",
+                "--print-argv",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["prompt"], "inline brief")
+
+    def test_run_accepts_quota_wait_flag(self):
+        rc, out, _err = run(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "agy",
+                "--role",
+                "implement",
+                "--prompt",
+                "inline brief",
+                "--quota-wait",
+                "120",
+                "--print-argv",
+            ]
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["quota_wait"], 120.0)
+
+    def test_delegate_child_argv_carries_prompt_and_quota_wait(self):
+        args = cli.build_parser().parse_args(
+            [
+                "delegate",
+                "run",
+                "--provider",
+                "agy",
+                "--role",
+                "implement",
+                "--prompt",
+                "inline brief",
+                "--quota-wait",
+                "90",
+            ]
+        )
+        child_argv = cli._delegate_child_argv(args, "run-123")
+        self.assertIn("--prompt", child_argv)
+        self.assertIn("inline brief", child_argv)
+        self.assertIn("--quota-wait", child_argv)
+        self.assertIn("90", child_argv)
+
     def test_run_shows_registry_warnings_and_shadowing_clashes_on_stderr(self):
         registry = self._registry_file(
             "providers:\n  grok:\n    transport: cli\n    command: cursor-agent\n    bogus: 1\n"
