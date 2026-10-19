@@ -370,7 +370,12 @@ class FinishCase(unittest.TestCase):
         item = self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0]
         if isinstance(item, Exception):
             raise item
-        return "gh-graphql", {"ci": item, "head_sha": "abc", "merge_state": "CLEAN"}
+        return "gh-graphql", {
+            "ci": item,
+            "head_sha": "abc",
+            "branch": "feat/test-branch",
+            "merge_state": "CLEAN",
+        }
 
     def _invoke(self, argv, *, capture):
         self.invocations.append((argv, capture))
@@ -412,6 +417,11 @@ class TestFinishChain(FinishCase):
         )
         self.assertEqual([a[0][0] for a in self.invocations], ["ship", "merge"])
         self.assertTrue(all(capture for _, capture in self.invocations))
+        ship = self.invocations[0][0]
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "abc")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "feat/test-branch")
 
     def test_reviews_are_posted_first_through_keel_review(self):
         self.snapshots = [_ci("pass")]
@@ -514,11 +524,30 @@ class TestFinishChain(FinishCase):
 
     def test_explicit_head_sha_and_branch_are_forwarded_to_ship(self):
         self.snapshots = [_ci("pass")]
-        rc, doc, _ = self.finish("--head-sha", "abc", "--branch", "feat/test")
+        rc, doc, _ = self.finish("--head-sha", "explicit-sha", "--branch", "feat/explicit")
         self.assertEqual(rc, 0)
         ship_argv = self.invocations[0][0]
-        self.assertEqual(ship_argv[ship_argv.index("--head-sha") + 1], "abc")
-        self.assertEqual(ship_argv[ship_argv.index("--branch") + 1], "feat/test")
+        self.assertEqual(ship_argv[ship_argv.index("--head-sha") + 1], "explicit-sha")
+        self.assertEqual(ship_argv[ship_argv.index("--branch") + 1], "feat/explicit")
+
+    def test_head_sha_and_branch_fall_back_to_local_git_when_snapshot_omits_them(self):
+        self.snapshot_patch.stop()
+        fake_snapshot = (
+            "gh-graphql",
+            {"ci": _ci("pass"), "head_sha": None, "branch": None, "merge_state": "CLEAN"},
+        )
+        with (
+            mock.patch("keel.cli._merge_snapshot_over_best_transport", return_value=fake_snapshot),
+            mock.patch("keel.cli.git.rev_parse", return_value="gitsha123"),
+            mock.patch("keel.cli.git.current_branch", return_value="local-branch"),
+        ):
+            rc, doc, _ = self.finish()
+        self.assertEqual(rc, 0, doc)
+        ship = self.invocations[0][0]
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "gitsha123")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "local-branch")
 
     def test_closure_without_reviews_is_refused_before_anything_runs(self):
         rc, _, err = _run(["finish", self.config, "--pr", "7", "--issue", "3", "--closure", "c"])
@@ -842,7 +871,12 @@ class TestFinishAgainstTheRealHandlers(FinishCase):
 
     def test_the_real_snapshot_reader_accepts_the_namespace_the_wait_builds(self):
         rollup = [{"name": "build", "status": "COMPLETED", "conclusion": "SUCCESS"}]
-        payload = {"headRefOid": "abc", "mergeStateStatus": "CLEAN", "statusCheckRollup": rollup}
+        payload = {
+            "headRefOid": "abc",
+            "headRefName": "feat/graphql-branch",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": rollup,
+        }
         seen, fake = self._gh({"pr view": json.dumps(payload)})
         self.snapshot_patch.stop()
         with (
@@ -851,11 +885,29 @@ class TestFinishAgainstTheRealHandlers(FinishCase):
         ):
             rc, doc, _ = self.finish()
         self.assertEqual(rc, 0, doc)
-        self.assertEqual(seen[0][:3], ["gh", "pr", "view"])
+        self.assertEqual(
+            seen[0],
+            [
+                "gh",
+                "pr",
+                "view",
+                "7",
+                "--json",
+                "headRefOid,headRefName,mergeStateStatus,statusCheckRollup",
+            ],
+        )
         self.assertEqual(doc["steps"][0]["ci"]["state"], "pass")
+        ship = self.invocations[0][0]
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "abc")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "feat/graphql-branch")
 
     def test_the_real_snapshot_reader_over_rest_also_accepts_it(self):
-        pull = {"head": {"sha": "abc"}, "mergeable_state": "clean"}
+        pull = {
+            "head": {"sha": "abc", "ref": "feat/rest-branch"},
+            "mergeable_state": "clean",
+        }
         empty = {"check_runs": [], "total_count": 0}
         seen, fake = self._gh(
             {"check-runs": json.dumps(empty), "pulls/7": json.dumps(pull), "status": "[]"}
@@ -868,6 +920,11 @@ class TestFinishAgainstTheRealHandlers(FinishCase):
             rc, doc, _ = self.finish("--transport", "rest")
         self.assertEqual(rc, 0, doc)
         self.assertEqual(doc["steps"][0]["ci"]["state"], "no-checks")
+        ship = self.invocations[0][0]
+        self.assertIn("--head-sha", ship)
+        self.assertEqual(ship[ship.index("--head-sha") + 1], "abc")
+        self.assertIn("--branch", ship)
+        self.assertEqual(ship[ship.index("--branch") + 1], "feat/rest-branch")
 
     def test_finish_end_to_end_ship_and_merge_see_matching_gates_sha(self):
         subprocess.run(["git", "init", "-q", self.dir], check=True)

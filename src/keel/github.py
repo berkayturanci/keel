@@ -574,7 +574,7 @@ def pr_merge_snapshot(pr: int | str, *, cwd: str | None = None, _run=None) -> Co
             "view",
             str(pr),
             "--json",
-            "headRefOid,mergeStateStatus,statusCheckRollup",
+            "headRefOid,headRefName,mergeStateStatus,statusCheckRollup",
         ],
         cwd=cwd,
         **_kw(_run),

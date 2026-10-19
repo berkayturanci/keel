@@ -9379,8 +9379,8 @@ def _finish_step(
             consent=consent_flags,
         )
     elif name == finish.STEP_SHIP:
-        head_sha = getattr(args, "head_sha", None) or git.rev_parse("HEAD", cwd=args.root)
-        branch = getattr(args, "branch", None) or git.current_branch(cwd=args.root)
+        head_sha = getattr(args, "head_sha", None)
+        branch = getattr(args, "branch", None)
         argv = finish.ship_argv(
             path=args.path,
             root=args.root,
