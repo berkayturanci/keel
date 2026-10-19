@@ -905,23 +905,52 @@ def verified_findings(panel: Panel) -> list[Finding]:
     suggestion, ``nit`` is advisory — the same mapping a host reviewer's findings
     get, which is the whole point of the panel being the review rather than a
     second opinion beside it.
+
+    Findings verified by consensus are carried first. Any minor finding raised
+    by a panelist that was not part of a verified consensus group is carried
+    as a single-reviewer minor tagged with its source (#1546), so a panelist's
+    non-blocking remark reaches the s9 fix synthesis instead of being dropped.
     """
     out: list[Finding] = []
+    seen: set[tuple[str | None, int | None, str]] = set()
     for record in panel.verified:
         reviewers = record.get("reviewers") or []
         source = f"jury:{reviewers[0]}" if reviewers else "jury:consensus"
         path = record.get("path")
         line = record.get("line")
+        message = record.get("message") or "(jury finding)"
+        seen.add((path, line, message))
         out.append(
             Finding(
                 severity=record["severity"],
-                message=record["message"],
+                message=message,
                 source=source,
                 path=path,
                 line=line,
                 anchorable=bool(path) and isinstance(line, int),
             )
         )
+    for ballot in _review_ballots(panel.ballots):
+        for finding in ballot.findings:
+            if finding.get("severity") != "minor":
+                continue
+            path = finding.get("path")
+            line = finding.get("line")
+            message = finding.get("message") or "(jury finding)"
+            key = (path, line, message)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                Finding(
+                    severity="minor",
+                    message=message,
+                    source=f"jury:{ballot.reviewer}",
+                    path=path,
+                    line=line,
+                    anchorable=bool(path) and isinstance(line, int),
+                )
+            )
     return out
 
 

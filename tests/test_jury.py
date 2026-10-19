@@ -740,6 +740,147 @@ class TestVerifiedFindings(unittest.TestCase):
         )
         self.assertEqual(jury.verified_findings(panel)[0].message, "(jury finding)")
 
+    def test_single_panelist_minor_finding_reaches_s9_synthesis(self):
+        """A panelist's minor finding is carried when no consensus group verified it (#1546)."""
+        report = {
+            "findings": [
+                {
+                    "severity": "minor",
+                    "file": "migrations/0002.py",
+                    "line": 14,
+                    "claim": "editing an already-numbered migration won't reach applied DBs",
+                },
+                {
+                    "severity": "major",
+                    "file": "src/danger.py",
+                    "line": 1,
+                    "claim": "unverified major should never gate",
+                },
+                {
+                    "severity": "nit",
+                    "file": "src/style.py",
+                    "line": 2,
+                    "claim": "trailing space",
+                },
+            ],
+            "reviewers": [
+                {
+                    "name": "claude",
+                    "verdict": "COMMENT",
+                    "findings": [0, 1, 2],
+                    "counts_as_review": True,
+                    "scope": "Checked migrations",
+                }
+            ],
+            "consensus": [],
+        }
+        panel = jury.parse_panel(report)
+        found = jury.verified_findings(panel)
+
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, "minor")
+        self.assertEqual(
+            found[0].message,
+            "editing an already-numbered migration won't reach applied DBs",
+        )
+        self.assertEqual(found[0].source, "jury:claude")
+        self.assertEqual(found[0].path, "migrations/0002.py")
+        self.assertEqual(found[0].line, 14)
+        self.assertTrue(found[0].anchorable)
+
+    def test_single_panelist_minor_finding_deduplicates_against_verified_consensus(self):
+        """A minor finding already verified in consensus is not duplicated (#1546)."""
+        report = {
+            "findings": [
+                {
+                    "severity": "minor",
+                    "file": "migrations/0002.py",
+                    "line": 14,
+                    "claim": "numbered migration edited",
+                },
+            ],
+            "consensus": [
+                {
+                    "representative": {
+                        "severity": "minor",
+                        "file": "migrations/0002.py",
+                        "line": 14,
+                        "claim": "numbered migration edited",
+                    },
+                    "reviewers": ["claude", "gemini"],
+                    "verification_status": "verified",
+                }
+            ],
+            "reviewers": [
+                {
+                    "name": "claude",
+                    "verdict": "COMMENT",
+                    "findings": [0],
+                    "counts_as_review": True,
+                    "scope": "Checked migrations",
+                },
+                {
+                    "name": "gemini",
+                    "verdict": "COMMENT",
+                    "findings": [0],
+                    "counts_as_review": True,
+                    "scope": "Checked migrations",
+                },
+            ],
+        }
+        panel = jury.parse_panel(report)
+        found = jury.verified_findings(panel)
+
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].source, "jury:claude")
+        self.assertEqual(found[0].severity, "minor")
+
+    def test_single_panelist_minor_finding_deduplicates_across_panelists(self):
+        """Identical unverified minor findings from multiple panelists are deduplicated (#1546)."""
+        report = {
+            "findings": [
+                {
+                    "severity": "minor",
+                    "file": "migrations/0002.py",
+                    "line": 14,
+                    "claim": "numbered migration edited",
+                },
+            ],
+            "consensus": [],
+            "reviewers": [
+                {
+                    "name": "claude",
+                    "verdict": "COMMENT",
+                    "findings": [0],
+                    "counts_as_review": True,
+                    "scope": "Checked migrations",
+                },
+                {
+                    "name": "gemini",
+                    "verdict": "COMMENT",
+                    "findings": [0],
+                    "counts_as_review": True,
+                    "scope": "Checked migrations",
+                },
+            ],
+        }
+        panel = jury.parse_panel(report)
+        found = jury.verified_findings(panel)
+
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].source, "jury:claude")
+        self.assertEqual(found[0].severity, "minor")
+
+    def test_an_abstaining_panelist_minor_finding_does_not_reach_s9(self):
+        """An abstaining panelist's remarks are not reviews and do not reach s9 (#1546)."""
+        ballot = jury.Ballot(
+            reviewer="alpha",
+            verdict="ABSTAIN",
+            findings=({"severity": "minor", "path": "a.py", "line": 1, "message": "msg"},),
+        )
+        panel = jury.Panel(ballots=(ballot,))
+        self.assertEqual(jury.verified_findings(panel), [])
+
 
 class TestJuryVerdictRecord(unittest.TestCase):
     def test_the_record_declares_the_panel_it_came_from(self):
