@@ -635,6 +635,7 @@ class TheMergeFollowup(unittest.TestCase):
             self.assertIsNone(error)
             self.assertTrue(record["filed"])
             self.assertEqual(record["head_sha"], HEAD)
+            create.assert_called_once()
 
             config = cfg.load_config(_config(tmp))
             args = argparse.Namespace(pr=7, root=tmp, dry_run=False)
