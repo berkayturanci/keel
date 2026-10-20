@@ -60,6 +60,14 @@ REQUEST_CHANGES_VERDICTS = frozenset({"REQUEST_CHANGES", "CHANGES_REQUESTED", "N
 VERDICT_NOT_APPROVED_FINDING = "review-verdict-not-approved"
 #: The finding a non-approving jury verdict at the current head raises (#1429).
 JURY_NOT_APPROVED_FINDING = "jury-verdict-not-approved"
+#: The one consensus the opt-in ``team.jury.comment_consensus`` rule can accept (#1570).
+COMMENT_CONSENSUS = "COMMENT"
+#: Findings-summary labels that block under the COMMENT-consensus rule, the non-blocking
+#: labels it accepts, and the label it leaves out of the follow-up issue (advisory, never
+#: gates — ``findings.py``, #1570).
+_COMMENT_BLOCKING_LABELS = frozenset({"critical", "major"})
+_COMMENT_NON_BLOCKING_LABELS = frozenset({"minor", "nit"})
+_COMMENT_ADVISORY_LABEL = "nit"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 #: The comment a live ship run posts on its PR right after creating it (#1013). It is
 #: the *primary* arming signal for the evidence gate: unlike the branch name it is
@@ -484,12 +492,38 @@ def verify(
         and not (item.id in deferred or item.kind in deferred or "all" in deferred)
         for item in items
     )
-    jury_refusal = _jury_not_approved_finding(
-        pr_comments or [],
-        head_sha=head_sha,
-        covered_heads=covered_heads,
-        enforced=enforced,
-        blocking=jury_required,
+    # The opt-in COMMENT-consensus rule (#1570): a COMMENT panel with no blocking finding
+    # and enough approving reviewers at the head satisfies `jury-verdict`. When it is on
+    # and does not apply, the refusal below says which of its conditions failed.
+    # Only where `jury-verdict` is required: an advisory panel has no requirement to meet,
+    # and its COMMENT is reported as it always was, with no follow-up filed for it.
+    consensus = (
+        comment_consensus(
+            review_contract,
+            pr_comments or [],
+            pr_reviews or [],
+            head_sha=head_sha,
+            covered_heads=covered_heads,
+            enforced=enforced,
+            pr_title=pr_title,
+        )
+        if jury_required
+        else None
+    )
+    consensus_applied = consensus is not None and consensus["applied"]
+    if consensus_applied:
+        counts["jury_verdict"] = 1
+    jury_refusal = (
+        None
+        if consensus_applied
+        else _jury_not_approved_finding(
+            pr_comments or [],
+            head_sha=head_sha,
+            covered_heads=covered_heads,
+            enforced=enforced,
+            blocking=jury_required,
+            comment_rule=consensus,
+        )
     )
     results = []
     for item in items:
@@ -599,7 +633,111 @@ def verify(
         "results": results,
         "counts": counts,
         "findings": findings,
+        "comment_consensus": consensus,
     }
+
+
+def comment_consensus(
+    review_contract: dict[str, Any],
+    pr_comments: list[dict[str, Any]],
+    pr_reviews: list[dict[str, Any]],
+    *,
+    head_sha: str | None,
+    covered_heads: Collection[str] = (),
+    enforced: bool = True,
+    pr_title: str = "",
+) -> dict[str, Any] | None:
+    """Whether the opt-in COMMENT-consensus rule satisfies ``jury-verdict`` here (#1570).
+
+    ``None`` when the rule has nothing to say: it is off on this contract
+    (``jury.comment_consensus`` is not a count), no jury verdict stands for the head, or
+    the standing consensus is not ``COMMENT`` — an approval needs no rule, and
+    ``REQUEST_CHANGES``, ``ABSTAIN``, ``NO_QUORUM`` or an unreadable line is a hard stop
+    this rule never relaxes.
+
+    Otherwise a record: ``applied`` and, when it is not, the ``reason`` naming the first
+    condition that failed. All of these must hold, and each fails closed:
+
+    * **a resolved head** (:func:`keel.juryavail.is_pinnable_head`). This rule removes a
+      requirement, so — like the vendor count (#1069) — it is never read off a blank head;
+    * **a findings summary keel rendered** (:func:`keel.artifacts.jury_verdict_summary`),
+      because "unreadable" is never the same answer as "no findings";
+    * **no** ``critical`` / ``major`` **item** in it, and every item labeled ``minor`` or
+      ``nit`` (any unrecognised or missing severity blocks, #1570);
+    * **no review verdict at the head that fails to approve**, and **at least
+      ``min_approvals`` distinct approving ones** — the same tally the
+      ``review-verdict-N`` items count (:func:`_review_tally`: trusted, head-pinned, with
+      substance, judged at each reviewer's latest word), at the head under verification or
+      a head it covers by capture commits alone.
+
+    ``minors`` are the summary's remaining items, nits left out: what ``keel merge`` files
+    as the follow-up issue when the rule is what passed the gate.
+    """
+    jury = review_contract.get("jury")
+    required = jury.get("comment_consensus") if isinstance(jury, dict) else None
+    if isinstance(required, bool) or not isinstance(required, int):
+        return None
+    standing = _standing_jury_verdict(
+        pr_comments, head_sha=head_sha, covered_heads=covered_heads, enforced=enforced
+    )
+    if standing is None:
+        return None
+    body = _body(standing)
+    if jury_verdict_token(body) != COMMENT_CONSENSUS:
+        return None
+    record: dict[str, Any] = {
+        "applied": False,
+        "reason": None,
+        "head": _verdict_head(standing, body),
+        "required_approvals": required,
+        "approvals": 0,
+        "minors": [],
+    }
+    if not juryavail.is_pinnable_head(head_sha):
+        record["reason"] = "no head was resolved to hold the review verdicts to"
+        return record
+    # Imported here: `artifacts` renders the verdict this module reads and imports it.
+    from . import artifacts
+
+    summary = artifacts.jury_verdict_summary(body)
+    if summary is None:
+        record["reason"] = "its findings summary is not one keel rendered and cannot be read"
+        return record
+    # Fail closed on unknown severities (#1570): only an explicit `minor:` or `nit:` item
+    # is non-blocking; anything else (no `:`, `blocker:`, empty or unknown token) holds.
+    labelled = [
+        (item.partition(":")[0].strip().lower() if ":" in item else "", item) for item in summary
+    ]
+    blocking = [item for label, item in labelled if label in _COMMENT_BLOCKING_LABELS]
+    if blocking:
+        record["reason"] = f"its findings summary carries a blocking finding ({blocking[0]})"
+        return record
+    unrecognised = [item for label, item in labelled if label not in _COMMENT_NON_BLOCKING_LABELS]
+    if unrecognised:
+        record["reason"] = (
+            "its findings summary carries an item with an unrecognised severity "
+            f"({unrecognised[0]})"
+        )
+        return record
+    tally = _review_tally(
+        [*pr_comments, *pr_reviews],
+        head_sha=head_sha,
+        covered_heads=covered_heads,
+        enforced=enforced,
+        pr_title=pr_title,
+    )
+    record["approvals"] = len(tally.accepted)
+    if tally.not_approved:
+        record["reason"] = f"{len(tally.not_approved)} review verdict(s) at the head do not approve"
+        return record
+    if len(tally.accepted) < required:
+        record["reason"] = (
+            f"{len(tally.accepted)} of {required} required approving review verdicts at the head"
+        )
+        return record
+    record["applied"] = True
+    record["minors"] = [item for label, item in labelled if label != _COMMENT_ADVISORY_LABEL]
+    return record
 
 
 def refusal_reason(verification: dict[str, Any]) -> str:
@@ -2618,8 +2756,13 @@ def _jury_not_approved_finding(
     covered_heads: Collection[str] = (),
     enforced: bool,
     blocking: bool,
+    comment_rule: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """The finding for a standing jury verdict whose consensus does not approve (#1429).
+
+    ``comment_rule`` is :func:`comment_consensus`'s record when the opt-in rule was on
+    and weighed this verdict without applying; its ``reason`` joins the message, so the
+    operator is told which condition held the merge rather than only the consensus.
 
     ``major`` when ``blocking`` — the ``jury-verdict`` item is required and not deferred —
     so a rejecting panel **holds** the merge with its consensus and head named
@@ -2643,6 +2786,8 @@ def _jury_not_approved_finding(
         if token
         else f"the jury verdict at {head} has no readable AI Jury verdict line."
     )
+    if comment_rule is not None:
+        message = f"{message[:-1]} (comment_consensus not met: {comment_rule['reason']})."
     return {
         "id": JURY_NOT_APPROVED_FINDING,
         "severity": "major" if blocking else "minor",

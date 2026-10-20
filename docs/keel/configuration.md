@@ -546,6 +546,80 @@ keeps the `config_hash` it had before the setting existed. Writing it explicitly
 `fallback`, the value it would default to — is a config change and rotates the hash, which
 is the guarantee `knobs.team` has made since #1014: the hash changes *iff* `team` does.
 
+### `jury.comment_consensus` — a COMMENT panel with nothing blocking
+
+By default the `jury-verdict` requirement is met only by a consensus of `APPROVE` / `LGTM` /
+`PASS`. A panel that comes back `COMMENT` with only minor findings is refused at merge as
+`jury-verdict-not-approved`, and the ways forward are another panel round (which tends to say
+`COMMENT` again) or an owner override (which leaves the minors untracked).
+
+It is off until a project sets it:
+
+```yaml
+knobs:
+  team:
+    jury:
+      comment_consensus:
+        enabled: true
+        min_approvals: 2     # optional; the default, and the floor
+```
+
+With it on, a standing jury verdict whose consensus is `COMMENT` satisfies `jury-verdict` (and
+the s8 `jury` gate) when **all** of these hold:
+
+- the head is a resolved commit. The rule removes a requirement, so it is never read off a
+  blank head;
+- the verdict's findings summary is one keel rendered and can be read;
+- that summary has no `critical` or `major` item — only `minor` and `nit` items are accepted,
+  and any item with an unrecognised or missing severity label blocks;
+- no review verdict at the head fails to approve, and at least `min_approvals` distinct
+  reviewers approve there. These are the same verdicts the `review-verdict-N` items count:
+  trusted, pinned to the head (or to a head it covers by capture commits alone), with
+  substance, and judged by each reviewer's latest verdict. Approvals are counted as distinct
+  reviewer identities as `review-verdict` already does (the verdict's `reviewer:` name), not
+  distinct GitHub accounts.
+
+`REQUEST_CHANGES`, `ABSTAIN`, `NO_QUORUM`, an unreadable consensus line, or any blocking
+finding still stops the merge. When the rule is on and doesn't apply, the
+`jury-verdict-not-approved` message says which condition failed:
+`… is COMMENT, not an approval (comment_consensus not met: 1 of 2 required approving review
+verdicts at the head).` The evidence report carries the rule's record as
+`comment_consensus`.
+
+**The minors become one follow-up issue.** When this rule is what passed the gate and the
+summary has `minor` items (nits are advisory and are left out), `keel merge` files one issue
+listing them, with the pull request and head, *before* it merges. It records the issue in
+the run ledger as a `jury_followup` record ([command-contracts.md](command-contracts.md#run-ledger-block)),
+so a retried merge reuses the issue and doesn't file a second one. If the issue can't be
+filed, the merge is refused: the minors are never merged past untracked. If the follow-up
+issue was filed but recording it in the run ledger failed, the operator should close the
+duplicate after the retry files a new one (or note the existing issue number in the PR);
+each new head can file its own follow-up. `--dry-run` reports
+what it would file (`comment_consensus_followup` in the merge payload) and files nothing.
+
+### `jury.base_facts` — the claims a change makes about code outside its diff
+
+The jury reads only the diff. A change that relies on something the diff doesn't show (an
+existing check upstream, an invariant a caller enforces, the base branch's current
+behaviour) leaves the panel unable to check that reliance, and a panel that can't check
+hedges. `base_facts: true` does two things:
+
+- the PR body `keel ship --json` renders (`result.artifact_bodies.pr_body`) gets a
+  `## Base facts` section after `Context / Root Cause`, for the implementer to list each such
+  fact with a `path:line` or a commit (or `none`);
+- keel hands that section to the jury ahead of the diff, where `git format-patch` puts a
+  commit message, framed as claims to verify against the head checkout the panel runs in. A
+  false claim, or one the change depends on and the checkout can't confirm, is a finding. The
+  author's word is input to the review, never a substitute for it.
+
+The s8 `jury` gate reads the section off the pull request itself (`keel ship --pr N`). The s7
+panel the adapter dispatches gets the same input from `keel jury-diff` ([cli.md](cli.md)).
+Reading is fail-soft: an unreadable pull request, or a section that is missing, empty, still
+the template prompt, or `none`, means the jury reads the diff alone, as it did before.
+
+**`config_hash`.** Both settings are absent from the canonical `team` block when unset, so a
+project that doesn't use them keeps its hash.
+
 **Tier keys are quoted strings** (`"1"`, `"2"`, `"3"`). YAML reads a bare `1:` as an
 integer key, which a JSON schema cannot describe; keel says so instead of accepting it and
 meaning something else.

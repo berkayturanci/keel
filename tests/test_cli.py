@@ -9548,6 +9548,52 @@ class TestCoreMerge(unittest.TestCase):
         merge_mock.assert_not_called()
         self.assertEqual(evidence_mock.call_args.kwargs["phase"], cli.evidence.PHASE_PRE_MERGE)
 
+    def test_merge_reports_and_refuses_on_the_comment_consensus_followup(self):
+        """#1570: the follow-up record rides the payload, and a filing failure refuses."""
+        fake_report = _merge_capability_report()
+        followup = {"head_sha": "abc", "findings": ["minor: x"], "issue": None}
+        for error, expected_rc in ((None, 0), ("could not file the follow-up issue: x", 1)):
+            with self.subTest(error=error):
+                with (
+                    patch("keel.cli.runtime.detect", return_value=fake_report),
+                    patch("keel.cli.window.is_merge_open", return_value=True),
+                    patch(
+                        "keel.cli.github.pr_merge_snapshot",
+                        return_value=_json_result(
+                            {
+                                "headRefOid": "abc",
+                                "mergeStateStatus": "CLEAN",
+                                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+                            }
+                        ),
+                    ),
+                    patch(
+                        "keel.cli._verify_merge_evidence",
+                        return_value={
+                            "head_sha": "abc",
+                            "enforced": True,
+                            "verification": {"status": "pass", "missing": []},
+                        },
+                    ),
+                    patch("keel.cli.ledger.read_records", return_value=[]),
+                    patch(
+                        "keel.cli.ledger.gates_pass_for_head",
+                        return_value=(True, {"run_id": "RUN-1"}),
+                    ),
+                    patch(
+                        "keel.cli._comment_consensus_followup", return_value=(followup, error)
+                    ) as followup_mock,
+                    patch("keel.cli.github.merge_pr") as merge_mock,
+                ):
+                    rc, out, _ = run(_merge_args(json_out=True, dry_run=True))
+                data = json.loads(out)
+                self.assertEqual(rc, expected_rc)
+                self.assertEqual(data["comment_consensus_followup"], followup)
+                self.assertEqual(followup_mock.call_args.args[3], "abc")
+                merge_mock.assert_not_called()
+                if error:
+                    self.assertEqual(data["reason"], error)
+
     def test_merge_executes_and_reports_gh_merge_failure(self):
         fake_report = _merge_capability_report()
         with (
@@ -19770,8 +19816,12 @@ class TestLedgerReadersIgnoreConsentDelegations(TestLedgerReadersSkipUnknownKind
             ["ship_run", "consent_delegation", "ship_run"],
         )
         self.assertEqual(mixed["record_count"], 3)
-        self.assertEqual(mixed["record_types"], {"ship_run": 2, "consent_delegation": 1})
-        self.assertEqual(plain["record_types"], {"ship_run": 2, "consent_delegation": 0})
+        self.assertEqual(
+            mixed["record_types"], {"ship_run": 2, "consent_delegation": 1, "jury_followup": 0}
+        )
+        self.assertEqual(
+            plain["record_types"], {"ship_run": 2, "consent_delegation": 0, "jury_followup": 0}
+        )
         self.assertEqual(mixed["capture_health"], plain["capture_health"])
         self.assertIn("by type       : ship_run 2, consent_delegation 1", text)
 

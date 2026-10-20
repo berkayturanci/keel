@@ -407,6 +407,11 @@ def resolve_review_contract(
     # ai-jury #682 was opened for: a review that says nothing about the panel it replaced.
     jury_record["panel_unavailable"] = panel_unavailable
     jury_record["availability"] = None if assignment is None else assignment["jury"]["availability"]
+    # The opt-in COMMENT-consensus rule (#1570) travels on the contract for the same
+    # reason: `keel merge` and `evidence-verify` judge the verdict off the contract alone.
+    jury_record["comment_consensus"] = (
+        None if assignment is None else assignment["jury"].get("comment_consensus")
+    )
     if panel_is_jury:
         count, source = _jury_panel_size(jury_record, jury_panel_size), "jury"
     pack = policy_pack or {}

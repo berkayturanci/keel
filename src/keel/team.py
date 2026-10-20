@@ -223,6 +223,13 @@ class TeamPolicy:
     #: :data:`JURY_ON_UNAVAILABLE_DEFAULT`; kept tri-state at the config boundary so an
     #: explicit ``fallback`` stays distinguishable from silence for ``config_hash``.
     jury_on_unavailable: str | None = None
+    #: ``team.jury.comment_consensus`` — the approving review verdicts a ``COMMENT``
+    #: consensus needs to satisfy ``jury-verdict`` (#1570). ``None`` is off, which is
+    #: the default; when on it is at least :data:`COMMENT_CONSENSUS_MIN_APPROVALS`.
+    jury_comment_consensus: int | None = None
+    #: ``team.jury.base_facts`` — the PR body carries a ``## Base facts`` section and the
+    #: jury is handed it ahead of the diff (#1570). ``None`` is unset, which is off.
+    jury_base_facts: bool | None = None
     fix: Seat | None = None
     #: The seat that coordinates a batch of ships — the team lead a swarm cluster or a
     #: work block reports through. Defaults to the host agent driving the run.
@@ -327,6 +334,26 @@ def _benches(raw: Any) -> dict[str, Bench]:
     return benches
 
 
+#: The fewest approving review verdicts the ``COMMENT``-consensus rule accepts (#1570):
+#: one approval beside a panel that did not approve is a single opinion, not consensus.
+COMMENT_CONSENSUS_MIN_APPROVALS = 2
+
+
+def _comment_consensus(raw: Any) -> int | None:
+    """``team.jury.comment_consensus`` -> its approval count when enabled, else ``None``.
+
+    Fails closed on shape: anything but ``enabled: true`` is off, and a ``min_approvals``
+    below :data:`COMMENT_CONSENSUS_MIN_APPROVALS` (or not an integer) reads as that floor,
+    so a malformed block can never lower the bar the schema sets.
+    """
+    if not isinstance(raw, Mapping) or raw.get("enabled") is not True:
+        return None
+    count = raw.get("min_approvals")
+    if isinstance(count, bool) or not isinstance(count, int):
+        return COMMENT_CONSENSUS_MIN_APPROVALS
+    return max(count, COMMENT_CONSENSUS_MIN_APPROVALS)
+
+
 def parse_team(raw: Any) -> TeamPolicy:
     """Parse a ``knobs.team`` block (``None``/malformed -> an unconfigured policy)."""
     if not isinstance(raw, Mapping):
@@ -348,6 +375,7 @@ def parse_team(raw: Any) -> TeamPolicy:
     default_review = _seats(review.get("default")) if "default" in review else None
     jury = raw.get("jury") if isinstance(raw.get("jury"), Mapping) else {}
     min_vendors = jury.get("min_vendors")
+    base_facts = jury.get("base_facts")
     return TeamPolicy(
         configured=True,
         implement=_seat(implement.get("default")),
@@ -358,6 +386,8 @@ def parse_team(raw: Any) -> TeamPolicy:
         jury_mode=_text(jury.get("mode")),
         jury_min_vendors=min_vendors if isinstance(min_vendors, int) else None,
         jury_on_unavailable=_text(jury.get("on_unavailable")),
+        jury_comment_consensus=_comment_consensus(jury.get("comment_consensus")),
+        jury_base_facts=base_facts if isinstance(base_facts, bool) else None,
         fix=_seat(raw.get("fix")),
         lead=_seat(raw.get("lead")),
         by_difficulty=_benches(raw.get("by_difficulty")),
@@ -434,6 +464,14 @@ def canonical(policy: TeamPolicy) -> dict[str, Any]:
     # `on_unavailable` keeps the `config_hash` it had before the setting existed (#1066).
     if policy.jury_on_unavailable is not None:
         jury["on_unavailable"] = policy.jury_on_unavailable
+    # Both absent when unset, for the same reason (#1570).
+    if policy.jury_comment_consensus is not None:
+        jury["comment_consensus"] = {
+            "enabled": True,
+            "min_approvals": policy.jury_comment_consensus,
+        }
+    if policy.jury_base_facts is not None:
+        jury["base_facts"] = policy.jury_base_facts
     if jury:
         team["jury"] = jury
     if policy.fix is not None:
@@ -998,6 +1036,8 @@ def resolve_assignment(
             # configured a panel — which is the silent downgrade #1066 exists to refuse.
             "panel_configured": review_source == JURY_FALLBACK_SOURCE or panel == JURY_PANEL,
             "on_unavailable": jury_on_unavailable(policy.jury_on_unavailable),
+            # The approvals a COMMENT consensus needs, or `None` when the rule is off (#1570).
+            "comment_consensus": policy.jury_comment_consensus,
             # `None` until something measured it: `keel plan --no-probe`-shaped callers
             # and every non-panel tier resolve without a probe, and an absent measurement
             # must not read as "we checked and it was fine".

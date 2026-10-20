@@ -7,6 +7,7 @@ descriptions, review verdicts, jury verdicts, or extension result summaries.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from . import evidence
@@ -79,8 +80,14 @@ def render_pr_body(
     testing: list[str] | tuple[str, ...] = (),
     fix_evidence: list[str] | tuple[str, ...] | None = (),
     docs_impact: str | None = None,
+    base_facts: bool = False,
 ) -> str:
-    """Render the canonical PR body used by ship implementers."""
+    """Render the canonical PR body used by ship implementers.
+
+    ``base_facts`` (``team.jury.base_facts``, #1570) adds a :data:`BASE_FACTS_HEADING`
+    section the implementer fills; keel hands it to the jury ahead of the diff
+    (:func:`base_facts_section`, :func:`keel.jury.with_base_facts`).
+    """
     intake = issue_intake if isinstance(issue_intake, dict) else {}
     lines = [
         "## Summary",
@@ -89,8 +96,10 @@ def render_pr_body(
         "## Context / Root Cause",
         _value(intake.get("objective"), "See the linked issue for context."),
         "",
-        "## Changes Made",
     ]
+    if base_facts:
+        lines.extend([BASE_FACTS_HEADING, BASE_FACTS_PROMPT, ""])
+    lines.append("## Changes Made")
     # `None` is "git could not be read", which must not render as "nothing changed".
     if changed_files is None:
         lines.append("- The changed-file list could not be read from git.")
@@ -140,6 +149,74 @@ def render_pr_body(
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
+
+
+#: The PR-body section the jury is handed ahead of the diff (#1570), and the prompt the
+#: rendered body carries until the implementer replaces it. A section still holding the
+#: prompt states no facts: :func:`base_facts_section` reads it as absent.
+BASE_FACTS_HEADING = "## Base facts"
+BASE_FACTS_PROMPT = (
+    "- Not stated yet. List each fact about code outside this diff that the change relies "
+    "on (an existing check upstream, an invariant a caller enforces, current behaviour on "
+    "the base branch), each with a `path:line` or a commit. The jury verifies every one "
+    "against the head checkout; write `none` if the change relies on nothing outside the diff."
+)
+
+
+#: Values in :data:`BASE_FACTS_HEADING` that declare no facts (#1570): ``none``, ``none.``,
+#: ``n/a``, and the PR template's ``N/A — <reason>`` / ``N/A - <reason>`` convention.
+_NO_BASE_FACTS_RE = re.compile(
+    r"(?:none\.?|n/a(?:\.?|\s*[-\u2013\u2014].*))",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def base_facts_section(pr_body: str | None) -> str | None:
+    """The body of a PR's :data:`BASE_FACTS_HEADING` section, or ``None`` (#1570).
+
+    Everything after the heading up to the next ``## `` heading, stripped. ``None`` when
+    there is no such section, it is empty, it still carries :data:`BASE_FACTS_PROMPT`, or
+    it says ``none`` / ``none.`` / ``n/a`` / ``n/a — <reason>`` — each is a PR that states
+    no facts for the jury to check.
+    """
+    if not isinstance(pr_body, str):
+        return None
+    lines = pr_body.splitlines()
+    try:
+        start = [line.rstrip() for line in lines].index(BASE_FACTS_HEADING) + 1
+    except ValueError:
+        return None
+    section: list[str] = []
+    for line in lines[start:]:
+        if line.startswith("## "):
+            break
+        section.append(line)
+    text = "\n".join(section).strip()
+    cleaned = text.lstrip("-* ").strip().strip("`").strip()
+    if not cleaned or BASE_FACTS_PROMPT in text or _NO_BASE_FACTS_RE.fullmatch(cleaned):
+        return None
+    return text
+
+
+def render_jury_followup_issue(
+    *, pr_number: int, head_sha: str, findings: list[str] | tuple[str, ...]
+) -> tuple[str, str]:
+    """``(title, body)`` of the follow-up issue for a COMMENT panel's minors (#1570).
+
+    ``keel merge`` files it when ``team.jury.comment_consensus`` is what passed the gate,
+    so the findings the panel left are tracked instead of merged past and forgotten.
+    """
+    title = f"Follow up the jury's minor findings from #{pr_number}"
+    lines = [
+        f"The jury's consensus on #{pr_number} at `{head_sha}` was `COMMENT`, with no "
+        "blocking finding, and the review verdicts at that head approved, so "
+        "`team.jury.comment_consensus` let it merge. These are the minor findings the panel "
+        "left:",
+        "",
+    ]
+    lines.extend(f"- [ ] {' '.join(item.split())}" for item in findings)
+    lines.extend(["", f"Refs #{pr_number}"])
+    return title, "\n".join(lines) + "\n"
 
 
 def render_issue_update(
