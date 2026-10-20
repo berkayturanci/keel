@@ -21,7 +21,7 @@ import shutil
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any
 
@@ -158,11 +158,14 @@ def _gate_runner(
     posted_panel: tuple[bool, list[fnd.Finding]] | None = None,
     head_sha: str | None = None,
     base_facts: str | None = None,
+    comment_rule: dict[str, Any] | None = None,
 ):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
 
     ``base_facts`` is the PR's ``## Base facts`` section (#1570), read by
-    :func:`_pr_base_facts`; the jury reads it ahead of the diff.
+    :func:`_pr_base_facts`; the jury reads it ahead of the diff. ``comment_rule`` is
+    :func:`keel.evidence.comment_consensus`'s record when the opt-in COMMENT-consensus
+    rule is on (#1570).
 
     ``phases`` scopes the run the way ``run_jury`` scopes the panel: a spec whose phase
     is outside the set is reported ``not_run`` and its command is never executed. The s4
@@ -204,6 +207,7 @@ def _gate_runner(
                 timeout=jury_limit,
                 head_sha=head_sha,
                 base_facts=base_facts,
+                comment_rule=comment_rule,
             )
             # A jury that could not run (no CLI, empty diff) judged nothing: `SKIPPED`,
             # never `ok` (#1369).
@@ -255,6 +259,7 @@ def _posted_panel(
     transport,
     *,
     gating: bool,
+    review_contract: dict[str, Any] | None = None,
 ) -> tuple[gates.PanelReuse, tuple[bool, list[fnd.Finding]]] | None:
     """The jury verdict already posted for the head being certified, ready to reuse (#1437).
 
@@ -264,7 +269,10 @@ def _posted_panel(
     pull request and a head are known, and the transport reads comments, this reads the
     pull request's comments with the evidence gate's fetch and takes the standing jury
     verdict exactly as ``keel merge`` will (:func:`keel.evidence.standing_jury_verdict`:
-    trusted author, marker, the head or a head it covers, latest posted).
+    trusted author, marker, the head or a head it covers, latest posted). When
+    ``team.jury.comment_consensus`` is enabled (#1570), it also evaluates
+    :func:`keel.evidence.comment_consensus` over the PR's comments, reviews, head, covered
+    heads and title so the s8 ``jury`` gate and ``keel merge`` agree on a ``COMMENT`` panel.
 
     ``None`` — **convene the panel as before** — whenever any of that is missing, the
     comments cannot be read, no jury verdict stands for this head, or its summary is not
@@ -276,6 +284,8 @@ def _posted_panel(
     head = args.head_sha
     if pr is None or not head or transport.name != "gh" or not transport.supports("comments"):
         return None
+    contract = review_contract or {}
+    rule_enabled = gating and isinstance((contract.get("jury") or {}).get("comment_consensus"), int)
     try:
         owner_repo = _owner_repo(config)
         comments = _gh_json_list(
@@ -286,12 +296,33 @@ def _posted_panel(
         repo = pull_head.get("repo") if isinstance(pull_head.get("repo"), dict) else {}
         head_repo = repo.get("full_name") if isinstance(repo.get("full_name"), str) else None
         covered = _covered_heads(config, owner_repo, pr, head, cwd=args.root, head_repo=head_repo)
+        reviews = (
+            _gh_json_list(["repos", owner_repo, "pulls", str(pr), "reviews"], cwd=args.root)
+            if rule_enabled
+            else []
+        )
     except (OSError, ValueError):
         return None
     standing = evidence.standing_jury_verdict(comments, head_sha=head, covered_heads=covered)
     if standing is None:
         return None
-    result = jury.reuse_posted_verdict(str(standing.get("body") or ""), gating=gating)
+    pr_title = pull.get("title") if isinstance(pull.get("title"), str) else ""
+    comment_rule = (
+        evidence.comment_consensus(
+            contract,
+            comments,
+            reviews,
+            head_sha=head,
+            covered_heads=covered,
+            enforced=True,
+            pr_title=pr_title,
+        )
+        if rule_enabled
+        else None
+    )
+    result = jury.reuse_posted_verdict(
+        str(standing.get("body") or ""), gating=gating, comment_rule=comment_rule
+    )
     if result is None:
         return None
     comment_id = standing.get("id")
@@ -1459,7 +1490,11 @@ def _cmd_merge(args: argparse.Namespace) -> int:
             return _finish_merge(args, payload, gate_error, code=1)
 
         followup, followup_error = _comment_consensus_followup(
-            args, config, evidence_payload["verification"], head_sha
+            args,
+            config,
+            evidence_payload["verification"],
+            head_sha,
+            covered_heads=tuple(evidence_payload.get("covered_heads") or ()),
         )
         if followup is not None:
             payload["comment_consensus_followup"] = followup
@@ -1521,21 +1556,30 @@ def _comment_consensus_followup(
     config: cfg.ProjectConfig,
     verification: dict[str, Any],
     head_sha: str,
+    *,
+    covered_heads: Collection[str] = (),
 ) -> tuple[dict[str, Any] | None, str | None]:
     """File the follow-up issue for a COMMENT panel's minors before merging (#1570).
 
     ``(record, error)``. ``(None, None)`` when ``team.jury.comment_consensus`` is not what
     passed the gate. Otherwise ``record`` says what was filed — or, on a dry run, what
     would be — and ``error`` is a refusal: the merge never lands past minors it could not
-    track. One issue per pull request and head, keyed in the run ledger
-    (:data:`keel.ledger.RECORD_TYPE_JURY_FOLLOWUP`), so a retried merge reuses it.
+    track. One issue per pull request and consensus head, keyed in the run ledger
+    (:data:`keel.ledger.RECORD_TYPE_JURY_FOLLOWUP`) and matched across ``covered_heads``,
+    so a retried merge or an s10/s11 capture commit reuses it instead of filing another.
     """
     consensus = verification.get("comment_consensus")
     if not isinstance(consensus, dict) or not consensus.get("applied"):
         return None, None
+    consensus_head = consensus.get("head")
+    target_head = (
+        consensus_head.strip()
+        if isinstance(consensus_head, str) and consensus_head.strip()
+        else head_sha
+    )
     minors = [str(item) for item in consensus.get("minors") or ()]
     record: dict[str, Any] = {
-        "head_sha": head_sha,
+        "head_sha": target_head,
         "findings": minors,
         "issue": None,
         "filed": False,
@@ -1550,7 +1594,9 @@ def _comment_consensus_followup(
         )
     except ledger.LedgerError as exc:
         return record, f"invalid run ledger: {exc}"
-    existing = ledger.jury_followup_for_head(records, args.pr, head_sha)
+    existing = ledger.jury_followup_for_head(
+        records, args.pr, target_head, covered_heads=(head_sha, *covered_heads)
+    )
     if existing is not None:
         record["issue"] = existing["issue"]
         record["reused"] = True
@@ -1563,7 +1609,7 @@ def _comment_consensus_followup(
     except ValueError as exc:
         return record, f"{refusal}: {exc}"
     title, body = artifacts.render_jury_followup_issue(
-        pr_number=args.pr, head_sha=head_sha, findings=minors
+        pr_number=args.pr, head_sha=target_head, findings=minors
     )
     result = github.create_issue(owner_repo, title, body, cwd=args.root)
     created = github.rest_json(result)
@@ -1579,7 +1625,7 @@ def _comment_consensus_followup(
             path,
             ledger.build_jury_followup_record(
                 pr_number=args.pr,
-                head_sha=head_sha,
+                head_sha=target_head,
                 issue_number=number,
                 issue_url=issue["url"],
                 findings=minors,
@@ -2060,7 +2106,12 @@ def _cmd_ship(args: argparse.Namespace) -> int:
     )
     diff_text = git.diff(base_ref, jury_head_sha or "HEAD", cwd=args.root)
     posted = _posted_panel(
-        args, config, specs, transport, gating=review_contract["jury"]["mode"] == "gating"
+        args,
+        config,
+        specs,
+        transport,
+        gating=review_contract["jury"]["mode"] == "gating",
+        review_contract=review_contract,
     )
     outcomes, tdd_result = _run_planned_gates(
         specs,

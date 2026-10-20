@@ -564,17 +564,20 @@ knobs:
         min_approvals: 2     # optional; the default, and the floor
 ```
 
-With it on, a standing jury verdict whose consensus is `COMMENT` satisfies `jury-verdict` when
-**all** of these hold:
+With it on, a standing jury verdict whose consensus is `COMMENT` satisfies `jury-verdict` (and
+the s8 `jury` gate) when **all** of these hold:
 
 - the head is a resolved commit. The rule removes a requirement, so it is never read off a
   blank head;
 - the verdict's findings summary is one keel rendered and can be read;
-- that summary has no `critical` or `major` item;
+- that summary has no `critical` or `major` item — only `minor` and `nit` items are accepted,
+  and any item with an unrecognised or missing severity label blocks;
 - no review verdict at the head fails to approve, and at least `min_approvals` distinct
   reviewers approve there. These are the same verdicts the `review-verdict-N` items count:
   trusted, pinned to the head (or to a head it covers by capture commits alone), with
-  substance, and judged by each reviewer's latest verdict.
+  substance, and judged by each reviewer's latest verdict. Approvals are counted as distinct
+  reviewer identities as `review-verdict` already does (the verdict's `reviewer:` name), not
+  distinct GitHub accounts.
 
 `REQUEST_CHANGES`, `ABSTAIN`, `NO_QUORUM`, an unreadable consensus line, or any blocking
 finding still stops the merge. When the rule is on and doesn't apply, the
@@ -588,7 +591,10 @@ summary has `minor` items (nits are advisory and are left out), `keel merge` fil
 listing them, with the pull request and head, *before* it merges. It records the issue in
 the run ledger as a `jury_followup` record ([command-contracts.md](command-contracts.md#run-ledger-block)),
 so a retried merge reuses the issue and doesn't file a second one. If the issue can't be
-filed, the merge is refused: the minors are never merged past untracked. `--dry-run` reports
+filed, the merge is refused: the minors are never merged past untracked. If the follow-up
+issue was filed but recording it in the run ledger failed, the operator should close the
+duplicate after the retry files a new one (or note the existing issue number in the PR);
+each new head can file its own follow-up. `--dry-run` reports
 what it would file (`comment_consensus_followup` in the merge payload) and files nothing.
 
 ### `jury.base_facts` — the claims a change makes about code outside its diff

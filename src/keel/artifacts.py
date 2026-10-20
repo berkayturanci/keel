@@ -7,6 +7,7 @@ descriptions, review verdicts, jury verdicts, or extension result summaries.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from . import evidence
@@ -162,12 +163,21 @@ BASE_FACTS_PROMPT = (
 )
 
 
+#: Values in :data:`BASE_FACTS_HEADING` that declare no facts (#1570): ``none``, ``none.``,
+#: ``n/a``, and the PR template's ``N/A — <reason>`` / ``N/A - <reason>`` convention.
+_NO_BASE_FACTS_RE = re.compile(
+    r"(?:none\.?|n/a(?:\.?|\s*[-\u2013\u2014].*))",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 def base_facts_section(pr_body: str | None) -> str | None:
     """The body of a PR's :data:`BASE_FACTS_HEADING` section, or ``None`` (#1570).
 
     Everything after the heading up to the next ``## `` heading, stripped. ``None`` when
     there is no such section, it is empty, it still carries :data:`BASE_FACTS_PROMPT`, or
-    it says ``none`` — each is a PR that states no facts for the jury to check.
+    it says ``none`` / ``none.`` / ``n/a`` / ``n/a — <reason>`` — each is a PR that states
+    no facts for the jury to check.
     """
     if not isinstance(pr_body, str):
         return None
@@ -182,7 +192,8 @@ def base_facts_section(pr_body: str | None) -> str | None:
             break
         section.append(line)
     text = "\n".join(section).strip()
-    if not text or BASE_FACTS_PROMPT in text or text.lstrip("- ").strip().lower() == "none":
+    cleaned = text.lstrip("-* ").strip().strip("`").strip()
+    if not cleaned or BASE_FACTS_PROMPT in text or _NO_BASE_FACTS_RE.fullmatch(cleaned):
         return None
     return text
 

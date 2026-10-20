@@ -227,7 +227,75 @@ def panel_consensus(data: dict | str) -> str | None:
     return panel.chair.verdict if panel.chair is not None else "ABSTAIN"
 
 
-def _consensus_finding(data: dict | str, *, gating: bool) -> Finding | None:
+def _non_approving_consensus_finding(
+    token: str | None,
+    *,
+    gating: bool,
+    posted: bool,
+    comment_rule: dict[str, Any] | None = None,
+) -> Finding:
+    """The finding emitted when a jury consensus does not approve (#1436, #1570).
+
+    When ``gating`` is True, the consensus is ``COMMENT``, and ``comment_rule``
+    (:func:`keel.evidence.comment_consensus`) is present:
+
+    * if ``comment_rule["applied"]`` is True, the finding degrades to ``minor`` and names
+      how many approving review verdicts satisfied the rule;
+    * otherwise it stays ``major`` and appends ``comment_rule["reason"]``, matching
+      :func:`keel.evidence._jury_not_approved_finding`.
+    """
+    prefix = "posted jury" if posted else "jury"
+    if not token:
+        return Finding(
+            severity="major" if gating else "minor",
+            message="posted jury verdict has no readable AI Jury verdict line.",
+            source=CONSENSUS_SOURCE,
+            path=None,
+            line=None,
+            anchorable=False,
+        )
+    if gating and token == evidence.COMMENT_CONSENSUS and comment_rule is not None:
+        if comment_rule.get("applied"):
+            approvals = comment_rule.get("approvals", 0)
+            required = comment_rule.get("required_approvals", approvals)
+            return Finding(
+                severity="minor",
+                message=(
+                    f"{prefix} consensus is {token}; comment_consensus applied "
+                    f"({approvals} of {required} required approving review verdicts at the head)."
+                ),
+                source=CONSENSUS_SOURCE,
+                path=None,
+                line=None,
+                anchorable=False,
+            )
+        return Finding(
+            severity="major",
+            message=(
+                f"{prefix} consensus is {token}, not an approval "
+                f"(comment_consensus not met: {comment_rule.get('reason')})."
+            ),
+            source=CONSENSUS_SOURCE,
+            path=None,
+            line=None,
+            anchorable=False,
+        )
+    return Finding(
+        severity="major" if gating else "minor",
+        message=f"{prefix} consensus is {token}, not an approval.",
+        source=CONSENSUS_SOURCE,
+        path=None,
+        line=None,
+        anchorable=False,
+    )
+
+
+def _consensus_finding(
+    data: dict | str,
+    *,
+    gating: bool,
+    comment_rule: dict[str, Any] | None = None,
+) -> Finding | None:
     """The finding a jury gate reports when the panel's consensus does not approve (#1436).
 
     Read against :data:`keel.evidence.APPROVING_VERDICTS` by the same reader the
@@ -235,7 +303,9 @@ def _consensus_finding(data: dict | str, *, gating: bool) -> Finding | None:
     (:func:`keel.evidence.jury_verdict_approves`), so the gates-pass and the evidence
     gate cannot disagree about what the panel said. ``major`` in gating mode — the gate
     fails — and ``minor`` in advisory mode, which reports a rejection and never gates on
-    one, as the evidence gate does.
+    one, as the evidence gate does. When the opt-in ``team.jury.comment_consensus`` rule
+    applies (:func:`keel.evidence.comment_consensus`, #1570), a ``COMMENT`` consensus is
+    reported as a non-blocking ``minor`` finding instead.
 
     **A report with no consensus fails closed in gating mode, and is silent in advisory
     mode.** A gating jury's verdict comment has to approve before ``keel merge`` will land
@@ -263,13 +333,8 @@ def _consensus_finding(data: dict | str, *, gating: bool) -> Finding | None:
     if evidence.jury_verdict_approves(line):
         return None
     token = evidence.jury_verdict_token(line) or consensus
-    return Finding(
-        severity="major" if gating else "minor",
-        message=f"jury consensus is {token}, not an approval.",
-        source=CONSENSUS_SOURCE,
-        path=None,
-        line=None,
-        anchorable=False,
+    return _non_approving_consensus_finding(
+        token, gating=gating, posted=False, comment_rule=comment_rule
     )
 
 
@@ -280,7 +345,12 @@ REUSED_SOURCE = "jury:reused"
 REVIEW_CHECKOUT_SOURCE = "jury:review-checkout"
 
 
-def reuse_posted_verdict(body: str, *, gating: bool) -> tuple[bool, list[Finding]] | None:
+def reuse_posted_verdict(
+    body: str,
+    *,
+    gating: bool,
+    comment_rule: dict[str, Any] | None = None,
+) -> tuple[bool, list[Finding]] | None:
     """The jury gate's outcome read off the panel already posted for the head (#1437).
 
     ``body`` is the standing ``keel.jury-verdict.v1`` comment for the head
@@ -290,9 +360,11 @@ def reuse_posted_verdict(body: str, *, gating: bool) -> tuple[bool, list[Finding
     * **the severity rule** — each ``<severity>: <message>`` item of the comment's findings
       summary (:func:`keel.artifacts.jury_verdict_summary`, the verified findings
       :func:`jury_verdict` posts) becomes a finding, and a critical or major one fails;
-    * **the consensus rule** (#1436) — an ``AI Jury verdict:`` line that does not approve,
-      or no readable line at all, is a ``major`` finding in gating mode and a ``minor`` one
-      in advisory mode, the same as :func:`_consensus_finding` for a report.
+    * **the consensus rule** (#1436, #1570) — an ``AI Jury verdict:`` line that does not
+      approve, or no readable line at all, is a ``major`` finding in gating mode (unless
+      ``comment_rule`` says ``team.jury.comment_consensus`` applied to a ``COMMENT``
+      consensus, in which case it is a ``minor`` finding) and a ``minor`` one in advisory
+      mode, the same as :func:`_consensus_finding` for a report.
 
     ``(ok, findings)``, or ``None`` when the comment's summary cannot be read — a body keel
     did not render. ``None`` means *do not reuse*: the caller convenes the panel as it
@@ -319,17 +391,8 @@ def reuse_posted_verdict(body: str, *, gating: bool) -> tuple[bool, list[Finding
     if not evidence.jury_verdict_approves(body):
         token = evidence.jury_verdict_token(body)
         findings.append(
-            Finding(
-                severity="major" if gating else "minor",
-                message=(
-                    f"posted jury consensus is {token}, not an approval."
-                    if token
-                    else "posted jury verdict has no readable AI Jury verdict line."
-                ),
-                source=CONSENSUS_SOURCE,
-                path=None,
-                line=None,
-                anchorable=False,
+            _non_approving_consensus_finding(
+                token, gating=gating, posted=True, comment_rule=comment_rule
             )
         )
     blocked = any(f.severity in ("critical", "major") for f in findings)
@@ -376,6 +439,7 @@ def run_gate(
     timeout: int = DEFAULT_JURY_TIMEOUT_S,
     head_sha: str | None = None,
     base_facts: str | None = None,
+    comment_rule: dict[str, Any] | None = None,
     _run=None,
 ) -> tuple[bool, list[Finding], bool]:
     """Run ``jury`` on ``diff_text`` and map its findings.
@@ -502,7 +566,9 @@ def run_gate(
         # timed_out rides along so the outcome renders as TIMEOUT rather than FAIL,
         # the distinction #622 established for command gates.
         return (not gating), [incomplete], result.timed_out
-    consensus = _consensus_finding(result.stdout, gating=mode == "gating")
+    consensus = _consensus_finding(
+        result.stdout, gating=mode == "gating", comment_rule=comment_rule
+    )
     if consensus is not None:
         report = [*report, consensus]
     blocked = any(f.severity in ("critical", "major") for f in report)

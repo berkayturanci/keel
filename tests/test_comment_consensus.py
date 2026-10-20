@@ -139,6 +139,14 @@ class TheRule(unittest.TestCase):
                     f"its findings summary carries a blocking finding ({label}: wrong)",
                 )
 
+    def test_an_unrecognised_severity_holds(self):
+        for item in ("no colon here", "blocker: stop", "warning: odd", ": blank label"):
+            with self.subTest(item=item):
+                self._refused(
+                    [*APPROVALS, _jury(findings=(item, "minor: x"))],
+                    f"its findings summary carries an item with an unrecognised severity ({item})",
+                )
+
     def test_one_approval_is_not_enough(self):
         report = self._refused(
             [APPROVALS[0], _jury()],
@@ -288,6 +296,12 @@ class TheLedgerRecord(unittest.TestCase):
         )
         records = ledger.parse_records(text, kinds=(ledger.RECORD_TYPE_JURY_FOLLOWUP,))
         self.assertEqual(ledger.jury_followup_for_head(records, 7, HEAD)["issue"]["number"], 10)
+        self.assertEqual(
+            ledger.jury_followup_for_head(records, 7, "capture999", covered_heads=(HEAD,))["issue"][
+                "number"
+            ],
+            10,
+        )
         self.assertIsNone(ledger.jury_followup_for_head(records, 8, HEAD))
         mixed = [{"record_type": ledger.RECORD_TYPE_SHIP_RUN}, *records]
         self.assertEqual(ledger.jury_followup_for_head(mixed, 7, HEAD)["issue"]["number"], 10)
@@ -356,7 +370,19 @@ class TheArtifacts(unittest.TestCase):
         self.assertEqual(artifacts.base_facts_section(last), "- only fact")
 
     def test_no_facts(self):
-        bodies = (None, "## Summary\n", "## Base facts\n\n## Changes\n", "## Base facts\n- none\n")
+        bodies = (
+            None,
+            "## Summary\n",
+            "## Base facts\n\n## Changes\n",
+            "## Base facts\n- none\n",
+            "## Base facts\nNone.\n",
+            "## Base facts\n- None.\n",
+            "## Base facts\nN/A\n",
+            "## Base facts\n- n/a\n",
+            "## Base facts\nN/A \u2014 pure refactor\n",
+            "## Base facts\n- N/A \u2014 docs only\n",
+            "## Base facts\nn/a - no assumptions\n",
+        )
         for body in bodies:
             with self.subTest(body=body):
                 self.assertIsNone(artifacts.base_facts_section(body))
@@ -600,6 +626,273 @@ class TheMergeFollowup(unittest.TestCase):
                 (record, error), _ = self._run(tmp, self.APPLIED, created={"number": 42})
             self.assertTrue(record["filed"])
             self.assertIn("filed follow-up issue #42, but could not record it", error)
+
+    def test_a_capture_commit_reuses_the_followup_for_the_consensus_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            created = {"number": 42, "html_url": "https://example.test/42"}
+            consensus = {"applied": True, "head": HEAD, "minors": ["minor: x"]}
+            (record, error), create = self._run(tmp, consensus, created=created)
+            self.assertIsNone(error)
+            self.assertTrue(record["filed"])
+            self.assertEqual(record["head_sha"], HEAD)
+
+            config = cfg.load_config(_config(tmp))
+            args = argparse.Namespace(pr=7, root=tmp, dry_run=False)
+            with mock.patch.object(cli.github, "create_issue") as create_after_capture:
+                reused, reuse_error = cli._comment_consensus_followup(
+                    args,
+                    config,
+                    {"comment_consensus": consensus},
+                    "capture999",
+                    covered_heads=(HEAD,),
+                )
+            self.assertIsNone(reuse_error)
+            self.assertTrue(reused["reused"])
+            self.assertFalse(reused["filed"])
+            self.assertEqual(reused["issue"]["number"], 42)
+            self.assertEqual(reused["head_sha"], HEAD)
+            create_after_capture.assert_not_called()
+
+
+class TheJuryGate(unittest.TestCase):
+    """#1570: the s8 `jury` gate honours `team.jury.comment_consensus`."""
+
+    @staticmethod
+    def _report(verdict="COMMENT"):
+        return json.dumps(
+            {
+                "findings": [],
+                "reviewers": [
+                    {"name": "a", "vendor": "anthropic", "verdict": verdict},
+                    {"name": "b", "vendor": "google", "verdict": verdict},
+                    {"name": "chair", "role": "chair", "verdict": verdict},
+                ],
+            }
+        )
+
+    def test_reuse_posted_verdict_and_run_gate_respect_comment_consensus(self):
+        body = _jury("COMMENT", findings=("minor: rename `x`",))["body"]
+        applied = {
+            "applied": True,
+            "reason": None,
+            "head": HEAD,
+            "required_approvals": 2,
+            "approvals": 2,
+            "minors": ["minor: rename `x`"],
+        }
+        ok, findings = jury.reuse_posted_verdict(body, gating=True, comment_rule=applied)
+        self.assertTrue(ok)
+        consensus = [f for f in findings if f.source == jury.CONSENSUS_SOURCE]
+        self.assertEqual(len(consensus), 1)
+        self.assertEqual(consensus[0].severity, "minor")
+        self.assertIn("comment_consensus applied (2 of 2", consensus[0].message)
+
+        refused = {
+            "applied": False,
+            "reason": "1 of 2 required approving review verdicts at the head",
+            "head": HEAD,
+            "required_approvals": 2,
+            "approvals": 1,
+            "minors": [],
+        }
+        ok, findings = jury.reuse_posted_verdict(body, gating=True, comment_rule=refused)
+        self.assertFalse(ok)
+        consensus = [f for f in findings if f.source == jury.CONSENSUS_SOURCE]
+        self.assertEqual(consensus[0].severity, "major")
+        self.assertIn(
+            "comment_consensus not met: 1 of 2 required approving review verdicts at the head",
+            consensus[0].message,
+        )
+
+        # Rule off: blocked as before.
+        ok, findings = jury.reuse_posted_verdict(body, gating=True, comment_rule=None)
+        self.assertFalse(ok)
+        consensus = [f for f in findings if f.source == jury.CONSENSUS_SOURCE]
+        self.assertEqual(
+            (consensus[0].severity, consensus[0].message),
+            ("major", "posted jury consensus is COMMENT, not an approval."),
+        )
+
+        # REQUEST_CHANGES: blocked regardless, even if a comment_rule record is passed.
+        reject_body = _jury("REQUEST_CHANGES", findings=())["body"]
+        ok, findings = jury.reuse_posted_verdict(reject_body, gating=True, comment_rule=applied)
+        self.assertFalse(ok)
+        self.assertEqual(
+            (findings[0].severity, findings[0].message),
+            ("major", "posted jury consensus is REQUEST_CHANGES, not an approval."),
+        )
+
+        # Live `run_gate` -> `_consensus_finding` shares the same rule.
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["jury", "--version"]:
+                return CommandResult(True, 0, "1")
+            return CommandResult(True, 0, "", stdout=self._report("COMMENT"))
+
+        with mock.patch.object(jury, "run_argv", side_effect=fake_run):
+            ok, findings, _ = jury.run_gate(
+                "diff --git a/x b/x\n", mode="gating", comment_rule=applied
+            )
+            self.assertTrue(ok)
+            self.assertEqual(findings[0].severity, "minor")
+            self.assertIn("comment_consensus applied (2 of 2", findings[0].message)
+
+            ok, findings, _ = jury.run_gate(
+                "diff --git a/x b/x\n", mode="gating", comment_rule=refused
+            )
+            self.assertFalse(ok)
+            self.assertEqual(findings[0].severity, "major")
+            self.assertIn("comment_consensus not met: 1 of 2", findings[0].message)
+
+            ok, findings, _ = jury.run_gate(
+                "diff --git a/x b/x\n", mode="gating", comment_rule=None
+            )
+            self.assertFalse(ok)
+            self.assertEqual(findings[0].message, "jury consensus is COMMENT, not an approval.")
+
+    def _ship_with_posted_panel(self, comments, *, comment_consensus=True, reviews=()):
+        with tempfile.TemporaryDirectory() as root:
+            jury_block = (
+                "    jury:\n      comment_consensus:\n        enabled: true\n"
+                if comment_consensus
+                else "    {}\n"
+            )
+            config_path = Path(root) / "project.yaml"
+            config_path.write_text(
+                "extends: keel\ncore_version: '^1.0'\nbase_branch: main\nowner: o\nrepo: r\n"
+                "gates: [build, jury]\nknobs:\n  build_gate_cmd: 'true'\n  team:\n"
+                + jury_block
+                + "policy_pack:\n  name: tmp\n  reports:\n    run_ledger: 'state/runs.jsonl'\n",
+                encoding="utf-8",
+            )
+
+            def gh_list(args, *, cwd):
+                if args[-1] == "reviews":
+                    return list(reviews)
+                return list(comments)
+
+            report = cli.runtime.CapabilityReport(
+                (
+                    cli.runtime.Capability("shell", True, "ok", "test"),
+                    cli.runtime.Capability("git", True, "ok", "test"),
+                    cli.runtime.Capability("worktree", True, "ok", "test"),
+                    cli.runtime.Capability("gh", True, "ok", "test"),
+                    cli.runtime.Capability("gh-auth", True, "ok", "test"),
+                )
+            )
+            out = StringIO()
+            with (
+                mock.patch("keel.cli.runtime.detect", return_value=report),
+                mock.patch("keel.cli.github.ci_conclusion", return_value=None),
+                mock.patch("keel.cli.github.ci_check_names", return_value=None),
+                mock.patch("keel.cli.github.ci_workflow_names", return_value=None),
+                mock.patch(
+                    "keel.cli.github.pr_labels",
+                    return_value=["agent:claude", "model:opus-4"],
+                ),
+                mock.patch("keel.cli._gh_json_list", side_effect=gh_list),
+                mock.patch(
+                    "keel.cli._gh_json",
+                    return_value={
+                        "title": "Fix thing",
+                        "head": {"sha": HEAD, "repo": {"full_name": "o/r"}},
+                    },
+                ),
+                mock.patch("keel.cli._covered_heads", return_value=()),
+                mock.patch("keel.cli.git.diff", return_value="diff --git a/src/x.py b/src/x.py\n"),
+                mock.patch("keel.jury.run_gate") as run_gate,
+                mock.patch("sys.stdout", out),
+            ):
+                rc = cli.main(
+                    [
+                        "ship",
+                        str(config_path),
+                        "--root",
+                        root,
+                        "--live",
+                        "--json",
+                        "--append-ledger",
+                        "--run-id",
+                        "RUN-1570",
+                        "--issue",
+                        "1570",
+                        "--pr",
+                        "7",
+                        "--head-sha",
+                        HEAD,
+                        "--capture-status",
+                        "not-run",
+                        "--approve-scope",
+                        "filesystem,git,github",
+                        "--operator",
+                        "tester",
+                    ]
+                )
+            data = json.loads(out.getvalue())
+            record = data["result"]["run_ledger"]["record"]
+            entry = next(g for g in record["gates"] if g["gate"] == "jury")
+            return rc, entry, record, run_gate, data
+
+    def test_ship_jury_gate_not_blocked_when_rule_on_and_two_approvals_at_head(self):
+        rc, entry, record, run_gate, data = self._ship_with_posted_panel(
+            [*APPROVALS, _jury("COMMENT", findings=("minor: rename `x`",))],
+            comment_consensus=True,
+        )
+        run_gate.assert_not_called()
+        self.assertEqual(rc, 0)
+        self.assertTrue(entry["ok"])
+        self.assertTrue(ledger.record_gates_passed(record))
+        matched, _ = ledger.gates_pass_for_head([record], 7, HEAD)
+        self.assertTrue(matched)
+        findings = data["result"]["verdict"]["findings"]
+        consensus = [f for f in findings if f["source"] == jury.CONSENSUS_SOURCE]
+        self.assertEqual(consensus[0]["severity"], "minor")
+        self.assertIn("comment_consensus applied (2 of 2", consensus[0]["message"])
+
+    def test_ship_jury_gate_blocked_with_reason_when_only_one_approval(self):
+        _rc, entry, record, run_gate, data = self._ship_with_posted_panel(
+            [APPROVALS[0], _jury("COMMENT", findings=("minor: rename `x`",))],
+            comment_consensus=True,
+        )
+        run_gate.assert_not_called()
+        self.assertFalse(entry["ok"])
+        self.assertFalse(ledger.record_gates_passed(record))
+        findings = data["result"]["verdict"]["findings"]
+        consensus = [f for f in findings if f["source"] == jury.CONSENSUS_SOURCE]
+        self.assertEqual(consensus[0]["severity"], "major")
+        self.assertIn(
+            "comment_consensus not met: 1 of 2 required approving review verdicts at the head",
+            consensus[0]["message"],
+        )
+
+    def test_ship_jury_gate_blocked_as_before_when_rule_off(self):
+        _rc, entry, record, run_gate, data = self._ship_with_posted_panel(
+            [*APPROVALS, _jury("COMMENT", findings=("minor: rename `x`",))],
+            comment_consensus=False,
+        )
+        run_gate.assert_not_called()
+        self.assertFalse(entry["ok"])
+        self.assertFalse(ledger.record_gates_passed(record))
+        findings = data["result"]["verdict"]["findings"]
+        consensus = [f for f in findings if f["source"] == jury.CONSENSUS_SOURCE]
+        self.assertEqual(
+            (consensus[0]["severity"], consensus[0]["message"]),
+            ("major", "posted jury consensus is COMMENT, not an approval."),
+        )
+
+    def test_ship_jury_gate_blocked_regardless_on_request_changes(self):
+        _rc, entry, record, run_gate, data = self._ship_with_posted_panel(
+            [*APPROVALS, _jury("REQUEST_CHANGES", findings=())],
+            comment_consensus=True,
+        )
+        run_gate.assert_not_called()
+        self.assertFalse(entry["ok"])
+        self.assertFalse(ledger.record_gates_passed(record))
+        findings = data["result"]["verdict"]["findings"]
+        consensus = [f for f in findings if f["source"] == jury.CONSENSUS_SOURCE]
+        self.assertEqual(
+            (consensus[0]["severity"], consensus[0]["message"]),
+            ("major", "posted jury consensus is REQUEST_CHANGES, not an approval."),
+        )
 
 
 class TheGithubWrapper(unittest.TestCase):

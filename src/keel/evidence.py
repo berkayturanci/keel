@@ -62,9 +62,11 @@ VERDICT_NOT_APPROVED_FINDING = "review-verdict-not-approved"
 JURY_NOT_APPROVED_FINDING = "jury-verdict-not-approved"
 #: The one consensus the opt-in ``team.jury.comment_consensus`` rule can accept (#1570).
 COMMENT_CONSENSUS = "COMMENT"
-#: Findings-summary labels that block under the COMMENT-consensus rule, and the label it
-#: leaves out of the follow-up issue (advisory, never gates — ``findings.py``).
+#: Findings-summary labels that block under the COMMENT-consensus rule, the non-blocking
+#: labels it accepts, and the label it leaves out of the follow-up issue (advisory, never
+#: gates — ``findings.py``, #1570).
 _COMMENT_BLOCKING_LABELS = frozenset({"critical", "major"})
+_COMMENT_NON_BLOCKING_LABELS = frozenset({"minor", "nit"})
 _COMMENT_ADVISORY_LABEL = "nit"
 JURY_VERDICT_MARKER = "keel.jury-verdict.v1"
 #: The comment a live ship run posts on its PR right after creating it (#1013). It is
@@ -660,7 +662,8 @@ def comment_consensus(
       requirement, so — like the vendor count (#1069) — it is never read off a blank head;
     * **a findings summary keel rendered** (:func:`keel.artifacts.jury_verdict_summary`),
       because "unreadable" is never the same answer as "no findings";
-    * **no** ``critical`` / ``major`` **item** in it;
+    * **no** ``critical`` / ``major`` **item** in it, and every item labeled ``minor`` or
+      ``nit`` (any unrecognised or missing severity blocks, #1570);
     * **no review verdict at the head that fails to approve**, and **at least
       ``min_approvals`` distinct approving ones** — the same tally the
       ``review-verdict-N`` items count (:func:`_review_tally`: trusted, head-pinned, with
@@ -700,10 +703,21 @@ def comment_consensus(
     if summary is None:
         record["reason"] = "its findings summary is not one keel rendered and cannot be read"
         return record
-    labelled = [(item.partition(":")[0].strip().lower(), item) for item in summary]
+    # Fail closed on unknown severities (#1570): only an explicit `minor:` or `nit:` item
+    # is non-blocking; anything else (no `:`, `blocker:`, empty or unknown token) holds.
+    labelled = [
+        (item.partition(":")[0].strip().lower() if ":" in item else "", item) for item in summary
+    ]
     blocking = [item for label, item in labelled if label in _COMMENT_BLOCKING_LABELS]
     if blocking:
         record["reason"] = f"its findings summary carries a blocking finding ({blocking[0]})"
+        return record
+    unrecognised = [item for label, item in labelled if label not in _COMMENT_NON_BLOCKING_LABELS]
+    if unrecognised:
+        record["reason"] = (
+            "its findings summary carries an item with an unrecognised severity "
+            f"({unrecognised[0]})"
+        )
         return record
     tally = _review_tally(
         [*pr_comments, *pr_reviews],
@@ -722,9 +736,7 @@ def comment_consensus(
         )
         return record
     record["applied"] = True
-    record["minors"] = [
-        item for label, item in labelled if label != _COMMENT_ADVISORY_LABEL and item.strip()
-    ]
+    record["minors"] = [item for label, item in labelled if label != _COMMENT_ADVISORY_LABEL]
     return record
 
 

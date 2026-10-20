@@ -537,16 +537,21 @@ def build_jury_followup_record(
 
 
 def jury_followup_for_head(
-    records: list[dict[str, Any]], pr_number: int, head_sha: str
+    records: list[dict[str, Any]],
+    pr_number: int,
+    head_sha: str,
+    *,
+    covered_heads: Collection[str] = (),
 ) -> dict[str, Any] | None:
-    """The latest ``jury_followup`` record for ``pr_number`` at ``head_sha``, or ``None``."""
+    """Latest ``jury_followup`` record for ``pr_number`` at ``head_sha`` or ``covered_heads``."""
+    accepted = {head_sha, *covered_heads}
     match: dict[str, Any] | None = None
     for record in records:
         if record.get("record_type") != RECORD_TYPE_JURY_FOLLOWUP:
             continue
         if (record.get("pull_request") or {}).get("number") == pr_number and record.get(
             "head_sha"
-        ) == head_sha:
+        ) in accepted:
             match = record
     return match
 
