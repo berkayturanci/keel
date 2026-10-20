@@ -945,8 +945,12 @@ def ship_result_as_dict(
     issue_intake: dict[str, Any] | None = None,
     run_ledger: dict[str, Any] | None = None,
     jury_consensus: str | None = None,
+    base_facts: bool = False,
 ) -> dict[str, Any]:
     """Normalized deterministic result record for ``keel ship --json``.
+
+    ``base_facts`` is ``team.jury.base_facts`` (#1570): the rendered ``pr_body`` then
+    carries the ``## Base facts`` section the jury is handed ahead of the diff.
 
     ``jury_consensus`` is the panel's own verdict (the chair's, as
     :func:`keel.jury.jury_verdict` reports it) when the caller has one; the
@@ -987,6 +991,7 @@ def ship_result_as_dict(
             changed_files=changed_files,
             testing=testing,
             docs_impact=_docs_impact(changed_files),
+            base_facts=base_facts,
         ),
         "issue_update": artifacts.render_issue_update(
             issue_number=issue_number,

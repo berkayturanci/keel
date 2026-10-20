@@ -18,6 +18,10 @@ RECORD_TYPE_SHIP_RUN = "ship_run"
 #: one record when the run delegates it, and one more per cluster pull request its
 #: workers open. See :func:`build_consent_delegation_record`.
 RECORD_TYPE_CONSENT_DELEGATION = "consent_delegation"
+#: The follow-up issue ``keel merge`` filed for the minor findings a ``COMMENT`` jury
+#: consensus left when ``team.jury.comment_consensus`` passed the gate (#1570). One per
+#: pull request and head, so a retried merge reuses the issue instead of filing another.
+RECORD_TYPE_JURY_FOLLOWUP = "jury_followup"
 # The record kinds this keel reads. A reader skips any other kind (#1400): the ledger is
 # append-only and shared by every keel on a checkout, so a kind a newer keel adds must not
 # make an older keel refuse the history it can still read. The writer stays strict —
@@ -25,7 +29,11 @@ RECORD_TYPE_CONSENT_DELEGATION = "consent_delegation"
 #: :data:`KNOWN_RECORD_TYPES` in its published order (the ledger contract's
 #: ``record_types``). A keel older than 1.26.0 refuses a ledger holding any kind but the
 #: first: those readers did not yet skip a kind they did not know.
-RECORD_TYPES: tuple[str, ...] = (RECORD_TYPE_SHIP_RUN, RECORD_TYPE_CONSENT_DELEGATION)
+RECORD_TYPES: tuple[str, ...] = (
+    RECORD_TYPE_SHIP_RUN,
+    RECORD_TYPE_CONSENT_DELEGATION,
+    RECORD_TYPE_JURY_FOLLOWUP,
+)
 KNOWN_RECORD_TYPES: frozenset[str] = frozenset(RECORD_TYPES)
 #: What :func:`parse_records` and :func:`read_records` return unless a reader asks for
 #: more. Every reader keel had before #1400 reads ship runs and nothing else; it gets ship
@@ -53,7 +61,7 @@ def ledger_contract_as_dict(config: cfg.ProjectConfig) -> dict[str, Any]:
         "path": path,
         "path_source": source,
         "missing_handling": "treat-as-empty",
-        "append_owner": ["ship", "swarm-run"],
+        "append_owner": ["ship", "swarm-run", "merge"],
         "readers": [
             "morning",
             "wrap",
@@ -505,6 +513,44 @@ def build_consent_delegation_record(
     return record
 
 
+def build_jury_followup_record(
+    *,
+    pr_number: int,
+    head_sha: str,
+    issue_number: int,
+    issue_url: str | None,
+    findings: list[str] | tuple[str, ...],
+    recorded_at: str,
+) -> dict[str, Any]:
+    """A ``jury_followup`` record: the issue filed for a COMMENT panel's minors (#1570)."""
+    record: dict[str, Any] = {
+        "schema_version": LEDGER_SCHEMA_VERSION,
+        "record_type": RECORD_TYPE_JURY_FOLLOWUP,
+        "pull_request": {"number": pr_number},
+        "head_sha": head_sha,
+        "issue": {"number": issue_number, "url": issue_url},
+        "findings": list(findings),
+        "recorded_at": recorded_at,
+    }
+    _validate_record(record)
+    return record
+
+
+def jury_followup_for_head(
+    records: list[dict[str, Any]], pr_number: int, head_sha: str
+) -> dict[str, Any] | None:
+    """The latest ``jury_followup`` record for ``pr_number`` at ``head_sha``, or ``None``."""
+    match: dict[str, Any] | None = None
+    for record in records:
+        if record.get("record_type") != RECORD_TYPE_JURY_FOLLOWUP:
+            continue
+        if (record.get("pull_request") or {}).get("number") == pr_number and record.get(
+            "head_sha"
+        ) == head_sha:
+            match = record
+    return match
+
+
 def consent_delegation_for_pr(
     records: list[dict[str, Any]], pr_number: int
 ) -> dict[str, Any] | None:
@@ -900,8 +946,30 @@ def _validate_record(record: Any, *, line_number: int | None = None) -> None:
     if kind == RECORD_TYPE_CONSENT_DELEGATION:
         if problem := _consent_delegation_problem(record):
             raise LedgerError(f"{prefix}invalid consent_delegation record: {problem}")
+    elif kind == RECORD_TYPE_JURY_FOLLOWUP:
+        if problem := _jury_followup_problem(record):
+            raise LedgerError(f"{prefix}invalid jury_followup record: {problem}")
     elif kind != RECORD_TYPE_SHIP_RUN:
         raise LedgerError(f"{prefix}unsupported record_type")
+
+
+def _positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _jury_followup_problem(record: dict[str, Any]) -> str:
+    """What is wrong with a ``jury_followup`` record, or ``""`` when nothing is."""
+    if not _positive_int((record.get("pull_request") or {}).get("number")):
+        return "pull_request.number must be a positive integer"
+    for key in ("head_sha", "recorded_at"):
+        if not _nonblank(record.get(key)):
+            return f"{key} must be a non-blank string"
+    if not _positive_int((record.get("issue") or {}).get("number")):
+        return "issue.number must be a positive integer"
+    findings = record.get("findings")
+    if not isinstance(findings, list) or not findings or not all(_nonblank(f) for f in findings):
+        return "findings must be a non-empty list of non-blank strings"
+    return ""
 
 
 def _consent_delegation_problem(record: dict[str, Any]) -> str:

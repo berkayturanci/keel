@@ -157,8 +157,12 @@ def _gate_runner(
     phases: frozenset[str] | None = None,
     posted_panel: tuple[bool, list[fnd.Finding]] | None = None,
     head_sha: str | None = None,
+    base_facts: str | None = None,
 ):
     """A gate runner that handles command gates plus the ``jury`` built-in (on the diff).
+
+    ``base_facts`` is the PR's ``## Base facts`` section (#1570), read by
+    :func:`_pr_base_facts`; the jury reads it ahead of the diff.
 
     ``phases`` scopes the run the way ``run_jury`` scopes the panel: a spec whose phase
     is outside the set is reported ``not_run`` and its command is never executed. The s4
@@ -199,6 +203,7 @@ def _gate_runner(
                 mode=jury_mode,
                 timeout=jury_limit,
                 head_sha=head_sha,
+                base_facts=base_facts,
             )
             # A jury that could not run (no CLI, empty diff) judged nothing: `SKIPPED`,
             # never `ok` (#1369).
@@ -299,6 +304,27 @@ def _posted_panel(
         url=url if isinstance(url, str) and url else None,
     )
     return reuse, result
+
+
+def _pr_base_facts(
+    config: cfg.ProjectConfig, pr: int | None, *, root: str, transport=None
+) -> str | None:
+    """The PR's ``## Base facts`` section for the jury, or ``None`` (#1570).
+
+    Read only when ``team.jury.base_facts`` is on and a pull request is known. Fail-soft:
+    an unreadable pull request (or a transport that cannot read it) means the jury reads
+    the diff alone, exactly as it did before the option existed — never a refused run.
+    """
+    if config.knobs.team.jury_base_facts is not True or pr is None:
+        return None
+    if transport is not None and transport.name != "gh":
+        return None
+    try:
+        pull = _gh_json(["repos", _owner_repo(config), "pulls", str(pr)], cwd=root)
+    except (OSError, ValueError):
+        return None
+    body = pull.get("body")
+    return artifacts.base_facts_section(body if isinstance(body, str) else None)
 
 
 def _run_planned_gates(
@@ -1432,6 +1458,14 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         if gate_error is not None:
             return _finish_merge(args, payload, gate_error, code=1)
 
+        followup, followup_error = _comment_consensus_followup(
+            args, config, evidence_payload["verification"], head_sha
+        )
+        if followup is not None:
+            payload["comment_consensus_followup"] = followup
+        if followup_error is not None:
+            return _finish_merge(args, payload, followup_error, code=1)
+
         if args.dry_run:
             return _finish_merge(args, payload, "dry-run: merge not performed", code=0)
         # Pinned on both wires: every check above was of this head, so GitHub is asked to
@@ -1480,6 +1514,84 @@ def _cmd_merge(args: argparse.Namespace) -> int:
         return _finish_merge(args, payload, "merged", code=0)
     finally:
         lock.release_resource(_lock_root(args.root), "merge", owner=owner, best_effort=True)
+
+
+def _comment_consensus_followup(
+    args: argparse.Namespace,
+    config: cfg.ProjectConfig,
+    verification: dict[str, Any],
+    head_sha: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """File the follow-up issue for a COMMENT panel's minors before merging (#1570).
+
+    ``(record, error)``. ``(None, None)`` when ``team.jury.comment_consensus`` is not what
+    passed the gate. Otherwise ``record`` says what was filed — or, on a dry run, what
+    would be — and ``error`` is a refusal: the merge never lands past minors it could not
+    track. One issue per pull request and head, keyed in the run ledger
+    (:data:`keel.ledger.RECORD_TYPE_JURY_FOLLOWUP`), so a retried merge reuses it.
+    """
+    consensus = verification.get("comment_consensus")
+    if not isinstance(consensus, dict) or not consensus.get("applied"):
+        return None, None
+    minors = [str(item) for item in consensus.get("minors") or ()]
+    record: dict[str, Any] = {
+        "head_sha": head_sha,
+        "findings": minors,
+        "issue": None,
+        "filed": False,
+        "reused": False,
+    }
+    if not minors:
+        return record, None
+    path = ledger.resolve_path(args.root, config)
+    try:
+        records = ledger.read_records(
+            path, warn=_ledger_warning, kinds=(ledger.RECORD_TYPE_JURY_FOLLOWUP,)
+        )
+    except ledger.LedgerError as exc:
+        return record, f"invalid run ledger: {exc}"
+    existing = ledger.jury_followup_for_head(records, args.pr, head_sha)
+    if existing is not None:
+        record["issue"] = existing["issue"]
+        record["reused"] = True
+        return record, None
+    if args.dry_run:
+        return record, None
+    refusal = "could not file the follow-up issue for the jury's minor findings"
+    try:
+        owner_repo = _owner_repo(config)
+    except ValueError as exc:
+        return record, f"{refusal}: {exc}"
+    title, body = artifacts.render_jury_followup_issue(
+        pr_number=args.pr, head_sha=head_sha, findings=minors
+    )
+    result = github.create_issue(owner_repo, title, body, cwd=args.root)
+    created = github.rest_json(result)
+    number = created.get("number") if isinstance(created, dict) else None
+    if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+        return record, f"{refusal}: {result.output.strip() or 'no issue number returned'}"
+    url = created.get("html_url")
+    issue = {"number": number, "url": url if isinstance(url, str) and url else None}
+    record["issue"] = issue
+    record["filed"] = True
+    try:
+        ledger.append_record(
+            path,
+            ledger.build_jury_followup_record(
+                pr_number=args.pr,
+                head_sha=head_sha,
+                issue_number=number,
+                issue_url=issue["url"],
+                findings=minors,
+                recorded_at=_now_iso(),
+            ),
+        )
+    except OSError as exc:
+        return record, (
+            f"filed follow-up issue #{number}, but could not record it in the run ledger "
+            f"({exc}); record it before merging again, or a retry files a second issue"
+        )
+    return record, None
 
 
 def _shipped_jury_availability(
@@ -1959,6 +2071,16 @@ def _cmd_ship(args: argparse.Namespace) -> int:
             timeout=config.knobs.gate_timeout_s,
             posted_panel=posted[1] if posted is not None else None,
             head_sha=jury_head_sha,
+            base_facts=(
+                _pr_base_facts(
+                    config,
+                    args.pr if args.pr is not None else args.ledger_pr,
+                    root=args.root,
+                    transport=transport,
+                )
+                if has_jury_gate and posted is None
+                else None
+            ),
         ),
         config=config,
         root=args.root,
@@ -2260,6 +2382,7 @@ def _cmd_ship(args: argparse.Namespace) -> int:
                         assessment=a,
                         issue_intake=contract.get("issue_intake"),
                         run_ledger=ledger_result,
+                        base_facts=config.knobs.team.jury_base_facts is True,
                     ),
                 },
                 indent=2,
@@ -4384,6 +4507,52 @@ def _cmd_review_cycle_summary(args: argparse.Namespace) -> int:
         )
     else:
         print(body, end="")
+    return 0
+
+
+def _cmd_jury_diff(args: argparse.Namespace) -> int:
+    """Write the diff the jury reads, with the PR's base facts ahead of it (#1570).
+
+    The s7 panel is dispatched by the adapter, which builds the diff itself; this is how
+    that panel gets the same input the s8 ``jury`` gate gets (:func:`keel.jury.with_base_facts`).
+    With ``team.jury.base_facts`` off, or no base facts stated, ``--out`` is ``--diff``
+    unchanged. An unreadable pull request is fail-soft: a warning, and the diff alone.
+    """
+    try:
+        config = cfg.load_config(args.path)
+    except FileNotFoundError:
+        print(f"no such config: {args.path}", file=sys.stderr)
+        return 1
+    except cfg.ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        diff_text = Path(args.diff).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(f"cannot read --diff {args.diff}: {exc}", file=sys.stderr)
+        return 1
+    facts: str | None = None
+    if config.knobs.team.jury_base_facts is True:
+        if args.pr_body_file is not None:
+            try:
+                body = Path(args.pr_body_file).read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                print(f"cannot read --pr-body-file {args.pr_body_file}: {exc}", file=sys.stderr)
+                return 1
+            facts = artifacts.base_facts_section(body)
+        else:
+            facts = _pr_base_facts(config, args.pr, root=args.root)
+        if facts is None:
+            print(
+                "jury-diff: no base facts stated (or the PR body could not be read); "
+                "the jury reads the diff alone",
+                file=sys.stderr,
+            )
+    try:
+        Path(args.out).write_text(jury.with_base_facts(diff_text, facts), encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot write --out {args.out}: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -10440,6 +10609,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_attr.add_argument("--json", action="store_true", help="emit the attribution record as JSON")
     p_attr.set_defaults(func=_cmd_attribution)
+
+    p_jd = sub.add_parser(
+        "jury-diff",
+        help="write the diff the jury reads, with the PR's base facts ahead of it",
+    )
+    p_jd.add_argument("path", help="path to project.yaml")
+    p_jd.add_argument("--root", default=".", help="repo root for GitHub operations")
+    p_jd.add_argument("--diff", required=True, help="the diff file the panel would read")
+    p_jd.add_argument("--out", required=True, help="where to write the jury's input")
+    jd_source = p_jd.add_mutually_exclusive_group()
+    jd_source.add_argument("--pr", type=_positive_int, default=None, help="read the PR body")
+    jd_source.add_argument(
+        "--pr-body-file", default=None, help="read the PR body from a file (offline)"
+    )
+    p_jd.set_defaults(func=_cmd_jury_diff)
 
     p_post = sub.add_parser(
         "post-comment",

@@ -203,6 +203,16 @@ consensus of `REQUEST_CHANGES`, `ABSTAIN`, `COMMENT` or anything else refuses th
 `blocking finding(s): jury-verdict-not-approved: the jury's consensus at <head> is
 REQUEST_CHANGES, not an approval.`
 
+**Unless `team.jury.comment_consensus` is on and a `COMMENT` qualifies (#1570).** A `COMMENT`
+consensus with no `critical`/`major` item in its findings summary, beside at least
+`min_approvals` (default 2) approving review verdicts at the head and none that fails to
+approve, satisfies `jury-verdict`. Before merging, `keel merge` then files the summary's
+minor findings as one follow-up issue and records it in the run ledger as a `jury_followup`
+record. A retry reuses the issue, a filing failure refuses the merge, and `--dry-run` only
+reports it. The payload's `comment_consensus_followup` block (`head_sha`, `findings`,
+`issue`, `filed`, `reused`) says what happened. See
+[configuration.md](configuration.md#jurycomment_consensus--a-comment-panel-with-nothing-blocking).
+
 The gates-SHA check reads the run ledger and requires a `ship_run` record whose
 `pull_request.number` matches the PR, whose `git.head_sha` equals the PR's current head
 (from the live merge snapshot) — or a head that head **covers**: one it descends from by
@@ -437,6 +447,26 @@ last line of its stderr), and the `ci` step always carries
 `polls`, `elapsed`, the last `ci` snapshot (`null` before one was read) and the checks it
 `reran`. Exit code 0 means the
 pull request merged (or `--dry-run`); 1 means it stopped.
+
+## `keel jury-diff <project.yaml> --diff FILE --out FILE [--pr N | --pr-body-file FILE] [--root DIR]`
+
+Write the diff the jury reads. With `knobs.team.jury.base_facts` on, the PR's `## Base facts`
+section goes ahead of the diff, framed as claims for the panel to verify against the head
+checkout (#1570; see
+[configuration.md](configuration.md#jurybase_facts--the-claims-a-change-makes-about-code-outside-its-diff)).
+This is how the s7 panel the adapter dispatches gets the same input as the s8 `jury` gate,
+which reads the section itself.
+
+```bash
+keel jury-diff .keel/project.yaml --root . --pr 42 --diff "$DIFF" --out "$DIFF.jury"
+(cd "$JURY_WT" && jury --format json --diff-file "$DIFF.jury" -o report.json)
+```
+
+`--pr` reads the body from GitHub, and `--pr-body-file` reads it from a file (offline). With
+the option off, or no facts stated (no section, an empty one, the template prompt, or
+`none`), `--out` is `--diff` unchanged. An unreadable pull request gives a warning and the
+diff alone, never a refusal. An unreadable `--diff`, `--pr-body-file` or config, or an
+unwritable `--out`, exits 1.
 
 ## `keel attribution --vendor VENDOR [--model MODEL] [--profile NAME] [--config FILE] [--json]`
 
@@ -720,8 +750,8 @@ must not build morning/wrap/capture reports from corrupted history. A record who
 with one `warning:` line on stderr per kind, so a later keel may add record kinds (see
 [forward compatibility](command-contracts.md#run-ledger-block)).
 
-`keel ledger` lists every kind it knows — `ship_run` and a live swarm run's
-`consent_delegation` records — in the order written, with `record_types` counting each kind
+`keel ledger` lists every kind it knows — `ship_run`, a live swarm run's
+`consent_delegation` records, and the `jury_followup` records `keel merge` writes — in the order written, with `record_types` counting each kind
 (the text output's `by type` line). `capture_health` reads the ship runs alone. Every other
 reader is handed ship runs only.
 
@@ -1291,7 +1321,10 @@ which is the point — an explicit operator act stays distinguishable from armin
   approve leaves `jury-verdict` unsatisfied and raises a `jury-verdict-not-approved` finding
   naming the consensus and head — blocking when the jury verdict is required, `minor` for an
   advisory or deferred panel. The `vendors:` / `panelists:` readers that size the panel keep
-  reading presence;
+  reading presence. With `team.jury.comment_consensus` on, a qualifying `COMMENT` satisfies it
+  too, and the report's `comment_consensus` record (`applied`, `reason`, `head`,
+  `required_approvals`, `approvals`, `minors`; `null` when the rule has nothing to say) gives
+  the outcome (#1570);
 - at least one mandatory `agent:<vendor>` attribution label on the PR (the labels keel
   computes for the effective implementer). A missing `agent:*` label fails with a blocking
   `attribution-label` finding. When a `ship_run` ledger record exists for the PR, the label

@@ -96,9 +96,12 @@ class TestLedgerContract(unittest.TestCase):
         self.assertIn("morning", contract["readers"])
         self.assertEqual(contract["unknown_record_types"], "skip-with-warning")
         # #1400: a live swarm run writes its consent delegation; consent-verify reads it.
-        self.assertEqual(contract["record_types"], ["ship_run", "consent_delegation"])
+        self.assertEqual(
+            contract["record_types"], ["ship_run", "consent_delegation", "jury_followup"]
+        )
         self.assertEqual(contract["default_read_record_types"], ["ship_run"])
         self.assertIn("swarm-run", contract["append_owner"])
+        self.assertIn("merge", contract["append_owner"])
         self.assertIn("consent-verify", contract["readers"])
 
     def test_reports_override_changes_path_only(self):

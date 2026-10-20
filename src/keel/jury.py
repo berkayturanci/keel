@@ -341,6 +341,33 @@ def could_not_run(findings) -> bool:
     return any(f.source == NOT_RUN_SOURCE for f in findings)
 
 
+#: The lines that frame a PR's base facts ahead of the diff the jury reads (#1570).
+BASE_FACTS_LEAD = (
+    "Base facts — stated by the pull request's author about code outside this diff, "
+    "which the change relies on:"
+)
+BASE_FACTS_CHECK = (
+    "Each base fact above is a claim, not a given. Check every one against this checkout "
+    "(the head of the change). A base fact that is false, or that the change depends on and "
+    "the checkout cannot confirm, is a finding against the change."
+)
+
+
+def with_base_facts(diff_text: str, base_facts: str | None) -> str:
+    """``diff_text`` with the PR's base facts ahead of it, or unchanged when there are none.
+
+    The jury reads only the diff, so a change that relies on code outside it leaves the
+    panel unable to check the reliance — and a panel that cannot check hedges. The facts
+    go where ``git format-patch`` puts a commit message, before the first ``diff --git``
+    header, which ai-jury keeps attached to the first file rather than dropping. They are
+    framed as claims to verify (:data:`BASE_FACTS_CHECK`): the author's word is input to
+    the review, never a substitute for it.
+    """
+    if not base_facts or not base_facts.strip() or not diff_text:
+        return diff_text
+    return f"{BASE_FACTS_LEAD}\n\n{base_facts.strip()}\n\n{BASE_FACTS_CHECK}\n\n{diff_text}"
+
+
 def run_gate(
     diff_text: str,
     *,
@@ -348,9 +375,13 @@ def run_gate(
     mode: str = "advisory",
     timeout: int = DEFAULT_JURY_TIMEOUT_S,
     head_sha: str | None = None,
+    base_facts: str | None = None,
     _run=None,
 ) -> tuple[bool, list[Finding], bool]:
     """Run ``jury`` on ``diff_text`` and map its findings.
+
+    ``base_facts`` is the PR's ``## Base facts`` section (``team.jury.base_facts``,
+    #1570); when given, the panel reads it ahead of the diff (:func:`with_base_facts`).
 
     When ``head_sha`` is provided, executes ``jury`` inside an isolated detached checkout of
     ``head_sha`` created via :func:`keel.swarm_runtime.review_checkout` (under ``cwd``) and
@@ -397,6 +428,7 @@ def run_gate(
         )
     if not diff_text:
         return True, [_not_run_finding(NOT_RUN_EMPTY_DIFF)], False
+    diff_text = with_base_facts(diff_text, base_facts)
     size = len(diff_text.encode("utf-8"))
     if size > MAX_DIFF_BYTES:
         if mode == "gating":

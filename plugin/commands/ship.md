@@ -565,6 +565,10 @@ Every implementer (delegated or not) receives the same brief plus:
   include at least: `Context / Root Cause`, `Changes Made`, `Testing`, `Fix evidence`,
   `Docs Impact`, and a final `Closes #<N>` reference. If any section is not applicable, write
   `N/A — <reason>` inside that section instead of omitting it.
+  **`Base facts`** appears in the rendered body when `knobs.team.jury.base_facts` is on: list
+  each fact about code *outside* the diff that the change relies on, each with a `path:line`
+  or commit, or write `none`. The jury is handed it ahead of the diff and verifies every
+  claim against the head checkout, so state only what the checkout shows (#1570).
   **`Fix evidence` is where a fix proves its test guards it.** For each behaviour the change
   touches — each arm of a conditional, each call site, not each git hunk — name a test that
   fails *as an assertion* when that one change is reverted, and list any behaviour you could
@@ -822,6 +826,10 @@ working tree. Read the panel off the contract, never off this prose:
 ROOT=$(pwd)
 HEAD_SHA=$(git rev-parse HEAD)
 DIFF_ABS=$(cd "$(dirname "$DIFF")" && pwd)/$(basename "$DIFF")
+# The PR's base facts ahead of the diff when team.jury.base_facts is on (#1570); otherwise
+# the diff unchanged. Fail-soft: the panel then reads the plain diff.
+keel jury-diff .keel/project.yaml --root "$ROOT" --pr <PR> --diff "$DIFF_ABS" \
+  --out "$DIFF_ABS.jury" || cp "$DIFF_ABS" "$DIFF_ABS.jury"
 JURY_WT="$ROOT/.keel/worktrees/review-$RUN_ID-jury"
 mkdir -p "$ROOT/.keel/worktrees" "$ROOT/.keel/state/jury"
 JURY_RC=1
@@ -844,7 +852,7 @@ if test ! -e "$JURY_WT" && git worktree add -d "$JURY_WT" "$HEAD_SHA"; then
   fi
   if test "$JURY_RC" -eq 0; then
     rm -f "$ROOT/.keel/state/jury/$RUN_ID.json"
-    (cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
+    (cd "$JURY_WT" && jury --format json --diff-file "$DIFF_ABS.jury" -o "$ROOT/.keel/state/jury/$RUN_ID.json")
     JURY_RC=$?
   else
     echo "error: could not copy jury configuration into $JURY_WT" >&2
@@ -1754,4 +1762,4 @@ is set in exactly one place (s12, post-merge) · attribute the **effective** ven
 everywhere · a local-model implementer is orchestrator-driven, refused on tier-3, and never
 bypasses review/tester/merge gates or the lock.
 
-<!-- keel-generated: surface=plugin command=ship keel_version=1.33.0 source_sha256=46d68942ee1454a945eaf370c670240a3f1e89eb34d37bc6fd5d763a82b51c4e generated_sha256=46d68942ee1454a945eaf370c670240a3f1e89eb34d37bc6fd5d763a82b51c4e -->
+<!-- keel-generated: surface=plugin command=ship keel_version=1.33.0 source_sha256=fdae165126dc380b7e319b0fc133c1a3bad0ecf032dd39b3e37135169bf0102b generated_sha256=fdae165126dc380b7e319b0fc133c1a3bad0ecf032dd39b3e37135169bf0102b -->

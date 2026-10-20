@@ -45,7 +45,7 @@ once here in full; the per-command sections below only note deviations.
   must parse the JSON output, never the human text.
 - **Accepted by:** every contract-emitting subcommand. Not present on `version`,
   `validate`, `window`, `init`, `setup`, `install-adapter`, `update-adapter`, `sync`,
-  `install-legacy-wrappers`, and `scratch-dir`.
+  `install-legacy-wrappers`, `scratch-dir`, and `jury-diff`.
 - **Example:** `keel ship .keel/project.yaml --root . --json`
 
 ### `--live` / `--dry-run`

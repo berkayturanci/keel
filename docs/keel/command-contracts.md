@@ -242,15 +242,15 @@ The block records:
 - `format: jsonl`
 - `path` and `path_source`
 - `missing_handling: treat-as-empty`
-- append owners (`ship`, `swarm-run`) and offline readers (`morning`, `wrap`,
+- append owners (`ship`, `swarm-run`, `merge`) and offline readers (`morning`, `wrap`,
   `overnight`, `capture-verification`, `consent-verify`, `ledger`)
 - `record_types` — the kinds this keel reads and writes (`ship_run`,
-  `consent_delegation`)
+  `consent_delegation`, `jury_followup`)
 - `default_read_record_types` — the kinds a reader is handed unless it asks for more
   (`ship_run`); see below
 - `unknown_record_types: skip-with-warning` — see below
 
-**Two record kinds.** `ship_run` is what `keel ship --live --append-ledger` writes (below).
+**Three record kinds.** `ship_run` is what `keel ship --live --append-ledger` writes (below).
 `consent_delegation` is the operator's consent as a live `swarm-run` delegated it to its
 workers ([#1400](https://github.com/berkayturanci/keel/issues/1400)); see
 [swarm.md — Consent delegation](swarm.md#consent-delegation). It is written as two events,
@@ -276,6 +276,24 @@ request. The validator is strict about every field above and tolerates a field i
 name, so a later keel can add one without this one refusing the ledger. A malformed
 `consent_delegation` record is refused like a malformed ship run — by every reader, since
 every record of a known kind is validated.
+
+`jury_followup` is the follow-up issue `keel merge` filed for the minor findings a `COMMENT`
+jury consensus left, when `knobs.team.jury.comment_consensus` is what passed the gate
+([#1570](https://github.com/berkayturanci/keel/issues/1570); see
+[configuration.md](configuration.md#jurycomment_consensus--a-comment-panel-with-nothing-blocking)).
+One per pull request and head: a retried merge finds it and reuses the issue.
+
+| field | type | meaning |
+| --- | --- | --- |
+| `schema_version` | `keel.run-ledger.v1` | |
+| `record_type` | `jury_followup` | |
+| `pull_request` | object | `number` (positive integer) |
+| `head_sha` | non-blank string | the head the jury verdict and the approvals answered for |
+| `issue` | object | `number` (positive integer) and `url` (string or `null`) of the filed issue |
+| `findings` | non-empty list of non-blank strings | the `<severity>: <message>` items the issue lists |
+| `recorded_at` | non-blank string | when this line was written |
+
+`merge` reads `jury_followup` records alone, to find one for the head it is merging.
 
 **A reader is handed ship runs unless it asks for more.** `parse_records`/`read_records`
 validate every known kind and return only the kinds the caller names, `ship_run` by

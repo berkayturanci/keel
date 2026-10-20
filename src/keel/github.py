@@ -686,6 +686,37 @@ def post_issue_comment(
     )
 
 
+def create_issue(
+    owner_repo: str,
+    title: str,
+    body: str,
+    *,
+    cwd: str | None = None,
+    _run=None,
+) -> CommandResult:
+    """Open one issue over REST; the response JSON names its ``number`` and ``html_url``.
+
+    ``-f``, never ``-F``, for the same reason as :func:`issue_labels_add_argv`: ``-F``
+    reads a value starting with ``@`` as a file path, and a title or body is text.
+    Mutating — callers gate it on operator consent.
+    """
+    return run_argv(
+        [
+            "gh",
+            "api",
+            f"repos/{owner_repo}/issues",
+            "-X",
+            "POST",
+            "-f",
+            f"title={title}",
+            "-f",
+            f"body={body}",
+        ],
+        cwd=cwd,
+        **_kw(_run),
+    )
+
+
 def edit_issue_comment(
     owner_repo: str,
     comment_id: int | str,

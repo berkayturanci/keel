@@ -69,7 +69,12 @@ In Keel's evidence gate (`s10 merge`), approvals and review verdicts are strictl
   `jury-verdict` is unsatisfied and a blocking `jury-verdict-not-approved` finding names the
   consensus and head: `the jury's consensus at <head> is REQUEST_CHANGES, not an approval.` It
   blocks wherever the jury verdict is required; an advisory or deferred panel's rejection is
-  reported as `minor`. Until #1429 the line was not read, and on the `keel init` scaffold
+  reported as `minor`. One exception is opt-in per project: with
+  `knobs.team.jury.comment_consensus` on, a `COMMENT` with no `critical`/`major` item in its
+  findings summary, beside at least `min_approvals` approving review verdicts at the head and
+  none that fails to approve, satisfies `jury-verdict`, and `keel merge` files its minors as
+  one follow-up issue (#1570; [configuration.md](configuration.md#jurycomment_consensus--a-comment-panel-with-nothing-blocking)).
+  Until #1429 the line was not read, and on the `keel init` scaffold
   (`gates: [build, lint]`, no `jury` gate) nothing else stood between a rejecting panel and
   `keel merge`. Since #1436 the `jury` gate reads the same consensus, so a gating jury whose
   consensus does not approve also records no gates-pass for the head — and since #1437
