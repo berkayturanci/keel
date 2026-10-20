@@ -237,7 +237,10 @@ class ThePolicy(unittest.TestCase):
         from keel import jsonschema_min
 
         schema = json.loads(
-            Path(cfg.__file__).with_name("schema").joinpath("project.schema.json").read_text()
+            Path(cfg.__file__)
+            .with_name("schema")
+            .joinpath("project.schema.json")
+            .read_text(encoding="utf-8")
         )
         jury_schema = schema["properties"]["knobs"]["properties"]["team"]["properties"]["jury"]
         good = {"comment_consensus": {"enabled": True, "min_approvals": 2}, "base_facts": True}
@@ -387,7 +390,7 @@ class TheJuryInput(unittest.TestCase):
         def fake(argv, **kwargs):
             if argv[:2] == ["jury", "--version"]:
                 return CommandResult(True, 0, "1")
-            seen["diff"] = Path(argv[argv.index("--diff-file") + 1]).read_text()
+            seen["diff"] = Path(argv[argv.index("--diff-file") + 1]).read_text(encoding="utf-8")
             return CommandResult(True, 0, "{}", stdout='{"findings": []}')
 
         with mock.patch.object(jury, "run_argv", side_effect=fake):
@@ -401,7 +404,8 @@ def _config(tmp, *, base_facts=True):
     jury_block = "    jury:\n      base_facts: true\n" if base_facts else ""
     path.write_text(
         "extends: keel\ncore_version: '^1.0'\nowner: o\nrepo: r\nbase_branch: main\n"
-        "knobs:\n  team:\n" + (jury_block or "    {}\n")
+        "knobs:\n  team:\n" + (jury_block or "    {}\n"),
+        encoding="utf-8",
     )
     return path
 
@@ -433,19 +437,19 @@ class TheCli(unittest.TestCase):
     def _jury_diff(self, tmp, *extra, base_facts=True, diff="diff --git a/x b/x\n"):
         config = _config(tmp, base_facts=base_facts)
         diff_path = Path(tmp) / "in.diff"
-        diff_path.write_text(diff)
+        diff_path.write_text(diff, encoding="utf-8")
         out = Path(tmp) / "out.diff"
         err = StringIO()
         with redirect_stderr(err):
             code = cli.main(
                 ["jury-diff", str(config), "--diff", str(diff_path), "--out", str(out), *extra]
             )
-        return code, (out.read_text() if out.exists() else None), err.getvalue()
+        return code, (out.read_text(encoding="utf-8") if out.exists() else None), err.getvalue()
 
     def test_jury_diff_from_a_body_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             body = Path(tmp) / "body.md"
-            body.write_text("## Base facts\n- fact\n")
+            body.write_text("## Base facts\n- fact\n", encoding="utf-8")
             code, out, _ = self._jury_diff(tmp, "--pr-body-file", str(body))
             self.assertEqual(code, 0)
             self.assertTrue(out.startswith(jury.BASE_FACTS_LEAD))
@@ -484,10 +488,10 @@ class TheCli(unittest.TestCase):
                     cli.main(["jury-diff", f"{tmp}/missing.yaml", "--diff", "d", "--out", "o"]), 1
                 )
             bad = Path(tmp) / "bad.yaml"
-            bad.write_text("knobs: [\n")
+            bad.write_text("knobs: [\n", encoding="utf-8")
             with redirect_stderr(StringIO()):
                 self.assertEqual(cli.main(["jury-diff", str(bad), "--diff", "d", "--out", "o"]), 1)
-            Path(tmp, "in.diff").write_text("d")
+            Path(tmp, "in.diff").write_text("d", encoding="utf-8")
             with redirect_stderr(StringIO()) as err:
                 code = cli.main(
                     ["jury-diff", str(_config(tmp)), "--diff", f"{tmp}/in.diff", "--out", tmp]
@@ -571,7 +575,10 @@ class TheMergeFollowup(unittest.TestCase):
     def test_no_owner_repo_refuses(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "p.yaml"
-            path.write_text("extends: keel\ncore_version: '^1.0'\nbase_branch: main\nknobs: {}\n")
+            path.write_text(
+                "extends: keel\ncore_version: '^1.0'\nbase_branch: main\nknobs: {}\n",
+                encoding="utf-8",
+            )
             args = argparse.Namespace(pr=7, root=tmp, dry_run=False)
             record, error = cli._comment_consensus_followup(
                 args, cfg.load_config(path), {"comment_consensus": self.APPLIED}, HEAD
@@ -582,7 +589,7 @@ class TheMergeFollowup(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = ledger.resolve_path(tmp, cfg.load_config(_config(tmp)))
             path.parent.mkdir(parents=True)
-            path.write_text("not json\n")
+            path.write_text("not json\n", encoding="utf-8")
             (record, error), create = self._run(tmp, self.APPLIED)
             self.assertTrue(error.startswith("invalid run ledger:"))
             create.assert_not_called()
