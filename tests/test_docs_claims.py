@@ -125,6 +125,7 @@ def _number_to_words(n: int) -> str:
     return str(n)
 
 
+#: `## `keel <name> …`` / `### `keel <name> …`` — the signature headings cli.md uses.
 _CLI_SECTION = re.compile(r"(?m)^#{2,3} `keel ([a-z][a-z0-9-]*)")
 
 #: A `knobs` key as configuration.md spells it: a table row and a detail heading.
@@ -1340,8 +1341,13 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
             if "swarm-review" not in text:
                 continue
             named.add(rel)
-            self.assertIn(status, text.lower(), f"{rel} does not contain status {status}")
-            self.assertIn(status_line, text, f"{rel} does not contain status_line {status_line}")
+            with self.subTest(surface=rel):
+                self.assertIn(status, text.lower(), f"{rel} does not contain status {status}")
+                self.assertIn(
+                    status_line,
+                    text,
+                    f"{rel} does not contain status_line {status_line}",
+                )
         self.assertEqual(named, _SURFACES_NAMING_SWARM_REVIEW)
 
     def test_every_swarm_status_surface_says_experimental(self):
@@ -1352,7 +1358,8 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
         """
         status = _load_claims()["swarm"]["status"]
         for rel in _SWARM_STATUS_SURFACES:
-            self.assertIn(status, _flat(rel).lower(), f"{rel} does not contain {status}")
+            with self.subTest(surface=rel):
+                self.assertIn(status, _flat(rel).lower(), f"{rel} does not contain {status}")
 
     def test_the_claim_detectors_fire_on_the_wording_they_ban(self):
         for claim in (
@@ -1387,10 +1394,17 @@ class TestSwarmCopyOnTheSiteIsNotAFlagship(unittest.TestCase):
             _load_claims()["swarm"],
             {"status": "production-ready", "status_line": "unlimited production runs"},
         ):
-            with self.assertRaises(AssertionError):
-                self.test_a_surface_naming_swarm_review_states_its_one_run_and_its_limits()
-            with self.assertRaises(AssertionError):
-                self.test_every_swarm_status_surface_says_experimental()
+            res1 = unittest.TestResult()
+            TestSwarmCopyOnTheSiteIsNotAFlagship(
+                "test_a_surface_naming_swarm_review_states_its_one_run_and_its_limits"
+            ).run(res1)
+            self.assertTrue(res1.failures)
+
+            res2 = unittest.TestResult()
+            TestSwarmCopyOnTheSiteIsNotAFlagship(
+                "test_every_swarm_status_surface_says_experimental"
+            ).run(res2)
+            self.assertTrue(res2.failures)
 
     def test_the_security_page_says_the_august_audit_predates_the_live_path(self):
         security = re.sub(r"\s+", " ", (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8"))
@@ -2816,19 +2830,57 @@ class TheReadmeCoverageClaimIsTheGate(unittest.TestCase):
         self.assertNotRegex(self.readme, r"The pure core \([^)]*\) is held at")
 
     def test_every_surface_stating_coverage_bar_quotes_canonical_claim(self):
-        claim = _load_claims()["coverage"]["claim"]
+        cov = _load_claims()["coverage"]
+        claim = cov["claim"]
+        exception = cov["exception"]
         surfaces = ("README.md", "CONTRIBUTING.md", "AGENTS.md")
         for rel in surfaces:
-            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            text = _flat(rel)
             self.assertIn(claim, text, f"{rel} does not quote canonical coverage claim: {claim}")
+            self.assertIn(
+                exception, text, f"{rel} does not quote canonical coverage exception: {exception}"
+            )
 
     def test_no_surface_states_the_stale_pure_core_coverage_bar(self):
-        surfaces = ("README.md", "CONTRIBUTING.md", "AGENTS.md", ".github/pull_request_template.md")
-        stale_pattern = re.compile(r"pure core (?:is held at|stays at)", re.IGNORECASE)
+        surfaces = (
+            "README.md",
+            "CONTRIBUTING.md",
+            "AGENTS.md",
+            ".github/pull_request_template.md",
+            "pyproject.toml",
+        )
+        stale_pattern = re.compile(
+            r"pure core (?:is held at|stays at|stays fully covered)",
+            re.IGNORECASE,
+        )
         for rel in surfaces:
             text = (REPO_ROOT / rel).read_text(encoding="utf-8")
             with self.subTest(surface=rel):
                 self.assertIsNone(stale_pattern.search(text))
+
+    def test_pull_request_template_and_site_quote_coverage_bar(self):
+        cov = _load_claims()["coverage"]
+        bar = cov["bar"]
+        fail_under = cov["fail_under"]
+        pr_template = (REPO_ROOT / ".github" / "pull_request_template.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            bar,
+            pr_template,
+            f".github/pull_request_template.md does not quote coverage bar: {bar}",
+        )
+        content_js = (REPO_ROOT / "website" / "content.js").read_text(encoding="utf-8")
+        self.assertIn(
+            bar,
+            content_js,
+            f"website/content.js does not quote coverage bar: {bar}",
+        )
+        self.assertIn(
+            f"fail_under = {fail_under}",
+            content_js,
+            f"website/content.js does not quote fail_under = {fail_under}",
+        )
 
     def test_coverage_claim_check_fails_when_yaml_claim_differs(self):
         """Mutation test: if claims.yaml specifies a different claim, surface checks must fail."""
@@ -2840,6 +2892,18 @@ class TheReadmeCoverageClaimIsTheGate(unittest.TestCase):
                 self.test_the_readme_claims_the_whole_package()
             with self.assertRaises(AssertionError):
                 self.test_every_surface_stating_coverage_bar_quotes_canonical_claim()
+        with unittest.mock.patch.dict(
+            _load_claims()["coverage"],
+            {"exception": "omits nothing"},
+        ):
+            with self.assertRaises(AssertionError):
+                self.test_every_surface_stating_coverage_bar_quotes_canonical_claim()
+        with unittest.mock.patch.dict(
+            _load_claims()["coverage"],
+            {"bar": "90% line + branch"},
+        ):
+            with self.assertRaises(AssertionError):
+                self.test_pull_request_template_and_site_quote_coverage_bar()
 
     def test_the_readme_names_every_omitted_file(self):
         omitted = self.coverage["run"]["omit"]
@@ -3142,13 +3206,15 @@ class TestPublicClaimsSource(unittest.TestCase):
         self.assertIn("coverage", claims)
         cov = claims["coverage"]
         self.assertIsInstance(cov, dict)
-        for key in ("bar", "claim", "fail_under"):
+        for key in ("bar", "claim", "fail_under", "exception"):
             self.assertIn(key, cov)
         self.assertIsInstance(cov["bar"], str)
         self.assertTrue(cov["bar"].strip())
         self.assertIsInstance(cov["claim"], str)
         self.assertTrue(cov["claim"].strip())
         self.assertIsInstance(cov["fail_under"], int)
+        self.assertIsInstance(cov["exception"], str)
+        self.assertTrue(cov["exception"].strip())
         # Gate matches pyproject.toml
         with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
             pyproject = tomllib.load(fh)
@@ -3156,6 +3222,11 @@ class TestPublicClaimsSource(unittest.TestCase):
         self.assertEqual(cov["fail_under"], gate)
         # Consistency: claim quotes the bar
         self.assertIn(cov["bar"], cov["claim"])
+        # Consistency: exception names the omitted entry shim from pyproject.toml
+        omitted = pyproject["tool"]["coverage"]["run"]["omit"]
+        for pat in omitted:
+            filename = pat.split("/")[-1]
+            self.assertIn(filename, cov["exception"])
 
     def test_revert_check_schema_and_types(self):
         claims = _load_claims()

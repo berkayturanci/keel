@@ -90,7 +90,7 @@ source = ["keel"]
 omit = ["*/keel/__main__.py"]
 
 [tool.coverage.report]
-# keel keeps a high bar — the pure core stays fully covered (line + branch).
+# keel keeps a high bar — every module under src/keel/ stays fully covered (line + branch).
 fail_under = 100
 show_missing = true
 skip_covered = false

@@ -15,6 +15,7 @@ coverage:
   bar: "100% line + branch"
   fail_under: 100
   claim: "Every module under `src/keel/` is held at **100% line + branch coverage**"
+  exception: "omits only the `python -m keel` entry shim, `src/keel/__main__.py`"
 
 revert_check:
   fixes_audited: 14
