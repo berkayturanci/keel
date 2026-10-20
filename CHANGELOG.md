@@ -6,6 +6,23 @@ All notable changes to keel are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.34.0] - 2026-10-20
+
+- `keel finish` now carries a PR all the way to the merge, and `keel ship` waits instead of saying MERGE while required checks are still pending.
+- `keel delegate run` waits out a retryable quota error (429) and accepts `--prompt`, so an exhausted agent no longer ends a run.
+- An opt-in rule lets a COMMENT-only consensus merge (#1570).
+
+### Added
+- **Opt-in COMMENT-consensus merge rule, and base facts for the jury** (#1570). With `knobs.team.jury.comment_consensus` on, a jury verdict whose consensus is `COMMENT` satisfies `jury-verdict` and the s8 `jury` gate when its findings summary has only `minor`/`nit` items (no `critical`/`major` or unrecognised severity), at least `min_approvals` (default 2) distinct review verdicts approve at the head, and none there fails to approve. `keel merge` then files the remaining minor findings as one follow-up issue before merging, records it in the run ledger as a new `jury_followup` record so a retry reuses it, and refuses the merge if the issue can't be filed. `REQUEST_CHANGES`, `ABSTAIN`, `NO_QUORUM` and any blocking finding still stop the merge. With `knobs.team.jury.base_facts` on, the rendered PR body gets a `## Base facts` section, and the jury reads it ahead of the diff as claims to verify against the head checkout. The s8 `jury` gate reads it from the pull request, and the s7 panel gets it through the new `keel jury-diff`.
+
+### Fixed
+- **Public claims follow-ups: coverage exception, PR template and site pinned, subTest per surface** (#1535). `docs/keel/claims.yaml` records the `src/keel/__main__.py` entry shim omission under `coverage.exception` and tests enforce that `README.md`, `AGENTS.md` and `CONTRIBUTING.md` quote it; the PR template and `website/content.js` are pinned to `coverage.bar` and `fail_under`; `pyproject.toml`'s coverage comment no longer states the stale pure-core bar; the two swarm-status tests restore `self.subTest(surface=...)`; and `tests/test_docs_claims.py` restores the `_CLI_SECTION` documentation comment.
+- **`test_agent_install_docs` ignores nested worktrees and `.keel` runtime trees** (#1544). `tests/test_agent_install_docs.py`'s instruction page discovery now skips nested worktrees under `.claude/worktrees/` and `.keel/worktrees/`, and `.keel/` runtime trees, preventing cross-document anchor link failures during `keel ship` and `keel swarm-land` runs in checkouts holding worktrees.
+- **`keel ship` waits for pending or queued checks instead of reporting clear to merge** (#1545). `ci_conclusion` now recognizes in-progress, queued, and expected checks as pending (including in-flight reruns with empty string conclusion), and ship assessments report `ci: pending` and decision `WAIT — checks pending` rather than `MERGE — clear to merge` whenever required checks are still in flight without failures.
+- **`keel review --from-jury` carries single-panelist minor findings to s9 synthesis** (#1546). `jury.verified_findings` previously drew exclusively from verified consensus groups, dropping non-blocking minor remarks raised by only one panelist; minor findings from review ballots that are not part of a verified consensus group are now carried to s9 tagged with their source.
+- **`keel delegate run`: back off and retry on retryable quota errors (429 RESOURCE_EXHAUSTED) and accept `--prompt`** (#1549). `delegaterun` backs off on quota refusals reporting `retryable: true` up to a configurable ceiling (`--quota-wait SECONDS`, reported as `quota-wait` in the result), and `plan_run` accepts `--prompt TEXT` directly alongside `--prompt-file`.
+- **`keel finish` passes head SHA and branch to ship and fails if ship records no matching gates-pass** (#1556). `keel finish` now passes the resolved head SHA and branch (or explicitly supplied `--head-sha` and `--branch`) to `keel ship` so the ledger entry matches what `keel merge` expects, fails the ship step if no matching gates-pass for the head is recorded in the ledger, and includes non-null `"step"` in every planned and executed step dictionary.
+
 ## [1.33.0] - 2026-10-16
 
 - `keel finish` takes an open PR to a merge in one command, and every retry refusal after a failed merge now prints the command that resolves it.
