@@ -428,7 +428,7 @@ class TheCli(unittest.TestCase):
         spec = argparse.Namespace(kind="builtin", id="jury", phase="test", timeout=5)
         with mock.patch.object(jury, "run_gate", return_value=(True, [], False)) as gate:
             cli._gate_runner(".", "d", base_facts="- fact")(spec)
-        self.assertEqual(gate.call_args.kwargs["base_facts"], "- fact")
+        self.assertEqual(gate.call_args.kwargs.get("base_facts"), "- fact")
 
     def _jury_diff(self, tmp, *extra, base_facts=True, diff="diff --git a/x b/x\n"):
         config = _config(tmp, base_facts=base_facts)
