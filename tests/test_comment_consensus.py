@@ -14,11 +14,11 @@ import json
 import subprocess
 import tempfile
 import unittest
+import unittest.mock as mock
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-import unittest.mock as mock
 
 from keel import artifacts, cli, contracts, evidence, jury, ledger, ship, team
 from keel import config as cfg
